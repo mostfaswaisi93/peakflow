@@ -1,6 +1,6 @@
 # Phase 06 — EN 16931, serializers, validation and jurisdiction profiles
 
-**20 tasks · 123 points**
+**20 tasks · 116 points**
 
 The heaviest phase, and the one where the architecture either pays off or does not.
 

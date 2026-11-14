@@ -1,6 +1,6 @@
 # Phase 00 — Foundations, tooling and guardrails
 
-**17 tasks · 62 points**
+**17 tasks · 60 points**
 
 The guardrails come first because they are nearly free now and nearly impossible later. An architecture test that forbids a `float` in the money path is a one-line rule applied to an empty repository and a three-week audit applied to a finished one. Nothing in this phase is a feature; everything in it is a constraint that the next thirteen phases are written inside.
 

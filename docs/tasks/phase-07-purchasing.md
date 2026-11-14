@@ -1,6 +1,6 @@
 # Phase 07 — Purchase orders, bills, approvals and three-way match
 
-**15 tasks · 68 points**
+**15 tasks · 67 points**
 
 The payable side. Structurally the mirror of `Sales`, with two things sales does not have: **documents that arrive from outside** and must be parsed rather than composed, and **approval**, because money leaving needs a second person in a way money arriving does not.
 

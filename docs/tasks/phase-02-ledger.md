@@ -1,6 +1,6 @@
 # Phase 02 — The general ledger
 
-**22 tasks · 109 points**
+**22 tasks · 104 points**
 
 This is the phase that decides whether PeakFlow is a financial system or a database of documents. Everything after it posts into what is built here.
 

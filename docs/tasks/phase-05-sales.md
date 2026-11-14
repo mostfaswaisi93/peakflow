@@ -1,6 +1,6 @@
 # Phase 05 — Quotes, orders, invoices and credit notes
 
-**21 tasks · 103 points**
+**21 tasks · 110 points**
 
 The first phase that produces something a customer sees. It depends on the ledger and the tax engine being finished, because an invoice is a document **plus a posting plus a frozen tax treatment**, and building the document first produces a system where invoices exist and the books do not reconcile.
 

@@ -1,6 +1,6 @@
 # Phase 01 — Tenancy, entities, identity and segregation of duties
 
-**19 tasks · 86 points**
+**19 tasks · 84 points**
 
 Two structures are built here and both are load-bearing for everything after. **Tenancy** is physical isolation: a database per customer. **Entity** is legal isolation inside a customer: a company that files its own return. Confusing the two, or adding either one late, is a migration across every financial table in the system.
 

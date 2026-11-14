@@ -6,21 +6,21 @@
 
 | Phase | Theme | Tasks | Points |
 |-------|-------|-------|--------|
-| [00](phase-00-foundations.md) | Foundations, tooling and guardrails | 17 | 62 |
-| [01](phase-01-tenancy-identity.md) | Tenancy, entities, identity, segregation of duties | 19 | 86 |
-| [02](phase-02-ledger.md) | The general ledger | 22 | 109 |
-| [03](phase-03-masters.md) | Parties, catalog, currencies, FX | 16 | 65 |
+| [00](phase-00-foundations.md) | Foundations, tooling and guardrails | 17 | 60 |
+| [01](phase-01-tenancy-identity.md) | Tenancy, entities, identity, segregation of duties | 19 | 84 |
+| [02](phase-02-ledger.md) | The general ledger | 22 | 104 |
+| [03](phase-03-masters.md) | Parties, catalog, currencies, FX | 16 | 66 |
 | [04](phase-04-tax.md) | The tax engine | 14 | 71 |
-| [05](phase-05-sales.md) | Quotes, orders, invoices, credit notes | 21 | 103 |
-| [06](phase-06-einvoicing.md) | EN 16931, serializers, validation, jurisdiction profiles | 20 | 123 |
-| [07](phase-07-purchasing.md) | Purchase orders, bills, approvals, three-way match | 15 | 68 |
-| [08](phase-08-banking.md) | Bank accounts, statements, reconciliation | 21 | 112 |
-| [09](phase-09-settlement.md) | Payments, allocation, FX, payment runs | 16 | 82 |
-| [10](phase-10-reporting.md) | Reporting, close, consolidation | 17 | 85 |
-| [11](phase-11-design-system.md) | Design system, data grid, accessibility, RTL | 18 | 88 |
-| [12](phase-12-api-exchange.md) | REST API, webhooks, the Exchange plane | 14 | 60 |
-| [13](phase-13-hardening.md) | Security, observability, performance, release | 16 | 76 |
-| | **Total** | **246** | **1,190** |
+| [05](phase-05-sales.md) | Quotes, orders, invoices, credit notes | 21 | 110 |
+| [06](phase-06-einvoicing.md) | EN 16931, serializers, validation, jurisdiction profiles | 20 | 116 |
+| [07](phase-07-purchasing.md) | Purchase orders, bills, approvals, three-way match | 15 | 67 |
+| [08](phase-08-banking.md) | Bank accounts, statements, reconciliation | 21 | 109 |
+| [09](phase-09-settlement.md) | Payments, allocation, FX, payment runs | 16 | 81 |
+| [10](phase-10-reporting.md) | Reporting, close, consolidation | 17 | 87 |
+| [11](phase-11-design-system.md) | Design system, data grid, accessibility, RTL | 18 | 99 |
+| [12](phase-12-api-exchange.md) | REST API, webhooks, the Exchange plane | 14 | 57 |
+| [13](phase-13-hardening.md) | Security, observability, performance, release | 16 | 77 |
+| | **Total** | **246** | **1,188** |
 
 A flat, sortable view of every task is in [`backlog.md`](backlog.md).
 
@@ -94,6 +94,8 @@ Ordering is by dependency and by **cost of being wrong late**, not by what demos
 | `risk:high` | Being subtly wrong here costs money or breaks an audit. Needs a second reviewer |
 | `needs:adr` | Cannot be closed without an architecture decision record |
 | `blocked` | A dependency is not merged, or an external answer is pending |
+
+> **96 of the 246 tasks carry `risk:high`**, which is 39% and is not label inflation - it is a description of the product. In a system whose job is to be correct about money, a majority of the core domain work is work where a subtle error is expensive and silent. The label earns its keep by naming which tasks need a second reviewer; the ten tasks below are the ones where being wrong is worst, and they are called out separately because a list of 96 is not a priority.
 
 ## Risk register
 

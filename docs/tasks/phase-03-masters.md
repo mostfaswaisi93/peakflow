@@ -1,6 +1,6 @@
 # Phase 03 — Parties, catalog, currencies and FX
 
-**16 tasks · 65 points**
+**16 tasks · 66 points**
 
 The master data every document references. Two parts of this phase carry more risk than their size suggests: **party bank details**, because beneficiary substitution is the highest-value attack in the entire product, and **FX rates**, because a rate stored with the wrong direction or inverted on the fly produces differences that are small, plausible and impossible to explain.
 
