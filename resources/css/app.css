@@ -413,7 +413,10 @@
            right-aligned in RTL, because digits read left-to-right in both
            directions. Using `end` here would left-align figures in Arabic and
            destroy the thousands-place scan. */
-        text-align: right;
+        text-align: right; /* @arch-allow: numbers do not flip - digits read
+           left-to-right in both directions, so a figure column stays
+           right-aligned in Arabic. `end` here would left-align every figure
+           in RTL and destroy the thousands-place scan. */
         white-space: nowrap;
     }
 

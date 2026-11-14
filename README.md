@@ -3,9 +3,9 @@
 > A multi-tenant financial operations platform where every invoice, every bank line and every payment is a **posting into an immutable double-entry ledger** - not a PDF with a total on it. One tenant can run **many legal entities**, each with its own chart of accounts, functional currency, tax registration and fiscal calendar, and consolidate across them. Invoices are issued against **EN 16931** semantics and delivered as **UBL 2.1 / Peppol BIS Billing 3.0**; bank statements arrive as **ISO 20022 CAMT.053** and payments leave as **PAIN.001**; and nothing in the system can report a balance it cannot explain line by line. Arabic-first (RTL), bilingual AR/EN, server-rendered and reactive, with a versioned REST API.
 
 <p align="center">
-<img src="https://img.shields.io/badge/PHP-8.4+-777BB4?logo=php&logoColor=white" alt="PHP 8.4+">
+<img src="https://img.shields.io/badge/PHP-8.3+-777BB4?logo=php&logoColor=white" alt="PHP 8.3+">
 <img src="https://img.shields.io/badge/Laravel-13-FF2D20?logo=laravel&logoColor=white" alt="Laravel 13">
-<img src="https://img.shields.io/badge/PostgreSQL-18-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL 18">
+<img src="https://img.shields.io/badge/PostgreSQL-16+-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL 16+">
 <img src="https://img.shields.io/badge/Livewire-3-FB70A9?logo=livewire&logoColor=white" alt="Livewire 3">
 <img src="https://img.shields.io/badge/Tailwind_CSS-4-38BDF8?logo=tailwindcss&logoColor=white" alt="Tailwind CSS 4">
 <img src="https://img.shields.io/badge/EN_16931-compliant-0B5FFF" alt="EN 16931">
@@ -770,9 +770,9 @@ PeakFlow is built against published standards rather than against a competitor's
 
 Chosen for a long-lived financial system: boring where correctness matters, modern where the user experience does.
 
-- **PHP 8.4** - property hooks, asymmetric visibility, typed class constants, `#[\Deprecated]`
+- **PHP 8.3+** - typed class constants, readonly classes, `json_validate`. 8.4 is the target and 8.3 is the floor; the code is verified on 8.3
 - **Laravel 13** - the application framework
-- **PostgreSQL 18** - `numeric` exact decimal, deferrable constraint triggers, row-level security, declarative partitioning for the journal, `pg_stat_statements`, logical replication, PITR via WAL archiving. **The ledger's integrity rules are expressed as database constraints, which is the single strongest argument for PostgreSQL over the alternative**
+- **PostgreSQL 16+** - `numeric` exact decimal, deferrable constraint triggers, row-level security, declarative partitioning for the journal, exclusion constraints, `pg_stat_statements`, PITR via WAL archiving. Every one of those exists in 16, which is the verified floor; 17 and 18 work. **The ledger's integrity rules are expressed as database constraints, which is the single strongest argument for PostgreSQL over the alternative**
 - **Redis 8** - cache, queues, rate limiting, and distributed locks for scheduled runs
 - **Laravel Horizon** - queue supervision and visibility, which the `Exchange` plane needs rather than wants
 - **Laravel Octane + FrankenPHP** - persistent workers, HTTP/3, early hints
@@ -790,10 +790,11 @@ Chosen for a long-lived financial system: boring where correctness matters, mode
 
 | Tool | Gate |
 |------|------|
-| **Pest 4** (on PHPUnit 12) | Unit, feature, architecture and browser tests |
+| **`bin/verify`** | The architecture rules and the specification's worked examples, with **no test runner at all**. One implementation, two runners - so the checks run even where the dev dependencies cannot be installed |
+| **Pest 4** (on PHPUnit 11) | Unit, feature, architecture and browser tests |
 | **PHPStan 2 / Larastan**, level `max` | Static analysis, no baseline suppressions for new code |
 | **Deptrac 3** | Module boundary enforcement - the table in [Bounded contexts](#bounded-contexts-and-a-compiler-that-enforces-them) is its config |
-| **Rector 2** | Automated upgrades and dead-code removal |
+| **Rector 2** | Automated upgrades and dead-code removal. Configured in `rector.php` and installed on demand - see `composer suggest` |
 | **Laravel Pint** | Formatting |
 | **Infection** | Mutation testing, with a minimum MSI on the `Ledger`, `Tax` and `Settlement` modules - the places where a passing test suite with weak assertions is most dangerous |
 | **Composer audit** + **Dependabot** + **Trivy** | Dependency and image vulnerabilities |
@@ -801,11 +802,12 @@ Chosen for a long-lived financial system: boring where correctness matters, mode
 
 ## Requirements
 
-- PHP **8.4+** with `bcmath`, `intl`, `pgsql`, `redis`, `zip`, `dom`, `xsl`, `gmp`, `sodium`
-  - `intl` is **required**, not optional: ICU drives number and date formatting, Arabic plural selection, and locale-aware collation
+- PHP **8.3+** with `intl`, `pgsql`, `dom`, `xsl`, `zip`, `sodium`, `mbstring`
+  - `intl` is **required**, not optional: ICU drives number and date formatting, currency symbols and digit shaping, Arabic plural selection, and locale-aware collation
   - `xsl` is **required**: Schematron validation compiles to XSLT 2.0
+  - `bcmath` or `gmp` are **recommended, not required**: `brick/math` falls back to a pure-PHP calculator without them, which is exactly as correct and measurably slower. The money layer is verified on a build with neither
 - Composer 2.8+
-- **PostgreSQL 18+**. The provisioner issues `CREATE DATABASE` / `CREATE ROLE` / `GRANT`, so the configured role needs those privileges. On managed hosting without them, the provisioner's **link** mode attaches a pre-created database instead
+- **PostgreSQL 16+**. The provisioner issues `CREATE DATABASE` / `CREATE ROLE` / `GRANT`, so the configured role needs those privileges. On managed hosting without them, the provisioner's **link** mode attaches a pre-created database instead
 - **Redis 8+**
 - Node.js **22 LTS+** and npm
 - **Gotenberg** and **veraPDF** reachable for PDF generation and PDF/A verification. Both run as containers in development; `PDF_DRIVER=stub` renders an HTML placeholder so a fresh clone works with neither
@@ -1094,7 +1096,7 @@ Full strategy, with the reasoning per layer, in [`docs/operations/testing-strate
 When it is enabled, the pipeline runs in this order, and the order is the point:
 
 ```
-lint & static ──┬─► build assets ──► unit + arch ──► feature (PostgreSQL 18 + Redis service)
+lint & static ──┬─► build assets ──► unit + arch ──► feature (PostgreSQL 16+ + Redis service)
   pint          │                                       │
   phpstan max   │                                       ├─► concurrency suite
   deptrac       │                                       ├─► contract (OpenAPI)

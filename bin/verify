@@ -1,0 +1,105 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ |-----------------------------------------------------------------------------
+ | bin/verify - the checks, without a test runner
+ |-----------------------------------------------------------------------------
+ |
+ | Runs the architecture rules and the specification's worked examples against
+ | the real code, using nothing but the application's own autoloader.
+ |
+ | It exists because the dev dependencies could not be installed in the
+ | environment PeakFlow was first assembled in, and "we could not run the
+ | checks" is not an acceptable state for a financial system. The same rules
+ | are wrapped by PHPUnit tests in tests/Architecture and tests/Unit, so in a
+ | normal environment they run there too - one implementation, two runners.
+ |
+ |   php bin/verify            everything
+ |   php bin/verify arch       architecture rules only
+ |   php bin/verify examples   worked examples only
+ |
+ | Exits non-zero on any violation.
+ */
+
+$base = dirname(__DIR__);
+
+require $base.'/vendor/autoload.php';
+
+// The worked examples read config('money.*'), so the application has to boot.
+$app = require $base.'/bootstrap/app.php';
+$app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+
+// tests/ is in autoload-dev, which may not be dumped. Register it directly so
+// bin/verify works against an optimized production autoloader too.
+spl_autoload_register(static function (string $class) use ($base): void {
+    if (! str_starts_with($class, 'Tests\\')) {
+        return;
+    }
+
+    $path = $base.'/tests/'.str_replace('\\', '/', substr($class, 6)).'.php';
+
+    if (is_file($path)) {
+        require $path;
+    }
+});
+
+$only = $argv[1] ?? 'all';
+
+$suites = [];
+
+if ($only === 'all' || $only === 'arch') {
+    $suites['Architecture rules'] = (new Tests\Support\ArchitectureRules($base))->all();
+}
+
+if ($only === 'all' || $only === 'examples') {
+    $suites['Worked examples'] = (new Tests\Support\WorkedExamples())->all();
+}
+
+if ($suites === []) {
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | examples\n");
+    exit(2);
+}
+
+$bold = static fn (string $s): string => "\033[1m{$s}\033[0m";
+$green = static fn (string $s): string => "\033[32m{$s}\033[0m";
+$red = static fn (string $s): string => "\033[31m{$s}\033[0m";
+$dim = static fn (string $s): string => "\033[2m{$s}\033[0m";
+
+$passed = 0;
+$failed = 0;
+
+foreach ($suites as $suiteName => $rules) {
+    echo "\n".$bold($suiteName)."\n";
+
+    foreach ($rules as $rule => $violations) {
+        if ($violations === []) {
+            $passed++;
+            printf("  %s %s\n", $green('PASS'), $rule);
+
+            continue;
+        }
+
+        $failed++;
+        printf("  %s %s\n", $red('FAIL'), $bold($rule));
+
+        foreach (array_slice($violations, 0, 15) as $violation) {
+            printf("       %s\n", $violation);
+        }
+
+        if (count($violations) > 15) {
+            printf("       %s\n", $dim(sprintf('… and %d more', count($violations) - 15)));
+        }
+    }
+}
+
+printf(
+    "\n%s  %s passed, %s failed\n\n",
+    $bold('Result:'),
+    $failed === 0 ? $green((string) $passed) : (string) $passed,
+    $failed === 0 ? '0' : $red((string) $failed),
+);
+
+exit($failed === 0 ? 0 : 1);

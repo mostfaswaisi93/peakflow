@@ -256,7 +256,11 @@ final readonly class Money implements JsonSerializable, Stringable
     public function format(?string $locale = null, bool $withSymbol = true): string
     {
         $locale = $this->withNumberingSystem($locale ?? $this->currentLocale());
-        $value = (float) (string) $this->toPresentation();
+        // @arch-allow: ICU's NumberFormatter takes a float and there is no
+        // decimal-aware alternative. Safe here and only here: the value has
+        // already been rounded to the currency's own exponent, so the float
+        // is a presentation artefact that is never read back or stored.
+        $value = (float) (string) $this->toPresentation(); // @arch-allow
 
         $formatter = new NumberFormatter(
             $locale,

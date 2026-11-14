@@ -3,34 +3,85 @@
          xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
          bootstrap="vendor/autoload.php"
          colors="true"
->
+         failOnWarning="true"
+         failOnRisky="true"
+         failOnDeprecation="true"
+         beStrictAboutOutputDuringTests="true"
+         cacheDirectory=".phpunit.cache">
+    <!--
+        Suites are separated because each layer answers a different question
+        and has a different cost. See docs/operations/testing-strategy.md.
+
+        ⚠️  THE FEATURE SUITE CANNOT RUN ON SQLITE.
+
+        Deferrable constraint triggers, row-level security, declarative
+        partitioning and `numeric` semantics ARE THE THING UNDER TEST. A suite
+        that silently skipped them would report green while testing a different
+        system, which is worse than no suite.
+
+        With no PostgreSQL reachable, several hundred tests fail IDENTICALLY
+        with a connection error. That looks alarming and is not a code failure:
+        start PostgreSQL before reading anything into a red run.
+
+        `Unit` and `Architecture` need no database and run in under ten seconds.
+    -->
     <testsuites>
         <testsuite name="Unit">
             <directory>tests/Unit</directory>
         </testsuite>
+        <testsuite name="Architecture">
+            <directory>tests/Architecture</directory>
+        </testsuite>
         <testsuite name="Feature">
             <directory>tests/Feature</directory>
         </testsuite>
+        <!-- Real parallel workers. A single-process test of a race proves
+             nothing, which is why this is its own suite and excluded from the
+             default run. -->
+        <testsuite name="Concurrency">
+            <directory>tests/Concurrency</directory>
+        </testsuite>
+        <testsuite name="Contract">
+            <directory>tests/Contract</directory>
+        </testsuite>
+        <testsuite name="Golden">
+            <directory>tests/Golden</directory>
+        </testsuite>
+        <testsuite name="Performance">
+            <directory>tests/Performance</directory>
+        </testsuite>
     </testsuites>
+
     <source>
         <include>
             <directory>app</directory>
         </include>
     </source>
+
     <php>
         <env name="APP_ENV" value="testing"/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
-        <env name="BROADCAST_CONNECTION" value="null"/>
+
+        <!-- The platform test database. The harness creates and wipes
+             `peakflow_testing` and `peakflow_testing_tenant` itself, so
+             DB_DATABASE must never be aimed at a database you picked for
+             something else. Put credentials in .env.testing, not .env. -->
+        <env name="DB_CONNECTION" value="platform"/>
+        <env name="DB_DATABASE" value="peakflow_testing"/>
+
         <env name="CACHE_STORE" value="array"/>
-        <env name="DB_CONNECTION" value="sqlite"/>
-        <env name="DB_DATABASE" value=":memory:"/>
-        <env name="DB_URL" value=""/>
-        <env name="MAIL_MAILER" value="array"/>
-        <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>
-        <env name="PULSE_ENABLED" value="false"/>
-        <env name="TELESCOPE_ENABLED" value="false"/>
-        <env name="NIGHTWATCH_ENABLED" value="false"/>
+        <env name="QUEUE_CONNECTION" value="sync"/>
+        <env name="MAIL_MAILER" value="array"/>
+
+        <!-- Both drivers stay on their stub so the suite needs no third-party
+             credentials, and so the state machine is exercised rather than
+             mocked. A feature test is run against BOTH the stub and the real
+             driver to prove switching is configuration, not a code path. -->
+        <env name="EXCHANGE_DRIVER" value="log"/>
+        <env name="PDF_DRIVER" value="stub"/>
+
+        <env name="TELEMETRY_ENABLED" value="false"/>
     </php>
 </phpunit>

@@ -8,7 +8,7 @@ use RuntimeException;
 
 final class NotCanonicalizable extends RuntimeException
 {
-    public static function float(float $value): self
+    public static function float(float $value): self // @arch-allow: this method exists to REJECT a float; it has to be able to receive one
     {
         return new self(sprintf(
             'A float (%s) reached the canonicalizer. PeakFlow has no float in its money path, so this is a bug rather than an input problem: an amount must be a decimal string and a quantity must be a string or an integer. Hashing a float would make the hash depend on the platform.',

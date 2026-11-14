@@ -14,6 +14,7 @@ Twelve layers. Each one exists because of a class of defect the others cannot se
 
 | Layer | Tool | Catches what nothing else does |
 |-------|------|-------------------------------|
+| **`bin/verify`** | none | The architecture rules and worked examples with no test runner, so the checks run anywhere |
 | **Unit** | Pest | Money arithmetic, rounding policies, IBAN/BIC validation, parsers, posting-rule output |
 | **Property-based** | Pest + generators | Invariants across inputs nobody thought to write a case for |
 | **Architecture** | Pest arch + Deptrac | Rules a code review misses consistently |
@@ -168,7 +169,8 @@ That matrix is twelve variants per screen, which sounds excessive until a logica
 ## Running it
 
 ```bash
-php artisan test --testsuite=unit,arch          # no database, under 10s
+php bin/verify                                  # no runner, no database
+php artisan test --testsuite=Unit,Architecture  # no database, under 10s
 php artisan test --testsuite=feature            # needs PostgreSQL + Redis
 php artisan test --testsuite=concurrency        # parallel workers
 php artisan test --testsuite=browser            # needs the built assets
