@@ -80,6 +80,24 @@ Ordering is by dependency and by **cost of being wrong late**, not by what demos
 7. **The design system is split** (Phase 11), and this is the one deliberate exception to dependency ordering. The shell, the token architecture and the data grid are scheduled in Phase 00 and Phase 11 respectively: a usable shell exists immediately, because eleven phases of screens built before a design system produces eleven design systems - but the full systematic pass, the density modes, the contrast matrix and the print stylesheets land once the screens they govern exist and can be audited together.
 8. **Hardening is continuous, and its phase is a verification gate, not the first time security is considered** (Phase 13). Every phase carries its own security acceptance criteria; Phase 13 is where the ASVS pass, the invariant alerting and the restore drill are *proven*.
 
+## The GitHub mirror
+
+All 246 tasks exist as issues, each attached as a **sub-issue** of its phase's tracking issue, so the hierarchy is navigable in GitHub's own UI.
+
+| | |
+|---|---|
+| **Phase epics** | Issues [#1](https://github.com/mostfaswaisi93/peakflow/issues/1)–[#14](https://github.com/mostfaswaisi93/peakflow/issues/14), one per phase, each labelled `type:epic` |
+| **Tasks** | Issues #15–#260 — `PF-NNN` maps to issue **NNN + 14**, so `PF-043` is [#57](https://github.com/mostfaswaisi93/peakflow/issues/57) and `PF-246` is [#260](https://github.com/mostfaswaisi93/peakflow/issues/260) |
+| **Grouping** | The `phase:NN` label, plus the parent/sub-issue relationship |
+
+An issue carries the task's module, estimate, dependencies, standards and its intent, and links back to its phase file. **The phase file remains the authoritative text** — an issue tracker is a queue and a specification is a document, and when they disagree the file is right.
+
+### On GitHub Milestones
+
+The seven **delivery milestones** (M1–M7) are defined in [`../roadmap.md`](../roadmap.md) and named on each phase epic. They are not yet GitHub Milestone objects: creating those is a one-minute action in the repository's Issues → Milestones tab, after which every task can be assigned to one in bulk.
+
+The phase labels and the epic hierarchy already provide the grouping that matters day to day, so this is a convenience rather than a gap.
+
 ## Labels used on GitHub
 
 | Label | Meaning |
