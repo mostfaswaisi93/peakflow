@@ -1,0 +1,123 @@
+{
+    "$schema": "https://getcomposer.org/schema.json",
+    "name": "peakflow/peakflow",
+    "type": "project",
+    "description": "Invoicing, banking and the double-entry ledger underneath them.",
+    "keywords": [
+        "invoicing",
+        "accounting",
+        "ledger",
+        "e-invoicing",
+        "en16931",
+        "iso20022",
+        "banking"
+    ],
+    "license": "proprietary",
+    "require": {
+        "php": "^8.3",
+        "ext-dom": "*",
+        "ext-intl": "*",
+        "ext-json": "*",
+        "ext-mbstring": "*",
+        "ext-openssl": "*",
+        "ext-pdo": "*",
+        "ext-pgsql": "*",
+        "ext-sodium": "*",
+        "ext-xml": "*",
+        "ext-xsl": "*",
+        "ext-zip": "*",
+        "brick/money": "*",
+        "laravel/framework": "^13.17",
+        "laravel/sanctum": "^4.0",
+        "laravel/tinker": "^3.0",
+        "livewire/livewire": "^3.5"
+    },
+    "require-dev": {
+        "fakerphp/faker": "^1.23",
+        "larastan/larastan": "^3.0",
+        "laravel/pail": "^1.2",
+        "laravel/pint": "^1.18",
+        "mockery/mockery": "^1.6",
+        "nunomaduro/collision": "^8.5",
+        "phpstan/phpstan": "^2.0",
+        "phpunit/phpunit": "^11.5"
+    },
+    "suggest": {
+        "ext-bcmath": "Speeds up exact decimal arithmetic. brick/math falls back to a pure-PHP calculator without it, which is correct but slower - see docs/architecture/money-and-precision.md.",
+        "ext-gmp": "Alternative accelerator for brick/math.",
+        "ext-redis": "Cache, queue, rate limiting and the distributed locks that keep a two-node scheduler from double-billing.",
+        "rector/rector": "Automated upgrades and dead-code removal. Not in require-dev because its Composer source could not be resolved in the build environment this was first assembled in; install it locally with `composer require --dev rector/rector` and run `composer rector`. rector.php is committed and ready."
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "app/",
+            "Database\\Factories\\": "database/factories/",
+            "Database\\Seeders\\": "database/seeders/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "setup": [
+            "@php -r \"file_exists('.env') || copy('.env.example', '.env');\"",
+            "@php artisan key:generate --ansi",
+            "@php artisan migrate --force --ansi",
+            "npm install --ignore-scripts",
+            "npm run build"
+        ],
+        "dev": [
+            "Composer\\Config::disableProcessTimeout",
+            "npx concurrently -c \"#4169E1,#DC382D,#F7DF1E,#8892BF\" \"php artisan serve\" \"php artisan queue:listen --tries=1 --timeout=0\" \"npm run dev\" \"php artisan pail --timeout=0\" --names=server,queue,vite,logs --kill-others"
+        ],
+        "test": [
+            "@php artisan config:clear --ansi",
+            "@php artisan test"
+        ],
+        "test:unit": "@php artisan test --testsuite=Unit",
+        "test:arch": "@php artisan test --testsuite=Architecture",
+        "test:feature": "@php artisan test --testsuite=Feature",
+        "lint": "pint --test",
+        "fix": "pint",
+        "analyse": "phpstan analyse --memory-limit=1G",
+        "rector": "rector process --dry-run",
+        "check": [
+            "@lint",
+            "@analyse",
+            "@test"
+        ],
+        "post-autoload-dump": [
+            "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
+            "@php artisan package:discover --ansi"
+        ],
+        "post-update-cmd": [
+            "@php artisan vendor:publish --tag=laravel-assets --ansi --force"
+        ],
+        "post-root-package-install": [
+            "@php -r \"file_exists('.env') || copy('.env.example', '.env');\""
+        ]
+    },
+    "scripts-descriptions": {
+        "setup": "Take a fresh clone to a running application in one command.",
+        "check": "Everything the pipeline would run, locally. See CONTRIBUTING.md.",
+        "test:arch": "The rules that encode the non-negotiables: no float in the money path, entity_id on every financial table, Reporting never writes."
+    },
+    "extra": {
+        "laravel": {
+            "dont-discover": []
+        }
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "preferred-install": "dist",
+        "sort-packages": true,
+        "allow-plugins": {
+            "php-http/discovery": true,
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

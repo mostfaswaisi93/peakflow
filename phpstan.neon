@@ -1,0 +1,45 @@
+# PHPStan at the maximum level, with an EMPTY baseline.
+#
+# A baseline is a record of debt, not a way to pass. A new entry requires a
+# reviewer's approval and a linked task - see CONTRIBUTING.md. There is
+# deliberately no `baseline.neon` include here: adding one has to be a visible
+# change to this file.
+
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    level: max
+
+    paths:
+        - app
+        - config
+        - database
+        - routes
+        - tests
+
+    excludePaths:
+        analyseAndScan:
+            - bootstrap/cache
+            - storage
+
+    # Laravel's container and facades defeat some inference. These are the
+    # narrowest exclusions that keep level max usable, and each one is a
+    # framework limitation rather than a concession about our own code.
+    ignoreErrors:
+        - identifier: missingType.iterableValue
+          path: database/migrations/*
+        - identifier: missingType.iterableValue
+          path: database/factories/*
+
+    checkMissingCallableSignature: true
+    checkTooWideReturnTypesInProtectedAndPublicMethods: true
+    checkUninitializedProperties: true
+    reportAlwaysTrueInLastCondition: true
+    reportPossiblyNonexistentGeneralArrayOffset: true
+    treatPhpDocTypesAsCertain: false
+
+    # The money path must never see a float. PHPStan cannot express that on its
+    # own, so the rule lives in tests/Architecture/MoneyPathTest.php - this
+    # note is here so that nobody adds a float and assumes static analysis
+    # would have caught it.

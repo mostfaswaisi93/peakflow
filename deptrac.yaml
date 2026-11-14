@@ -1,0 +1,176 @@
+# =============================================================================
+#  Module boundaries - COMPILED, not documented.
+# =============================================================================
+#  The dependency table in README.md IS this file. A boundary that is only
+#  written down is a boundary that erodes: one import that seemed harmless,
+#  then forty.
+#
+#  The two rules that matter most:
+#
+#  1. `Ledger` depends on nothing but `Tenancy` and `Support`. It must not know
+#     what an invoice is. That is what makes the posting rules for a
+#     jurisdiction changeable without touching `Sales`.
+#
+#  2. `Reporting` may read every module and may be depended upon by none. A
+#     report that can be depended on has become a second source of truth, and
+#     the whole promise of the product - that every balance is explainable from
+#     the journal - depends on there being exactly one.
+# =============================================================================
+
+deptrac:
+  paths:
+    - ./app
+
+  layers:
+    - name: Support
+      collectors:
+        - type: directory
+          value: app/Support/.*
+
+    - name: Platform
+      collectors:
+        - type: directory
+          value: app/Platform/.*
+
+    - name: Identity
+      collectors:
+        - type: directory
+          value: app/Tenant/Identity/.*
+
+    - name: Tenancy
+      collectors:
+        - type: directory
+          value: app/Tenant/Tenancy/.*
+
+    - name: Ledger
+      collectors:
+        - type: directory
+          value: app/Tenant/Ledger/.*
+
+    - name: Parties
+      collectors:
+        - type: directory
+          value: app/Tenant/Parties/.*
+
+    - name: Catalog
+      collectors:
+        - type: directory
+          value: app/Tenant/Catalog/.*
+
+    - name: Tax
+      collectors:
+        - type: directory
+          value: app/Tenant/Tax/.*
+
+    - name: Sales
+      collectors:
+        - type: directory
+          value: app/Tenant/Sales/.*
+
+    - name: Purchasing
+      collectors:
+        - type: directory
+          value: app/Tenant/Purchasing/.*
+
+    - name: Banking
+      collectors:
+        - type: directory
+          value: app/Tenant/Banking/.*
+
+    - name: Settlement
+      collectors:
+        - type: directory
+          value: app/Tenant/Settlement/.*
+
+    - name: Reporting
+      collectors:
+        - type: directory
+          value: app/Tenant/Reporting/.*
+
+    - name: Exchange
+      collectors:
+        - type: directory
+          value: app/Exchange/.*
+
+  ruleset:
+    # Depends on nothing. Every module may use it.
+    Support: ~
+
+    Platform:
+      - Support
+      - Identity
+
+    Identity:
+      - Support
+
+    Tenancy:
+      - Support
+      - Identity
+
+    # The ledger must not know what an invoice is.
+    Ledger:
+      - Support
+      - Tenancy
+
+    Parties:
+      - Support
+      - Tenancy
+
+    Catalog:
+      - Support
+      - Tenancy
+
+    Tax:
+      - Support
+      - Tenancy
+      - Ledger
+
+    Sales:
+      - Support
+      - Tenancy
+      - Ledger
+      - Parties
+      - Catalog
+      - Tax
+
+    Purchasing:
+      - Support
+      - Tenancy
+      - Ledger
+      - Parties
+      - Catalog
+      - Tax
+
+    Banking:
+      - Support
+      - Tenancy
+      - Ledger
+      - Parties
+
+    Settlement:
+      - Support
+      - Tenancy
+      - Ledger
+      - Sales
+      - Purchasing
+      - Banking
+
+    # Reads everything. Nothing reads it.
+    Reporting:
+      - Support
+      - Tenancy
+      - Identity
+      - Ledger
+      - Parties
+      - Catalog
+      - Tax
+      - Sales
+      - Purchasing
+      - Banking
+      - Settlement
+
+    Exchange:
+      - Support
+      - Tenancy
+      - Sales
+      - Purchasing

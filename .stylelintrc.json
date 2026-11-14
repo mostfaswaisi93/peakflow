@@ -1,0 +1,51 @@
+{
+    "extends": "stylelint-config-standard",
+    "rules": {
+        "declaration-property-value-disallowed-list": {
+            "text-align": ["left", "right"],
+            "float": ["left", "right"],
+            "clear": ["left", "right"]
+        },
+        "property-disallowed-list": [
+            "left",
+            "right",
+            "margin-left",
+            "margin-right",
+            "padding-left",
+            "padding-right",
+            "border-left",
+            "border-right",
+            "border-left-width",
+            "border-right-width",
+            "border-left-color",
+            "border-right-color",
+            "border-left-style",
+            "border-right-style",
+            "border-top-left-radius",
+            "border-top-right-radius",
+            "border-bottom-left-radius",
+            "border-bottom-right-radius"
+        ],
+        "at-rule-no-unknown": [
+            true,
+            {
+                "ignoreAtRules": [
+                    "theme",
+                    "source",
+                    "utility",
+                    "variant",
+                    "custom-variant",
+                    "apply",
+                    "reference",
+                    "config",
+                    "plugin",
+                    "layer"
+                ]
+            }
+        ],
+        "no-descending-specificity": null,
+        "custom-property-pattern": null,
+        "selector-class-pattern": null
+    },
+    "ignoreFiles": ["public/**", "vendor/**", "node_modules/**"]
+}

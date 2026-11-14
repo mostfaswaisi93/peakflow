@@ -1,0 +1,139 @@
+# =============================================================================
+#  PeakFlow - local development services
+# =============================================================================
+#  `composer setup && composer dev` must take a fresh clone to a running,
+#  seeded, logged-in application and nothing else. These are the services that
+#  makes true.
+#
+#  PostgreSQL is REQUIRED, not preferred: the tenant schema uses deferrable
+#  constraint triggers, row-level security and declarative partitioning, and
+#  the ledger's invariants live there rather than in application code. The
+#  tenant test suite CANNOT run on SQLite - those features are the thing under
+#  test. See ADR-0002 and docs/operations/testing-strategy.md.
+#
+#  Profiles:
+#    (default)  postgres + redis + mailpit  - enough to run the suite
+#    documents  gotenberg + verapdf         - real PDF/A-3, verified
+#    search     meilisearch
+#    laptop     postgres + redis only
+# =============================================================================
+
+name: peakflow
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    # 16 is the floor and is what CI verifies. 17 and 18 work; every feature
+    # the ledger depends on - deferrable constraint triggers, RLS, declarative
+    # partitioning, exclusion constraints, partial indexes - is present in 16.
+    environment:
+      POSTGRES_USER: peakflow_migrator
+      POSTGRES_PASSWORD: peakflow
+      POSTGRES_DB: peakflow
+      # C collation keeps index ordering deterministic across machines, which
+      # matters because gapless numbering and cursor pagination both depend on
+      # a stable sort.
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --lc-collate=C --lc-ctype=C'
+    command:
+      - postgres
+      # The query budget tests assert index and partition use via EXPLAIN, so
+      # the extension that makes plans observable is on by default.
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+      # A journal with monthly partitions accumulates them quickly.
+      - -c
+      - max_locks_per_transaction=256
+      - -c
+      - log_min_duration_statement=250ms
+    ports:
+      - '${DB_PORT:-5432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./database/docker/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U peakflow_migrator -d peakflow']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    profiles: ['', 'laptop', 'full']
+
+  redis:
+    image: redis:8-alpine
+    # A SHARED store is required: the locks keyed on (task, tenant, occurrence)
+    # are what stop a two-node scheduler from double-billing a customer.
+    command: ['redis-server', '--appendonly', 'yes', '--maxmemory-policy', 'noeviction']
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    profiles: ['', 'laptop', 'full']
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - '1025:1025'   # SMTP
+      - '8025:8025'   # UI
+    healthcheck:
+      test: ['CMD', 'sh', '-c', 'nc -z 127.0.0.1 1025']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    profiles: ['', 'full']
+
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    # HTML to PDF. Conversion to PDF/A-3 and its VERIFICATION happen after -
+    # a PDF that merely claims PDF/A conformance is not an archive copy, so
+    # veraPDF checks and a non-conformant output fails the job rather than
+    # being delivered. See PF-102.
+    command:
+      - gotenberg
+      - --chromium-disable-javascript=false
+      - --chromium-allow-list=file:///tmp/.*
+      - --api-timeout=60s
+    ports:
+      - '3000:3000'
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://127.0.0.1:3000/health']
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    profiles: ['documents', 'full']
+
+  verapdf:
+    image: verapdf/cli:latest
+    # Verification only - it has no long-running process, so it is invoked
+    # per document rather than left up.
+    entrypoint: ['tail', '-f', '/dev/null']
+    volumes:
+      - ./storage/app/archive:/data:ro
+    profiles: ['documents', 'full']
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.11
+    environment:
+      MEILI_ENV: development
+      MEILI_NO_ANALYTICS: 'true'
+    ports:
+      - '7700:7700'
+    volumes:
+      - meili-data:/meili_data
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://127.0.0.1:7700/health']
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    profiles: ['search', 'full']
+
+volumes:
+  postgres-data:
+  redis-data:
+  meili-data:

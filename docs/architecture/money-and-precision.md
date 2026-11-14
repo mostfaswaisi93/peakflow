@@ -138,7 +138,17 @@ payable             = ¥12,573
 
 **2. A payment rounding difference is posted, not absorbed.** When a customer pays `999.99` against `1,000.00` and policy says settle it, the `0.01` becomes its own journal line against a configured `rounding_difference` account. It does not quietly shrink the receivable. The tolerance is a per-entity setting with a **platform-enforced ceiling** - "write off anything under 50" is a policy decision, not a developer's constant.
 
-**3. An apportionment residual is assigned deterministically.** A document-level 7% discount across three rate groups will not divide evenly. The residual cent goes to the largest group, always, by rule - not to the first, not to the last, and never left to floating-point luck. Stated once, tested, and identical on every re-computation, because a document that recomputes to a different total is worse than one that is a cent off.
+**3. An apportionment residual is assigned deterministically.** A document-level 7% discount across three rate groups will not divide evenly. The residual goes to the **largest** weight, always, by rule - never left to floating-point luck.
+
+Shares are computed **toward zero**, so the residual is explicit and carries the amount's own sign rather than appearing as an overshoot. Where several weights are equally the largest, the residual goes to the **first** of them: three equal groups put it on group one, every time.
+
+```
+100.00 across weights 1 : 1 : 1   →  33.3334 / 33.3333 / 33.3333   (sums to 100.0000)
+100.00 across weights 70 : 20 : 10 →  70.0000 / 20.0000 / 10.0000
+-100.00 across weights 1 : 1 : 1  → -33.3334 / -33.3333 / -33.3333  (sums to -100.0000)
+```
+
+That tie-break is arbitrary, and it is **fixed**, which is the only property that matters: a document that recomputes to a different total is worse than one that is a cent off. It is stated here because "the largest group" is ambiguous when groups are equal, and an ambiguity in a rounding rule becomes two implementations.
 
 ## FX, and why rates are never inverted
 

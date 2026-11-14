@@ -1,0 +1,38 @@
+{
+    "preset": "laravel",
+    "rules": {
+        "declare_strict_types": true,
+        "strict_comparison": true,
+        "strict_param": true,
+        "global_namespace_import": {
+            "import_classes": true,
+            "import_constants": false,
+            "import_functions": false
+        },
+        "fully_qualified_strict_types": true,
+        "no_unused_imports": true,
+        "ordered_imports": {
+            "sort_algorithm": "alpha"
+        },
+        "ordered_class_elements": {
+            "order": [
+                "use_trait",
+                "case",
+                "constant",
+                "property",
+                "construct",
+                "method"
+            ]
+        },
+        "php_unit_method_casing": false,
+        "final_class": false,
+        "nullable_type_declaration_for_default_null_value": true,
+        "void_return": true,
+        "native_function_invocation": {
+            "include": ["@compiler_optimized"],
+            "scope": "namespaced",
+            "strict": true
+        }
+    },
+    "exclude": ["bootstrap/cache", "storage", "vendor", "node_modules"]
+}
