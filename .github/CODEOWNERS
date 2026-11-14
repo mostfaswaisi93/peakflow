@@ -1,0 +1,19 @@
+# Anything touching the ledger, tax, settlement or the tenant schema needs a
+# second pair of eyes. These are the places where being subtly wrong is
+# expensive and silent.
+
+/app/Tenant/Ledger/            @mostfaswaisi93
+/app/Tenant/Tax/               @mostfaswaisi93
+/app/Tenant/Settlement/        @mostfaswaisi93
+/app/Support/Money/            @mostfaswaisi93
+/app/Exchange/                 @mostfaswaisi93
+/database/migrations/tenant/   @mostfaswaisi93
+
+# The specification is the contract the code is written against.
+/docs/architecture/decisions/  @mostfaswaisi93
+/docs/standards/               @mostfaswaisi93
+/docs/domain/schema.md         @mostfaswaisi93
+
+# Security-relevant configuration.
+/deptrac.yaml                  @mostfaswaisi93
+/phpstan.neon                  @mostfaswaisi93

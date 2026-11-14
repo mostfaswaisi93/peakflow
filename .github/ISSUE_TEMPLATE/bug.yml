@@ -1,0 +1,88 @@
+name: Bug
+description: Something behaves incorrectly.
+labels: ["type:bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Not for security vulnerabilities.** Report those privately - see
+        `SECURITY.md`.
+
+        If a reported figure is wrong, include the drill-down: every balance
+        in PeakFlow is meant to be explainable to the journal line, the source
+        document and the user. If it is not, that is itself the bug.
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - "Critical - a financial figure is wrong, or an invariant is broken"
+        - "High - a workflow is blocked"
+        - "Medium - incorrect behaviour with a workaround"
+        - "Low - cosmetic or minor"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Ledger / posting
+        - Invoicing
+        - E-invoicing / clearance
+        - Tax
+        - Purchasing / approvals
+        - Banking / reconciliation
+        - Payments / payment runs
+        - Reporting / close
+        - Identity / permissions / SoD
+        - UI / accessibility
+        - API / webhooks
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: Expected and actual
+      description: For a wrong figure, give both values and the currency.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1. 
+        2. 
+        3. 
+    validations:
+      required: true
+
+  - type: input
+    id: entity_period
+    attributes:
+      label: Entity and period
+      description: Which legal entity and which accounting period. Both matter more than they look.
+      placeholder: "Acme Trading FZE, 2026-11"
+
+  - type: textarea
+    id: ledger_verify
+    attributes:
+      label: "`ledger:verify` output"
+      description: If this concerns a balance, run it and paste the result.
+      render: text
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      value: |
+        - Version / commit:
+        - PostgreSQL:
+        - Browser and locale (`ar` / `en`), and direction:
+        - Density mode:

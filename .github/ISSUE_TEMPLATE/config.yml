@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/mostfaswaisi93/peakflow/security/advisories/new
+    about: Report privately. Never open a public issue for a vulnerability.
+  - name: The specification
+    url: https://github.com/mostfaswaisi93/peakflow/tree/main/docs
+    about: Architecture, domain model, standards, design system and the backlog.

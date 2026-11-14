@@ -1,0 +1,472 @@
+# =============================================================================
+#  PeakFlow CI pipeline — NOT ENABLED
+# =============================================================================
+#
+#  This file is a NON-EXECUTING reference. It is deliberately NOT in
+#  .github/workflows/, so nothing runs on push. See ADR-0010 and PF-013.
+#
+#  To enable:
+#      mkdir -p .github/workflows
+#      cp docs/operations/ci-pipeline.yml.example .github/workflows/ci.yml
+#
+#  Expected first-run failures while the repository has no code (none of
+#  these indicate a broken pipeline — see docs/operations/ci-cd.md):
+#      phpstan: no files · deptrac: no layers · pest: no tests
+#      vite: no entrypoint · infection: no mutations
+#
+#  THE ORDER IS THE POINT:
+#    1. The asset build runs BEFORE the PHP tests. The translation-coverage
+#       and template-markup tests read compiled output, so a build failure
+#       would otherwise ship a broken page through a green suite.
+#    2. A real PostgreSQL 18 service is MANDATORY. The tenant schema uses
+#       deferrable constraint triggers, row-level security and declarative
+#       partitioning. It cannot run on SQLite, and a suite that silently
+#       skipped those tests would be worse than no suite.
+#    3. The deploy gates on EVERYTHING. A guard nobody runs is not a guard.
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PHP_VERSION: '8.4'
+  NODE_VERSION: '22'
+  # No third-party credentials are needed to run the suite. These are the
+  # committed defaults precisely so a fresh clone works end to end.
+  EXCHANGE_DRIVER: log
+  PDF_DRIVER: stub
+
+jobs:
+
+  # ---------------------------------------------------------------- lint ----
+  lint-and-static:
+    name: Lint and static analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: bcmath, intl, pgsql, redis, zip, dom, xsl, gmp, sodium
+          coverage: none
+
+      - name: Install PHP dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Pint
+        run: ./vendor/bin/pint --test
+
+      # Level max, and the baseline must stay empty. A baseline is a record
+      # of debt, not a way to pass.
+      - name: PHPStan
+        run: ./vendor/bin/phpstan analyse --no-progress --error-format=github
+
+      # The bounded-context table in the README IS this configuration.
+      - name: Deptrac — module boundaries
+        run: ./vendor/bin/deptrac analyse --no-progress --formatter=github-actions
+
+      - name: Rector (dry run)
+        run: ./vendor/bin/rector process --dry-run --no-progress-bar
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      # Fails on any physical CSS property. One `left:` is an RTL bug
+      # waiting for a customer to find it.
+      - name: Stylelint
+        run: npx stylelint "resources/css/**/*.css"
+
+      - name: Lint YAML and Markdown
+        run: |
+          npx yaml-lint docs/api/openapi.yaml
+          npx markdownlint-cli2 "**/*.md" "#node_modules" "#vendor"
+
+  # --------------------------------------------------------------- build ----
+  build:
+    name: Build assets
+    runs-on: ubuntu-latest
+    needs: lint-and-static
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Bundle size budget
+        run: node scripts/check-bundle-size.mjs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build
+          path: public/build
+          retention-days: 1
+
+  # -------------------------------------------------------- unit and arch ---
+  unit-and-arch:
+    name: Unit and architecture
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: bcmath, intl, pgsql, redis, zip, dom, xsl, gmp, sodium
+          coverage: pcov
+
+      - run: composer install --prefer-dist --no-interaction --no-progress
+      - run: cp .env.example .env && php artisan key:generate
+
+      # No database. Under 10 seconds. These are the tests that encode the
+      # non-negotiables: no float in the money path, entity_id on every
+      # financial table, Reporting never writes, no physical CSS property,
+      # every label names a control, every __() key in both catalogs.
+      - name: Unit and architecture suites
+        run: php artisan test --testsuite=unit,arch --coverage --min=80
+
+  # ------------------------------------------------------------- feature ----
+  feature:
+    name: Feature (PostgreSQL 18 + Redis 8)
+    runs-on: ubuntu-latest
+    needs: unit-and-arch
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: peakflow
+          POSTGRES_PASSWORD: peakflow
+          POSTGRES_DB: peakflow_testing
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U peakflow"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+      redis:
+        image: redis:8
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: bcmath, intl, pgsql, redis, zip, dom, xsl, gmp, sodium
+          coverage: pcov
+
+      - run: composer install --prefer-dist --no-interaction --no-progress
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: build
+          path: public/build
+
+      - run: cp .env.example .env.testing && php artisan key:generate --env=testing
+
+      - name: Migrate the platform and tenant schemas
+        run: |
+          php artisan migrate --force
+          php artisan tenants:provision ci-tenant --force
+
+      # Runs against the REAL deferrable constraint triggers, row-level
+      # security and partitioning. ledger:verify runs after every test that
+      # posts — an individual assertion can be written to pass, a global
+      # invariant cannot.
+      - name: Feature suite
+        run: php artisan test --testsuite=feature --coverage --min=85
+
+  # --------------------------------------------------------- concurrency ----
+  concurrency-suite:
+    name: Concurrency
+    runs-on: ubuntu-latest
+    needs: feature
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: peakflow
+          POSTGRES_PASSWORD: peakflow
+          POSTGRES_DB: peakflow_testing
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U peakflow"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: bcmath, intl, pgsql, redis, zip, dom, xsl, gmp, sodium
+      - run: composer install --prefer-dist --no-interaction --no-progress
+      - run: cp .env.example .env.testing && php artisan key:generate --env=testing
+      - run: php artisan migrate --force
+
+      # PF-094 lives here: 200 invoices from 20 parallel workers against one
+      # series, asserting the numbers are exactly 1..200 with no gaps and no
+      # duplicates. The single most important test in the suite, and the one
+      # that fails if someone "optimizes" the allocation by moving it earlier.
+      - name: Concurrency suite
+        run: php artisan test --testsuite=concurrency --parallel --processes=8
+
+  # ------------------------------------------------------------ contract ----
+  contract:
+    name: OpenAPI contract (two-way)
+    runs-on: ubuntu-latest
+    needs: feature
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: bcmath, intl, pgsql, redis, dom, xsl
+      - run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Validate the spec
+        run: npx @redocly/cli lint docs/api/openapi.yaml
+
+      # Both directions: every operation in the spec exists, AND no
+      # undocumented route exists on the API surface.
+      - name: Contract test
+        run: php artisan test --testsuite=contract
+
+  # --------------------------------------------------------- golden file ----
+  golden-file:
+    name: Golden files, Schematron and PDF/A
+    runs-on: ubuntu-latest
+    needs: feature
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: bcmath, intl, dom, xsl, zip
+      - run: composer install --prefer-dist --no-interaction --no-progress
+
+      # Official EN 16931, Peppol and ZATCA corpora, byte-compared, then run
+      # through the full four-stage validation chain. Negative fixtures assert
+      # each major BR-CO-* rule fails for the RIGHT reason.
+      - name: Serializer golden files and Schematron
+        run: php artisan test --testsuite=golden
+
+      - name: veraPDF — PDF/A-3 conformance
+        run: |
+          curl -sSL -o verapdf.zip https://software.verapdf.org/releases/verapdf-installer.zip
+          unzip -q verapdf.zip -d verapdf && ./verapdf/*/verapdf-install -options scripts/verapdf-auto-install.xml
+          php artisan test --testsuite=pdfa
+
+  # ------------------------------------------------------ accessibility ----
+  accessibility:
+    name: Accessibility and visual regression
+    runs-on: ubuntu-latest
+    needs: feature
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: bcmath, intl, pgsql, redis, dom, xsl
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: composer install --prefer-dist --no-interaction --no-progress
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: build
+          path: public/build
+
+      # Every legitimate foreground/background token pair in BOTH themes,
+      # 4.5:1 text and 3:1 UI. A palette change that regresses any pair
+      # fails the build. This exists because a sibling project shipped a
+      # status pill at 1.62:1 in dark mode.
+      - name: Contrast matrix
+        run: php artisan test --testsuite=contrast
+
+      - name: axe on every route
+        run: php artisan test --testsuite=a11y
+
+      # Keyboard parity: a full multi-row grid edit and a complete
+      # reconciliation, both performed with the keyboard alone.
+      - name: Browser keyboard tests
+        run: php artisan test --testsuite=browser
+
+      # LTR/RTL × light/dark × three densities, plus every print view
+      # diffed as a rendered PDF.
+      - name: Visual regression
+        run: npx playwright test --config=playwright.visual.config.ts --trace off
+
+  # --------------------------------------------------------- performance ----
+  performance:
+    name: Query budgets and plans
+    runs-on: ubuntu-latest
+    needs: feature
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: peakflow
+          POSTGRES_PASSWORD: peakflow
+          POSTGRES_DB: peakflow_testing
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U peakflow"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: bcmath, intl, pgsql, redis, dom, xsl
+      - run: composer install --prefer-dist --no-interaction --no-progress
+      - run: cp .env.example .env.testing && php artisan key:generate --env=testing
+      - run: php artisan migrate --force
+
+      # A page must cost the same number of queries at 5 rows as at 500.
+      # An N+1 is invisible to every other kind of test.
+      # EXPLAIN assertions prove index and partition use rather than hoping.
+      - name: Performance suite
+        run: php artisan test --testsuite=performance
+
+  # ------------------------------------------------------------ security ----
+  security:
+    name: Dependencies, code scanning and SBOM
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: bcmath, intl, pgsql, redis, dom, xsl
+      - run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Composer audit
+        run: composer audit --no-dev --format=plain
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm audit --audit-level=high
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript, actions
+      - uses: github/codeql-action/analyze@v3
+
+      - uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+      - name: CycloneDX SBOM
+        run: |
+          ./vendor/bin/cyclonedx-php composer:make-bom --output-file=sbom.json
+          echo "SBOM generated; attach to the release."
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+
+  # ------------------------------------------------------------ mutation ----
+  mutation:
+    name: Mutation (Ledger, Tax, Settlement)
+    runs-on: ubuntu-latest
+    needs: feature
+    # Slow. On a pull request it runs only for the modules where a passing
+    # suite with weak assertions is most dangerous.
+    if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'risk:high')
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: peakflow
+          POSTGRES_PASSWORD: peakflow
+          POSTGRES_DB: peakflow_testing
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U peakflow"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: bcmath, intl, pgsql, redis, dom, xsl
+          coverage: pcov
+      - run: composer install --prefer-dist --no-interaction --no-progress
+      - run: cp .env.example .env.testing && php artisan key:generate --env=testing
+      - run: php artisan migrate --force
+
+      # A money test suite that still passes against mutated arithmetic is
+      # not testing the arithmetic.
+      - name: Infection
+        run: |
+          ./vendor/bin/infection \
+            --min-msi=85 --min-covered-msi=90 \
+            --filter=app/Support/Money,app/Tenant/Ledger,app/Tenant/Tax,app/Tenant/Settlement \
+            --threads=4 --no-progress
+
+  # -------------------------------------------------------------- deploy ----
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    # EVERY gate. A guard nobody runs is not a guard — and a sibling project
+    # deployed on every push with no test job in front of it.
+    needs:
+      - lint-and-static
+      - build
+      - unit-and-arch
+      - feature
+      - concurrency-suite
+      - contract
+      - golden-file
+      - accessibility
+      - performance
+      - security
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      # Refuses a migration that is not safe to run while serving traffic:
+      # a non-nullable column with no default, an ALTER TYPE on a large
+      # column, an ACCESS EXCLUSIVE lock on a partitioned table, an
+      # unbatched backfill, CREATE INDEX without CONCURRENTLY.
+      - name: Migration online-safety pre-flight
+        run: php artisan migrate:check-online-safety
+
+      - name: Deploy
+        run: echo "Deployment steps are added with the hosting decision (PF-246)."

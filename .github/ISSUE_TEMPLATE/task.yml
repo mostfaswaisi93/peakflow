@@ -1,0 +1,106 @@
+name: Backlog task
+description: A new PF task, or a task not yet in the backlog files.
+title: "PF-XXX · "
+labels: ["type:task"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The backlog files in `docs/tasks/` are the source of truth. An issue
+        mirrors a task; it does not replace it. If this work has no task,
+        write the task first - a task whose acceptance criteria cannot be
+        written is a task whose scope is not understood.
+
+  - type: input
+    id: task_id
+    attributes:
+      label: Task id
+      description: The `PF-###` id. Add it to the phase file in the same change.
+      placeholder: PF-247
+    validations:
+      required: true
+
+  - type: dropdown
+    id: module
+    attributes:
+      label: Module
+      description: Also the Deptrac layer the code must land in.
+      options:
+        - Identity
+        - Tenancy
+        - Ledger
+        - Parties
+        - Catalog
+        - Tax
+        - Sales
+        - Purchasing
+        - Banking
+        - Settlement
+        - Reporting
+        - Exchange
+        - Support
+        - "— (cross-cutting)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: estimate
+    attributes:
+      label: Estimate
+      description: Anything above 13 is not a task yet and must be split.
+      options: ["1", "2", "3", "5", "8", "13"]
+    validations:
+      required: true
+
+  - type: input
+    id: depends
+    attributes:
+      label: Depends on
+      description: Tasks that must be **merged**, not merely started.
+      placeholder: PF-043, PF-047
+
+  - type: input
+    id: standards
+    attributes:
+      label: Standards
+      description: What this answers to, so the criteria can be checked against a clause.
+      placeholder: EN 16931 BR-CO-14, IAS 21
+
+  - type: textarea
+    id: intent
+    attributes:
+      label: Intent
+      description: One or two sentences - what this is for, and the constraint that makes it non-obvious.
+    validations:
+      required: true
+
+  - type: textarea
+    id: criteria
+    attributes:
+      label: Acceptance criteria
+      description: Each one written so it can only be true or false. No criterion may read "works correctly".
+      value: |
+        - [ ] 
+        - [ ] 
+        - [ ] 
+    validations:
+      required: true
+
+  - type: textarea
+    id: failure_mode
+    attributes:
+      label: Failure mode
+      description: What goes wrong in production if this is subtly wrong, and which test layer catches it.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: readiness
+    attributes:
+      label: Definition of Ready
+      options:
+        - label: Every dependency is merged
+        - label: Where a standard is named, the clause has been read and is quoted
+        - label: Any schema change is reflected in `docs/domain/schema.md` first
+        - label: If it touches money, the rounding behaviour is specified rather than inferred
+        - label: If it touches the ledger, the posting rule is written out as debits and credits
