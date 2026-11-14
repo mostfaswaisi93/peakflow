@@ -18,7 +18,8 @@ declare(strict_types=1);
  | normal environment they run there too - one implementation, two runners.
  |
  |   php bin/verify            everything
- |   php bin/verify arch       architecture rules only
+ |   php bin/verify arch       architecture rules only (source files)
+ |   php bin/verify wiring     wiring rules only (the booted application)
  |   php bin/verify examples   worked examples only
  |
  | Exits non-zero on any violation.
@@ -54,12 +55,16 @@ if ($only === 'all' || $only === 'arch') {
     $suites['Architecture rules'] = (new Tests\Support\ArchitectureRules($base))->all();
 }
 
+if ($only === 'all' || $only === 'wiring') {
+    $suites['Wiring'] = (new Tests\Support\WiringRules($app))->all();
+}
+
 if ($only === 'all' || $only === 'examples') {
     $suites['Worked examples'] = (new Tests\Support\WorkedExamples())->all();
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | examples\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | examples\n");
     exit(2);
 }
 

@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use App\Http\Middleware\ResolveTenantFromHeader;
+use App\Http\Middleware\ResolveTenantFromSession;
 use App\Http\Middleware\SetLocale;
 use App\Support\Http\Problem;
 use App\Support\Http\ProblemType;
@@ -47,26 +49,47 @@ return Application::configure(basePath: dirname(__DIR__))
         | Middleware ordering is LOAD-BEARING
         |----------------------------------------------------------------------
         |
-        | The tenant and entity resolvers MUST run before any auth middleware,
-        | because the `users` table lives in the tenant's own database. A guard
-        | that ran first would query whichever connection happened to be
-        | configured - in development the platform database, in production the
-        | previous request's tenant.
+        | The tenant resolver MUST run before any auth middleware, because the
+        | `users` table lives in the tenant's own database. A guard that ran
+        | first would query whichever connection happened to be configured - in
+        | development the platform database, in production the PREVIOUS
+        | request's tenant.
         |
         | The symptom is intermittent authentication against the wrong
         | database, which is one of the worst failures to diagnose, and this is
         | exactly the kind of ordering a framework upgrade reorders silently.
-        | So it is pinned explicitly here AND asserted by a test.
+        | So it is pinned explicitly AND asserted by
+        | tests/Feature/MiddlewarePriorityTest.php.
         |
-        | The resolvers themselves arrive in Phase 01 (PF-021, PF-026). The
-        | pinning is written here now so that the ordering is a decision made
-        | once, before there is anything to get wrong.
-        |
-        |   $middleware->prependToPriorityList(
-        |       before: \Illuminate\Auth\Middleware\Authenticate::class,
-        |       prepend: [ResolveTenant::class, ScopeEntity::class],
-        |   );
+        | The entity scope (PF-026) joins this list when it lands; it has the
+        | same constraint for the same reason.
         */
+        /*
+        | Pin before the AuthenticatesRequests CONTRACT, not the Authenticate
+        | class.
+        |
+        | Laravel's priority list holds the interface. Naming the concrete
+        | class here matches nothing, and `prependToPriorityList` then silently
+        | APPENDS - which puts the resolvers after the guard and produces
+        | exactly the failure this pinning exists to prevent. That is not a
+        | hypothetical: it is what happened on the first attempt, and it is why
+        | MiddlewarePriorityTest asserts the resulting positions rather than
+        | asserting that these lines were called.
+        |
+        | One call per middleware: $prepend is used as an array key, so it
+        | takes a single class and not a list.
+        */
+        foreach ([ResolveTenantFromSession::class, ResolveTenantFromHeader::class] as $resolver) {
+            $middleware->prependToPriorityList(
+                before: \Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests::class,
+                prepend: $resolver,
+            );
+        }
+
+        $middleware->alias([
+            'tenant.session' => ResolveTenantFromSession::class,
+            'tenant.header' => ResolveTenantFromHeader::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         /*
@@ -152,6 +175,11 @@ return Application::configure(basePath: dirname(__DIR__))
         | leak the same way, so none of them carries a bound value, an IBAN or
         | a token - see config/telemetry.php and PF-014.
         */
+        $exceptions->render(static fn (
+            \App\Platform\Exceptions\TenantNotResolvable $e,
+            Request $request,
+        ) => $e->render($request));
+
         $exceptions->context(static fn (): array => array_filter([
             'tenant_id' => app()->bound('currentTenant') ? app('currentTenant')->getKey() : null,
             'entity_id' => app()->bound('currentEntity') ? app('currentEntity')->getKey() : null,
