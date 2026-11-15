@@ -139,6 +139,16 @@ final class OpsTenantController
      * sequence that tears down the role and the database it created, which
      * PF-024's rollback checks prove by injecting a failure at each step.
      */
+    /**
+     * @no-permission-required: KNOWN LIMITATION, not an exemption on merit.
+     *
+     * The same gap as setStatus: the operator plane has no role model, so
+     * every operator is a full administrator and any of them can provision or
+     * expire. That is recorded as an open item in PF-036 rather than hidden
+     * behind this annotation. What exists today: `auth:ops`, a mandatory
+     * written reason of at least eight characters, and an activity-log row
+     * naming who did it.
+     */
     public function store(Request $request, TenantProvisioner $provisioner): RedirectResponse
     {
         $validated = $request->validate([
@@ -215,6 +225,16 @@ final class OpsTenantController
      * irreversible and deserves the two-person flow the SoD engine already
      * provides - that is a task of its own and not a button added quietly
      * here.
+     */
+    /**
+     * @no-permission-required: KNOWN LIMITATION, not an exemption on merit.
+     *
+     * The same gap as setStatus: the operator plane has no role model, so
+     * every operator is a full administrator and any of them can provision or
+     * expire. That is recorded as an open item in PF-036 rather than hidden
+     * behind this annotation. What exists today: `auth:ops`, a mandatory
+     * written reason of at least eight characters, and an activity-log row
+     * naming who did it.
      */
     public function expire(Request $request, Tenant $tenant): RedirectResponse
     {
