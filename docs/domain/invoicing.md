@@ -86,7 +86,9 @@ Rule 2 is asserted by **reading the issuer's source**, with its comments strippe
 
 Rule 3 is asserted twice: there is no `dispatch()`, `Http::`, `Mail::` or render in the issuer at all, and `Issuer::afterCommit()` returns the three post-commit jobs for the caller to queue. A job dispatched inside a transaction that then rolls back is a job about a document that never existed.
 
-**`PF-094` is the proof**: 200 invoices from 20 parallel workers against one series, asserting the numbers are exactly `1..200`. Variants assert that a third failing after the lock point leaves the rest gapless, that two series do not block each other, and that a crashed worker consumes no number.
+**`PF-094` is the proof**, and it runs: `bin/verify concurrency` issues 200 invoices from 20 real OS processes against one series and asserts the numbers are exactly `1..200`, with no duplicates and a chain that still walks. Variants assert that four transactions failing *after* the lock point leave the rest gapless, that a worker killed with `SIGKILL` mid-transaction consumes nothing, and that holding one series' lock does not stop another series issuing.
+
+It found a bug on its first run. First use of a series was a plain `INSERT`, so two workers creating the same series at the same instant collided on `number_series_one_per_scope` and the loser's whole document failed — for a reason with nothing to do with the document. It is `INSERT ... ON CONFLICT DO NOTHING` followed by a re-read under the lock now, and the collision is **forced** rather than raced: the suite holds the row in an open transaction, polls `pg_locks` until a backend is genuinely waiting, and only then commits.
 
 Formats are templated — `INV-{entity}-{YYYY}-{seq:6}` — and the format is **frozen once the series has issued its first document**, because changing the shape of a sequence mid-year breaks its own gaplessness.
 

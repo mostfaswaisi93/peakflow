@@ -22,6 +22,7 @@ declare(strict_types=1);
  |   php bin/verify wiring     wiring rules only (the booted application)
  |   php bin/verify tenant     what the tenant database actually enforces
  |   php bin/verify rollback   provisioning rollback, by injecting a failure at each step (slow)
+ |   php bin/verify concurrency  gapless numbering under 20 parallel issuers (slow, writes data)
  |   php bin/verify ledger     what the ledger refuses
  |   php bin/verify parties    the controls around party bank details
  |   php bin/verify currency   what the currency and FX layer refuses
@@ -119,6 +120,15 @@ if ($only === 'all' || $only === 'wiring') {
  | database and role. Slow and cluster-writing checks that run on every quick
  | verify are checks people stop running.
  */
+/*
+ | Not in `all`, for the same reasons as `rollback`: it writes committed data
+ | - its workers are separate processes and cannot see a transaction this one
+ | holds open - and it spawns twenty of them.
+ */
+if ($only === 'concurrency') {
+    $suites['The gapless proof'] = $suite(static fn (): array => (new Tests\Support\ConcurrencyRules())->all());
+}
+
 if ($only === 'rollback') {
     $suites['Provisioning rollback'] = $suite(static fn (): array => (new Tests\Support\ProvisioningRollbackRules())->all());
 }

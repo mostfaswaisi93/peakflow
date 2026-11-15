@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tenant\Ledger\Services;
 
 use App\Support\Numbering\NumberFormat;
+use App\Tenant\Ledger\Exceptions\NumberSeriesUnavailable;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -74,7 +75,25 @@ final class NumberAllocator
                  | deploy, and a change of shape mid-sequence is the thing
                  | the freeze trigger exists to prevent.
                  */
-                $connection->table('number_series')->insert([
+                /*
+                 | `ON CONFLICT DO NOTHING`, then read it back under the lock.
+                 |
+                 | Measured by PF-094: twenty workers issuing at once, and a
+                 | series being used for the FIRST time. Two of them found no
+                 | row, both inserted, one lost - "duplicate key value
+                 | violates unique constraint number_series_one_per_scope" -
+                 | and that worker's whole transaction failed. The document
+                 | was never issued, which is correct, and it failed for a
+                 | reason that has nothing to do with the document: it was
+                 | the second one through the door.
+                 |
+                 | A plain INSERT here is correct in every single-threaded
+                 | test and wrong on the first busy morning after a series is
+                 | created - which is to say, on the morning a new year's
+                 | series opens, when every worker in the entity is trying to
+                 | create it at once.
+                 */
+                $connection->table('number_series')->insertOrIgnore([
                     'id' => (string) Str::ulid(),
                     'entity_id' => $entityId,
                     'scope' => $scope,
@@ -93,6 +112,14 @@ final class NumberAllocator
                 ]);
 
                 $series = $this->lock($connection, $entityId, $scope, $key, $branch, $date);
+
+                if ($series === null) {
+                    // The insert was ignored and the row is still not
+                    // visible: something is wrong with the identity itself,
+                    // and allocating from a series nobody can find would
+                    // produce a number nobody can audit.
+                    throw NumberSeriesUnavailable::cannotBeCreated($scope, $key, $date->year);
+                }
             }
 
             $number = (int) $series->next_number;
