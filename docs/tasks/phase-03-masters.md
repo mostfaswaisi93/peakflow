@@ -38,11 +38,11 @@ The highest-value fraud surface in the product.
 ### PF-062 · Credit control
 `Parties` · **3 pts** · depends: PF-059 · standards: IFRS 9
 
-- [ ] Credit limit per party per entity, in the entity's functional currency
-- [ ] Exposure computed as open receivables plus uninvoiced orders, and shown against the limit before an order is confirmed
-- [ ] Credit hold blocks issuing new invoices, with an explicit override that is permissioned and audited
-- [ ] A **dispute flag** per invoice, which suspends dunning and moves the invoice to a dispute report rather than letting it escalate
-- [ ] A risk grade per party, used later by the IFRS 9 provisioning matrix (`PF-173`)
+- [x] Credit limit per party per entity, in the entity's functional currency
+- [x] Exposure computed as open receivables plus uninvoiced orders, and shown against the limit before an order is confirmed
+- [x] Credit hold blocks issuing new invoices, with an explicit override that is permissioned and audited
+- [x] A **dispute flag** per invoice, which suspends dunning and moves the invoice to a dispute report rather than letting it escalate
+- [x] A risk grade per party, used later by the IFRS 9 provisioning matrix (`PF-173`)
 
 ### PF-063 · Contacts and communication
 `Parties` · **2 pts** · depends: PF-059 · standards: —
