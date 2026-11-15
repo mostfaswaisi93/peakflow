@@ -57,6 +57,7 @@ Start with the [root README](../README.md) for the whole system in one pass. Com
 
 | Document | Answers |
 |----------|---------|
+| [`operations/configuration.md`](operations/configuration.md) | Every key a deployment can set, the safe ranges, and the values a production boot refuses to start without |
 | [`operations/database-roles.md`](operations/database-roles.md) | The four database roles, the boundary enforced at the connection, and why an empty PostgreSQL ACL is not "nobody" |
 | [`operations/testing-strategy.md`](operations/testing-strategy.md) | Every test layer, what it is for, and what it cannot catch |
 | [`operations/security-hardening.md`](operations/security-hardening.md) | Threat model, abuse cases, controls, ASVS mapping |

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Providers;
 
 use App\Support\Audit\AuditTrail;
+use App\Support\Config\ProductionConfiguration;
 use App\Support\Telemetry\CorrelationId;
 use App\Tenant\Identity\Services\AuditLog;
 use Illuminate\Database\Eloquent\Model;
@@ -41,6 +42,33 @@ final class AppServiceProvider extends ServiceProvider
 
         $this->enforceModelDiscipline();
         $this->guardAgainstFloatMoney();
+        $this->refuseToStartOnUnsafeProductionSettings();
+    }
+
+    /**
+     * Refuse to boot a production deployment whose settings are silently wrong - PF-012.
+     *
+     * Every rule in {@see ProductionConfiguration} is a value whose wrong
+     * setting WORKS: `sslmode=prefer` connects, `EXCHANGE_DRIVER=log` reports
+     * success, an unset `SESSION_SECURE_COOKIE` logs people in. The discovery
+     * in each case is made by somebody other than the person who deployed it.
+     *
+     * So this throws rather than logs. The cost is accepted: a deployment that
+     * has not read `docs/operations/configuration.md` does not start, and the
+     * message names every wrong value and why it matters. A warning in a log
+     * is read during the incident it was meant to prevent.
+     *
+     * Production only - every rule here would make local development
+     * impossible, and `.env.example` is deliberately a configuration this
+     * guard rejects.
+     */
+    private function refuseToStartOnUnsafeProductionSettings(): void
+    {
+        if (! $this->app->isProduction()) {
+            return;
+        }
+
+        ProductionConfiguration::assert();
     }
 
     /**
