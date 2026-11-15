@@ -35,6 +35,14 @@ final class LedgerServiceProvider extends ServiceProvider
         $this->app->singleton(PostingRuleRegistry::class);
 
         /*
+         | The registry of reasons a period might not close - PF-088.
+         |
+         | Owned by the ledger because closing is its act; filled by other
+         | modules through the interface in `Support`.
+         */
+        $this->app->singleton(\App\Support\Closing\ClosingChecks::class);
+
+        /*
          | The chart templates, read from disk once per process.
          |
          | A singleton because parsing and checking three JSON files on every

@@ -187,6 +187,7 @@ if ($only === 'all' || $only === 'tax') {
     $suites['Return periods'] = $suite(static fn (): array => (new Tests\Support\ReturnPeriodRules())->all());
     $suites['Return filing'] = $suite(static fn (): array => (new Tests\Support\ReturnFilingRules())->all());
     $suites['Return adjustments'] = $suite(static fn (): array => (new Tests\Support\ReturnAdjustmentRules())->all());
+    $suites['Tax reconciliation'] = $suite(static fn (): array => (new Tests\Support\TaxReconciliationRules())->all());
 }
 
 if ($only === 'all' || $only === 'ops') {

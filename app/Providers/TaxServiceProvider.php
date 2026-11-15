@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Providers;
 
+use App\Support\Closing\ClosingChecks;
 use App\Tenant\Ledger\Posting\PostingRuleRegistry;
+use App\Tenant\Tax\Closing\TaxReconciliationCheck;
 use App\Tenant\Tax\Posting\Rules\PurchaseTaxRule;
 use App\Tenant\Tax\Posting\Rules\ReverseChargeSelfAssessmentRule;
 use App\Tenant\Tax\Posting\Rules\SalesTaxRule;
@@ -49,5 +51,18 @@ final class TaxServiceProvider extends ServiceProvider
 
         $registry->register(new WithholdingOnPaymentRule());
         $registry->register(new WithholdingOnReceiptRule());
+
+        /*
+         | And the reason a period might not close - PF-088.
+         |
+         | Registered into a registry in `Support` that the ledger consults,
+         | so the ledger never learns what a tax return is. An unexplained
+         | difference between the control accounts and the return stops the
+         | close, because the close is the last moment the period can still be
+         | posted into.
+         */
+        $this->app->make(ClosingChecks::class)->register(
+            $this->app->make(TaxReconciliationCheck::class),
+        );
     }
 }

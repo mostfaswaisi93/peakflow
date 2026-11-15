@@ -70,6 +70,24 @@ final class PeriodTransitionRefused extends RuntimeException
      * review happens because something went wrong, when the only artefact
      * is what somebody typed at the time. "Fix" is not an artefact.
      */
+    /**
+     * Something outside the ledger says this period must not close - PF-088.
+     *
+     * @param  list<string>  $reasons
+     */
+    public static function closingIsBlocked(string $label, array $reasons): self
+    {
+        return new self(sprintf(
+            'The %s period will not close while %d thing%s outstanding: %s. Closing it would freeze '.
+            'figures that nobody has reconciled, and the reconciliation is much harder afterwards - the '.
+            'period cannot be posted into, so every correction becomes a restatement.',
+            $label,
+            \count($reasons),
+            \count($reasons) === 1 ? ' is' : 's are',
+            implode(' | ', $reasons),
+        ));
+    }
+
     public static function reopeningNeedsAReason(string $label): self
     {
         return new self(sprintf(

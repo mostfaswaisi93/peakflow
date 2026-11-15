@@ -456,3 +456,42 @@ opening vat_output balance
 ```
 
 Differences are **itemized and classified**, never netted into a single reconciling figure. A non-zero unexplained difference **blocks the period close** unless a controller signs it off with a reason — and that sign-off appears on the compliance evidence pack. The assertion is part of `ledger:verify`, per period.
+
+### As built (PF-088)
+
+The control accounts move by **accounting date**; the return is assembled by **tax point**. A supply delivered on 30 April and booked on 5 May is in April's return and May's trial balance, and that is not an error — it is the two dates doing their jobs. So the reconciliation's purpose is not to make the figures equal. It is to explain the gap item by item and be left with nothing.
+
+| Class | Explains? | What it is |
+|---|---|---|
+| `timing` | **yes** | a line whose tax point is in one window and whose accounting date is in the other |
+| `manual` | no | a line on a VAT control account with **no tax code** |
+| `other jurisdiction` | no | a line whose code belongs to another authority |
+| `unmapped` | no | a line whose code maps to no box on this form |
+
+**Being classified is not the same as being explained.** The first version of this report classified a manual journal and then reported the period clean — which is worse than not looking at manual journals at all. Only a timing difference explains anything; the other three are *identified*, so somebody can act on them, and still counted as unexplained.
+
+`manual` is the class that matters. A journal straight into the output account moves the trial balance and cannot reach a return, because a return is assembled from tax codes. It is also the easiest thing in the world to do at a month end, with a plausible narration, to make a number look right.
+
+**Nothing is netted.** A timing difference of +500 and a manual journal of −500 add to nothing: a report with one reconciling figure would call that period clean and the manual journal would never be seen. A check builds exactly that period and asserts both classes appear with their own amounts.
+
+**The two sides are read independently** — the ledger side from the control accounts, the return side from the tax-coded lines by tax point. Deriving one from the other is the shape of a reconciliation that is always clean.
+
+#### Blocking the close
+
+Through a registry in `Support`: `ClosingCheck` and `ClosingChecks`, the same decision as `AuditTrail` and `RequiresStepUp`. Closing is the ledger's act and the ledger depends on nothing but `Tenancy`; the things that should stop a close belong to other modules. The ledger asks the registry and knows nothing about what is in it — an unmatched bank line will be the next entry.
+
+A check that **throws** becomes a reason not to close rather than a silent pass: a period whose checks nobody has seen must not close.
+
+Only on the way to `Closed`. Locking is a stronger state reached from `Closed`, so anything that would have blocked the close has been dealt with — and refusing a lock for a reconciliation would leave a statutory lock hostage to a report.
+
+#### The sign-off, and why it is bounded
+
+A reconciliation that can only block makes a period uncloseable over four riyals that nobody will ever explain, and the response to that is somebody disabling the check — at which point the real difference, next quarter, goes through unnoticed.
+
+So a controller can accept a difference, and the acceptance covers an **amount**. A larger one blocks again, so a figure that drifts comes back rather than hiding behind a decision made when it was small. The sign-off is immutable — editing the amount would retroactively widen a decision made about a smaller figure — and it needs a sentence, the same rule as PF-087's adjustment reason.
+
+The lookup takes the **largest** acceptance rather than the latest, because the question is whether anybody has accepted a difference at least this big. Ordering by `signed_at` answered the wrong question and answered it unreliably: two sign-offs recorded in the same second are indistinguishable by timestamp, which is how a controller who signed off 100 and then 500 could get either answer. Found exactly that way.
+
+#### In `ledger:verify`
+
+Per **open** period, as a critical finding. A difference that would block a close is worth knowing about before the day somebody tries to close, and `ledger:verify` is what runs nightly. Closed periods are not re-reported: one either had no reason to refuse or was signed off, and re-reporting it every night trains the reader to skip the output.

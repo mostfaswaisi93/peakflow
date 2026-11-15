@@ -6,6 +6,8 @@ namespace App\Console\Commands;
 
 use App\Platform\Models\Tenant;
 use App\Platform\Services\TenantConnectionResolver;
+use App\Support\Closing\ClosingChecks;
+use App\Tenant\Ledger\Models\Period;
 use App\Tenant\Ledger\Services\LedgerFinding;
 use App\Tenant\Ledger\Services\LedgerVerifier;
 use App\Tenant\Tenancy\Models\Entity;
@@ -52,6 +54,23 @@ final class LedgerVerify extends Command
                 app(EntityContext::class)->use($entity);
 
                 $findings = $verifier->verify((string) $entity->getKey());
+
+                /*
+                 | And the per-period closing checks - PF-088.
+                 |
+                 | The same registry the close consults, run here as an
+                 | assertion rather than as a gate: a difference that would
+                 | block a close is worth knowing about before the day
+                 | somebody tries to close, and `ledger:verify` is what runs
+                 | nightly.
+                 |
+                 | Only periods that are still OPEN. A closed one either had
+                 | no reason to refuse or was signed off, and re-reporting it
+                 | every night would train the reader to skip the output.
+                 */
+                $findings = $findings->concat(
+                    $this->closingFindings((string) $entity->getKey()),
+                );
 
                 $label = sprintf('%s · %s', $tenant->slug, $entity->code);
 
@@ -118,6 +137,48 @@ final class LedgerVerify extends Command
     }
 
     /** @return list<Tenant> */
+    /**
+     * What the registered closing checks say about each open period - PF-088.
+     *
+     * @return list<LedgerFinding>
+     */
+    private function closingFindings(string $entityId): array
+    {
+        $checks = app(ClosingChecks::class);
+
+        if ($checks->names() === []) {
+            return [];
+        }
+
+        $findings = [];
+
+        $periods = Period::query()
+            ->where('entity_id', $entityId)
+            ->where('state', 'open')
+            ->orderBy('starts_on')
+            ->get();
+
+        foreach ($periods as $period) {
+            $reasons = $checks->reasonsToRefuse(
+                $entityId,
+                (string) $period->label,
+                $period->starts_on->toDateString(),
+                $period->ends_on->copy()->addDay()->toDateString(),
+            );
+
+            foreach ($reasons as $reason) {
+                $findings[] = LedgerFinding::critical(
+                    sprintf('period %s will not close', $period->label),
+                    $reason,
+                    'The period cannot be closed until this is explained or signed off, and after a '.
+                    'close every correction is a restatement rather than an entry.',
+                );
+            }
+        }
+
+        return $findings;
+    }
+
     private function targets(): array
     {
         if ($this->option('all')) {

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tenant\Ledger\Services;
 
 use App\Support\Audit\AuditTrail;
+use App\Support\Closing\ClosingChecks;
 use App\Support\Authorization\RequiresStepUp;
 use App\Tenant\Ledger\Enums\PeriodState;
 use App\Tenant\Ledger\Events\PeriodClosed;
@@ -53,6 +54,7 @@ final class PeriodStateMachine
     public function __construct(
         private readonly AuditTrail $audit,
         private readonly RequiresStepUp $stepUp,
+        private readonly ClosingChecks $closingChecks,
     ) {}
 
     /**
@@ -124,6 +126,33 @@ final class PeriodStateMachine
          */
         if ($reopening) {
             $this->stepUp->assert('period.reopen', (string) $period->getKey(), (string) $period->label);
+        }
+
+        /*
+         | Whatever else says this period must not close - PF-088.
+         |
+         | The ledger asks a registry in `Support` and knows nothing about
+         | what is in it. Today it is the tax reconciliation; an unmatched
+         | bank line will be another. Asking each module directly would make
+         | the ledger depend on all of them, and the first one added would
+         | carry the rest in with it.
+         |
+         | Only on the way to Closed. Locking is a stronger state reached from
+         | Closed, so anything that would have blocked the close has already
+         | been dealt with - and refusing a lock for a reconciliation would
+         | leave a statutory lock hostage to a report.
+         */
+        if ($to === PeriodState::Closed) {
+            $reasons = $this->closingChecks->reasonsToRefuse(
+                (string) $period->entity_id,
+                (string) $period->label,
+                $period->starts_on->toDateString(),
+                $period->ends_on->copy()->addDay()->toDateString(),
+            );
+
+            if ($reasons !== []) {
+                throw PeriodTransitionRefused::closingIsBlocked((string) $period->label, $reasons);
+            }
         }
 
         return DB::connection('tenant')->transaction(function () use (
