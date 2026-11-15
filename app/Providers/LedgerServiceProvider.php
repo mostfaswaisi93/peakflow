@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Providers;
 
+use App\Tenant\Ledger\Charts\ChartTemplateLibrary;
 use App\Tenant\Ledger\Events\RevaluationRun;
 use App\Tenant\Ledger\Listeners\CheckBalancesAfterARevaluation;
 use App\Tenant\Ledger\Posting\PostingRuleRegistry;
@@ -30,6 +31,18 @@ final class LedgerServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(PostingRuleRegistry::class);
+
+        /*
+         | The chart templates, read from disk once per process.
+         |
+         | A singleton because parsing and checking three JSON files on every
+         | resolution is work with one answer, and because the check is the
+         | expensive half: every template is validated at load, and a
+         | provisioning run that resolves the library per entity would
+         | revalidate the same files for each one.
+         */
+        $this->app->singleton(ChartTemplateLibrary::class, static fn (): ChartTemplateLibrary =>
+            ChartTemplateLibrary::shipped());
     }
 
     public function boot(): void

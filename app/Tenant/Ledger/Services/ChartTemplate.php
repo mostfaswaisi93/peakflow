@@ -4,7 +4,8 @@ declare(strict_types=1);
 
 namespace App\Tenant\Ledger\Services;
 
-use App\Tenant\Ledger\Enums\AccountType;
+use App\Tenant\Ledger\Charts\ChartTemplateDefinition;
+use App\Tenant\Ledger\Charts\ChartTemplateLibrary;
 use App\Tenant\Ledger\Enums\ControlRole;
 use App\Tenant\Ledger\Models\Account;
 use App\Tenant\Ledger\Models\AccountRole;
@@ -25,194 +26,158 @@ use Illuminate\Support\Facades\DB;
  * So provisioning seeds a statutory-shaped chart with the roles already
  * assigned, and the tenant edits from something that works.
  *
- * ## A template is data, versioned, with a source
+ * ## The templates are data; this class only applies them
  *
- * Each template records where its structure comes from. "The accountant who
- * set up the first customer" is not a source, and a chart nobody can trace is
- * one nobody can defend when an auditor asks why revenue is split the way it
- * is.
+ * They live in `database/charts` as JSON, one file per template, each with a
+ * version and a documented source. See {@see ChartTemplateDefinition} for why
+ * data rather than code, and {@see ChartTemplateLibrary} for how one is
+ * chosen.
+ *
+ * What is left here is the application: build the tree in one pass, assign
+ * the roles, create the journals, and record on the entity which template at
+ * which version it came from - because "why does this subsidiary have an
+ * account the other one does not" is otherwise answered by archaeology.
  */
 final class ChartTemplate
 {
-    public const GENERIC = 'ifrs_generic';
-
     /**
-     * The generic IFRS chart.
+     * Kept as a constant because callers and tests name it.
      *
-     * Four levels at most: statement, group, sub-group, posting account. Each
-     * row is [code, parent code or null, type, Arabic name, English name,
-     * postable, control role or null, monetary].
-     *
-     * ## The last element is the IAS 21 classification, and it is stated
-     *
-     * Monetary items are restated at the closing rate at each period end and
-     * non-monetary items are not, so every account has to say which it is.
-     * It cannot be derived: property and receivables are both assets, and a
-     * prepayment is both current and non-monetary.
-     *
-     * Two rows are worth reading twice. **Deferred revenue is false**: it is
-     * settled by delivering goods and services, not by paying money, and
-     * revaluing it puts an exchange difference through profit or loss for an
-     * obligation that is not denominated in currency. It is the account most
-     * often wrongly marked monetary.
-     *
-     * **Suspense is false** for a different reason: it holds items nobody has
-     * identified, and revaluing an unidentified item asserts a
-     * classification that has not been made.
-     *
-     * @return list<array{0: string, 1: ?string, 2: AccountType, 3: string, 4: string, 5: bool, 6: ?ControlRole, 7: bool}>
+     * @deprecated Use {@see ChartTemplateLibrary::DEFAULT}. Retained so an
+     *             existing reference does not silently become a null key.
      */
-    private function generic(): array
-    {
-        return [
-            // ---- Assets -------------------------------------------------
-            ['1', null, AccountType::Asset, 'الأصول', 'Assets', false, null, false],
-            ['1.1', '1', AccountType::Asset, 'الأصول المتداولة', 'Current assets', false, null, false],
-            ['1.1.1', '1.1', AccountType::Asset, 'النقد وما في حكمه', 'Cash and cash equivalents', false, null, false],
-            ['1.1.1.1', '1.1.1', AccountType::Asset, 'الصندوق', 'Petty cash', true, null, true],
-            ['1.1.1.2', '1.1.1', AccountType::Asset, 'البنك', 'Bank', true, ControlRole::Bank, true],
-            ['1.1.1.3', '1.1.1', AccountType::Asset, 'مدفوعات قيد التحصيل', 'Payments in transit', true, ControlRole::PaymentsInTransit, true],
-            ['1.1.2', '1.1', AccountType::Asset, 'الذمم المدينة', 'Receivables', false, null, false],
-            ['1.1.2.1', '1.1.2', AccountType::Asset, 'ذمم العملاء', 'Trade receivables', true, ControlRole::AccountsReceivable, true],
-            ['1.1.2.2', '1.1.2', AccountType::Asset, 'مخصص الخسائر الائتمانية', 'Expected credit loss provision', true, ControlRole::EclProvision, true],
-            ['1.1.3', '1.1', AccountType::Asset, 'ضريبة القيمة المضافة المدخلة', 'Input VAT', true, ControlRole::VatInput, true],
-            ['1.1.4', '1.1', AccountType::Asset, 'حسابات وسيطة', 'Suspense', true, ControlRole::Suspense, false],
-            ['1.1.5', '1.1', AccountType::Asset, 'حسابات جارية بين الشركات', 'Inter-entity', true, ControlRole::InterEntity, true],
-            ['1.2', '1', AccountType::Asset, 'الأصول غير المتداولة', 'Non-current assets', false, null, false],
-            ['1.2.1', '1.2', AccountType::Asset, 'الممتلكات والمعدات', 'Property, plant and equipment', true, null, false],
+    public const GENERIC = ChartTemplateLibrary::DEFAULT;
 
-            // ---- Liabilities --------------------------------------------
-            ['2', null, AccountType::Liability, 'الالتزامات', 'Liabilities', false, null, false],
-            ['2.1', '2', AccountType::Liability, 'الالتزامات المتداولة', 'Current liabilities', false, null, false],
-            ['2.1.1', '2.1', AccountType::Liability, 'ذمم الموردين', 'Trade payables', true, ControlRole::AccountsPayable, true],
-            ['2.1.2', '2.1', AccountType::Liability, 'ضريبة القيمة المضافة المخرجة', 'Output VAT', true, ControlRole::VatOutput, true],
-            ['2.1.3', '2.1', AccountType::Liability, 'إيرادات مؤجلة', 'Deferred revenue', true, ControlRole::DeferredRevenue, false],
-
-            // ---- Equity --------------------------------------------------
-            ['3', null, AccountType::Equity, 'حقوق الملكية', 'Equity', false, null, false],
-            ['3.1', '3', AccountType::Equity, 'رأس المال', 'Share capital', true, null, false],
-            ['3.2', '3', AccountType::Equity, 'الأرباح المحتجزة', 'Retained earnings', true, ControlRole::RetainedEarnings, false],
-
-            // ---- Revenue -------------------------------------------------
-            ['4', null, AccountType::Revenue, 'الإيرادات', 'Revenue', false, null, false],
-            ['4.1', '4', AccountType::Revenue, 'إيرادات المبيعات', 'Sales revenue', true, null, false],
-            ['4.2', '4', AccountType::Revenue, 'إيرادات أخرى', 'Other income', true, null, false],
-
-            // ---- Expenses ------------------------------------------------
-            ['5', null, AccountType::Expense, 'المصروفات', 'Expenses', false, null, false],
-            ['5.1', '5', AccountType::Expense, 'تكلفة المبيعات', 'Cost of sales', true, null, false],
-            ['5.2', '5', AccountType::Expense, 'مصروفات إدارية', 'Administrative expenses', true, null, false],
-            ['5.3', '5', AccountType::Expense, 'فروق العملة', 'Foreign exchange gain or loss', true, ControlRole::FxGainLoss, false],
-            ['5.4', '5', AccountType::Expense, 'إعادة تقييم العملة', 'FX revaluation', true, ControlRole::FxRevaluation, false],
-            ['5.5', '5', AccountType::Expense, 'فروق التقريب', 'Rounding difference', true, ControlRole::RoundingDifference, false],
-            ['5.6', '5', AccountType::Expense, 'ديون معدومة', 'Bad debt', true, ControlRole::BadDebt, false],
-        ];
-    }
+    public function __construct(private readonly ChartTemplateLibrary $library) {}
 
     /**
-     * The journals every entity needs - PF-040.
-     *
-     * @return list<array{0: string, 1: string, 2: string, 3: string, 4: bool}>
-     */
-    private function journals(): array
-    {
-        return [
-            ['SAL', 'sales', 'المبيعات', 'Sales', false],
-            ['PUR', 'purchases', 'المشتريات', 'Purchases', false],
-            ['CSH', 'cash', 'الصندوق', 'Cash', false],
-            ['BNK', 'bank', 'البنك', 'Bank', false],
-            ['GEN', 'general', 'عام', 'General', false],
-            // Reserved: these accept postings only from the process that owns
-            // them. An opening balance typed by hand six months into the year
-            // is indistinguishable from the real one, and is found a year
-            // later by whoever compares this opening to last year's closing.
-            ['OPN', 'opening', 'الأرصدة الافتتاحية', 'Opening balances', true],
-            ['CLS', 'closing', 'الإقفال', 'Closing', true],
-            ['REV', 'revaluation', 'إعادة التقييم', 'Revaluation', true],
-        ];
-    }
-
-    /**
-     * Apply the template to an entity.
+     * Apply a template to an entity.
      *
      * Idempotent: an entity that already has accounts is left alone, because
      * re-running this over a live chart would either duplicate codes or
      * silently rewrite names somebody chose.
      *
-     * @return array{accounts: int, journals: int, roles: int}
+     * With no key, the template is chosen from the entity's country, falling
+     * back to the generic IFRS chart. Never the nearest-looking national
+     * chart - a chart that is almost right is harder to correct than one that
+     * is plainly a starting point.
+     *
+     * @return array{template: string, version: int, accounts: int, journals: int, roles: int}
      */
-    public function apply(string $entityId): array
+    public function apply(string $entityId, ?string $templateKey = null): array
     {
+        $template = $templateKey !== null
+            ? $this->library->get($templateKey)
+            : $this->library->forCountry($this->countryOf($entityId));
+
         if (Account::query()->where('entity_id', $entityId)->exists()) {
-            return ['accounts' => 0, 'journals' => 0, 'roles' => 0];
+            return [
+                'template' => $template->key,
+                'version' => $template->version,
+                'accounts' => 0,
+                'journals' => 0,
+                'roles' => 0,
+            ];
         }
 
-        return DB::connection('tenant')->transaction(function () use ($entityId): array {
-            $byCode = [];
+        return DB::connection('tenant')->transaction(function () use ($entityId, $template): array {
+            $created = [];
+            $paths = [];
             $roles = 0;
 
-            foreach ($this->generic() as [$code, $parentCode, $type, $nameAr, $nameEn, $postable, $role, $monetary]) {
-                $parent = $parentCode === null ? null : $byCode[$parentCode];
+            foreach ($template->accounts as $account) {
+                $parent = $account->parent === null ? null : $created[$account->parent];
 
-                $account = Account::create([
+                /*
+                 | The path is the chain of ancestors, and each link is the
+                 | node's own SEGMENT rather than its whole code.
+                 |
+                 | The shipped templates all code hierarchically, so for them
+                 | the segment of `1.1.3` under `1.1` is `3` and the path
+                 | comes out equal to the code - which is what it has always
+                 | been. Appending the whole code instead repeats the
+                 | parent's prefix: the first version of this gave `1.1.3`
+                 | the path `1.1.1.1.3` at depth 5, measured on a Saudi
+                 | entity before anything else noticed.
+                 |
+                 | The segment is what makes a NON-nesting template work.
+                 | Numbered 1000, 1100, 1110, nothing can be stripped, so the
+                 | segment is the whole code and the path becomes
+                 | `1000.1100.1110`. Deriving the path from the code alone
+                 | would flatten that tree and leave every grouped report
+                 | wrong with nothing in the data looking unusual.
+                 */
+                $parentCode = $account->parent;
+
+                $segment = $parentCode !== null && str_starts_with($account->code, $parentCode.'.')
+                    ? substr($account->code, strlen($parentCode) + 1)
+                    : $account->code;
+
+                $path = $parentCode === null
+                    ? $segment
+                    : $paths[$parentCode].'.'.$segment;
+
+                $paths[$account->code] = $path;
+
+                $created[$account->code] = Account::create([
                     'entity_id' => $entityId,
-                    'code' => $code,
-                    'name_ar' => $nameAr,
-                    'name_en' => $nameEn,
+                    'code' => $account->code,
+                    'name_ar' => $account->nameAr,
+                    'name_en' => $account->nameEn,
                     'parent_id' => $parent?->getKey(),
-                    // The path IS the code here, because the generic chart is
-                    // already coded hierarchically. A template whose codes do
-                    // not nest would build the path from its ancestors.
-                    'path' => $code,
-                    'depth' => substr_count($code, '.'),
-                    'type' => $type->value,
-                    'statement_line' => $type->statement(),
-                    'postable' => $postable,
-                    'monetary' => $monetary,
+                    'path' => $path,
+                    'depth' => substr_count($path, '.'),
+                    'type' => $account->type->value,
+                    'statement_line' => $account->type->statement(),
+                    'postable' => $account->postable,
+                    'monetary' => $account->monetary,
                 ]);
 
-                $byCode[$code] = $account;
-
-                if ($role !== null) {
+                if ($account->role !== null) {
                     AccountRole::create([
                         'entity_id' => $entityId,
-                        'role' => $role->value,
-                        'account_id' => $account->getKey(),
+                        'role' => $account->role->value,
+                        'account_id' => $created[$account->code]->getKey(),
                     ]);
 
                     $roles++;
                 }
             }
 
-            foreach ($this->journals() as [$code, $type, $nameAr, $nameEn, $reserved]) {
-                /*
-                 | A reserved journal declares WHICH rule may post into it.
-                 |
-                 | `reserved` on its own was a comment: any rule could post
-                 | into the opening-balances journal, and an opening balance
-                 | typed by hand is indistinguishable from the real one.
-                 */
-                $rule = match ($type) {
-                    'opening' => 'ledger.opening_balance',
-                    'closing' => 'ledger.year_end_close',
-                    'revaluation' => 'ledger.fx_revaluation',
-                    default => null,
-                };
-
+            foreach ($template->journals as $journal) {
                 Journal::create([
                     'entity_id' => $entityId,
-                    'code' => $code,
-                    'type' => $type,
-                    'name_ar' => $nameAr,
-                    'name_en' => $nameEn,
-                    'reserved' => $reserved,
-                    'posting_rule' => $rule,
+                    'code' => $journal->code,
+                    'type' => $journal->type,
+                    'name_ar' => $journal->nameAr,
+                    'name_en' => $journal->nameEn,
+                    'reserved' => $journal->reserved,
+                    'posting_rule' => $journal->postingRule,
                 ]);
             }
 
+            /*
+             | Written with the chart, in the same transaction.
+             |
+             | A chart that exists with no record of where it came from is
+             | the state this column exists to make unrepresentable, and a
+             | separate write is a state that occurs whenever the second one
+             | fails.
+             */
+            DB::connection('tenant')->table('entities')
+                ->where('id', $entityId)
+                ->update([
+                    'chart_template' => $template->key,
+                    'chart_template_version' => $template->version,
+                    'chart_applied_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
             return [
-                'accounts' => count($byCode),
-                'journals' => count($this->journals()),
+                'template' => $template->key,
+                'version' => $template->version,
+                'accounts' => count($created),
+                'journals' => count($template->journals),
                 'roles' => $roles,
             ];
         });
@@ -249,5 +214,32 @@ final class ChartTemplate
             static fn (ControlRole $role): bool => $role->isRequiredToPost()
                 && ! in_array($role->value, $assigned, true),
         ));
+    }
+
+    /** What this entity's chart was built from, if anybody recorded it. */
+    public function provenanceOf(string $entityId): ?array
+    {
+        $row = DB::connection('tenant')->table('entities')
+            ->where('id', $entityId)
+            ->first(['chart_template', 'chart_template_version', 'chart_applied_at']);
+
+        if ($row === null || $row->chart_template === null) {
+            return null;
+        }
+
+        return [
+            'template' => (string) $row->chart_template,
+            'version' => (int) $row->chart_template_version,
+            'applied_at' => (string) $row->chart_applied_at,
+        ];
+    }
+
+    private function countryOf(string $entityId): ?string
+    {
+        $country = DB::connection('tenant')->table('entities')
+            ->where('id', $entityId)
+            ->value('country');
+
+        return $country === null ? null : (string) $country;
     }
 }

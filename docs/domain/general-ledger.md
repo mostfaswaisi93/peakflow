@@ -50,6 +50,40 @@ Three rules are structural rather than configurable:
 
 > This is the invariant that keeps a subledger equal to its control account — the reconciliation every month-end close starts with, and the one that is impossible to restore once a human has posted a manual adjustment into it. The single exception is opening balances, available only while the entity has no other postings, permissioned and audited.
 
+### Where a chart comes from
+
+A new entity does not get an empty tree. An empty chart is not a neutral starting point: the tenant has to invent one before they can record anything, what they invent is shaped by the first three transactions they happen to think of, and they cannot post at all until the control-account roles are assigned — which nothing tells them, because the way it is said is a posting failure naming one role at a time.
+
+So provisioning applies a template, and the entity is postable the moment it exists.
+
+**A template is data, not code.** One JSON file per template in `database/charts`, discovered by reading the directory, so adding a jurisdiction is adding a file. Three reasons, and the third decided it: a chart is argued about and an accountant can read and correct a data file; a template has a version and a source, so a diff is a readable history of a structure changing; and a tenant will eventually supply their own, for which a format already exists.
+
+| Template | Serves | Accounts |
+|----------|--------|----------|
+| `ifrs-generic` | every country with no template of its own | 32 |
+| `saudi-arabia` | `SA` | 42 |
+| `jordan` | `JO` | 42 |
+
+**The country suggests; it does not impose.** Every template stays selectable — a Saudi subsidiary keeping its books on a group's generic chart is an ordinary arrangement, and so is the reverse. What the selection never does is fall back to the *nearest-looking* national chart: an entity in a country with no template gets the plainly generic one, because a chart that is almost right is harder to correct than one that is obviously a starting point. A tenant who sees a Saudi chart assumes somebody checked it against Saudi requirements.
+
+**The source says what is not mandated.** Neither Saudi Arabia nor Jordan mandates a chart of accounts for commercial companies. Saudi Arabia has a unified chart for government entities and it does not apply to a trading company; Jordan has none for private companies at all. The templates say so. What each one adds to the IFRS structure is the set of accounts an entity in that jurisdiction cannot operate without — the ones driven by obligations rather than by presentation:
+
+| | Saudi Arabia | Jordan |
+|--|--------------|--------|
+| Indirect tax | VAT, administered by ZATCA | General sales tax, administered by the ISTD |
+| On profit | Zakat **and** income tax — a mixed company apportions between the Saudi/GCC-owned share and the rest | Income tax, plus the national contribution certain sectors bear |
+| Withheld at source | On payments to non-residents | On certain payments |
+| Social | GOSI contributions | Social Security Corporation contributions |
+| Employee benefit | End-of-service benefits (IAS 19, required by the Labor Law) | End-of-service benefits |
+
+Two things deliberately absent from every chart file. **No rate**: rates change by regulation and belong to the tax engine, where a change is dated and a historical return still recomputes. **No inference**: `monetary` is required on every account, because IAS 21 restates monetary items at the closing rate and the classification cannot be derived — property and receivables are both assets, and only one of them moves.
+
+The Jordanian GST accounts carry the **same control roles** as the VAT accounts elsewhere, which is the whole point of a role: the tax has a different name, a different rate and a different return in each jurisdiction, and not one posting rule has to know that.
+
+**Every template is checked at load, not at use.** A parent that does not exist, a child written before its parent, one role on two accounts, a role on a group account nothing can post to, a subtree that changes statement, a postable account with children, a reserved journal naming no rule, a missing version, a source with no note: each is refused when the file is read. A template is edited by whoever understands the accounting rather than the code, so the read is the only useful place to catch a mistake — the alternative is a chart that is wrong in a way the tenant meets weeks later, with nothing pointing back at the file.
+
+**The entity records what built it.** `chart_template`, `chart_template_version` and `chart_applied_at`, written in the same transaction as the chart and constrained to move together. "Why does this subsidiary have an account the other one does not" is otherwise answered by archaeology — and the version is the half that earns its place, because two entities provisioned a month apart may legitimately differ, which is a different situation from somebody having edited one of them.
+
 ## Journals, entries and lines
 
 | Journal | Source |

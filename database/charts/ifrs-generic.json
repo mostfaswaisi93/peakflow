@@ -1,0 +1,404 @@
+{
+  "key": "ifrs-generic",
+  "version": 1,
+  "name_ar": "دليل حسابات عام وفق المعايير الدولية",
+  "name_en": "Generic IFRS chart of accounts",
+  "countries": [],
+  "source": {
+    "title": "IFRS presentation requirements - IAS 1 Presentation of Financial Statements, with IAS 21 and IFRS 9 for the classifications",
+    "url": "https://www.ifrs.org/issued-standards/list-of-standards/",
+    "note": "IFRS does not prescribe a chart of accounts and no standard contains one. IAS 1 prescribes what the statements must present; this chart is a minimal structure that can produce those statements, and nothing more. The two classifications that are NOT presentation choices are marked per account: `monetary` is the IAS 21 distinction that decides what is restated at the closing rate, and the expected credit loss provision follows IFRS 9. Used for any entity whose country has no template of its own - deliberately generic rather than the nearest-looking national chart, because a chart that is almost right is harder to correct than one that is plainly a starting point."
+  },
+  "accounts": [
+    {
+      "code": "1",
+      "parent": null,
+      "type": "asset",
+      "name_ar": "الأصول",
+      "name_en": "Assets",
+      "postable": false,
+      "role": null,
+      "monetary": false
+    },
+    {
+      "code": "1.1",
+      "parent": "1",
+      "type": "asset",
+      "name_ar": "الأصول المتداولة",
+      "name_en": "Current assets",
+      "postable": false,
+      "role": null,
+      "monetary": false
+    },
+    {
+      "code": "1.1.1",
+      "parent": "1.1",
+      "type": "asset",
+      "name_ar": "النقد وما في حكمه",
+      "name_en": "Cash and cash equivalents",
+      "postable": false,
+      "role": null,
+      "monetary": false
+    },
+    {
+      "code": "1.1.1.1",
+      "parent": "1.1.1",
+      "type": "asset",
+      "name_ar": "الصندوق",
+      "name_en": "Petty cash",
+      "postable": true,
+      "role": null,
+      "monetary": true
+    },
+    {
+      "code": "1.1.1.2",
+      "parent": "1.1.1",
+      "type": "asset",
+      "name_ar": "البنك",
+      "name_en": "Bank",
+      "postable": true,
+      "role": "bank",
+      "monetary": true
+    },
+    {
+      "code": "1.1.1.3",
+      "parent": "1.1.1",
+      "type": "asset",
+      "name_ar": "مدفوعات قيد التحصيل",
+      "name_en": "Payments in transit",
+      "postable": true,
+      "role": "payments_in_transit",
+      "monetary": true
+    },
+    {
+      "code": "1.1.2",
+      "parent": "1.1",
+      "type": "asset",
+      "name_ar": "الذمم المدينة",
+      "name_en": "Receivables",
+      "postable": false,
+      "role": null,
+      "monetary": false
+    },
+    {
+      "code": "1.1.2.1",
+      "parent": "1.1.2",
+      "type": "asset",
+      "name_ar": "ذمم العملاء",
+      "name_en": "Trade receivables",
+      "postable": true,
+      "role": "accounts_receivable",
+      "monetary": true
+    },
+    {
+      "code": "1.1.2.2",
+      "parent": "1.1.2",
+      "type": "asset",
+      "name_ar": "مخصص الخسائر الائتمانية",
+      "name_en": "Expected credit loss provision",
+      "postable": true,
+      "role": "ecl_provision",
+      "monetary": true,
+      "note": "Monetary, and a credit balance on an asset. It is the provision against trade receivables (IFRS 9 expected credit losses), not a separate pool of money."
+    },
+    {
+      "code": "1.1.3",
+      "parent": "1.1",
+      "type": "asset",
+      "name_ar": "ضريبة القيمة المضافة المدخلة",
+      "name_en": "Input VAT",
+      "postable": true,
+      "role": "vat_input",
+      "monetary": true
+    },
+    {
+      "code": "1.1.4",
+      "parent": "1.1",
+      "type": "asset",
+      "name_ar": "حسابات وسيطة",
+      "name_en": "Suspense",
+      "postable": true,
+      "role": "suspense",
+      "monetary": false,
+      "note": "NOT monetary. Suspense holds items nobody has identified yet, and revaluing an unidentified item asserts a classification that has not been made."
+    },
+    {
+      "code": "1.1.5",
+      "parent": "1.1",
+      "type": "asset",
+      "name_ar": "حسابات جارية بين الشركات",
+      "name_en": "Inter-entity",
+      "postable": true,
+      "role": "inter_entity",
+      "monetary": true
+    },
+    {
+      "code": "1.2",
+      "parent": "1",
+      "type": "asset",
+      "name_ar": "الأصول غير المتداولة",
+      "name_en": "Non-current assets",
+      "postable": false,
+      "role": null,
+      "monetary": false
+    },
+    {
+      "code": "1.2.1",
+      "parent": "1.2",
+      "type": "asset",
+      "name_ar": "الممتلكات والمعدات",
+      "name_en": "Property, plant and equipment",
+      "postable": true,
+      "role": null,
+      "monetary": false,
+      "note": "NOT monetary under IAS 21: property is carried at its historical rate, unlike the receivable sitting two groups above it. Both are assets, which is why the classification cannot be derived from the type."
+    },
+    {
+      "code": "2",
+      "parent": null,
+      "type": "liability",
+      "name_ar": "الالتزامات",
+      "name_en": "Liabilities",
+      "postable": false,
+      "role": null,
+      "monetary": false
+    },
+    {
+      "code": "2.1",
+      "parent": "2",
+      "type": "liability",
+      "name_ar": "الالتزامات المتداولة",
+      "name_en": "Current liabilities",
+      "postable": false,
+      "role": null,
+      "monetary": false
+    },
+    {
+      "code": "2.1.1",
+      "parent": "2.1",
+      "type": "liability",
+      "name_ar": "ذمم الموردين",
+      "name_en": "Trade payables",
+      "postable": true,
+      "role": "accounts_payable",
+      "monetary": true
+    },
+    {
+      "code": "2.1.2",
+      "parent": "2.1",
+      "type": "liability",
+      "name_ar": "ضريبة القيمة المضافة المخرجة",
+      "name_en": "Output VAT",
+      "postable": true,
+      "role": "vat_output",
+      "monetary": true
+    },
+    {
+      "code": "2.1.3",
+      "parent": "2.1",
+      "type": "liability",
+      "name_ar": "إيرادات مؤجلة",
+      "name_en": "Deferred revenue",
+      "postable": true,
+      "role": "deferred_revenue",
+      "monetary": false,
+      "note": "NOT monetary. Deferred revenue is settled by delivering goods and services, not by paying money, so restating it at the closing rate puts an exchange difference through profit or loss for an obligation that is not denominated in currency. It is the account most often wrongly marked monetary."
+    },
+    {
+      "code": "3",
+      "parent": null,
+      "type": "equity",
+      "name_ar": "حقوق الملكية",
+      "name_en": "Equity",
+      "postable": false,
+      "role": null,
+      "monetary": false
+    },
+    {
+      "code": "3.1",
+      "parent": "3",
+      "type": "equity",
+      "name_ar": "رأس المال",
+      "name_en": "Share capital",
+      "postable": true,
+      "role": null,
+      "monetary": false
+    },
+    {
+      "code": "3.2",
+      "parent": "3",
+      "type": "equity",
+      "name_ar": "الأرباح المحتجزة",
+      "name_en": "Retained earnings",
+      "postable": true,
+      "role": "retained_earnings",
+      "monetary": false
+    },
+    {
+      "code": "4",
+      "parent": null,
+      "type": "revenue",
+      "name_ar": "الإيرادات",
+      "name_en": "Revenue",
+      "postable": false,
+      "role": null,
+      "monetary": false
+    },
+    {
+      "code": "4.1",
+      "parent": "4",
+      "type": "revenue",
+      "name_ar": "إيرادات المبيعات",
+      "name_en": "Sales revenue",
+      "postable": true,
+      "role": null,
+      "monetary": false
+    },
+    {
+      "code": "4.2",
+      "parent": "4",
+      "type": "revenue",
+      "name_ar": "إيرادات أخرى",
+      "name_en": "Other income",
+      "postable": true,
+      "role": null,
+      "monetary": false
+    },
+    {
+      "code": "5",
+      "parent": null,
+      "type": "expense",
+      "name_ar": "المصروفات",
+      "name_en": "Expenses",
+      "postable": false,
+      "role": null,
+      "monetary": false
+    },
+    {
+      "code": "5.1",
+      "parent": "5",
+      "type": "expense",
+      "name_ar": "تكلفة المبيعات",
+      "name_en": "Cost of sales",
+      "postable": true,
+      "role": null,
+      "monetary": false
+    },
+    {
+      "code": "5.2",
+      "parent": "5",
+      "type": "expense",
+      "name_ar": "مصروفات إدارية",
+      "name_en": "Administrative expenses",
+      "postable": true,
+      "role": null,
+      "monetary": false
+    },
+    {
+      "code": "5.3",
+      "parent": "5",
+      "type": "expense",
+      "name_ar": "فروق العملة",
+      "name_en": "Foreign exchange gain or loss",
+      "postable": true,
+      "role": "fx_gain_loss",
+      "monetary": false
+    },
+    {
+      "code": "5.4",
+      "parent": "5",
+      "type": "expense",
+      "name_ar": "إعادة تقييم العملة",
+      "name_en": "FX revaluation",
+      "postable": true,
+      "role": "fx_revaluation",
+      "monetary": false
+    },
+    {
+      "code": "5.5",
+      "parent": "5",
+      "type": "expense",
+      "name_ar": "فروق التقريب",
+      "name_en": "Rounding difference",
+      "postable": true,
+      "role": "rounding_difference",
+      "monetary": false
+    },
+    {
+      "code": "5.6",
+      "parent": "5",
+      "type": "expense",
+      "name_ar": "ديون معدومة",
+      "name_en": "Bad debt",
+      "postable": true,
+      "role": "bad_debt",
+      "monetary": false
+    }
+  ],
+  "journals": [
+    {
+      "code": "SAL",
+      "type": "sales",
+      "name_ar": "المبيعات",
+      "name_en": "Sales",
+      "reserved": false,
+      "posting_rule": null
+    },
+    {
+      "code": "PUR",
+      "type": "purchases",
+      "name_ar": "المشتريات",
+      "name_en": "Purchases",
+      "reserved": false,
+      "posting_rule": null
+    },
+    {
+      "code": "CSH",
+      "type": "cash",
+      "name_ar": "الصندوق",
+      "name_en": "Cash",
+      "reserved": false,
+      "posting_rule": null
+    },
+    {
+      "code": "BNK",
+      "type": "bank",
+      "name_ar": "البنك",
+      "name_en": "Bank",
+      "reserved": false,
+      "posting_rule": null
+    },
+    {
+      "code": "GEN",
+      "type": "general",
+      "name_ar": "عام",
+      "name_en": "General",
+      "reserved": false,
+      "posting_rule": null
+    },
+    {
+      "code": "OPN",
+      "type": "opening",
+      "name_ar": "الأرصدة الافتتاحية",
+      "name_en": "Opening balances",
+      "reserved": true,
+      "posting_rule": "ledger.opening_balance"
+    },
+    {
+      "code": "CLS",
+      "type": "closing",
+      "name_ar": "الإقفال",
+      "name_en": "Closing",
+      "reserved": true,
+      "posting_rule": "ledger.year_end_close"
+    },
+    {
+      "code": "REV",
+      "type": "revaluation",
+      "name_ar": "إعادة التقييم",
+      "name_en": "Revaluation",
+      "reserved": true,
+      "posting_rule": "ledger.fx_revaluation"
+    }
+  ]
+}

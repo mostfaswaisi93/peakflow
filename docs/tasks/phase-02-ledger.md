@@ -31,16 +31,19 @@ The invariant that keeps a subledger equal to its control account, and the one t
 ### PF-039 · Chart templates per jurisdiction
 `Ledger` · **3 pts** · depends: PF-038 · standards: —
 
-- [ ] Seedable templates producing a statutory-shaped chart, with the control-account roles pre-assigned
-- [ ] Templates for a generic IFRS chart, a Saudi chart and a Jordanian chart at minimum
+- [x] Seedable templates producing a statutory-shaped chart, with the control-account roles pre-assigned. Applied by the entity-creation listener, so an entity is postable the moment it exists: each shipped template is provisioned onto a real entity and interrogated afterwards - roles assigned, every role resolving to a *postable* account, reserved journals carrying their rule, no account orphaned below the root
+- [x] Templates for a generic IFRS chart, a Saudi chart and a Jordanian chart at minimum. The country selects one, and never the nearest-looking alternative: an entity in a country with no template of its own gets the plainly generic chart, because a chart that is almost right is harder to correct than one that is obviously a starting point. The national template is suggested, not imposed - a subsidiary on a group chart is ordinary
 - [x] A new entity opens with a usable chart rather than an empty tree
-- [ ] A template is data, versioned, with a documented source
+- [x] A template is data, versioned, with a documented source. JSON in `database/charts`, one file per template, discovered by reading the directory so adding one is adding a file. Every template is validated at load, not at use: eleven ways a template can be wrong are each built as a data file and each expected to be refused, because the file is edited by whoever understands the accounting rather than the code
+- [x] The source note says what is and is **not** mandated. Neither Saudi Arabia nor Jordan mandates a chart of accounts for commercial companies, and the templates say so rather than implying a statutory structure they do not have - what they add is the accounts an entity in that jurisdiction cannot operate without. No tax rate appears in a chart file; rates belong to the tax engine, where a change is dated and a historical return still recomputes
+- [x] The entity records which template at which version built its chart, written in the same transaction as the chart. "Why does this subsidiary have an account the other one does not" is otherwise answered by archaeology
+- [x] The path is assembled from the ancestors, one segment per level, so a template numbering its accounts 1000/1100/1110 nests as a tree rather than flattening into three roots. The first check written for that did not catch the bug being reintroduced - a flat template cannot tell the two implementations apart - so the invariant is asserted on the real charts instead: a child's path is its parent's path plus exactly one segment
 
 ### PF-040 · Journals and their series
 `Ledger` · **3 pts** · depends: PF-037 · standards: — · `type:schema`
 
 - [x] `journals`: `sales`, `purchases`, `cash`, `bank`, `general`, `opening`, `closing`, `revaluation`, each with a numbering series
-- [ ] Reserved journals (`opening`, `closing`, `revaluation`) accept postings only from their own process
+- [x] Reserved journals (`opening`, `closing`, `revaluation`) accept postings only from their own process - the allowed rule is a column on the journal, not a hard-coded list, and a database trigger enforces it. A reversal is exempt, because refusing it would mean a reserved entry could never be corrected at all
 - [x] A journal can be restricted to a set of accounts, so a cash journal cannot post revenue directly
 
 ### PF-041 · Journal entries and lines

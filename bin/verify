@@ -30,6 +30,7 @@ declare(strict_types=1);
  |   php bin/verify catalog    items, and which price wins
  |   php bin/verify settings   what a tenant may and may not decide
  |   php bin/verify queue      the tenant travels with the job
+ |   php bin/verify charts     the chart templates, and the charts they produce
  |   php bin/verify examples   worked examples only
  |
  | Exits non-zero on any violation.
@@ -106,6 +107,10 @@ if ($only === 'all' || $only === 'catalog') {
     $suites['Items and prices'] = (new Tests\Support\CatalogRules())->all();
 }
 
+if ($only === 'all' || $only === 'charts') {
+    $suites['Chart templates'] = (new Tests\Support\ChartTemplateRules())->all();
+}
+
 if ($only === 'all' || $only === 'queue') {
     $suites['Queue tenancy'] = (new Tests\Support\QueueTenancyRules())->all();
 }
@@ -119,7 +124,7 @@ if ($only === 'all' || $only === 'examples') {
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | queue | examples | rollback\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | charts | queue | examples | rollback\n");
     exit(2);
 }
 
