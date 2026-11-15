@@ -43,19 +43,22 @@ Two tasks in this phase carry disproportionate risk. `PF-093` is gapless numberi
 ### PF-092 · Draft editing and validation
 `Sales` · **5 pts** · depends: PF-091 · standards: EN 16931
 
-- [ ] A draft is freely editable, has no number, no posting and no effect on any balance
-- [ ] Validation runs continuously and shows **what would prevent issuing**, addressed by field, rather than failing at the end
-- [ ] The internal rule set: totals consistent, party has a registration where the tax treatment requires one, period open, currency enabled, evidence present for the tax category, place-of-supply rule resolved
-- [ ] A draft can be duplicated, and duplicating never copies the number or the posting
+- [x] A draft is freely editable, has no number, no posting and no effect on any balance. All four asserted together, because the three absences are what make the first one safe: a document somebody can still change, that already moved a balance, is a document in the books nobody agreed to
+- [x] Validation runs continuously and shows **what would prevent issuing**, addressed by field, rather than failing at the end. `InvoiceFinding` carries `lines.3.tax_code_id`, not "a line has no tax code" - on a fifty-line invoice the difference is twenty minutes. The engine is here and proven; the surface that calls it on every change arrives with the sales screens in Phase 11
+- [x] The internal rule set: totals consistent, party has a registration where the tax treatment requires one, period open, currency enabled, evidence present for the tax category, place-of-supply rule resolved. Sixteen codes, each with a check that breaks exactly one thing and asserts both the code and its address
+- [x] **Blocking and advisory are not the same list.** `blocking()` is what the issuer consults. A category K line's missing evidence is reported and does not stop the document, because a zero-rated export whose shipping paperwork has not arrived yet is still an invoice the business has to send - and the evidence gate is PF-080's business at return time. A check proves the advisory does not block, which is the half somebody breaks by treating the list as flat
+- [x] A draft can be duplicated, and duplicating never copies the number or the posting. Seven columns named rather than `replicate()` with an exclusion list, so a column added next year is absent until somebody decides it belongs. References are deliberately not copied: two credit notes pointing at one invoice, each claiming to be the credit, is a reference an auditor cannot resolve
+- [x] Found on the way: the duplication check duplicated a **draft**, and a draft has no number - so the bite that copied the number across copied a null and the check stayed green with the bug in place. It duplicates an issued document now, which is what anybody actually duplicates
 
 ### PF-093 · Gapless number allocation
 `Sales` · **8 pts** · depends: PF-071 · standards: — · `risk:high`
 
-- [ ] Allocation by `SELECT ... FOR UPDATE` on the `number_series` row inside the issuing transaction
-- [ ] A comment in the code records why a PostgreSQL `SEQUENCE` cannot be used: `nextval()` is deliberately non-transactional, so a rollback does not return the number and every validation failure, deadlock and crash leaves a gap
-- [ ] **Allocate last** - after validation, tax computation and the posting rule have all succeeded - so the series lock is held for as short a time as possible
-- [ ] **No I/O inside the lock**: no PDF render, no clearance call, no mail. A tax authority that takes thirty seconds to answer must not hold the invoice sequence for thirty seconds
-- [ ] Lock scope is one series, so two entities or two document types never contend
+- [x] Allocation by `SELECT ... FOR UPDATE` on the `number_series` row inside the issuing transaction. A check allocates inside a savepoint, rolls it back and asserts the counter is where it was - the property a sequence does not have
+- [x] A comment in the code records why a PostgreSQL `SEQUENCE` cannot be used: `nextval()` is deliberately non-transactional, so a rollback does not return the number and every validation failure, deadlock and crash leaves a gap. Asserted as text, in the file somebody would reach for one in, because that is the only place the reasoning is any use
+- [x] **Allocate last** - after validation, tax computation and the posting rule have all succeeded - so the series lock is held for as short a time as possible. Asserted by reading the issuer's source with its comments stripped, because it is the one property a single-threaded check cannot see. Moving the allocation to the top does **not** produce gaps - the transaction still returns the number - it destroys concurrency, silently, which is why the assertion is on the order and not on the outcome
+- [x] **No I/O inside the lock**: no PDF render, no clearance call, no mail. A tax authority that takes thirty seconds to answer must not hold the invoice sequence for thirty seconds. There is no `dispatch()` in the issuer at all: `afterCommit()` returns the three jobs for the caller to queue, and a check asserts both halves
+- [x] Lock scope is one series, so two entities or two document types never contend. An invoice and a credit note draw from different series and start their own chains; a check asserts the credit note is index 1 with the genesis hash while the invoice series is already running
+The concurrency proof itself is `PF-094`, and it is what turns all of the above from arguments into measurements.
 
 ### PF-094 · The gapless concurrency proof
 `Sales` · **5 pts** · depends: PF-093 · standards: — · `risk:high`
@@ -73,20 +76,23 @@ The single most important test in the suite, and the one that fails if someone "
 
 Five concerns, one transaction. It either all happens or none of it does.
 
-- [ ] In order: validate, compute and freeze totals, apply the posting rule, allocate the number, write the hash-chain link, commit - then dispatch the post-commit jobs
-- [ ] The journal posting is synchronous and inside the transaction; the PDF render, the delivery and the clearance submission are queued after commit
-- [ ] A failure at any point leaves no number consumed, no posting and no document in an issued state
-- [ ] The issued event carries enough for every downstream consumer without re-reading, so a consumer cannot observe a half-written document
-- [ ] A test injects a failure at each of the five steps and asserts the system state afterwards in each case
+- [x] In order: validate, compute and freeze totals, apply the posting rule, allocate the number, write the hash-chain link, commit - then dispatch the post-commit jobs. Validation runs **inside** the transaction rather than before it, because the period could close and a registration could lapse between a check and a write, and the check that passed is the one somebody would quote afterwards
+- [x] The journal posting is synchronous and inside the transaction; the PDF render, the delivery and the clearance submission are queued after commit. Returned rather than queued: a job dispatched inside a transaction that then rolls back is a job about a document that never existed
+- [x] A failure at any point leaves no number consumed, no posting and no document in an issued state. Five injected failures, each asserting the series counter, the journal-entry count and the document's status afterwards
+- [x] **The hash is taken over the stored row, not over the model that wrote it.** Measured: hashing the in-memory attributes froze `totals.prepaid` as absent while the row holds `0.0000`, and three genuine documents - issued through the real path, untouched afterwards - were reported as diverging at `totals.prepaid`. A verifier that cries tampering over a column default is a verifier nobody runs twice. The issuer re-reads the row first, and a check issues from a deliberately unread draft to prove it
+- [x] The issued event carries enough for every downstream consumer without re-reading, so a consumer cannot observe a half-written document. The audit record carries the number, the gross, the hash, the chain index and the journal entry id, and a check asserts all five
+- [x] A test injects a failure at each of the five steps and asserts the system state afterwards in each case. Three are reachable from outside and are checks: validation (four shapes), the freeze (a customer with no legal name), and the posting rule (a line with no revenue account). The allocation and the chain write cannot be made to fail from outside without changing the code, so they are covered by the bite loop instead - moving the allocation earlier and off the transaction, and making the chain link always claim the genesis, each turn a check red
 
 ### PF-096 · The hash chain
 `Sales` · **5 pts** · depends: PF-095 · standards: SHA-256, XML C14N, RFC 8785 · `risk:high` `type:compliance`
 
-- [ ] `canonical_hash`, `previous_hash` and `chain_index` per issued document, per series
-- [ ] The hash covers the legally significant fields only, canonicalized, so a cosmetic change cannot invalidate a chain and a material one cannot avoid it
-- [ ] `invoices:verify-chain` re-walks a series and reports the **first** divergence, with the document and the field that differs
-- [ ] Runs nightly and alerts on divergence
-- [ ] Documented clearly: the chain proves internal consistency, **not** authorship. A cryptographic seal is a separate step (`PF-124`)
+- [x] `canonical_hash`, `previous_hash` and `chain_index` per issued document, per series, with a CHECK that the three are present or absent together - a document with a hash and no position in the chain cannot be walked to
+- [x] The hash covers the legally significant fields only, canonicalized, so a cosmetic change cannot invalidate a chain and a material one cannot avoid it. Asserted in both directions: the frozen bytes must contain the number, the totals, both parties, the lines, the breakdown and the tax decision, and must **not** contain the note, the timestamps, the presentation exponent or who issued it. A chain that breaks when somebody fixes a typo is a chain people learn to ignore
+- [x] The canonical form is **stored**, not only hashed. A verifier holding a hash alone can say "this is not what it was", which is true and unhelpful; holding the bytes it can say the first field that differs, its old value and its new one
+- [x] `invoices:verify-chain` re-walks a series and reports the **first** divergence, with the document and the field that differs. The checks are ordered deliberately: the index gap first, then the previous-hash link, then whether the stored bytes hash to the stored hash - the frozen bytes having been edited is a different and louder fact than the document having changed - and only then the field-by-field comparison
+- [x] A document removed from the middle of a series is caught as a gap, not as a content mismatch. "Index 3 is missing" is the finding an auditor acts on; "document 4 does not match its bytes" is not
+- [x] Documented clearly: the chain proves internal consistency, **not** authorship. Anyone who can write to this database can recompute a chain from a tampered document onward and the result verifies. A check asserts both the verifier and the command say so, because a system trusted for something it cannot do is worse than no system. The cryptographic seal is PF-124
+- [ ] Runs nightly and alerts on divergence - the command is here and exits non-zero; the schedule belongs with the rest of the scheduled work in Phase 13
 
 ### PF-097 · Credit notes
 `Sales` · **5 pts** · depends: PF-095 · standards: UNCL 1001 (`381`) · `type:posting`

@@ -1,0 +1,26 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Providers;
+
+use App\Tenant\Ledger\Posting\PostingRuleRegistry;
+use App\Tenant\Sales\Posting\Rules\InvoiceIssuedRule;
+use Illuminate\Support\ServiceProvider;
+
+/**
+ * Registers the sales posting rules - PF-095.
+ *
+ * A provider of its own for the same reason the tax one has one: the layering
+ * ruleset lets Sales depend on Ledger and not the reverse, and registering a
+ * sales rule from `LedgerServiceProvider` would make the ledger's own wiring
+ * import from the sales module. Deptrac does not inspect providers, so the
+ * violation would be invisible to the check that exists to catch it.
+ */
+final class SalesServiceProvider extends ServiceProvider
+{
+    public function boot(): void
+    {
+        $this->app->make(PostingRuleRegistry::class)->register(new InvoiceIssuedRule());
+    }
+}

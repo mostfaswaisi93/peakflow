@@ -55,7 +55,7 @@ final class Invoice extends TenantModel
         'net_amount', 'tax_amount', 'gross_amount', 'prepaid_amount', 'payable_amount',
         'presentation_exponent', 'supplier_snapshot', 'customer_snapshot',
         'terms_snapshot', 'tax_decision_snapshot',
-        'issued_at', 'issued_by', 'canonical_hash', 'previous_hash', 'chain_index',
+        'issued_at', 'issued_by', 'canonical', 'canonical_hash', 'previous_hash', 'chain_index',
         'profile', 'note', 'created_by',
     ];
 
@@ -166,6 +166,17 @@ final class Invoice extends TenantModel
     public function displayed(string $amount): string
     {
         return (string) Money::of($amount, $this->currency)->toPresentation();
+    }
+
+    /**
+     * The bytes the hash was taken over - PF-096.
+     *
+     * Stored rather than recomputed, so a divergence report can name the
+     * field that changed rather than only that something did.
+     */
+    public function canonicalForm(): ?string
+    {
+        return $this->canonical === null ? null : (string) $this->canonical;
     }
 
     /** The due dates the payment terms produced, frozen at issue. */

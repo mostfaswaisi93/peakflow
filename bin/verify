@@ -41,6 +41,7 @@ declare(strict_types=1);
  |   php bin/verify ops        the tenant lifecycle on screen, and what it refuses
  |   php bin/verify tax        tax categories, and rates that are effective-dated
  |   php bin/verify charts     the chart templates, and the charts they produce
+ |   php bin/verify sales      the invoice: what a draft refuses, and what issuing guarantees
  |   php bin/verify property   the balanced-entry invariant over generated entries
  |   php bin/verify group      inter-entity postings across a four-entity group
  |   php bin/verify manual     manual journal entry: validation, templates, import
@@ -188,8 +189,12 @@ if ($only === 'all' || $only === 'tax') {
     $suites['Return filing'] = $suite(static fn (): array => (new Tests\Support\ReturnFilingRules())->all());
     $suites['Return adjustments'] = $suite(static fn (): array => (new Tests\Support\ReturnAdjustmentRules())->all());
     $suites['Tax reconciliation'] = $suite(static fn (): array => (new Tests\Support\TaxReconciliationRules())->all());
+}
 
+if ($only === 'all' || $only === 'sales') {
     $suites['Invoice schema'] = $suite(static fn (): array => (new Tests\Support\InvoiceSchemaRules())->all());
+    $suites['Invoice validation'] = $suite(static fn (): array => (new Tests\Support\InvoiceValidationRules())->all());
+    $suites['Issuing a document'] = $suite(static fn (): array => (new Tests\Support\InvoiceIssuingRules())->all());
 }
 
 if ($only === 'all' || $only === 'ops') {

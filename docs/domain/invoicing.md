@@ -54,15 +54,26 @@ A test changes a party's name, a tax rate and a payment term after issue and ass
 
 ```php
 // Inside the issuing transaction, as the LAST step before commit.
-$series = NumberSeries::query()
-    ->where('entity_id', $entity->id)
-    ->where('series_id', $seriesId)
-    ->where('period_year', $year)
-    ->lockForUpdate()          // SELECT ... FOR UPDATE
-    ->firstOrFail();
+// App\Tenant\Ledger\Services\NumberAllocator::next()
+$series = $connection->table('number_series')
+    ->where('entity_id', $entityId)
+    ->where('scope', $scope)        // 'sales_document'
+    ->where('key', $key)            // 'INV', 'CRN', ...
+    ->where('year', $date->year)    // only where the series resets annually
+    ->lockForUpdate()               // SELECT ... FOR UPDATE
+    ->first();
 
-$number = $series->next_number;
-$series->increment('next_number');
+$number = (int) $series->next_number;
+
+// The counter and the issuance record move in ONE statement under the lock:
+// if the count could be written separately it would eventually be written
+// separately, and the gap check compares the two against each other.
+$connection->table('number_series')->where('id', $series->id)->update([
+    'next_number' => $number + 1,
+    'last_issued_number' => $number,
+    'issued_count' => DB::raw('issued_count + 1'),
+    'last_issued_at' => now(),
+]);
 ```
 
 Three rules, each with a comment at the call site:
@@ -70,6 +81,10 @@ Three rules, each with a comment at the call site:
 1. **`nextval()` cannot be used.** A PostgreSQL sequence is deliberately non-transactional: it does not lock, and a rollback does not return the number. That is right for a surrogate key and wrong for a legal sequence — it would leave a gap on every validation failure, deadlock, crash and retry.
 2. **Allocate last.** Validation, tax computation and the posting rule all succeed first, so the series lock is held for one `UPDATE` rather than for the transaction's duration.
 3. **No I/O under the lock.** No PDF render, no clearance call, no mail. A tax authority that takes thirty seconds to answer must not hold the invoice sequence for thirty seconds.
+
+Rule 2 is asserted by **reading the issuer's source**, with its comments stripped so the file's own reasoning cannot satisfy its own check. That is deliberate: moving the allocation to the top of the transaction does not produce a single gap — the transaction still returns the number on failure — it serialises every invoice in the entity behind the slowest document anybody is issuing. The damage is invisible to any functional test and to every user until the day it is not.
+
+Rule 3 is asserted twice: there is no `dispatch()`, `Http::`, `Mail::` or render in the issuer at all, and `Issuer::afterCommit()` returns the three post-commit jobs for the caller to queue. A job dispatched inside a transaction that then rolls back is a job about a document that never existed.
 
 **`PF-094` is the proof**: 200 invoices from 20 parallel workers against one series, asserting the numbers are exactly `1..200`. Variants assert that a third failing after the lock point leaves the rest gapless, that two series do not block each other, and that a crashed worker consumes no number.
 
@@ -85,11 +100,42 @@ document.chain_index    = previous .chain_index + 1
 
 Canonicalization is RFC 8785 (JCS) for the JSON form and XML C14N 1.1 for the XML forms, so the hash is stable across PHP versions, key insertion order and locale — asserted by test.
 
+**The canonical bytes are stored, not only hashed.** A verifier holding a hash alone can say "this is not what it was", which is true and useless. Holding the bytes, `invoices:verify-chain` names the first field that differs, what it was and what it is now.
+
+**The hash is taken over the stored row, not over the model that wrote it.** Measured while building this: hashing the in-memory attributes froze `totals.prepaid` as absent, while the row holds the column default `0.0000` — and three genuine documents, issued through the real path and untouched afterwards, were reported as diverging at `totals.prepaid`. A verifier that cries tampering over a column default is a verifier nobody runs twice. The issuer re-reads the row before hashing, and a check issues from a deliberately unread draft to keep it that way.
+
+**What is checked, in order**, because the order decides what the report is worth:
+
+1. **The chain index**, so a gap reads as "index 3 is missing" — the finding an auditor acts on — rather than as a content mismatch on the document after it.
+2. **The previous hash**, so a broken link is named at the document that broke it.
+3. **The stored bytes against the stored hash**, because the frozen bytes having been edited is a different and louder fact than the document having changed.
+4. **Field by field**, last, against a recomputation from the row as it stands now.
+
 **What the chain proves:** insertion, deletion and alteration are detectable. Changing any document invalidates every hash after it; removing one breaks the link.
 
 **What it does not prove:** authorship. It is internal consistency, not a signature. Where a jurisdiction requires a cryptographic seal — ZATCA's stamp, an eIDAS qualified seal — that is a separate step performed in the `Exchange` plane with a key in a KMS or HSM.
 
-`invoices:verify-chain` re-walks a series and reports the **first** divergence with the document and the differing field. It runs nightly and alerts.
+`invoices:verify-chain` re-walks a series and reports the **first** divergence with the document and the differing field, and exits non-zero. Scheduling it nightly belongs with the rest of the scheduled work in Phase 13.
+
+## What a draft refuses before any of this
+
+Validation is the step before the number, and it runs **inside** the issuing transaction as well as continuously while editing — because the period can close and a registration can lapse between a check and a write, and the check that passed is the one somebody would quote afterwards.
+
+Findings are addressed to a field (`lines.3.tax_code_id`), not phrased as a sentence about the document ("a line has no tax code"). On a fifty-line invoice that difference is twenty minutes.
+
+Blocking and advisory are separate lists. `blocking()` is what the issuer consults; an advisory finding is reported and stops nothing:
+
+| Finding | Why it blocks, or does not |
+|---|---|
+| `no_lines`, `net_does_not_match_the_lines`, `breakdown_does_not_sum_to_the_tax` | Blocks. EN 16931 BR-CO-14, and a document whose totals do not tie is a document in dispute |
+| `line_without_a_tax_code`, `line_without_a_tax_point` | Blocks. A return is assembled from codes and tax points; a line without them is computed and then dropped |
+| `place_of_supply_unresolved` | Blocks. A default would issue a document in a jurisdiction nobody chose |
+| `exemption_reason_missing` | Blocks. BT-121. An invoice that says 0% with no reason cannot be defended |
+| `party_is_not_a_customer`, `party_was_merged`, `no_customer` | Blocks. A document addressed to a party nobody sells to, or to one that no longer exists |
+| `period_is_not_open`, `return_period_will_not_take_it` | Blocks. A document in a filed period is a correction, which is `PF-087`'s procedure, not an invoice |
+| `currency_is_not_enabled`, `foreign_currency_without_a_rate` | Blocks. A foreign-currency document with no rate has no functional-currency value to post |
+| `reverse_charge_without_a_registration` | Blocks. Reverse charge shifts the liability to a counterparty who must be registered to receive it |
+| `evidence_required` | **Advisory.** A zero-rated export whose shipping paperwork has not arrived yet is still an invoice the business has to send. The gate is `PF-080`, at return time |
 
 ## Recurring billing
 

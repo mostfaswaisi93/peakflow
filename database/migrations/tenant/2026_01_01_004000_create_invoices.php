@@ -141,6 +141,20 @@ return new class extends Migration
             $table->timestampTz('issued_at')->nullable();
             $table->char('issued_by', 26)->nullable();
 
+            /*
+             | The canonical form the hash was taken over - PF-096.
+             |
+             | Stored, not just hashed. A hash tells you that something
+             | changed; the canonical form tells you WHAT, which is what the
+             | criterion asks for - the divergence report has to name the
+             | field, and a verifier holding only a hash can say nothing
+             | beyond "this document is not what it was".
+             |
+             | The same decision as the return filing in PF-086, for the same
+             | reason: six years later, the bytes are the evidence.
+             */
+            $table->text('canonical')->nullable();
+
             // PF-096 fills these inside the same transaction.
             $table->char('canonical_hash', 64)->nullable();
             $table->char('previous_hash', 64)->nullable();
@@ -186,8 +200,27 @@ return new class extends Migration
             // After line-level allowances and charges - EN 16931 BT-131.
             $table->decimal('net_amount', 21, 4);
 
+            /*
+             | Where the credit goes - resolved at draft time, frozen here.
+             |
+             | The item's per-entity default is the usual source, and a line
+             | with no item has no default to read: a free-text line still has
+             | to post somewhere, and leaving the posting rule to guess is how
+             | revenue ends up in a suspense account.
+             */
+            $table->foreignUlid('revenue_account_id')->nullable()->constrained('accounts')->restrictOnDelete();
+
             $table->foreignUlid('tax_code_id')->nullable()->constrained('tax_codes')->nullOnDelete();
-            $table->char('tax_category', 3);
+            /*
+             | `varchar`, not `char`.
+             |
+             | A UNCL 5305 code is one or two characters - `S`, `AE`, `K` -
+             | and `char(3)` blank-pads it to `'S  '`, which then fails to
+             | cast back to the enum. Measured: the first invoice issued
+             | through the real path died on "S  " is not a valid backing
+             | value. The fixed-width column looked tidier and was wrong.
+             */
+            $table->string('tax_category', 3);
             $table->decimal('tax_rate', 9, 6);
             $table->date('tax_point')->nullable();
 
@@ -215,7 +248,7 @@ return new class extends Migration
             $table->char('entity_id', 26);
             $table->foreignUlid('invoice_id')->constrained()->cascadeOnDelete();
 
-            $table->char('category', 3);
+            $table->string('category', 3);
             $table->decimal('rate', 9, 6);
 
             $table->decimal('taxable_amount', 21, 4);
@@ -251,7 +284,7 @@ return new class extends Migration
 
             // An allowance carries its own tax treatment where it is applied
             // before tax - EN 16931 BT-95/BT-102.
-            $table->char('tax_category', 3)->nullable();
+            $table->string('tax_category', 3)->nullable();
             $table->decimal('tax_rate', 9, 6)->nullable();
 
             $table->timestamps();
@@ -338,7 +371,8 @@ return new class extends Migration
                     CHECK (canonical_hash IS NULL OR canonical_hash ~ '^[0-9a-f]{64}\$'),
 
                 ADD CONSTRAINT invoices_chain_is_complete
-                    CHECK ((canonical_hash IS NULL) = (chain_index IS NULL)),
+                    CHECK ((canonical_hash IS NULL) = (chain_index IS NULL)
+                        AND (canonical_hash IS NULL) = (canonical IS NULL)),
 
                 /*
                  | An FX rate comes with its direction and its source, or not
