@@ -28,6 +28,13 @@ final class EntitySwitchController
 {
     public function __construct(private readonly AuditLog $audit) {}
 
+    /**
+     * @no-permission-required: switching is authorized by the GRANTS rather
+     * than by a permission - the entity must appear in entitiesForSwitcher(),
+     * which reads the user's roles and excludes closed entities, and the
+     * refusal below is that check. There is no `entity.switch` permission to
+     * hold, because the right to act in an entity IS holding a role in it.
+     */
     public function __invoke(Request $request): RedirectResponse
     {
         $user = $request->user();

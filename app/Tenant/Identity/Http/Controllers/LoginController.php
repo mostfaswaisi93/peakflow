@@ -70,6 +70,10 @@ final class LoginController
         ]);
     }
 
+    /**
+     * @no-permission-required: this IS authentication. Requiring a permission
+     * to sign in would require being signed in to sign in.
+     */
     public function store(Request $request): RedirectResponse
     {
         $credentials = $request->validate([
@@ -157,6 +161,10 @@ final class LoginController
         return redirect()->intended(route('home'));
     }
 
+    /**
+     * @no-permission-required: a user may always end their own session, and a
+     * sign-out that can be refused is a way to keep someone signed in.
+     */
     public function destroy(Request $request): RedirectResponse
     {
         $user = $request->user();

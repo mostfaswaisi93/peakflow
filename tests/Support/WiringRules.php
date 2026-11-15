@@ -57,6 +57,7 @@ final class WiringRules
             'the plan gate refuses with an upgrade path, not a 403' => $this->planGateOffersAnUpgrade(),
             'every reporting command actually runs' => $this->reportingCommandsRun(),
             'the login form is not an account oracle' => $this->loginIsNotAnOracle(),
+            'every route that writes checks a permission' => $this->writingRoutesAuthorize(),
             'every operator route is guarded' => $this->operatorRoutesAreGuarded(),
             'no operator route can reach a tenant connection' => $this->operatorRoutesAvoidTenants(),
         ];
@@ -344,6 +345,158 @@ final class WiringRules
         }
 
         return $violations;
+    }
+
+    /**
+     * Every route that WRITES must authorize - PF-028.
+     *
+     * `auth` proves somebody is signed in. It proves nothing about whether
+     * this particular person may do this particular thing, and a navigation
+     * item hidden from them is not access control - it is a hint, and the URL
+     * is still there.
+     *
+     * The check accepts any of the real authorization mechanisms: a `can:`
+     * middleware, a Gate call, a policy `authorize()`, the step-up guard, or
+     * the SoD engine. What it refuses is a write route that does none of
+     * them, and an explicit annotation is the way to say a route genuinely
+     * needs none - with the reason, next to the code.
+     *
+     * Static analysis of the handler source, because the question is whether
+     * the code performs a check, not whether a check happens to pass for
+     * whoever is signed in while the suite runs.
+     *
+     * @return list<string>
+     */
+    public function writingRoutesAuthorize(): array
+    {
+        $writes = ['POST', 'PUT', 'PATCH', 'DELETE'];
+        $violations = [];
+
+        foreach (Route::getRoutes() as $route) {
+            if (array_intersect($writes, $route->methods()) === []) {
+                continue;
+            }
+
+            $middleware = $route->gatherMiddleware();
+
+            // A `can:` or `step-up:` middleware is authorization, stated on
+            // the route itself.
+            $declaredOnRoute = array_filter(
+                $middleware,
+                static fn (mixed $entry): bool => is_string($entry)
+                    && (str_starts_with($entry, 'can:') || str_starts_with($entry, 'step-up:')),
+            );
+
+            if ($declaredOnRoute !== []) {
+                continue;
+            }
+
+            /*
+             | Our code only, decided by where the handler LIVES rather than
+             | by its namespace - the routes that matter here are registered
+             | as closures by packages and carry no class name to test.
+             |
+             | Livewire's component endpoints authorize inside the components
+             | themselves. Laravel's `storage.local.upload` is a signed-URL
+             | route: `ReceiveFile` calls `abort_unless()` on the signature
+             | before writing anything, which I read rather than assumed.
+             |
+             | Annotating someone else's code would mean editing vendor files
+             | or keeping a list here that goes stale on their next release.
+             */
+            if ($this->handlerIsVendor($route)) {
+                continue;
+            }
+
+            $source = $this->handlerSource($route);
+
+            if ($source === null) {
+                $violations[] = sprintf(
+                    '%s %s has no readable handler, so whether it authorizes cannot be established',
+                    implode('|', array_intersect($writes, $route->methods())),
+                    $route->uri(),
+                );
+
+                continue;
+            }
+
+            $authorizes = (bool) preg_match(
+                '/->can\(|Gate::|authorize\(|StepUpGuard|SodEngine|->assert\(|@no-permission-required/',
+                $source,
+            );
+
+            if (! $authorizes) {
+                $violations[] = sprintf(
+                    'POST %s performs no authorization - being signed in is not permission to do this. Add a '.
+                    '`can:` middleware, call the Gate, or annotate the handler with '.
+                    '@no-permission-required: <why>',
+                    $route->uri(),
+                );
+            }
+        }
+
+        return $violations;
+    }
+
+    /** Does this route's handler live in vendor/? */
+    private function handlerIsVendor(\Illuminate\Routing\Route $route): bool
+    {
+        $file = $this->handlerFile($route);
+
+        return $file !== null && str_contains($file, '/vendor/');
+    }
+
+    private function handlerFile(\Illuminate\Routing\Route $route): ?string
+    {
+        try {
+            $action = $route->getAction('uses');
+
+            $reflection = match (true) {
+                is_string($action) && str_contains($action, '@') => new \ReflectionMethod(...explode('@', $action, 2)),
+                is_string($action) && class_exists($action) => new \ReflectionMethod($action, '__invoke'),
+                $action instanceof \Closure => new \ReflectionFunction($action),
+                default => null,
+            };
+
+            $file = $reflection?->getFileName();
+
+            return is_string($file) ? $file : null;
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    /** The source of a route's handler - a controller method, or a closure's file. */
+    private function handlerSource(\Illuminate\Routing\Route $route): ?string
+    {
+        try {
+            $action = $route->getAction('uses');
+
+            if (is_string($action) && str_contains($action, '@')) {
+                [$class, $method] = explode('@', $action, 2);
+                $reflection = new \ReflectionMethod($class, $method);
+            } elseif (is_string($action) && class_exists($action)) {
+                $reflection = new \ReflectionMethod($action, '__invoke');
+            } elseif ($action instanceof \Closure) {
+                $reflection = new \ReflectionFunction($action);
+            } else {
+                return null;
+            }
+
+            $file = $reflection->getFileName();
+
+            if ($file === false || ! is_file($file)) {
+                return null;
+            }
+
+            $lines = file($file) ?: [];
+            $start = max(0, $reflection->getStartLine() - 12); // include the docblock
+            $length = $reflection->getEndLine() - $start;
+
+            return implode('', array_slice($lines, $start, $length));
+        } catch (Throwable) {
+            return null;
+        }
     }
 
     /**

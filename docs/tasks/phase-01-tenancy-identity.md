@@ -22,7 +22,7 @@ The identity work in this phase is not generic authentication. It is the part of
 - [x] `tenants:provision` issues `CREATE DATABASE`, `CREATE ROLE`, `GRANT`, runs the tenant migrations and seeds the baseline
 - [x] Each tenant gets its own database **role** with a generated password, not a shared one
 - [x] The whole provision is idempotent and transactional at the step level: a failure half way leaves no orphan database and no half-registered tenant
-- [ ] A rollback path drops what it created, and is tested by injecting a failure at each step
+- [x] A rollback path drops what it created, and is tested by injecting a failure at each step
 - [x] Provisioning runs as `peakflow_migrator`, never as the application role
 
 ### PF-020 · Tenant provisioning, link mode
@@ -101,7 +101,7 @@ Two independent mechanisms, because one of them will eventually have a hole.
 
 - [x] Verb-shaped permissions, grouped by module: `invoice.draft`, `invoice.issue`, `credit_note.issue`, `bill.create`, `bill.approve`, `payment.prepare`, `payment.release`, `journal.post`, `journal.reverse`, `period.close`, `period.reopen`, `bank.import`, `bank.reconcile`, `reconciliation.write_off`, `supplier.bank_details.update`, `report.view`, `tax_return.file`, `settings.manage`, `user.manage`
 - [x] Each carries a plain-language bilingual description, because a role screen listing keys is unusable by the person who should be configuring it
-- [ ] A test asserts every route that writes checks a permission - `auth` only proves someone is signed in, and a hidden navigation item is not access control
+- [x] A test asserts every route that writes checks a permission - `auth` only proves someone is signed in, and a hidden navigation item is not access control
 - [x] Seeded roles: `owner`, `controller`, `accountant`, `ap_clerk`, `ar_clerk`, `auditor` (read-only), each a defensible real-world bundle
 
 ### PF-029 · Session and device hardening

@@ -21,6 +21,7 @@ declare(strict_types=1);
  |   php bin/verify arch       architecture rules only (source files)
  |   php bin/verify wiring     wiring rules only (the booted application)
  |   php bin/verify tenant     what the tenant database actually enforces
+ |   php bin/verify rollback   provisioning rollback, by injecting a failure at each step (slow)
  |   php bin/verify examples   worked examples only
  |
  | Exits non-zero on any violation.
@@ -60,6 +61,15 @@ if ($only === 'all' || $only === 'wiring') {
     $suites['Wiring'] = (new Tests\Support\WiringRules($app))->all();
 }
 
+/*
+ | Not in `all`: it provisions five times, each creating and dropping a real
+ | database and role. Slow and cluster-writing checks that run on every quick
+ | verify are checks people stop running.
+ */
+if ($only === 'rollback') {
+    $suites['Provisioning rollback'] = (new Tests\Support\ProvisioningRollbackRules())->all();
+}
+
 if ($only === 'all' || $only === 'tenant') {
     $suites['Tenant enforcement'] = (new Tests\Support\TenantEnforcementRules())->all();
 }
@@ -69,7 +79,7 @@ if ($only === 'all' || $only === 'examples') {
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | examples\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | examples | rollback\n");
     exit(2);
 }
 

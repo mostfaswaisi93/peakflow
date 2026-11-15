@@ -32,6 +32,7 @@ final class OpsLoginController
         return view('ops.login');
     }
 
+    /** @no-permission-required: this IS authentication, on the operator plane. */
     public function store(Request $request): RedirectResponse
     {
         $credentials = $request->validate([
@@ -90,6 +91,7 @@ final class OpsLoginController
         return redirect()->intended(route('ops.tenants'));
     }
 
+    /** @no-permission-required: an operator may always end their own session. */
     public function destroy(Request $request): RedirectResponse
     {
         $operator = auth()->guard('ops')->user();

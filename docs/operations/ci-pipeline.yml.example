@@ -201,6 +201,20 @@ jobs:
       - name: Feature suite
         run: php artisan test --testsuite=feature --coverage --min=85
 
+      # The rule sets that need no test runner. They are the same checks the
+      # PHPUnit wrappers call - one implementation, two callers - so this step
+      # is what keeps them honest in an environment where the dev tooling
+      # cannot be installed.
+      - name: Enforcement checks
+        run: php bin/verify
+
+      # Deliberately separate and deliberately not in `php bin/verify`: it
+      # provisions five times, injecting a failure at each step, and each
+      # attempt creates and drops a real database and role. Slow, and it
+      # writes to the cluster.
+      - name: Provisioning rollback
+        run: php bin/verify rollback
+
   # --------------------------------------------------------- concurrency ----
   concurrency-suite:
     name: Concurrency

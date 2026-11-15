@@ -53,6 +53,15 @@ final class OpsTenantController
      * see the workspace-unavailable page, and nothing of theirs is deleted or
      * altered.
      */
+    /**
+     * @no-permission-required: KNOWN LIMITATION, not an exemption on merit.
+     *
+     * The operator plane has no role model - every operator is a full
+     * administrator, so any of them can suspend any customer. That is a real
+     * gap and it is recorded as an open item in PF-036 rather than hidden
+     * behind this annotation. What exists today: `auth:ops`, a mandatory
+     * written reason, and an activity-log row naming who did it.
+     */
     public function setStatus(Request $request, Tenant $tenant): RedirectResponse
     {
         $validated = $request->validate([
