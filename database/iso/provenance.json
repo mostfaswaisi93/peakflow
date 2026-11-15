@@ -68,6 +68,18 @@
             "unverified": "nothing. Every column either is a product decision or was checked against ICU in-process",
             "note": "`numbering` is the locale's own system (arab for Arabic). It is NOT what a formatter is handed: financial documents in the region conventionally use Western digits even in Arabic text, so the display default is latn and the departure is recorded in config/money.php",
             "sha256": "425ec033d908463142e464962ec69f837e4d25a3fb75cd96ea32a56c32793427"
+        },
+        "iban.tsv": {
+            "standard": "ISO 13616",
+            "table": "per-country IBAN length, with a published registry example per country",
+            "publisher": "SWIFT, as the ISO 13616 registration authority",
+            "obtained": "transcribed; not downloaded in this environment",
+            "rows": 87,
+            "cross_checked": "every one of the 80 examples was put through MOD 97-10 before being committed, and all 80 are accepted by the Iban constructor on every bin/verify run. The check digits are a checksum over the whole string, so a validating example is a string that is right to about 1 part in 97 - which makes the example an independent check on the length column: a wrong length would refuse the country's own published IBAN",
+            "unverified": "the lengths of the 7 countries with no sourced example (BI, DJ, MN, NI, RU, SD, SO). bin/verify iban counts them and the count may shrink but not grow",
+            "dropped": "one candidate example failed MOD 97-10 and was dropped rather than corrected. A corrected example is no longer a registry vector, it is a computed one, and a computed one cannot confirm a length",
+            "not_here": "the BBAN structure per country. A structure table taken from memory would refuse real bank accounts, and refusing a customer's genuine IBAN stops them being paid, where accepting a structurally odd one that passes MOD 97-10 costs a rejected payment message with a reason. Deferred to Phase 06, against the registry file itself",
+            "sha256": "42ab8b23aba9721b7cd7d2af80b91ea7bf15785830a11e923791316dbdedd91d"
         }
     }
 }

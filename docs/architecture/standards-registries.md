@@ -283,3 +283,165 @@ the thing it guards is broken:
 | Every served locale is one the product is translated into | Declaring Arabic with two plural forms |
 | Arabic-first survives an empty environment | Restoring the skeleton's `env('APP_LOCALE', 'en')` |
 | A unit knows what it measures, and refuses the ones it does not | Adding `KTM` back |
+
+---
+
+# Bank account identifiers
+
+> `database/iso/iban.tsv` · `App\Support\Iso\Iban`, `IbanRegistry`, `Domestic\*` · PF-008 · `bin/verify iban`
+
+## The example is the length table's only check
+
+The IBAN lengths were a `const LENGTHS` array inside `Iban` with the comment
+*"Provenance: IBAN Registry, SWIFT"* above it and nothing confirming any of the
+87 numbers.
+
+A wrong length there does not fail safe. It refuses every IBAN for that country
+with a message about **the length being wrong** - which reads as the customer's
+account being wrong rather than as our table being wrong, and the customer is
+the one who gets told.
+
+So every row now carries a published ISO 13616 example, and the example checks
+the length arithmetically: if the length were wrong, the country's own published
+IBAN would be refused by the constructor. 80 of the 87 countries have one, and
+`bin/verify iban` puts all 80 through the real constructor on every run. Biting
+`JO`'s length from 30 to 29 fails three rules by name.
+
+### How the examples were themselves checked
+
+Each candidate was put through MOD 97-10 before it was committed. That is a real
+check and not a formality: the two check digits are a checksum over the whole
+rest of the string, so a remembered IBAN whose check digits validate is a string
+that is right to roughly 1 part in 97. 80 of 81 candidates validated.
+
+The one that did not - a Somali example - was **dropped rather than corrected**.
+A corrected example is no longer a registry vector, it is a computed one, and a
+computed one cannot confirm a length: it was computed *from* the length.
+
+Seven countries have no sourced example - `BI`, `DJ`, `MN`, `NI`, `RU`, `SD`,
+`SO` - so their lengths are unconfirmed. A check asserts that list exactly: it
+may shrink, and it may not grow.
+
+### Then each example is broken, the two ways people break one
+
+| Mutation | Asserted | Why |
+|----------|----------|-----|
+| One character changed | Refused, 80/80 | MOD 97-10 detects every single-character substitution |
+| Two adjacent characters swapped | Refused, 80/80 | A transposition is the most common error in a hand-copied account number |
+
+The transposition case picks the first two *adjacent and different* characters
+rather than a fixed position. Several registry examples are long runs of zeros,
+and swapping two identical characters produces the same string - so a fixed
+position would have silently asserted nothing for those countries.
+
+## What is deliberately not validated: the BBAN structure
+
+ISO 13616 also defines each country's internal structure - `SA` is two digits
+then eighteen alphanumerics. PeakFlow does not check it, and that is a decision
+about which failure is worse.
+
+A structure table taken from memory would **refuse real bank accounts**.
+Refusing a customer's genuine IBAN stops them being paid; accepting a
+structurally odd one that passes MOD 97-10 costs a rejected payment message,
+later, with a reason attached. The second is recoverable and the first is not.
+
+So the structure check waits for Phase 06, where the e-invoicing validators are
+built against the registry file itself rather than against a recollection of it.
+
+## Where IBAN does not apply
+
+Most of the world outside the IBAN area still has to be paid, and the form that
+asks for an IBAN and falls back to a free-text "account number" field has given
+up: a US routing number typed into free text is nine digits nobody checked, and
+the ABA checksum that would have caught the transposition never ran.
+
+Four schemes, with what each can and cannot detect stated rather than implied:
+
+| Scheme | Shape | Check available |
+|--------|-------|-----------------|
+| US routing number | 9 digits | **ABA check digit** plus the Federal Reserve prefix ranges |
+| UK sort code | 6 digits, `12-34-56` | None implemented - see below |
+| Australian BSB | 6 digits, `082-039` | None exists; `00` bank segment refused |
+| Indian IFSC | `AAAA0NNNNNN` | The reserved zero in position five |
+
+`DomesticScheme::hasCheckDigit()` exists so a form can act on the difference.
+Without a check digit, reading the number back - or asking for it twice - is the
+only defence against a transposed digit, and a form that believes the value was
+validated will offer neither.
+
+`GB` is the one deliberate overlap: it has an IBAN *and* its domestic payments
+are addressed by sort code, so an invoice to a UK customer carries both. A check
+asserts no other country has both, because two validators on one field with no
+rule about which wins is a field that accepts whichever the caller tried first.
+
+### The UK sort code has no check, and says so
+
+The UK does have a real check - VocaLink's modulus checking, which validates the
+sort code *together with* the account number using per-sort-code weights from
+the published `valacdos` table, with its own exception rules. PeakFlow does not
+implement it, because implementing it means shipping that weight table, and a
+weight table reconstructed from memory would refuse genuine accounts.
+
+The honest version of a missing check is a documented absence, not a regular
+expression dressed up as one. A caller who believes the sort code was validated
+will not double-check it; a caller who knows it was not, will.
+
+## The ABA checksum's blind spot, found by a check
+
+The first version of `UsRoutingNumber` claimed the checksum "catches every
+single-digit error and every transposition of adjacent digits". The first half is
+true. The second half is false, and the check that asserted it failed:
+
+```
+322271627  →  322721627   (the 2 and the 7 swapped)   accepted
+```
+
+The algebra: swapping adjacent digits `a` and `b` at weights `(w₁, w₂)` moves the
+weighted sum by `(w₂ − w₁)(a − b)`. The adjacent weight pairs in the repeating
+3-7-1 pattern are `(3,7)`, `(7,1)` and `(1,3)` - differences of 4, −6 and 2,
+**every one of them even**. So the swap is invisible whenever `a − b` is ±5.
+
+Checked exhaustively over all 90 ordered digit pairs at all three weight
+positions: exactly the ten pairs differing by five are undetected, and no others.
+
+Single-digit errors *are* all caught, and for a reason worth stating: a digit
+changed by `d` at weight `w` moves the sum by `w·d`, and 1, 3 and 7 are each
+coprime with 10, so no non-zero change lands back on a multiple of ten.
+
+The check now asserts the **exact shape** of the blind spot rather than its
+absence, and counts how many times it was exercised - because a corpus that
+happened to contain no two adjacent digits differing by five would let the
+exception branch sit there asserting nothing, and the documented limitation
+would quietly become a claim nobody tests.
+
+## A passing checksum is not enough
+
+`000000000` satisfies the ABA checksum: the weighted sum is zero, which is a
+multiple of ten. Measured. And a string of zeros is exactly what somebody types
+to get past a required field.
+
+So the Federal Reserve prefix is also checked. Only four ranges are allocated -
+`01`–`12` (Reserve Banks), `21`–`32` (thrifts), `61`–`72` (electronic) and `80`
+(travellers cheques) - and `00`, `13`–`20`, `33`–`60`, `73`–`79` and `81`–`99`
+are not.
+
+The first version of *that* check used numbers which did not pass the checksum,
+so it proved nothing: they would have been refused with or without the prefix
+rule. Each case is now computed to satisfy the weighted sum **and** sit in an
+unallocated range - `130000006`, `200000004`, `500000005`, `790000006`,
+`990000000` - which is the only form of the case that tests anything.
+
+## How this is checked
+
+`bin/verify iban` - twelve rules. Four proved by breaking what they guard:
+
+| Bite | Fired |
+|------|-------|
+| `JO`'s length changed from 30 to 29 | Three rules, naming the country and its published IBAN |
+| MOD 97-10 made to always return true | Both mutation rules, 80 countries each |
+| The Federal Reserve prefix check removed | All six unallocated numbers accepted |
+| The IFSC reserved zero no longer required | `SBIN1000123` accepted |
+
+One of those bites also found a defect in the suite itself: an unguarded
+`new Iban(...)` turned the `JO` bite into a stack trace instead of a finding. A
+check that cannot report is not a check.
