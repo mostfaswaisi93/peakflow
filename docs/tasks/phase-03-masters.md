@@ -9,18 +9,18 @@ The master data every document references. Two parts of this phase carry more ri
 ### PF-059 · The party model
 `Parties` · **5 pts** · depends: PF-026 · standards: — · `type:schema`
 
-- [ ] One `parties` table with **roles** (`customer`, `supplier`, `employee`, `both`), not separate customer and supplier tables - the same company is frequently both, and duplicating it guarantees the two copies diverge
-- [ ] Legal name, trading name, registration numbers, country, default currency, default language, payment terms, tax treatment
-- [ ] Parties are shared across the tenant; a party's **balances** are per entity, because a customer billed by two companies owes each of them separately
-- [ ] Soft deletes, so a party's name still resolves on a document issued years ago
+- [x] One `parties` table with **roles** (`customer`, `supplier`, `employee`, `both`), not separate customer and supplier tables - the same company is frequently both, and duplicating it guarantees the two copies diverge
+- [x] Legal name, trading name, registration numbers, country, default currency, default language, payment terms, tax treatment
+- [x] Parties are shared across the tenant; a party's **balances** are per entity, because a customer billed by two companies owes each of them separately
+- [x] Soft deletes, so a party's name still resolves on a document issued years ago
 - [ ] Merge for duplicates: re-points documents, preserves both histories, is audited and is reversible
 
 ### PF-060 · Addresses and tax registrations
 `Parties` · **3 pts** · depends: PF-059 · standards: ISO 3166-1, EN 16931, Peppol EAS
 
-- [ ] Multiple typed addresses per party: legal, billing, delivery, with the EN 16931 address terms as the shape
-- [ ] Tax registrations with jurisdiction, scheme and identifier, validated for structure where the scheme defines one
-- [ ] Electronic addressing identifiers with their **EAS** scheme code, which is what Peppol routing needs
+- [x] Multiple typed addresses per party: legal, billing, delivery, with the EN 16931 address terms as the shape
+- [x] Tax registrations with jurisdiction, scheme and identifier, validated for structure where the scheme defines one
+- [x] Electronic addressing identifiers with their **EAS** scheme code, which is what Peppol routing needs
 - [ ] A party's billing address and tax registration are **copied onto a document at issue**, never referenced - an issued invoice is a historical statement
 
 ### PF-061 · Party bank details
@@ -28,12 +28,12 @@ The master data every document references. Two parts of this phase carry more ri
 
 The highest-value fraud surface in the product.
 
-- [ ] IBAN and BIC validated on entry; domestic identifiers where IBAN does not apply
-- [ ] **Column-level encryption** at rest, separate from any disk or database encryption, with the key referenced from the KMS
-- [ ] Every change is audited with before and after, actor, time and source
-- [ ] A changed beneficiary account marks the party as **requiring re-verification**, and the next payment to it is blocked until a second user confirms the change through a channel the system did not supply
+- [x] IBAN and BIC validated on entry; domestic identifiers where IBAN does not apply
+- [x] **Column-level encryption** at rest, separate from any disk or database encryption, with the key referenced from the KMS
+- [x] Every change is audited with before and after, actor, time and source
+- [x] A changed beneficiary account marks the party as **requiring re-verification**, and the next payment to it is blocked until a second user confirms the change through a channel the system did not supply
 - [ ] Paired by SoD with `payment.release` (`PF-033`), and that pair cannot be overridden
-- [ ] Bank details never appear in a log, an export, a webhook payload or an error message - asserted by test
+- [x] Bank details never appear in a log, an export, a webhook payload or an error message - asserted by test
 
 ### PF-062 · Credit control
 `Parties` · **3 pts** · depends: PF-059 · standards: IFRS 9
@@ -47,7 +47,7 @@ The highest-value fraud surface in the product.
 ### PF-063 · Contacts and communication
 `Parties` · **2 pts** · depends: PF-059 · standards: —
 
-- [ ] Multiple contacts per party with roles (`billing`, `ap`, `primary`) and per-contact locale
+- [x] Multiple contacts per party with roles (`billing`, `ap`, `primary`) and per-contact locale
 - [ ] Document delivery preferences: which channel, which address, which language, which format
 - [ ] A document is rendered in the **recipient's** language, not the sender's, which is the whole reason locale lives on the contact
 
