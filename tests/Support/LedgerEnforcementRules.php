@@ -7,6 +7,8 @@ namespace Tests\Support;
 use App\Platform\Models\Tenant;
 use Brick\Math\BigDecimal;
 use App\Platform\Services\TenantConnectionResolver;
+use App\Tenant\Ledger\Enums\ControlRole;
+use App\Tenant\Ledger\Models\Account;
 use App\Tenant\Ledger\Enums\PeriodState;
 use App\Tenant\Ledger\Exceptions\EntryDoesNotBalance;
 use App\Tenant\Ledger\Exceptions\PeriodTransitionRefused;
@@ -19,13 +21,18 @@ use App\Tenant\Ledger\Posting\RuleDescription;
 use App\Tenant\Ledger\Services\BalanceRebuilder;
 use App\Tenant\Ledger\Services\ChartTemplate;
 use App\Support\Audit\AuditChain;
+use App\Tenant\Identity\Models\Role;
+use App\Tenant\Identity\Models\User;
+use App\Tenant\Identity\Models\UserEntityRole;
 use App\Tenant\Ledger\Services\LedgerFinding;
 use App\Tenant\Ledger\Services\LedgerVerifier;
+use App\Tenant\Ledger\Services\OpeningBalances;
 use App\Tenant\Ledger\Services\PeriodStateMachine;
 use App\Tenant\Ledger\Services\Poster;
 use App\Tenant\Ledger\Services\Reverser;
 use App\Tenant\Ledger\Services\TrialBalance;
 use App\Tenant\Ledger\Services\YearEndClose;
+use App\Tenant\Ledger\Services\AdjustingEntries;
 use App\Tenant\Ledger\Services\FiscalCalendarGenerator;
 use App\Tenant\Tenancy\Models\Entity;
 use App\Tenant\Tenancy\Services\EntityContext;
@@ -107,6 +114,8 @@ final class LedgerEnforcementRules
                 'the balance read model follows the journal, and drift is reported' => $this->balancesFollowTheJournal(),
                 'a posted entry carries a fingerprint, and a divergence is found' => $this->fingerprintsAreChecked(),
                 'the global proof includes the audit chain' => $this->theProofIncludesTheChain(),
+                'opening balances are permissioned, reasoned and time-bounded' => $this->openingBalancesAreBounded(),
+                'an adjustment lands in period 13, and the statement says so' => $this->adjustmentsAreDeclared(),
             ], $this->entityId);
         } catch (Throwable $e) {
             return ['ledger invariants could not be checked' => [
@@ -1478,12 +1487,52 @@ final class LedgerEnforcementRules
 
         $before = $this->balanceOf($trialBalance, $entity, $cashCode, $date);
 
+        /*
+         | A probe rule of its own, not the opening-balance rule.
+         |
+         | This check used to borrow `ledger.opening_balance` because it
+         | produces a one-sided set and lets the rule supply the balancing
+         | plug - convenient, and wrong once PF-038 bounded that rule to the
+         | moment before anything else is posted. The check broke, correctly,
+         | and borrowing a reserved rule to exercise reversals was always
+         | reaching past what the test needed.
+         */
+        $registry = app(PostingRuleRegistry::class);
+
+        $registry->register(new class implements PostingRule
+        {
+            public function key(): string
+            {
+                return 'probe.reversal_pair';
+            }
+
+            public function describe(): RuleDescription
+            {
+                return RuleDescription::of(
+                    $this->key(),
+                    'زوج للعكس',
+                    'A balanced pair, to be reversed',
+                    [['Dr', 'the named account', 'the amount'], ['Cr', 'retained earnings', 'the amount']],
+                );
+            }
+
+            public function lines(array $event, PostingContext $context): array
+            {
+                $amount = $context->money((string) $event['amount']);
+
+                return [
+                    PostingLine::toAccount((string) $event['debit'], $amount),
+                    PostingLine::toRole(ControlRole::RetainedEarnings, $amount->negated()),
+                ];
+            }
+        });
+
         $entry = $poster->post(
             $entity,
-            \App\Tenant\Ledger\Posting\Rules\OpeningBalanceRule::KEY,
-            ['balances' => [['account_id' => $this->accounts[$cashCode], 'amount' => '1234.5600']]],
+            'probe.reversal_pair',
+            ['debit' => $this->accounts[$cashCode], 'amount' => '1234.5600'],
             $date,
-            journalCode: 'OPN',
+            journalCode: 'GEN',
         );
 
         $afterPosting = $this->balanceOf($trialBalance, $entity, $cashCode, $date);
@@ -1677,6 +1726,536 @@ final class LedgerEnforcementRules
         }
 
         return [];
+    }
+
+    /**
+     * The one override on the control-account rule, and its window - PF-038.
+     *
+     * ## What is being claimed
+     *
+     * A control account may be reached only by a registered posting rule.
+     * Opening balances are the exception because no document produces them,
+     * and an exception with no bound is not an exception - the rule could be
+     * used in June to adjust a receivable, and the entry would be
+     * indistinguishable from the real opening balance.
+     *
+     * ## On a FRESH entity, which the first version of this did not do
+     *
+     * The first version ran every assertion against the suite's own entity,
+     * which has a dozen entries by the time this check runs - so its window
+     * was already shut and the database trigger refused everything. Every
+     * assertion passed, and removing the permission check from the service
+     * changed nothing: the refusals were all coming from the trigger, for a
+     * reason none of them was testing.
+     *
+     * So the permission, the reason and the figures are asserted while the
+     * window is OPEN, on an entity of this check's own. The window is then
+     * closed by posting something else, and the closure is asserted twice -
+     * through the service, which explains it, and through the Poster, which
+     * is what a backfill script would reach for.
+     *
+     * @return list<string>
+     */
+    public function openingBalancesAreBounded(): array
+    {
+        $violations = [];
+        $openings = app(OpeningBalances::class);
+
+        $entity = $this->freshEntity('OPB');
+        $entityId = (string) $entity->getKey();
+        $date = Carbon::parse($this->postingDate);
+
+        $accounts = Account::query()
+            ->where('entity_id', $entityId)
+            ->whereIn('code', ['1.1.1.1', '1.1.2.1', '2.1.1'])
+            ->pluck('id', 'code');
+
+        $figures = ['1.1.1.1' => '50000.0000', '1.1.2.1' => '120000.0000', '2.1.1' => '-80000.0000'];
+        $reason = 'from the signed closing trial balance of the previous system, dated 31 December';
+
+        $before = auth()->guard('web')->user();
+
+        try {
+            if ($openings->window($entityId)['open'] !== true) {
+                return ['a brand-new entity reports its opening-balance window already closed, so every '.
+                    'assertion below would pass for the wrong reason'];
+            }
+
+            /*
+             | A clerk may post a journal and may not open the books.
+             |
+             | Which is the whole reason the permission is separate: posting a
+             | journal is an everyday act, and naming a control account by
+             | hand is the act this module exists to prevent.
+             */
+            auth()->guard('web')->setUser($this->userWithRole('ar_clerk', $entityId));
+
+            if ($this->refusal(fn () => $openings->post($entity, $date, $figures, $reason)) === null) {
+                $violations[] = 'a receivables clerk entered opening balances into an empty ledger. The '.
+                    'permission is separate from journal.post because posting a journal is an everyday '.
+                    'act and naming a control account by hand is not';
+            }
+
+            auth()->guard('web')->setUser($this->userWithRole('controller', $entityId));
+
+            $thin = $this->refusal(fn () => $openings->post($entity, $date, $figures, 'setup'));
+
+            if ($thin === null || ! str_contains($thin, 'at least twenty characters')) {
+                $violations[] = '"setup" was accepted as the reason, or refused for some other reason. It '.
+                    'is read during the first audit of these books, when the only artefact is what '.
+                    'somebody typed';
+            }
+
+            /*
+             | The MESSAGE is asserted, not merely the refusal.
+             |
+             | A heading is refused by a database trigger too, so "it was
+             | refused" passes with the service's own check deleted - and
+             | what the person setting up a new set of books then sees is a
+             | constraint violation naming a trigger. Asserting the
+             | explanation is what makes the service's contribution
+             | load-bearing.
+             */
+            $heading = $this->refusal(fn () => $openings->post($entity, $date, ['1.1' => '10.0000'], $reason));
+
+            if ($heading === null) {
+                $violations[] = 'an opening balance was accepted on a group heading, which is a balance no '.
+                    'child explains and every drill-down loses';
+            } elseif (! str_contains($heading, 'group heading')) {
+                $violations[] = sprintf(
+                    'a group heading was refused by something other than the opening-balance service, so '.
+                    'the message does not say what is wrong: %s',
+                    Str::limit($heading, 110),
+                );
+            }
+
+            if ($this->refusal(fn () => $openings->post($entity, $date, ['9.9.9' => '10.0000'], $reason)) === null) {
+                $violations[] = 'an opening balance was accepted for an account code that does not exist';
+            }
+
+            // And properly, which also closes nothing: opening balances do
+            // not close their own window.
+            $entry = $openings->post($entity, $date, $figures, $reason);
+
+            if ($openings->window($entityId)['open'] !== true) {
+                $violations[] = 'posting opening balances closed the window, so a set entered in two '.
+                    'passes - which is how forty accounts get typed - could not be completed';
+            }
+
+            /*
+             | The plug, asserted.
+             |
+             | 50,000 + 120,000 - 80,000 is a net debit of 90,000, so the
+             | entry needs a 90,000 credit to retained earnings. A plug in
+             | the wrong direction balances just as well and puts the
+             | difference on the wrong side of equity.
+             */
+            $plug = $this->connection->table('journal_lines as l')
+                ->join('accounts as a', 'a.id', '=', 'l.account_id')
+                ->where('l.journal_entry_id', $entry->getKey())
+                ->where('a.code', '3.2')
+                ->value('l.functional_amount');
+
+            if ($plug === null || ! BigDecimal::of((string) $plug)->isEqualTo(BigDecimal::of('-90000.0000'))) {
+                $violations[] = sprintf(
+                    'the retained-earnings plug came out as %s where -90000.0000 belongs. A plug in the '.
+                    'wrong direction balances just as well and puts the difference on the wrong side of '.
+                    'equity',
+                    $plug === null ? '(absent)' : (string) $plug,
+                );
+            }
+
+            // Now something else, which does close it.
+            app(Poster::class)->post(
+                entity: $entity,
+                ruleKey: 'probe.reversal_pair',
+                event: ['debit' => (string) $accounts['1.1.1.1'], 'amount' => '100.0000'],
+                accountingDate: $date,
+                journalCode: 'GEN',
+            );
+
+            $window = $openings->window($entityId);
+
+            if ($window['open'] !== false) {
+                $violations[] = 'the window is still open after an ordinary entry was posted, so nothing '.
+                    'is closing it';
+            }
+
+            $closed = $this->refusal(fn () => $openings->post($entity, $date, $figures, $reason));
+
+            if ($closed === null) {
+                $violations[] = 'opening balances were accepted into a ledger that already has postings in '.
+                    'it. One typed six months into the year is indistinguishable from the real one, and is '.
+                    'found a year later by whoever compares this opening to last year\'s closing';
+            } elseif (! str_contains($closed, 'window is open only before')) {
+                /*
+                 | Again the message. The trigger refuses this as well, so
+                 | deleting the service's window check leaves the refusal
+                 | intact and the explanation gone - and the explanation is
+                 | the half that tells somebody to use a reversal instead.
+                 */
+                $violations[] = sprintf(
+                    'the closed window was reported by something other than the opening-balance service, '.
+                    'so nothing tells the person what to do instead: %s',
+                    Str::limit($closed, 110),
+                );
+            }
+
+            /*
+             | And the same thing with the service bypassed entirely.
+             |
+             | Through the Poster, which is the next thing down and the one a
+             | script would reach for.
+             */
+            $direct = $this->refusal(fn () => app(Poster::class)->post(
+                entity: $entity,
+                ruleKey: 'ledger.opening_balance',
+                event: ['balances' => [['account_id' => (string) $accounts['1.1.1.1'], 'amount' => '1.0000']]],
+                accountingDate: $date,
+                journalCode: 'OPN',
+            ));
+
+            if ($direct === null) {
+                $violations[] = 'the opening-balance rule posted straight through the Poster into a ledger '.
+                    'that already has entries. The service explains the refusal; the trigger is what a '.
+                    'backfill script cannot talk its way past, and it let this through';
+            }
+        } finally {
+            /*
+             | `forgetUser()` when there was nobody, not `setUser(null)`.
+             |
+             | The guard's signature does not accept null, and the suite runs
+             | with no authenticated user - so restoring "whoever was there"
+             | has to handle the case where that was nobody.
+             */
+            $before === null
+                ? auth()->guard('web')->forgetUser()
+                : auth()->guard('web')->setUser($before);
+
+            // Back to the suite's own entity, or every check after this one
+            // reads an empty ledger.
+            app(EntityContext::class)->use($this->entityId);
+        }
+
+        return $violations;
+    }
+
+    /**
+     * Period 13, and the declaration a statement carries - PF-051.
+     *
+     * ## Period 13 was a row nothing could reach
+     *
+     * It carries no calendar days: it starts and ends on the fiscal year's
+     * last day, sharing them with December, so `periodFor()` skips it on
+     * purpose - otherwise every December posting would land in it. Which left
+     * no way to post into it at all, and the only way to record an auditor's
+     * adjustment was to re-date it into December: the exact thing period 13
+     * exists to prevent.
+     *
+     * Found by measuring. A probe posted three adjustments "into the
+     * adjusting period", read the trial balance both ways, and got the same
+     * total twice - because all three had gone into December.
+     *
+     * ## The entry keeps the year-end date
+     *
+     * That is the whole reason the period shares its days. The adjustment is
+     * dated 31 December, because it belongs to that year's figures, and the
+     * PERIOD is what distinguishes "what the business recorded in December"
+     * from "what the audit changed afterwards".
+     *
+     * ## And a statement says which it included
+     *
+     * In words, not as a boolean in a payload a screen may ignore, a PDF may
+     * not print and an export may drop. Asserted here in both languages,
+     * including the case where the choice made no difference - "excluding
+     * adjusting entries" on a range that holds none reads as a warning about
+     * nothing.
+     *
+     * @return list<string>
+     */
+    public function adjustmentsAreDeclared(): array
+    {
+        $violations = [];
+        $entity = $this->freshEntity('ADJ');
+        $entityId = (string) $entity->getKey();
+        $adjusting = app(AdjustingEntries::class);
+        $trialBalance = app(TrialBalance::class);
+
+        $yearEnd = Carbon::parse($this->postingDate)->endOfYear()->startOfDay();
+
+        $accounts = Account::query()
+            ->where('entity_id', $entityId)
+            ->whereIn('code', ['1.1.1.1', '4.1'])
+            ->pluck('id', 'code');
+
+        $december = app(FiscalCalendarGenerator::class)->periodFor($entityId, $yearEnd);
+
+        if ($december === null) {
+            return ['the fresh entity has no period covering its own year end'];
+        }
+
+        if ($december->state !== PeriodState::Open) {
+            app(PeriodStateMachine::class)->transition(
+                $december,
+                PeriodState::Open,
+                'opened December so the adjusting-period check has something to compare against',
+            );
+        }
+
+        app(Poster::class)->post(
+            entity: $entity,
+            ruleKey: 'probe.reversal_pair',
+            event: ['debit' => (string) $accounts['1.1.1.1'], 'amount' => '1000.0000'],
+            accountingDate: $yearEnd,
+            journalCode: 'GEN',
+        );
+
+        /*
+         | The declaration BEFORE any adjustment exists.
+         |
+         | Both ways round, because the figures are the same and the sentence
+         | has to say so rather than warning about an exclusion that excluded
+         | nothing.
+         */
+        foreach ([true, false] as $include) {
+            $basis = $trialBalance->for($entityId, 'SAR', $yearEnd, includeAdjusting: $include)['basis'];
+
+            if ($basis['choice_mattered'] !== false) {
+                $violations[] = 'a statement on a year with no adjustments claims the choice mattered';
+            }
+
+            foreach (['declaration_en' => 'No adjusting entries', 'declaration_ar' => 'لا توجد قيود تسوية'] as $key => $needle) {
+                if (! str_contains((string) $basis[$key], $needle)) {
+                    $violations[] = sprintf(
+                        'the %s does not say that no adjusting entries fall in range: %s',
+                        $key,
+                        Str::limit((string) $basis[$key], 90),
+                    );
+                }
+            }
+        }
+
+        $period = $adjusting->periodFor($entityId, $yearEnd);
+
+        if ($period === null) {
+            return [...$violations, 'the entity has no adjusting period, so period 13 is not being '.
+                'generated and an auditor\'s adjustment has nowhere to go but December'];
+        }
+
+        $before = auth()->guard('web')->user();
+
+        try {
+            auth()->guard('web')->setUser($this->userWithRole('ar_clerk', $entityId));
+
+            $reason = 'from the external auditor schedule B-1, accrued income understated at the year end';
+
+            if ($this->refusal(fn () => $adjusting->post(
+                $entity,
+                'probe.reversal_pair',
+                ['debit' => (string) $accounts['1.1.1.1'], 'amount' => '250.0000'],
+                $yearEnd,
+                $reason,
+            )) === null) {
+                $violations[] = 'a receivables clerk posted an adjusting entry. It is a figure entered '.
+                    'after a year has been reported, which is why it is not covered by the everyday '.
+                    'posting permission';
+            }
+
+            auth()->guard('web')->setUser($this->userWithRole('controller', $entityId));
+
+            $thin = $this->refusal(fn () => $adjusting->post(
+                $entity,
+                'probe.reversal_pair',
+                ['debit' => (string) $accounts['1.1.1.1'], 'amount' => '250.0000'],
+                $yearEnd,
+                'audit',
+            ));
+
+            if ($thin === null || ! str_contains($thin, 'at least twenty characters')) {
+                $violations[] = '"audit" was accepted as the reason for an adjusting entry, or refused '.
+                    'for some other reason. The disclosure under IAS 10 is written from it';
+            }
+
+            // A future adjusting period is refused, which is why it is opened
+            // deliberately - the same rule as every other period.
+            if ($period->state !== PeriodState::Open) {
+                $future = $this->refusal(fn () => $adjusting->post(
+                    $entity,
+                    'probe.reversal_pair',
+                    ['debit' => (string) $accounts['1.1.1.1'], 'amount' => '250.0000'],
+                    $yearEnd,
+                    $reason,
+                ));
+
+                if ($future === null) {
+                    $violations[] = 'an adjustment was posted into an adjusting period that nobody had '.
+                        'opened, so it could land in a year nobody has started closing';
+                }
+
+                app(PeriodStateMachine::class)->transition(
+                    $period,
+                    PeriodState::Open,
+                    'opened the adjusting period for the audit adjustments of this year',
+                );
+            }
+
+            foreach (['250.0000', '125.0000', '75.0000'] as $index => $amount) {
+                $adjusting->post(
+                    $entity,
+                    'probe.reversal_pair',
+                    ['debit' => (string) $accounts['1.1.1.1'], 'amount' => $amount],
+                    $yearEnd,
+                    sprintf('from the external auditor schedule B-%d, accrued income understated', $index + 1),
+                );
+            }
+        } finally {
+            $before === null
+                ? auth()->guard('web')->forgetUser()
+                : auth()->guard('web')->setUser($before);
+        }
+
+        $summary = $adjusting->summaryFor($entityId, $yearEnd);
+
+        if ($summary['entries'] !== 3) {
+            $violations[] = sprintf(
+                '%d adjusting entr%s landed in the adjusting period where 3 belong - they went into '.
+                'December instead, which is what period 13 exists to prevent',
+                $summary['entries'],
+                $summary['entries'] === 1 ? 'y' : 'ies',
+            );
+        }
+
+        /*
+         | And the two statements have to DISAGREE.
+         |
+         | This is the assertion that caught the real bug: with the
+         | adjustments in December, including and excluding them gave the
+         | same total, the flag was still reported faithfully, and nothing
+         | else in the system noticed.
+         */
+        $including = $trialBalance->for($entityId, 'SAR', $yearEnd, includeAdjusting: true);
+        $excluding = $trialBalance->for($entityId, 'SAR', $yearEnd, includeAdjusting: false);
+
+        $difference = BigDecimal::of($including['total_debit'])->minus($excluding['total_debit']);
+
+        if (! $difference->isEqualTo(BigDecimal::of('450.0000'))) {
+            $violations[] = sprintf(
+                'including the adjustments changed the total debit by %s where 450.0000 belongs. If it is '.
+                'zero, the adjustments are in December and the two statements are the same page with two '.
+                'different footings',
+                (string) $difference,
+            );
+        }
+
+        foreach ([
+            [$including, 'including', 'بتضمين'],
+            [$excluding, 'EXCLUDING', 'باستثناء'],
+        ] as [$statement, $english, $arabic]) {
+            $basis = $statement['basis'];
+
+            if ($basis['choice_mattered'] !== true || $basis['adjusting_entries'] !== 3) {
+                $violations[] = sprintf(
+                    'the %s statement reports %d adjusting entries and mattered=%s',
+                    $english,
+                    $basis['adjusting_entries'],
+                    var_export($basis['choice_mattered'], true),
+                );
+            }
+
+            if (! str_contains((string) $basis['declaration_en'], $english)) {
+                $violations[] = sprintf(
+                    'the English declaration does not say "%s": %s',
+                    $english,
+                    Str::limit((string) $basis['declaration_en'], 90),
+                );
+            }
+
+            if (! str_contains((string) $basis['declaration_ar'], $arabic)) {
+                $violations[] = sprintf(
+                    'the Arabic declaration does not say "%s": %s',
+                    $arabic,
+                    Str::limit((string) $basis['declaration_ar'], 90),
+                );
+            }
+
+            /*
+             | The Arabic counted noun, which is not decoration.
+             |
+             | Arabic counts 3 to 10 as a broken plural - "3 قيود" - and 11
+             | upwards as a singular. "3 قيد" is wrong and this is a sentence
+             | an auditor reads.
+             */
+            if (! str_contains((string) $basis['declaration_ar'], '3 قيود تسوية')) {
+                $violations[] = sprintf(
+                    'the Arabic declaration does not count three entries correctly: %s',
+                    Str::limit((string) $basis['declaration_ar'], 90),
+                );
+            }
+        }
+
+        app(EntityContext::class)->use($this->entityId);
+
+        return $violations;
+    }
+
+    /**
+     * An entity of this check's own, with its chart and one open period.
+     *
+     * Needed because several claims are only testable while a ledger is
+     * empty, and the suite's entity stops being empty on its first check.
+     */
+    private function freshEntity(string $prefix): Entity
+    {
+        $context = app(EntityContext::class);
+        $context->forget();
+
+        $entity = Entity::create([
+            'code' => $prefix.random_int(100, 999),
+            'legal_name' => $prefix.' ledger check',
+            'country' => 'SA',
+            'functional_currency' => 'SAR',
+            'active' => true,
+        ]);
+
+        $context->use($entity);
+
+        $period = app(FiscalCalendarGenerator::class)
+            ->periodFor((string) $entity->getKey(), Carbon::parse($this->postingDate));
+
+        if ($period !== null && $period->state !== PeriodState::Open) {
+            app(PeriodStateMachine::class)->transition(
+                $period,
+                PeriodState::Open,
+                'opened by the ledger check suite for an empty-ledger assertion',
+            );
+        }
+
+        return $entity;
+    }
+
+    /**
+     * A user holding one seeded role in this entity.
+     *
+     * Created per call rather than shared, because a check that needs two
+     * different roles needs two different people - and reusing one would make
+     * the permission assertions pass for the wrong reason.
+     */
+    private function userWithRole(string $role, string $entityId): User
+    {
+        $user = User::create([
+            'name' => 'Check '.$role,
+            'email' => $role.random_int(100000, 999999).'@check.test',
+            'password' => 'x-not-a-real-password',
+            'active' => true,
+        ]);
+
+        UserEntityRole::create([
+            'user_id' => $user->getKey(),
+            'entity_id' => $entityId,
+            'role_id' => Role::query()->where('key', $role)->firstOrFail()->getKey(),
+        ]);
+
+        return $user;
     }
 
     private function writeEntry(

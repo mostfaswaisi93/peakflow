@@ -8,7 +8,9 @@ use App\Support\Money\Money;
 use App\Tenant\Ledger\Exceptions\EntryDoesNotBalance;
 use App\Tenant\Ledger\Exceptions\NoPeriodForDate;
 use App\Tenant\Ledger\Exceptions\PeriodDoesNotAcceptPostings;
+use App\Tenant\Ledger\Exceptions\PeriodDoesNotBelong;
 use App\Tenant\Ledger\Models\JournalEntry;
+use App\Tenant\Ledger\Models\Period;
 use App\Tenant\Ledger\Posting\PostingContext;
 use App\Tenant\Ledger\Posting\PostingLine;
 use App\Tenant\Ledger\Posting\PostingRuleRegistry;
@@ -60,6 +62,7 @@ final class Poster
         ?string $sourceType = null,
         ?string $sourceId = null,
         ?string $narration = null,
+        ?Period $into = null,
     ): JournalEntry {
         $rule = $this->rules->resolve($ruleKey);
 
@@ -73,8 +76,25 @@ final class Poster
 
         $this->assertBalanced($lines, $ruleKey, $context);
 
-        $period = $this->calendar->periodFor((string) $entity->getKey(), $accountingDate)
+        /*
+         | The period is derived from the date, unless a caller names one.
+         |
+         | Only one caller does, and it has to: the adjusting period shares
+         | its calendar days with the last month, so a date lookup skips it
+         | deliberately - see FiscalCalendarGenerator::periodFor(). Without a
+         | way to name it, period 13 is a row nothing can reach, which is
+         | what it was until PF-051.
+         |
+         | A named period is checked against the entity and the date, because
+         | "post this December entry into next year's adjusting period" is a
+         | typo nobody would see again.
+         */
+        $period = $into ?? $this->calendar->periodFor((string) $entity->getKey(), $accountingDate)
             ?? throw NoPeriodForDate::on($accountingDate);
+
+        if ($into !== null) {
+            $this->assertPeriodFits($into, $entity, $accountingDate);
+        }
 
         if (! $period->acceptsPostings()) {
             throw PeriodDoesNotAcceptPostings::in($period->label, $period->state);
@@ -280,5 +300,40 @@ final class Poster
         $this->assertBalanced($lines, $ruleKey, $context);
 
         return $lines;
+    }
+
+    /**
+     * A named period must belong to this entity and cover the date.
+     *
+     * The adjusting period starts and ends on the fiscal year's last day, so
+     * "covers the date" means the date falls inside its fiscal YEAR rather
+     * than inside its own one-day range - an adjustment is dated the day the
+     * auditor asked for it, which is usually weeks later.
+     */
+    private function assertPeriodFits(Period $period, Entity $entity, Carbon $accountingDate): void
+    {
+        if ((string) $period->entity_id !== (string) $entity->getKey()) {
+            throw PeriodDoesNotBelong::toEntity((string) $period->label, (string) $entity->code);
+        }
+
+        $year = DB::connection('tenant')->table('fiscal_years')
+            ->where('id', $period->fiscal_year_id)
+            ->first(['label', 'starts_on', 'ends_on']);
+
+        if ($year === null) {
+            throw PeriodDoesNotBelong::toEntity((string) $period->label, (string) $entity->code);
+        }
+
+        $date = $accountingDate->toDateString();
+
+        if ($date < (string) $year->starts_on || $date > (string) $year->ends_on) {
+            throw PeriodDoesNotBelong::toTheYear(
+                (string) $period->label,
+                $date,
+                (string) $year->label,
+                (string) $year->starts_on,
+                (string) $year->ends_on,
+            );
+        }
     }
 }

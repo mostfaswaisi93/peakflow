@@ -155,6 +155,34 @@ final class SettingsRegistry
 
             // ---- Dunning ---------------------------------------------------
 
+            // ---- The ledger -----------------------------------------------
+
+            /*
+             | Period 13, which is optional and defaults to ON - PF-051.
+             |
+             | It carries no calendar days: it starts and ends on the fiscal
+             | year's last day. Without it, an auditor's adjustment has to be
+             | re-dated into December, and afterwards nothing distinguishes
+             | "what the business recorded in December" from "what the audit
+             | changed afterwards" - which is the comparison every subsequent
+             | year's review starts from.
+             |
+             | Defaulting to on, because the cost of having it and not using
+             | it is an empty period, and the cost of not having it is a
+             | December that is not what December was.
+             */
+            new SettingDefinition(
+                key: 'ledger.adjusting_period',
+                type: 'bool',
+                scope: 'entity',
+                default: true,
+                descriptionAr: 'إنشاء فترة تسوية (الفترة ١٣) لكل سنة مالية، لا تحمل أيامًا تقويمية، '.
+                    'لتقع قيود التسوية بعد الشهر الأخير دون إعادة تأريخها فيه.',
+                descriptionEn: 'Create an adjusting period (period 13) for each fiscal year, carrying no '.
+                    'calendar days, so audit adjustments land after the last month rather than being '.
+                    're-dated into it.',
+            ),
+
             new SettingDefinition(
                 key: 'dunning.enabled',
                 type: 'bool',

@@ -83,6 +83,10 @@ final class RoleSeeder extends Seeder
             'controller' => ['المدير المالي', 'Controller', [
                 'journal.draft', 'journal.post', 'journal.reverse', 'account.manage',
                 'dimension.manage', 'period.close', 'period.post_adjusting',
+                // Controller and owner only - PF-038. An accountant may post
+                // a journal and may not open the books, because the window is
+                // the one moment a control account can be typed into by hand.
+                'ledger.opening_balance',
                 'invoice.draft', 'invoice.issue', 'credit_note.issue', 'quote.manage', 'dunning.manage',
                 'bill.create', 'bill.approve', 'purchase_order.manage', 'expense_claim.approve',
                 'payment.record', 'payment.allocate', 'payment.prepare', 'payment.release', 'writeoff.record',

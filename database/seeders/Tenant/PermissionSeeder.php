@@ -67,6 +67,20 @@ final class PermissionSeeder extends Seeder
             ['period.close', 'ledger', 'إقفال فترة مالية', 'Close an accounting period', true, false],
             ['period.reopen', 'ledger', 'إعادة فتح فترة مُقفلة', 'Reopen a closed period', true, true],
             ['period.post_adjusting', 'ledger', 'ترحيل قيود تسوية', 'Post adjusting entries', true, false],
+            /*
+             | The one way into a control account by hand - PF-038.
+             |
+             | Separate from `journal.post` because it is a different act: a
+             | posting rule reaching a control account is the normal path,
+             | and a HUMAN naming one is what the control exists to prevent.
+             | The exception is opening balances, which no document produces
+             | and which somebody therefore has to type.
+             |
+             | Step-up authentication, and the narrowest window in the
+             | system: it closes the moment the entity has any other posting.
+             */
+            ['ledger.opening_balance', 'ledger', 'إدخال الأرصدة الافتتاحية',
+                'Enter opening balances', true, true],
 
             // Sales
             ['invoice.draft', 'sales', 'إنشاء مسودة فاتورة', 'Draft an invoice', false, false],

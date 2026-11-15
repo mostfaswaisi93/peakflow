@@ -419,6 +419,45 @@ Up to **eight** axes per entity — cost centre, project, department, branch, fu
 
 Stored as **columns** on `journal_lines`, not JSON and not an EAV side table, because every financial report filters and groups by them and an index on a JSON path is not a substitute. An account may require a dimension; validity rules can forbid a combination, including a value belonging to another entity.
 
+## The adjusting period, and what a statement declares
+
+### Period 13 carries no calendar days, and that is load-bearing
+
+It starts and ends on the fiscal year's last day, sharing them with December. So a date lookup skips it on purpose — otherwise every December posting would land in it by accident, and the point is the opposite: an auditor's adjustment sits **after** the last month rather than being re-dated into it.
+
+Which left it unreachable. The period was a row the calendar generator could create and no posting path could use, so the only way to record an adjustment was to re-date it into December — exactly what it exists to prevent. Found by measuring, not by reading: a probe posted three adjustments "into the adjusting period", read the trial balance both ways, and got the same total twice, because all three had gone into December.
+
+`AdjustingEntries` is the way in. It takes `period.post_adjusting` with step-up authentication, a reason of at least twenty characters, and sets the transaction-local session flag the period trigger reads to admit a posting into a soft-closed period. The entry keeps its **year-end date** — it belongs to that year's figures, and the period is what distinguishes what the business recorded in December from what the audit changed afterwards.
+
+The period itself is optional, from the entity's `ledger.adjusting_period` setting, defaulting to on. The cost of having it and not using it is an empty period; the cost of not having it is a December that is not what December was.
+
+### Every statement says what it included
+
+A boolean in a payload is the right fact and is not a declaration. It sits in an array a screen may ignore, a PDF may not print and an export may drop, and the one place it matters is the printed page in front of an auditor.
+
+So every report carries a `StatementBasis`, which renders a sentence in both languages:
+
+```
+Stated in SAR as at 2026-12-31, including the 3 adjusting entries in the adjusting period.
+بعملة SAR كما في 2026-12-31، بتضمين 3 قيود تسوية في فترة التسوية.
+
+Stated in SAR as at 2026-12-31, EXCLUDING the 3 adjusting entries in the adjusting period.
+بعملة SAR كما في 2026-12-31، باستثناء 3 قيود تسوية في فترة التسوية.
+```
+
+Those two statements are 1,450 and 1,000. Both are legitimate under IAS 10 — one is the reported figure, the other is the operational figure the business was running on — and they are not interchangeable. A page that does not say which one it is showing is a page that will be quoted as the other.
+
+**Whether the choice made a difference is part of the sentence.** On a range with no adjusting entries in it:
+
+```
+Stated in SAR as at 2026-12-31. No adjusting entries fall in this range, so including or
+excluding them gives the same figures.
+```
+
+That settles an argument before it starts, and it catches the mistake in the other direction: "excluding" printed on a year with forty adjustments is a statement somebody will compare to the filed accounts and find short.
+
+**The Arabic counts properly.** One is singular, two is a dual, three to ten takes a broken plural, eleven upwards goes back to a singular. `3 قيد` is wrong, `3 قيود تسوية` is right, and this is a sentence an auditor reads — so a check asserts it, and simplifying it to a plural suffix fails the build.
+
 ## `ledger:verify`
 
 The global proof. An individual assertion can be written to pass: a check that posts an invoice and then asserts the receivable moved by the invoice total passes even if the rule posted twice, posted to the wrong receivable, or posted into a period that was closed — because the check only looks at what its author thought to look at.

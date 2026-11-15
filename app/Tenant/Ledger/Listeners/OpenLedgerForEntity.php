@@ -8,6 +8,7 @@ use App\Tenant\Ledger\Services\ChartTemplate;
 use App\Tenant\Ledger\Services\FiscalCalendarGenerator;
 use App\Tenant\Tenancy\Events\EntityCreated;
 use App\Tenant\Tenancy\Services\EntityContext;
+use App\Tenant\Tenancy\Services\Settings;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -38,6 +39,7 @@ final class OpenLedgerForEntity
         private readonly ChartTemplate $chart,
         private readonly FiscalCalendarGenerator $calendar,
         private readonly EntityContext $entities,
+        private readonly Settings $settings,
     ) {}
 
     public function handle(EntityCreated $event): void
@@ -86,6 +88,20 @@ final class OpenLedgerForEntity
          */
                 $start = Carbon::now()->startOfYear();
 
+                /*
+                 | The adjusting period, from the entity's own setting.
+                 |
+                 | On by default: without it an auditor's adjustment has to
+                 | be re-dated into December, and afterwards nothing
+                 | distinguishes what the business recorded in December from
+                 | what the audit changed afterwards.
+                 |
+                 | Read once rather than per year, because the answer cannot
+                 | differ between two years created in the same breath - and
+                 | a setting read in a loop is a setting that can.
+                 */
+                $withAdjusting = $this->settings->bool('ledger.adjusting_period', $entityId);
+
                 foreach ([0, 1] as $offset) {
                     $yearStart = $start->copy()->addYears($offset);
 
@@ -93,6 +109,7 @@ final class OpenLedgerForEntity
                         $entityId,
                         $yearStart->format('Y'),
                         $yearStart,
+                        withAdjustingPeriod: $withAdjusting,
                     );
                 }
             });

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tenant\Ledger\Services;
 
 use App\Support\Money\Money;
+use App\Tenant\Ledger\Reporting\StatementBasis;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -40,6 +41,7 @@ final class TrialBalance
      *     as_at: string,
      *     from: ?string,
      *     includes_adjusting: bool,
+     *     basis: array{includes_adjusting: bool, adjusting_entries: int, choice_mattered: bool, as_at: string, from: ?string, currency: string, declaration_ar: string, declaration_en: string},
      *     currency: string,
      *     rows: Collection<int, array{code: string, name_ar: string, name_en: string, type: string, debit: string, credit: string, balance: string, net_debit: string, net_credit: string}>,
      *     total_debit: string,
@@ -169,6 +171,22 @@ final class TrialBalance
             // not say whether it includes period 13 cannot be compared to
             // another one.
             'includes_adjusting' => $includeAdjusting,
+            /*
+             | And in words, because the boolean is not a declaration - PF-051.
+             |
+             | It sits in an array a screen may ignore, a PDF may not print
+             | and an export may drop, and the one place it matters is the
+             | printed page in front of an auditor. The sentence also says
+             | whether the choice made any DIFFERENCE, which it does not when
+             | the range holds no adjusting entries at all.
+             */
+            'basis' => StatementBasis::of(
+                includesAdjusting: $includeAdjusting,
+                adjustingEntries: $this->adjustingEntriesIn($entityId, $asAt, $from),
+                asAt: $asAt,
+                from: $from,
+                currency: $functionalCurrency,
+            )->toArray(),
             'currency' => $functionalCurrency,
             'rows' => $mapped,
             'total_debit' => (string) $totalDebit->amount,
@@ -241,5 +259,38 @@ final class TrialBalance
               AND {$dateBound}{$adjustingBound}
             ORDER BY e.accounting_date, e.number
         SQL, $bindings));
+    }
+
+    /**
+     * How many adjusting entries fall in the statement's range.
+     *
+     * Counted rather than assumed, because "excluding adjusting entries" on a
+     * range that holds none is the same figure as including them - and saying
+     * so on the page settles an argument before it starts.
+     *
+     * Entries, not lines: the sentence is about how many adjustments the
+     * auditor asked for, and forty lines in one entry is one adjustment.
+     */
+    private function adjustingEntriesIn(string $entityId, Carbon $asAt, ?Carbon $from): int
+    {
+        $bindings = [$entityId, $asAt->toDateString()];
+        $dateBound = 'e.accounting_date <= ?';
+
+        if ($from !== null) {
+            $dateBound = 'e.accounting_date BETWEEN ? AND ?';
+            $bindings = [$entityId, $from->toDateString(), $asAt->toDateString()];
+        }
+
+        $row = DB::connection('tenant')->selectOne(<<<SQL
+            SELECT count(*) AS n
+            FROM journal_entries e
+            JOIN periods p ON p.id = e.period_id
+            WHERE e.entity_id = cast(? AS char(26))
+              AND e.status IN ('posted', 'reversed')
+              AND p.is_adjusting = true
+              AND {$dateBound}
+        SQL, $bindings);
+
+        return (int) ($row->n ?? 0);
     }
 }

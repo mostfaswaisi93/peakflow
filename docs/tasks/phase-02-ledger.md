@@ -30,7 +30,12 @@ The invariant that keeps a subledger equal to its control account, and the one t
 - [x] Exactly one account per role per entity, enforced by a partial unique index
 - [x] A manual journal entry naming a control account is **refused**; only a registered posting rule may post to one
 - [x] The refusal is enforced in the database, because this is precisely the rule a backfill script will not respect
-- [ ] A controller-level override exists for opening balances only, is audited, and is available only while the entity has no other postings
+- [x] A controller-level override exists for opening balances only, is audited, and is available only while the entity has no other postings. `ledger.opening_balance` is its own permission with step-up authentication - separate from `journal.post`, because posting a journal is an everyday act and naming a control account by hand is the act the whole control exists to prevent. Controller and owner hold it; an accountant does not
+- [x] The window closes on the first other posting and never reopens. An exception with no bound is not an exception: the rule could otherwise be used in June to adjust a receivable, and the entry would be indistinguishable from the real opening balance - found a year later by whoever compares this opening to last year's closing
+- [x] Enforced by a database trigger as well as the service, because a backfill script, a psql session and a future bug all go around the service. A reversal is exempt, since the alternative to reversing a mistyped opening balance is editing a posted entry
+- [x] Audited with the **figures**, not just the act. "Somebody entered opening balances on the 3rd" is not the record anybody needs; the question at the first audit is where those numbers came from, and the entry can be reversed while the audit row cannot
+- [x] The reason must be at least twenty characters, which is enough to stop "import" and "setup"
+- [x] Every refusal is asserted by its **message**, not merely by refusing. A group heading and a closed window are both refused by the database too, so a check that only asserts "it was refused" passes with the service's own guards deleted - and what the person setting up a new set of books then sees is a constraint violation naming a trigger
 
 ### PF-039 · Chart templates per jurisdiction
 `Ledger` · **3 pts** · depends: PF-038 · standards: —
@@ -150,7 +155,12 @@ The mechanism that lets `Ledger` know nothing about invoices.
 `Ledger` · **2 pts** · depends: PF-049 · standards: IAS 10
 
 - [x] An optional period 13 carrying no calendar days, so audit adjustments land after the last month without being re-dated into it
-- [ ] Reports can include or exclude adjusting entries, and every statement states which it did
+- [x] Reports can include or exclude adjusting entries, and every statement states which it did - in words, in both languages, not as a boolean in a payload that a screen may ignore, a PDF may not print and an export may drop
+- [x] The declaration also says whether the choice made any **difference**. "Excluding adjusting entries" on a range that holds none is the same figure as including them, and saying so settles an argument before it starts; the mistake in the other direction - "excluding" on a year with forty adjustments - is a statement somebody will compare to the filed accounts and find short
+- [x] The Arabic counts the entries properly: 1 singular, 2 dual, 3-10 broken plural, 11 upwards singular again. "3 قيد" is wrong and this is a sentence an auditor reads
+- [x] **Period 13 could not be posted into at all** until this. It shares its calendar days with December, so a date lookup skips it deliberately - which left it a row the calendar generator could create and no posting path could reach, and the only way to record an auditor's adjustment was to re-date it into December, the exact thing it exists to prevent. Found by measuring: a probe posted three adjustments "into the adjusting period", read the trial balance both ways, and got the same total twice
+- [x] `AdjustingEntries` posts into it: `period.post_adjusting` with step-up, a reason of at least twenty characters, and the transaction-local session flag the period trigger reads. The entry keeps its **year-end date** - that is why the period carries no calendar days of its own
+- [x] The adjusting period is optional, from the entity's `ledger.adjusting_period` setting, defaulting to on
 
 ### PF-052 · Year-end close
 `Ledger` · **5 pts** · depends: PF-050, PF-047 · standards: IAS 1 · `type:posting`
