@@ -56,6 +56,10 @@ A rule engine, evaluated from data with a documented source per jurisdiction, de
 
 Rules are evaluated in a defined precedence and **the winning rule is recorded on the document**, so an accountant can check the decision. The shipped cases are domestic, export of goods, intra-GCC, intra-EU B2B goods and services, and digital services to consumers — plus a documented fallback that **refuses rather than guesses**.
 
+**As built (PF-078):** ten rules in [`config/place_of_supply.php`](../../config/place_of_supply.php), each with its article; the engine knows five conditions and eight words and no country at all. Precedence is an integer in the row rather than the row's position, because array order is invisible in a diff. `abroad` and `outside` are two different words, and the distinction is the whole of intra-bloc treatment. A missing delivery location refuses rather than falling through to a rule that the blocked one outranks.
+
+The full account, including the three orderings that are not obvious and why the United Kingdom is a dated departure rather than a deletion, is in [`place-of-supply.md`](place-of-supply.md).
+
 ## Rate versioning
 
 ```sql
@@ -200,6 +204,24 @@ Purchasing: Dr expense     1,000
 ```
 
 Modelled as the `AE` category, not as a zero rate with a comment. The invoice carries a **mandatory legal note** whose text is per jurisdiction, and issuing reverse-charge without both parties holding a valid registration is refused.
+
+### As built (PF-079)
+
+`AE` and `Z` both leave the tax column empty, which is exactly why they get conflated — and they are not the same in any return anywhere. A zero-rated supply is taxable at 0%: it counts toward taxable turnover and toward registration thresholds. A reverse charge moves the liability. Model the first as the second and three things break at once: the supplier's return reports a taxable supply it did not make, the customer's reports nothing, and nobody notices until an authority matches the two.
+
+**The note is part of the treatment, not presentation.** Six profiles in `config/jurisdictions.php`, each with Arabic and English text and the article it comes from — Art. 226(11a) for the EU mention, Art. 47 and 53 for Saudi Arabia, Art. 283-2 CGI for France. A profile with no note **refuses**: the fallback prints a document that is missing a mandatory legal mention and looks complete.
+
+Two of those articles are marked `article unverified here`, because the instrument is certain and the article number was not verifiable in this environment. A guessed article number is worse than a general citation: it reads as checked, and it is the first thing an auditor looks up. The check requires a citation **or** that marker, which is the same stance [`database/iso/provenance.json`](../../database/iso/provenance.json) takes.
+
+**Both registrations are judged on the tax point, not on today.** A document raised in May for a supply in March is judged on March, and a registration that lapsed in April was valid then. `party_tax_registrations` gained a half-open `daterange` with an exclusion constraint over `(party_id, jurisdiction, scheme)` — not including the identifier, because a renumbered business has two identifiers whose periods must not overlap. `Entity::primaryTaxRegistration()` answers for today; PF-079 added `taxRegistrationOn()` for the question a document actually asks.
+
+A refusal distinguishes **no registration** from **one that had lapsed**, with the date. The two send somebody to different places — the record, or the customer — and a refusal that cannot tell them apart gets resolved by typing a number in.
+
+**The layering**: the tax engine may not depend on `Parties`, so it declares what it needs as `CounterpartyRegistrations` and `Sales\Services\CounterpartyRegistrationReader` supplies it. The two sides of `assertIssuable()` are deliberately asymmetrical: an `Entity` is the tenant's own company and lives in `Tenancy`, which Tax depends on throughout; a party is a counterparty, and the tax engine has no business knowing what one is.
+
+The purchasing half — posting both the input and the output tax on the bill — is Phase 07. It is what makes a reverse charge net to nothing for a fully recoverable customer and cost money for one that is partly exempt.
+
+Checked by `php bin/verify tax`: nine rules in `tests/Support/ReverseChargeRules.php`, each proven to fail when the behaviour is removed, including a bite on the reader that drops the end date so no registration ever lapses.
 
 ## Withholding tax
 

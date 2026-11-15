@@ -110,6 +110,66 @@ return [
         'jofotara' => 'invoice_date',
     ],
 
+    /*
+    |---------------------------------------------------------------------------
+    | The reverse-charge note - PF-079
+    |---------------------------------------------------------------------------
+    |
+    | A reverse-charge invoice carries no tax amount, so the note is the only
+    | thing on the document that says why - and it is a legal requirement, not
+    | a courtesy. Directive 2006/112/EC Art. 226(11a) requires the mention;
+    | EN 16931 carries it as BT-120 with the code in BT-121.
+    |
+    | The wording is per jurisdiction because the wording is prescribed. A
+    | French invoice says "Autoliquidation"; a Saudi one has to say it in
+    | Arabic. Translating a generic English phrase at render time is how an
+    | invoice ends up carrying a note that satisfies nobody's rules.
+    |
+    | Both languages are stored for every profile. PeakFlow serves Arabic and
+    | English, an invoice is read by whoever receives it, and a note present in
+    | one language only is a note missing from half the documents.
+    |
+    | Every enabled profile must declare one: a missing note refuses rather
+    | than falling back, because the fallback prints an invoice that is missing
+    | a mandatory legal mention, and nothing on it says so.
+    */
+    'reverse_charge_note' => [
+        'generic' => [
+            'en' => 'Reverse charge: VAT to be accounted for by the recipient.',
+            'ar' => 'التحصيل العكسي: الضريبة مستحقة على المستلم.',
+            'source' => 'EN 16931 BT-120 with BT-121; Council Directive 2006/112/EC Art. 226(11a)',
+        ],
+        'peppol' => [
+            'en' => 'Reverse charge: VAT to be accounted for by the recipient.',
+            'ar' => 'التحصيل العكسي: الضريبة مستحقة على المستلم.',
+            'source' => 'EN 16931 BT-120 with BT-121; Council Directive 2006/112/EC Art. 226(11a)',
+        ],
+        'zatca' => [
+            'en' => 'Reverse charge: the customer accounts for the VAT under Article 47.',
+            'ar' => 'التحصيل العكسي: المستلم هو المكلف باحتساب ضريبة القيمة المضافة وفقاً للمادة السابعة والأربعين.',
+            'source' => 'KSA VAT Implementing Regulations Art. 47 (reverse charge) with Art. 53 (invoice contents)',
+        ],
+        'facturx' => [
+            'en' => 'Reverse charge - VAT self-assessed by the customer.',
+            'ar' => 'التحصيل العكسي: الضريبة يحتسبها المستلم.',
+            'source' => 'Art. 283-2 and Art. 242 nonies A, 13° CGI; Council Directive 2006/112/EC Art. 226(11a)',
+        ],
+        'eta' => [
+            'en' => 'Reverse charge: VAT due from the recipient.',
+            'ar' => 'التحصيل العكسي: الضريبة مستحقة على المستلم.',
+            // The instrument is certain; the article number was not verifiable
+            // in this environment, and is marked rather than guessed. An
+            // invented article is worse than a general citation: it reads as
+            // checked and is the first thing an auditor looks up.
+            'source' => 'Egypt VAT Law 67/2016 (services imported from abroad) - article unverified here',
+        ],
+        'jofotara' => [
+            'en' => 'Reverse charge: GST due from the recipient.',
+            'ar' => 'التحصيل العكسي: الضريبة العامة على المبيعات مستحقة على المستلم.',
+            'source' => 'Jordan General Sales Tax Law 6/1994, as amended - article unverified here',
+        ],
+    ],
+
     'rounding' => [
         'generic' => 'half_up',
         'peppol' => 'half_up',

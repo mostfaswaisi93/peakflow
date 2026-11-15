@@ -6,6 +6,7 @@ namespace App\Tenant\Tenancy\Models;
 
 use App\Support\Database\TenantModel;
 use App\Tenant\Tenancy\Exceptions\FunctionalCurrencyImmutable;
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -119,6 +120,28 @@ final class Entity extends TenantModel
             ->where('is_primary', true)
             ->whereDate('effective_from', '<=', now())
             ->where(fn ($q) => $q->whereNull('effective_to')->orWhereDate('effective_to', '>=', now()))
+            ->first();
+    }
+
+    /**
+     * The registration that identified this entity on a given date.
+     *
+     * {@see primaryTaxRegistration()} answers for today, which is the wrong
+     * question for a document: its own docblock says an invoice issued last
+     * year must carry the number that was current when it was issued, and
+     * `now()` cannot answer that. PF-079 needs it as at the TAX POINT - a
+     * document raised in May for a supply in March is judged on March - so
+     * the date is a parameter and the caller supplies it.
+     */
+    public function taxRegistrationOn(string $jurisdiction, CarbonInterface $on): ?TaxRegistration
+    {
+        $date = $on->toDateString();
+
+        return $this->taxRegistrations()
+            ->where('jurisdiction', $jurisdiction)
+            ->whereDate('effective_from', '<=', $date)
+            ->where(fn ($q) => $q->whereNull('effective_to')->orWhereDate('effective_to', '>=', $date))
+            ->orderByDesc('is_primary')
             ->first();
     }
 

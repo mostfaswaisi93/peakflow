@@ -178,6 +178,7 @@ if ($only === 'all' || $only === 'tax') {
     $suites['Tax codes'] = $suite(static fn (): array => (new Tests\Support\TaxCodeRules())->all());
     $suites['Tax point'] = $suite(static fn (): array => (new Tests\Support\TaxPointRules())->all());
     $suites['Place of supply'] = $suite(static fn (): array => (new Tests\Support\PlaceOfSupplyRules())->all());
+    $suites['Reverse charge'] = $suite(static fn (): array => (new Tests\Support\ReverseChargeRules())->all());
 }
 
 if ($only === 'all' || $only === 'ops') {

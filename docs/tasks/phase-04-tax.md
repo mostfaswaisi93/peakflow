@@ -64,10 +64,17 @@ The engine's organising principle is that **tax is data, not code**. A rate that
 ### PF-079 · Reverse charge
 `Tax` · **3 pts** · depends: PF-078 · standards: UNCL 5305 (`AE`), EN 16931 · `type:compliance`
 
-- [ ] Modelled as the `AE` category, which reverses who accounts for the tax - not as a zero rate with a comment
-- [ ] The invoice carries no tax amount and a **mandatory legal note**, whose text is per jurisdiction
+- [x] Modelled as the `AE` category, which reverses who accounts for the tax - not as a zero rate with a comment. `AE` and `Z` both leave the tax column empty, which is exactly why they get conflated, and the check asserts the four-way matrix for both from the code list rather than from the enum
+- [x] The invoice carries no tax amount and a **mandatory legal note**, whose text is per jurisdiction. Six profiles, Arabic and English, each with the article it comes from. A profile with no note **refuses**: the fallback prints a document missing a mandatory legal mention and looks complete
 - [ ] The recipient self-assesses: `Purchasing` posts both the input and the output tax on the bill, which is the half most systems forget
-- [ ] Requires both parties to have a valid registration; issuing reverse-charge without one is refused
+- [x] Requires both parties to have a valid registration; issuing reverse-charge without one is refused - and valid **on the tax point**, not today. A document raised in May for a supply in March is judged on March, and a registration that lapsed in April was valid then
+- [x] `party_tax_registrations` had an identifier and nothing about when it was the customer's identifier, so it gained a half-open `daterange` with an exclusion constraint over `(party_id, jurisdiction, scheme)` - deliberately **not** including the identifier, because a renumbered business has two identifiers in the same jurisdiction whose periods must not overlap
+- [x] A refusal tells **no registration** apart from **one that had lapsed**, with the date it stopped applying. The two send somebody to different places - the customer record, or the customer - and a refusal that cannot distinguish them gets resolved by typing a number in
+- [x] Found on the way: `Entity::primaryTaxRegistration()` answers for **today**, while its own docblock says an invoice issued last year must carry the number that was current when it was issued. `now()` cannot answer that, so `taxRegistrationOn()` takes the date. The bite - looking the customer up as at today - was accepted silently: the number is on the record, it is current, and it was not theirs when the supply happened
+- [x] Found on the way: the layer rules refused the first version outright. Tax may not depend on `Parties`, which is right - a module that reaches into another's models decides treatments from whatever happens to be on a record. Tax now declares `CounterpartyRegistrations` and `Sales\Services\CounterpartyRegistrationReader` supplies it, which is the first file in the Sales module and deliberately the smallest possible one
+- [x] Found on the way: the citation check failed on my own data - the Jordanian note cited a law and no article. The fix was **not** to invent one. A guessed article reads as checked and is the first thing an auditor looks up, so two sources are marked `article unverified here`, the same stance `database/iso/provenance.json` takes, and the check accepts a citation or that marker
+
+> The open criterion is the purchasing half, which is Phase 07: posting both the input and the output tax on the bill is what makes a reverse charge net to nothing for a fully recoverable customer and cost money for one that is partly exempt. The sell-side gate, the note and the registration checks are here.
 
 ### PF-080 · Zero-rated, exempt and out of scope
 `Tax` · **3 pts** · depends: PF-075 · standards: — · `type:compliance`

@@ -70,6 +70,30 @@ final class Party extends TenantModel
         return $this->hasMany(PartyEntitySetting::class);
     }
 
+    /** @return HasMany<PartyTaxRegistration, $this> */
+    public function taxRegistrations(): HasMany
+    {
+        return $this->hasMany(PartyTaxRegistration::class, 'party_id');
+    }
+
+    /**
+     * The registration that was valid in a jurisdiction on a date.
+     *
+     * Takes the date rather than defaulting to today, because the question a
+     * reverse charge asks is about the TAX POINT - and a document raised in
+     * May for a supply in March is judged on March. Defaulting to now would
+     * answer with a registration the customer did not have at the time, which
+     * is the direction that leaves the supplier owing the tax.
+     */
+    public function registrationIn(string $jurisdiction, \Carbon\CarbonInterface $on): ?PartyTaxRegistration
+    {
+        return $this->taxRegistrations()
+            ->where('jurisdiction', $jurisdiction)
+            ->effectiveOn($on)
+            ->orderByDesc('is_primary')
+            ->first();
+    }
+
     public function isMerged(): bool
     {
         return $this->merged_into_id !== null;
