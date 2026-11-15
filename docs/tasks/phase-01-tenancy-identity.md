@@ -81,11 +81,11 @@ For managed hosting where `CREATE DATABASE` is not available.
 
 Two independent mechanisms, because one of them will eventually have a hole.
 
-- [ ] `entity.scope` middleware binds `currentEntity` and refuses an entity the user holds no role in
-- [ ] A global Eloquent scope applies `entity_id` to every financial model
+- [x] `entity.scope` middleware binds `currentEntity` and refuses an entity the user holds no role in
+- [x] A global Eloquent scope applies `entity_id` to every financial model
 - [x] PostgreSQL **row-level security** policies on every financial table inside the tenant database, keyed on a session variable set per request
 - [x] A test proves that bypassing the Eloquent scope - raw query, console command - still returns nothing for a foreign entity
-- [ ] The architecture test from `PF-005` requiring `entity_id` is extended to require an RLS policy for each such table
+- [x] The architecture test from `PF-005` requiring `entity_id` is extended to require an RLS policy for each such table
 
 ### PF-027 · Entity switching
 `Identity` · **3 pts** · depends: PF-026 · standards: WCAG 2.2 AA · `type:a11y`
@@ -98,10 +98,10 @@ Two independent mechanisms, because one of them will eventually have a hole.
 ### PF-028 · The permission catalogue
 `Identity` · **3 pts** · depends: PF-024 · standards: —
 
-- [ ] Verb-shaped permissions, grouped by module: `invoice.draft`, `invoice.issue`, `credit_note.issue`, `bill.create`, `bill.approve`, `payment.prepare`, `payment.release`, `journal.post`, `journal.reverse`, `period.close`, `period.reopen`, `bank.import`, `bank.reconcile`, `reconciliation.write_off`, `supplier.bank_details.update`, `report.view`, `tax_return.file`, `settings.manage`, `user.manage`
-- [ ] Each carries a plain-language bilingual description, because a role screen listing keys is unusable by the person who should be configuring it
+- [x] Verb-shaped permissions, grouped by module: `invoice.draft`, `invoice.issue`, `credit_note.issue`, `bill.create`, `bill.approve`, `payment.prepare`, `payment.release`, `journal.post`, `journal.reverse`, `period.close`, `period.reopen`, `bank.import`, `bank.reconcile`, `reconciliation.write_off`, `supplier.bank_details.update`, `report.view`, `tax_return.file`, `settings.manage`, `user.manage`
+- [x] Each carries a plain-language bilingual description, because a role screen listing keys is unusable by the person who should be configuring it
 - [ ] A test asserts every route that writes checks a permission - `auth` only proves someone is signed in, and a hidden navigation item is not access control
-- [ ] Seeded roles: `owner`, `controller`, `accountant`, `ap_clerk`, `ar_clerk`, `auditor` (read-only), each a defensible real-world bundle
+- [x] Seeded roles: `owner`, `controller`, `accountant`, `ap_clerk`, `ar_clerk`, `auditor` (read-only), each a defensible real-world bundle
 
 ### PF-029 · Session and device hardening
 `Identity` · **3 pts** · depends: PF-024 · standards: OWASP ASVS 5.0 · `type:security`

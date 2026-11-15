@@ -290,8 +290,15 @@ final class ArchitectureRules
                 $violations[] = $this->relative($file).' is marked @financial but declares no entity_id';
             }
 
-            if (! str_contains($source, 'ENABLE ROW LEVEL SECURITY')) {
-                $violations[] = $this->relative($file).' is marked @financial but enables no row-level security';
+            // Either spelled out, or via the helper that migration 000500
+            // installs - which is the form a new financial migration should
+            // use, since it also FORCES RLS and adds the migrator bypass.
+            $enablesRls = str_contains($source, 'ENABLE ROW LEVEL SECURITY')
+                || str_contains($source, 'peakflow_apply_entity_rls');
+
+            if (! $enablesRls) {
+                $violations[] = $this->relative($file).
+                    ' is marked @financial but enables no row-level security; call peakflow_apply_entity_rls()';
             }
         }
 

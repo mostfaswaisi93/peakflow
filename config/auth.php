@@ -1,6 +1,7 @@
 <?php
 
-use App\Models\User;
+use App\Platform\Models\Operator;
+use App\Tenant\Identity\Models\User;
 
 return [
 
@@ -37,10 +38,30 @@ return [
     |
     */
 
+    /*
+     | Two guards, because there are two populations of people and they live in
+     | different databases.
+     |
+     | `web` authenticates a CUSTOMER'S user, whose row is in that tenant's own
+     | database. This is why the tenant must be resolved before the auth
+     | middleware runs (PF-021): a guard that ran first would look for the
+     | users table in the platform database and either fail or - far worse -
+     | find a different table of the same name.
+     |
+     | `ops` authenticates one of OUR operators, from the platform database.
+     | An operator is not a user of any tenant and holds no roles in any
+     | entity; reaching a customer's data requires an explicit, logged
+     | impersonation grant, never the operator's own session.
+     */
     'guards' => [
         'web' => [
             'driver' => 'session',
             'provider' => 'users',
+        ],
+
+        'ops' => [
+            'driver' => 'session',
+            'provider' => 'operators',
         ],
     ],
 
@@ -65,6 +86,11 @@ return [
         'users' => [
             'driver' => 'eloquent',
             'model' => env('AUTH_MODEL', User::class),
+        ],
+
+        'operators' => [
+            'driver' => 'eloquent',
+            'model' => Operator::class,
         ],
 
         // 'users' => [

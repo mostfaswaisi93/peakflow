@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Http\Middleware\ResolveEntity;
 use App\Http\Middleware\ResolveTenantFromHeader;
 use App\Http\Middleware\ResolveTenantFromSession;
 use App\Http\Middleware\SetLocale;
@@ -61,8 +62,9 @@ return Application::configure(basePath: dirname(__DIR__))
         | So it is pinned explicitly AND asserted by
         | tests/Feature/MiddlewarePriorityTest.php.
         |
-        | The entity scope (PF-026) joins this list when it lands; it has the
-        | same constraint for the same reason.
+        | The entity scope (PF-026) is the mirror image and is pinned AFTER
+        | the guard, not before: which entity a user may act in is a property
+        | of their roles, so the user has to exist first.
         */
         /*
         | Pin before the AuthenticatesRequests CONTRACT, not the Authenticate
@@ -86,9 +88,23 @@ return Application::configure(basePath: dirname(__DIR__))
             );
         }
 
+        /*
+        | And the entity scope immediately AFTER the guard.
+        |
+        | `appendToPriorityList` with the same contract as the anchor puts it
+        | directly after authentication: the user is known, so their roles can
+        | be read, and every middleware that runs later - authorization, the
+        | SoD engine - can rely on an entity being established.
+        */
+        $middleware->appendToPriorityList(
+            after: \Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests::class,
+            append: ResolveEntity::class,
+        );
+
         $middleware->alias([
             'tenant.session' => ResolveTenantFromSession::class,
             'tenant.header' => ResolveTenantFromHeader::class,
+            'entity.scope' => ResolveEntity::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

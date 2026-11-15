@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
@@ -190,6 +191,47 @@ return new class extends Migration
             $table->longText('payload');
             $table->integer('last_activity')->index();
         });
+
+        /*
+         | Both of these carry an `entity_id` and are deliberately NOT scoped
+         | by it, which every other table with that column must be. The reason
+         | is the same for both and it is structural, not convenience: these
+         | are the tables that ESTABLISH the scope, so they cannot be subject
+         | to it.
+         |
+         | `user_entity_roles` answers "which entities may this user act in".
+         | ResolveEntity reads it BEFORE any entity is set, because that is the
+         | question it exists to answer. Scoped by entity, the query would run
+         | with the session variable unset, match nothing, and no user could
+         | ever resolve an entity at all - and the entity switcher, which lists
+         | every entity a user holds a role in, could by definition only ever
+         | show the one they are already in.
+         |
+         | `sessions` holds authentication state, and its `entity_id` is which
+         | entity that session last switched to. Scoping it by entity would
+         | hide a user's own other sessions from them, which is the opposite of
+         | the concurrent-session visibility PF-029 requires, and switching
+         | entity would make the row vanish from under the request doing the
+         | switching.
+         |
+         | Access to both is controlled by permission, which is where it
+         | belongs. Recorded here, and in the table comment, so that the check
+         | enforcing RLS everywhere else can tell a decision from an omission.
+         */
+        $tenantScoped = [
+            'user_entity_roles' => 'decides which entities a user may act in, so it is read before any entity is '.
+                'established and cannot itself be entity-scoped',
+            'sessions' => 'holds authentication state across entity switches; scoping it would hide a user\'s own '.
+                'sessions from them and break switching',
+        ];
+
+        foreach ($tenantScoped as $table => $because) {
+            DB::unprepared(sprintf(
+                "COMMENT ON TABLE %s IS 'peakflow:tenant-scoped - %s.';",
+                $table,
+                str_replace("'", "''", $because),
+            ));
+        }
     }
 
     public function down(): void

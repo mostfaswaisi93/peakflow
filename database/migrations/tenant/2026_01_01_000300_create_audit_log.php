@@ -165,8 +165,37 @@ return new class extends Migration
          | table (the journal in Phase 02) gets the same treatment by carrying
          | the same comment, with nothing to remember.
          */
+        /*
+         | Two declarations, both read by checks rather than by people.
+         |
+         | `append-only` is what harden() acts on.
+         |
+         | `tenant-scoped` says that this table carries an `entity_id` and is
+         | deliberately NOT entity-scoped by row-level security, which is
+         | otherwise required of every table that has that column.
+         |
+         | Three reasons, and they are the reasons an auditor would give:
+         |
+         | 1. Many audit records have no entity at all - a sign-in, a failed
+         |    MFA assertion, a change to a tenant-wide setting. Scoping by
+         |    entity would make them unreachable rather than scoped.
+         | 2. An access review and an SoD investigation are cross-entity by
+         |    nature: "did the same person change a supplier's bank details in
+         |    one company and release the payment in another" is a question
+         |    that an entity-scoped log cannot answer.
+         | 3. The audit log is the evidence that entity scoping worked.
+         |    Scoping the evidence by the same key it is evidence for is
+         |    circular, and an attacker who could set the session variable
+         |    could also hide their own trail.
+         |
+         | Reads of the audit log are themselves audited, and access to it is a
+         | permission, which is where the control actually belongs.
+         */
         $connection->unprepared(
-            "COMMENT ON TABLE audit_log IS 'peakflow:append-only - UPDATE and DELETE are revoked from the application role by TenantProvisioner::harden(); record a correcting entry instead.';"
+            "COMMENT ON TABLE audit_log IS 'peakflow:append-only peakflow:tenant-scoped - ".
+            "UPDATE and DELETE are revoked from the application role by TenantProvisioner::harden(). ".
+            "Deliberately not entity-scoped: many records have no entity, access reviews are cross-entity, ".
+            "and the log is the evidence that entity scoping worked.';"
         );
     }
 

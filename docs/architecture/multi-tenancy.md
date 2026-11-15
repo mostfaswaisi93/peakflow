@@ -161,3 +161,32 @@ Stated plainly, because an architecture document that lists only advantages is m
 - **Cross-tenant analytics are awkward.** Platform-wide reporting requires a separate aggregation path - events pushed to a warehouse - rather than a query. Accepted: the operator's analytics needs are modest and known.
 - **Migration time grows linearly with tenant count.** Bounded concurrency helps; it does not change the order of growth.
 - **Schema drift is possible** if a migration fails on a subset. The schema-version row makes it visible, and a drift report runs nightly.
+
+## Entity scoping: two mechanisms, and three tables that opt out
+
+Inside one tenant, data is scoped to an **entity** by two independent mechanisms, because one of them will eventually have a hole.
+
+| Mechanism | Where | What it catches |
+|-----------|-------|-----------------|
+| `EntityScope` global scope | Eloquent | Ordinary application code, and it **refuses** rather than returning everything when no entity is set |
+| Row-level security policy | PostgreSQL | Raw queries, `DB::table()`, console commands, a future maintainer writing SQL at 2am |
+
+Neither trusts the other. The Eloquent scope throws `EntityNotInScope` when no entity is established — the obvious implementation skips the constraint instead, and that quietly returns every company's rows, which looks like data rather than an error. The database answers the same question differently: the policy compares `entity_id` against a session variable that is NULL when unset, and `entity_id = NULL` is never true, so an unscoped query returns nothing. **Eloquent refuses loudly; PostgreSQL returns nothing.**
+
+The session variable is re-applied on `ConnectionEstablished`, which fires on a transparent reconnect after a lost connection. Without that, a dropped connection mid-request produces a page that intermittently shows no data — safe, because it fails closed, but a miserable thing to diagnose.
+
+### RLS is forced, not merely enabled
+
+`ENABLE ROW LEVEL SECURITY` exempts a table's **owner** from its own policies. In a tenant database the owner is the migrator, so a merely-enabled table is scoped for the application and wide open to anything running as the migrator. Every policy is installed with `FORCE`, and a check asks the catalogue for `relforcerowsecurity` rather than trusting the migration that claimed it.
+
+### Three tables carry `entity_id` and are deliberately not scoped by it
+
+Every table with an `entity_id` column must have a forced policy — enforced against the live database, not against migration source. Three opt out, each declaring why in its own table comment so that `\dt+` shows the reason to whoever is holding the incident:
+
+| Table | Why it cannot be entity-scoped |
+|-------|-------------------------------|
+| `user_entity_roles` | It *decides* which entities a user may act in, so it is read before any entity is established. Scoped, the query would match nothing and no user could ever resolve an entity — and the switcher, which lists every entity a user holds a role in, could only ever show the one they are already in |
+| `sessions` | Authentication state that spans entity switches. Scoping it would hide a user's own sessions from them, the opposite of the concurrent-session visibility PF-029 requires, and switching entity would make the row vanish from under the request doing the switching |
+| `audit_log` | Many records have no entity at all — a sign-in, a failed MFA assertion, a tenant-wide setting change. Access reviews and SoD investigations are cross-entity by nature. And the log is the *evidence* that entity scoping worked: scoping the evidence by the same key it is evidence for is circular, and an attacker who could set the session variable could also hide their own trail |
+
+The pattern is the same in all three cases: **a table that establishes the scope cannot be subject to it.** Access to each is controlled by permission, which is where the control belongs. The opt-out lives in the database rather than in a list in the test, so a check can tell a decision from an omission.

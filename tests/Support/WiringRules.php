@@ -34,6 +34,7 @@ final class WiringRules
         return [
             'tenant resolvers run before the auth guard' => $this->resolversBeforeAuth(),
             'tenant resolvers run after the session starts' => $this->resolversAfterSession(),
+            'the entity scope runs after the auth guard' => $this->entityScopeAfterAuth(),
             'the tenant connection is a template with no credentials' => $this->tenantConnectionIsTemplate(),
             'the application does not connect as the migrator' => $this->applicationIsNotMigrator(),
             'problem types have unique URIs and sane statuses' => $this->problemTypesAreWellFormed(),
@@ -56,6 +57,43 @@ final class WiringRules
      *
      * @return list<string>
      */
+    /**
+     * The mirror of resolversBeforeAuth, and wrong in the opposite direction.
+     *
+     * Which entity a user may act in is read from their roles, so the guard
+     * must have run first. Pinned with `appendToPriorityList`, which has the
+     * same silent-fallback behaviour as its sibling if the anchor is not in
+     * the list - so again this asserts the position, not the call.
+     *
+     * @return list<string>
+     */
+    public function entityScopeAfterAuth(): array
+    {
+        $priority = $this->priorityList();
+        $authIndex = $this->indexOf($priority, AuthenticatesRequests::class);
+
+        if ($authIndex === null) {
+            return ['the auth guard is not in the middleware priority list at all'];
+        }
+
+        $index = $this->indexOf($priority, \App\Http\Middleware\ResolveEntity::class);
+
+        if ($index === null) {
+            return ['ResolveEntity is not in the middleware priority list; it would run in route order'];
+        }
+
+        if ($index < $authIndex) {
+            return [sprintf(
+                'ResolveEntity is at position %d, BEFORE the auth guard at %d. It reads the user\'s roles to '.
+                'decide which entities they may act in, so there would be no user to read them from.',
+                $index,
+                $authIndex,
+            )];
+        }
+
+        return [];
+    }
+
     public function resolversBeforeAuth(): array
     {
         $priority = $this->priorityList();
