@@ -76,12 +76,41 @@ $only = $argv[1] ?? 'all';
 
 $suites = [];
 
+/*
+ | A suite that throws must FAIL, not silence the run.
+ |
+ | Every suite's rules are evaluated eagerly while this array is built, so an
+ | exception thrown while building one used to abort bin/verify before the
+ | runner printed a single line: every other suite went quiet because one
+ | configuration file was contradictory.
+ |
+ | Found while proving that PF-078's bloc membership check bites. The
+ | deliberate contradiction - the United Kingdom listed as both an EU member
+ | and a departure - was refused exactly as designed, and the refusal took the
+ | whole run with it. A green run and an aborted run are easy to tell apart;
+ | an aborted run and a run that checked 23 things are not.
+ |
+ | The exception becomes a failed check carrying its message, and the suites
+ | after it still run.
+ */
+$suite = static function (callable $build): array {
+    try {
+        return $build();
+    } catch (Throwable $e) {
+        return ['the suite could not be built, so nothing in it was checked' => [sprintf(
+            '%s: %s',
+            $e::class,
+            preg_replace('/\s+/', ' ', $e->getMessage()) ?? '(no message)',
+        )]];
+    }
+};
+
 if ($only === 'all' || $only === 'arch') {
-    $suites['Architecture rules'] = (new Tests\Support\ArchitectureRules($base))->all();
+    $suites['Architecture rules'] = $suite(static fn (): array => (new Tests\Support\ArchitectureRules($base))->all());
 }
 
 if ($only === 'all' || $only === 'wiring') {
-    $suites['Wiring'] = (new Tests\Support\WiringRules($app))->all();
+    $suites['Wiring'] = $suite(static fn (): array => (new Tests\Support\WiringRules($app))->all());
 }
 
 /*
@@ -90,108 +119,109 @@ if ($only === 'all' || $only === 'wiring') {
  | verify are checks people stop running.
  */
 if ($only === 'rollback') {
-    $suites['Provisioning rollback'] = (new Tests\Support\ProvisioningRollbackRules())->all();
+    $suites['Provisioning rollback'] = $suite(static fn (): array => (new Tests\Support\ProvisioningRollbackRules())->all());
 }
 
 if ($only === 'all' || $only === 'tenant') {
-    $suites['Tenant enforcement'] = (new Tests\Support\TenantEnforcementRules())->all();
+    $suites['Tenant enforcement'] = $suite(static fn (): array => (new Tests\Support\TenantEnforcementRules())->all());
 }
 
 if ($only === 'all' || $only === 'ledger') {
-    $suites['Ledger invariants'] = (new Tests\Support\LedgerEnforcementRules())->all();
+    $suites['Ledger invariants'] = $suite(static fn (): array => (new Tests\Support\LedgerEnforcementRules())->all());
 }
 
 if ($only === 'all' || $only === 'parties') {
-    $suites['Party controls'] = (new Tests\Support\PartyEnforcementRules())->all();
+    $suites['Party controls'] = $suite(static fn (): array => (new Tests\Support\PartyEnforcementRules())->all());
 }
 
 if ($only === 'all' || $only === 'currency') {
-    $suites['Currency and FX'] = (new Tests\Support\CurrencyEnforcementRules())->all();
+    $suites['Currency and FX'] = $suite(static fn (): array => (new Tests\Support\CurrencyEnforcementRules())->all());
 }
 
 if ($only === 'all' || $only === 'numbering') {
-    $suites['Numbering'] = (new Tests\Support\NumberingRules())->all();
+    $suites['Numbering'] = $suite(static fn (): array => (new Tests\Support\NumberingRules())->all());
 }
 
 if ($only === 'all' || $only === 'terms') {
-    $suites['Payment terms'] = (new Tests\Support\PaymentTermRules())->all();
+    $suites['Payment terms'] = $suite(static fn (): array => (new Tests\Support\PaymentTermRules())->all());
 }
 
 if ($only === 'all' || $only === 'catalog') {
-    $suites['Items and prices'] = (new Tests\Support\CatalogRules())->all();
+    $suites['Items and prices'] = $suite(static fn (): array => (new Tests\Support\CatalogRules())->all());
 }
 
 if ($only === 'all' || $only === 'logging') {
-    $suites['Structured logging'] = (new Tests\Support\LoggingRules())->all();
+    $suites['Structured logging'] = $suite(static fn (): array => (new Tests\Support\LoggingRules())->all());
 }
 
 if ($only === 'all' || $only === 'manual') {
-    $suites['Manual journal entry'] = (new Tests\Support\ManualJournalRules())->all();
+    $suites['Manual journal entry'] = $suite(static fn (): array => (new Tests\Support\ManualJournalRules())->all());
 }
 
 if ($only === 'all' || $only === 'group') {
-    $suites['Inter-entity postings'] = (new Tests\Support\InterEntityRules())->all();
+    $suites['Inter-entity postings'] = $suite(static fn (): array => (new Tests\Support\InterEntityRules())->all());
 }
 
 if ($only === 'all' || $only === 'property') {
-    $suites['The balanced-entry property'] = (new Tests\Support\BalanceProperty())->all();
+    $suites['The balanced-entry property'] = $suite(static fn (): array => (new Tests\Support\BalanceProperty())->all());
 }
 
 if ($only === 'all' || $only === 'iso') {
-    $suites['ISO registries'] = (new Tests\Support\IsoRegistryRules())->all();
+    $suites['ISO registries'] = $suite(static fn (): array => (new Tests\Support\IsoRegistryRules())->all());
 }
 
 if ($only === 'all' || $only === 'iban') {
-    $suites['Bank identifiers'] = (new Tests\Support\BankIdentifierRules())->all();
+    $suites['Bank identifiers'] = $suite(static fn (): array => (new Tests\Support\BankIdentifierRules())->all());
 }
 
 if ($only === 'all' || $only === 'tax') {
-    $suites['Tax codes'] = (new Tests\Support\TaxCodeRules())->all();
-    $suites['Tax point'] = (new Tests\Support\TaxPointRules())->all();
+    $suites['Tax codes'] = $suite(static fn (): array => (new Tests\Support\TaxCodeRules())->all());
+    $suites['Tax point'] = $suite(static fn (): array => (new Tests\Support\TaxPointRules())->all());
+    $suites['Place of supply'] = $suite(static fn (): array => (new Tests\Support\PlaceOfSupplyRules())->all());
 }
 
 if ($only === 'all' || $only === 'ops') {
-    $suites['Operator console'] = (new Tests\Support\OperatorConsoleRules())->all();
+    $suites['Operator console'] = $suite(static fn (): array => (new Tests\Support\OperatorConsoleRules())->all());
 }
 
 if ($only === 'all' || $only === 'repo') {
-    $suites['Repository conventions'] = (new Tests\Support\RepositoryRules())->all();
+    $suites['Repository conventions'] = $suite(static fn (): array => (new Tests\Support\RepositoryRules())->all());
 }
 
 if ($only === 'all' || $only === 'errors') {
-    $suites['Error responses'] = (new Tests\Support\ErrorResponseRules())->all();
+    $suites['Error responses'] = $suite(static fn (): array => (new Tests\Support\ErrorResponseRules())->all());
 }
 
 if ($only === 'all' || $only === 'lang') {
-    $suites['Localization'] = (new Tests\Support\LocalizationRules())->all();
+    $suites['Localization'] = $suite(static fn (): array => (new Tests\Support\LocalizationRules())->all());
 }
 
 if ($only === 'all' || $only === 'config') {
-    $suites['Configuration'] = (new Tests\Support\ConfigurationRules())->all();
+    $suites['Configuration'] = $suite(static fn (): array => (new Tests\Support\ConfigurationRules())->all());
 }
 
 if ($only === 'all' || $only === 'roles') {
-    $suites['Database roles'] = (new Tests\Support\DatabaseRoleRules())->all();
+    $suites['Database roles'] = $suite(static fn (): array => (new Tests\Support\DatabaseRoleRules())->all());
 }
 
 if ($only === 'all' || $only === 'canonical') {
-    $suites['Canonicalization'] = (new Tests\Support\CanonicalizationRules())->all();
+    $suites['Canonicalization'] = $suite(static fn (): array => (new Tests\Support\CanonicalizationRules())->all());
 }
 
 if ($only === 'all' || $only === 'charts') {
-    $suites['Chart templates'] = (new Tests\Support\ChartTemplateRules())->all();
+    $suites['Chart templates'] = $suite(static fn (): array => (new Tests\Support\ChartTemplateRules())->all());
 }
 
 if ($only === 'all' || $only === 'queue') {
-    $suites['Queue tenancy'] = (new Tests\Support\QueueTenancyRules())->all();
+    $suites['Queue tenancy'] = $suite(static fn (): array => (new Tests\Support\QueueTenancyRules())->all());
 }
 
 if ($only === 'all' || $only === 'settings') {
-    $suites['Settings and ceilings'] = (new Tests\Support\SettingsRules())->all();
+    $suites['Settings and ceilings'] = $suite(static fn (): array => (new Tests\Support\SettingsRules())->all());
 }
 
 if ($only === 'all' || $only === 'examples') {
-    $suites['Worked examples'] = (new Tests\Support\WorkedExamples())->all();
+    $suites['Worked examples'] = $suite(static fn (): array => (new Tests\Support\WorkedExamples())->all());
 }
 
 if ($suites === []) {

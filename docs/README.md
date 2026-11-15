@@ -25,6 +25,7 @@ Start with the [root README](../README.md) for the whole system in one pass. Com
 | [`domain/invoicing.md`](domain/invoicing.md) | The document lifecycle, gapless numbering, the hash chain, recognition, dunning |
 | [`domain/banking.md`](domain/banking.md) | Statement formats, the matching engine pass by pass, payment initiation |
 | [`domain/tax-engine.md`](domain/tax-engine.md) | Tax point, place of supply, reverse charge, withholding, returns |
+| [`domain/place-of-supply.md`](domain/place-of-supply.md) | Which jurisdiction's tax applies: the rule book, its precedence, the blocs, and why the fallback refuses |
 | [`domain/schema.md`](domain/schema.md) | Every table, its columns, its constraints and its indexes |
 | [`domain/glossary.md`](domain/glossary.md) | The bilingual domain vocabulary, AR/EN, with the standard each term comes from |
 
