@@ -6,7 +6,15 @@ namespace Tests\Support;
 
 use App\Platform\Models\Tenant;
 use App\Platform\Services\TenantConnectionResolver;
+use App\Tenant\Ledger\Exceptions\EntryDoesNotBalance;
+use App\Tenant\Ledger\Posting\PostingContext;
+use App\Tenant\Ledger\Posting\PostingLine;
+use App\Tenant\Ledger\Posting\PostingRule;
+use App\Tenant\Ledger\Posting\PostingRuleRegistry;
+use App\Tenant\Ledger\Posting\RuleDescription;
 use App\Tenant\Ledger\Services\ChartTemplate;
+use App\Tenant\Ledger\Services\LedgerVerifier;
+use App\Tenant\Ledger\Services\Poster;
 use App\Tenant\Ledger\Services\FiscalCalendarGenerator;
 use App\Tenant\Tenancy\Models\Entity;
 use App\Tenant\Tenancy\Services\EntityContext;
@@ -67,11 +75,16 @@ final class LedgerEnforcementRules
             $this->seed();
 
             return [
+                // FIRST, because every check below is meaningless if a guard
+                // is switched off - and they would all pass.
+                'every ledger guard is enabled' => $this->guardsAreEnabled(),
                 'an entry must balance in the functional currency' => $this->entriesMustBalance(),
                 'a header or control account refuses a manual posting' => $this->accountsRefuseWhatTheyShould(),
                 'a closed period refuses a posting' => $this->closedPeriodsRefuse(),
                 'a posted entry cannot be altered' => $this->postedEntriesAreImmutable(),
                 'the chart opens with every required control role' => $this->chartIsUsable(),
+                'a posting rule that does not balance is refused by name' => $this->badRulesFailByName(),
+                'ledger:verify finds an entry someone unbalanced' => $this->verifyCatchesDamage(),
             ];
         } catch (Throwable $e) {
             return ['ledger invariants could not be checked' => [
@@ -243,6 +256,236 @@ final class LedgerEnforcementRules
             count($missing),
             implode(', ', array_map(static fn ($role): string => $role->value, $missing)),
         )];
+    }
+
+    /**
+     * Every trigger guarding the ledger is actually ENABLED.
+     *
+     * `ALTER TABLE ... DISABLE TRIGGER` is persistent DDL. A migration, a
+     * data fix, or a test that disables a trigger and is then interrupted
+     * leaves the table unguarded - and every check below passes, because
+     * nothing refuses anything any more.
+     *
+     * That is not hypothetical. An earlier version of the damage-injection
+     * check disabled these triggers to produce an unbalanced entry; the run
+     * was killed between disabling and re-enabling, and the next run reported
+     * that unbalanced entries, header-account postings and manual control
+     * -account postings were all ACCEPTED. The ledger had no guards at all
+     * and the suite would have gone on saying so in whichever direction was
+     * asked.
+     *
+     * So this runs first, and the current damage check never touches a
+     * trigger.
+     *
+     * @return list<string>
+     */
+    public function guardsAreEnabled(): array
+    {
+        $expected = [
+            'journal_lines' => [
+                'journal_lines_entry_balances',
+                'journal_lines_follow_entry',
+                'journal_lines_account_is_postable',
+                'journal_lines_posted_immutable',
+            ],
+            'journal_entries' => [
+                'journal_entries_period_accepts',
+                'journal_entries_posted_immutable',
+            ],
+            'periods' => ['periods_locked_is_terminal'],
+        ];
+
+        $rows = $this->connection->select(<<<'SQL'
+            SELECT c.relname AS table_name, t.tgname AS trigger_name, t.tgenabled::text AS enabled
+            FROM pg_trigger t
+            JOIN pg_class c ON c.oid = t.tgrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public'
+              AND NOT t.tgisinternal
+              AND c.relname IN ('journal_lines', 'journal_entries', 'periods')
+        SQL);
+
+        $state = [];
+
+        foreach ($rows as $row) {
+            $state[$row->table_name][$row->trigger_name] = (string) $row->enabled;
+        }
+
+        $violations = [];
+
+        foreach ($expected as $table => $triggers) {
+            foreach ($triggers as $trigger) {
+                $enabled = $state[$table][$trigger] ?? null;
+
+                if ($enabled === null) {
+                    $violations[] = sprintf('%s.%s does not exist, so nothing enforces what it guarded', $table, $trigger);
+
+                    continue;
+                }
+
+                // 'O' is origin-enabled, which is what a working trigger is.
+                // 'D' is disabled; 'R' and 'A' are replica-only states that
+                // also mean it does not fire for ordinary writes.
+                if ($enabled !== 'O') {
+                    $violations[] = sprintf(
+                        '%s.%s is in state "%s" rather than enabled - the ledger is accepting writes it should '.
+                        'refuse, and every other check here would pass while it does',
+                        $table,
+                        $trigger,
+                        $enabled,
+                    );
+                }
+            }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * A rule whose lines do not sum to zero fails with ITS OWN name - PF-047.
+     *
+     * The database catches it at commit, truly and uselessly: the message
+     * says the entry does not balance, not which of forty rules produced it.
+     * The poster checks first so a developer is told where to look.
+     *
+     * @return list<string>
+     */
+    public function badRulesFailByName(): array
+    {
+        $registry = app(PostingRuleRegistry::class);
+
+        $broken = new class implements PostingRule
+        {
+            public function key(): string
+            {
+                return 'enforcement.probe.unbalanced';
+            }
+
+            public function describe(): RuleDescription
+            {
+                return RuleDescription::of($this->key(), 'فحص', 'Probe', []);
+            }
+
+            public function lines(array $event, PostingContext $context): array
+            {
+                // One side only. Balances to 100, which is the bug.
+                return [PostingLine::toAccount((string) $event['account'], $context->money('100.0000'))];
+            }
+        };
+
+        $registry->register($broken);
+
+        $entity = Entity::query()->whereKey($this->entityId)->firstOrFail();
+        $violations = [];
+
+        try {
+            app(Poster::class)->post(
+                $entity,
+                $broken->key(),
+                ['account' => $this->accounts['1.1.1.1']],
+                Carbon::parse($this->postingDate),
+            );
+
+            $violations[] = 'a rule returning one unbalanced line was accepted';
+        } catch (EntryDoesNotBalance $e) {
+            if (! str_contains($e->getMessage(), $broken->key())) {
+                $violations[] = 'an unbalanced rule was refused without naming the rule, so the failure says '.
+                    'which constraint fired rather than which rule is wrong';
+            }
+        } catch (Throwable $e) {
+            $violations[] = 'an unbalanced rule failed with '.class_basename($e).
+                ' rather than a refusal naming it: '.Str::limit($e->getMessage(), 120);
+        }
+
+        // And it wrote nothing.
+        $written = $this->connection->table('journal_entries')
+            ->where('posting_rule', $broken->key())
+            ->count();
+
+        if ($written > 0) {
+            $violations[] = 'a refused rule still wrote an entry, so the check happens after the write';
+        }
+
+        return $violations;
+    }
+
+    /**
+     * `ledger:verify` must find an entry that someone unbalanced - PF-054.
+     *
+     * ## The damage is made through the ordinary connection, on purpose
+     *
+     * The first version injected it as the MIGRATOR with the triggers
+     * disabled, which is the shape of the real cause - a restore or a
+     * backfill. It also hung: disabling a trigger needs ACCESS EXCLUSIVE on
+     * the table, and the enclosing transaction already holds locks on it, so
+     * the two waited on each other until the run was killed.
+     *
+     * The deferred balance trigger gives a simpler route. It fires at COMMIT,
+     * and this transaction never commits - so an extra line inserted here
+     * leaves the entry genuinely unbalanced, in a transaction that will be
+     * rolled back, with no privileged connection and no lock to contend for.
+     *
+     * A verifier that has never found anything is a verifier nobody has
+     * tested, and the first time that matters is during an audit.
+     *
+     * @return list<string>
+     */
+    public function verifyCatchesDamage(): array
+    {
+        $verifier = app(LedgerVerifier::class);
+
+        if ($verifier->verify($this->entityId)->isNotEmpty()) {
+            return ['the probe ledger is already damaged before anything was injected'];
+        }
+
+        $entryId = (string) Str::ulid();
+
+        if ($this->writeEntry([['1.1.1.1', '20.0000'], ['4.1', '-20.0000']], entryId: $entryId) !== null) {
+            return ['could not write a healthy entry to damage'];
+        }
+
+        $violations = [];
+        $savepoint = 'damage_'.bin2hex(random_bytes(4));
+
+        $this->connection->statement('SAVEPOINT '.$savepoint);
+
+        try {
+            // One extra line. The entry now sums to 3.0000, and the deferred
+            // trigger will not notice until a commit that never comes.
+            $this->connection->table('journal_lines')->insert([
+                'id' => (string) Str::ulid(),
+                'entity_id' => $this->entityId,
+                'journal_entry_id' => $entryId,
+                'accounting_date' => $this->postingDate,
+                'period_id' => $this->periodId,
+                'account_id' => $this->accounts['4.1'],
+                'amount' => '3.0000',
+                'currency' => 'SAR',
+                'functional_amount' => '3.0000',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            $found = $verifier->verify($this->entityId)
+                ->contains(static fn ($finding): bool => $finding->kind === 'unbalanced entry');
+
+            if (! $found) {
+                $violations[] = 'an entry left out by 3.0000 was not reported, so the global proof proves '.
+                    'nothing about the invariant the whole phase exists to guarantee';
+            }
+        } catch (Throwable $e) {
+            $violations[] = 'could not inject damage to test the verifier: '.Str::limit($e->getMessage(), 140);
+        } finally {
+            $this->connection->statement('ROLLBACK TO SAVEPOINT '.$savepoint);
+        }
+
+        // And the finding clears once the damage is gone.
+        if ($violations === [] && $verifier->verify($this->entityId)->isNotEmpty()) {
+            $violations[] = 'the verifier still reports damage after it was rolled back, so it is reading '.
+                'something other than the current state';
+        }
+
+        return $violations;
     }
 
     /**

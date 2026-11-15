@@ -98,10 +98,10 @@ The invariant that keeps a subledger equal to its control account, and the one t
 
 The mechanism that lets `Ledger` know nothing about invoices.
 
-- [ ] A `PostingRule` abstraction: takes a domain event and an entity's configuration, returns a balanced set of lines
-- [ ] A registry where each module registers its own rules; `Ledger` resolves them without knowing what they mean
-- [ ] Rules are **declarative and inspectable** - a screen shows an operator exactly which accounts a given document type will hit, before anything is posted
-- [ ] Every rule's output is validated against the balanced-entry invariant before the entry is written, so a bad rule fails with its own name rather than as a constraint violation
+- [x] A `PostingRule` abstraction: takes a domain event and an entity's configuration, returns a balanced set of lines
+- [x] A registry where each module registers its own rules; `Ledger` resolves them without knowing what they mean
+- [x] Rules are **declarative and inspectable** - a screen shows an operator exactly which accounts a given document type will hit, before anything is posted
+- [x] Every rule's output is validated against the balanced-entry invariant before the entry is written, so a bad rule fails with its own name rather than as a constraint violation
 - [ ] Each shipped rule's debits and credits are written out in [`../domain/general-ledger.md`](../domain/general-ledger.md)
 
 ### PF-048 · Domain events and listeners
@@ -155,11 +155,11 @@ The mechanism that lets `Ledger` know nothing about invoices.
 
 The global proof. An individual assertion can be written to pass; this cannot.
 
-- [ ] Asserts every entry balances in functional currency
+- [x] Asserts every entry balances in functional currency
 - [ ] Asserts every subledger total equals its control account - AR, AP, VAT input and output, bank, in-transit
-- [ ] Asserts nothing is posted into a period that does not accept postings
+- [x] Asserts nothing is posted into a period that does not accept postings
 - [ ] Asserts no posted entry has been mutated, by re-checking the audit chain
-- [ ] Exits non-zero with a specific, actionable report
+- [x] Exits non-zero with a specific, actionable report
 - [ ] **Runs as the final assertion of every feature test that posts anything**, wired into the test case rather than remembered per test
 
 ### PF-055 · Manual journal entry

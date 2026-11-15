@@ -209,6 +209,7 @@ final class WiringRules
             'audit:verify' => ['--all' => true],
             'sod:exceptions' => ['tenant' => $tenant->slug],
             'mfa:status' => ['tenant' => $tenant->slug],
+            'ledger:verify' => ['--all' => true],
         ];
 
         $violations = [];
