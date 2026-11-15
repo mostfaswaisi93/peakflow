@@ -36,7 +36,7 @@ final class Account extends TenantModel
     protected $fillable = [
         'entity_id', 'code', 'name_ar', 'name_en', 'parent_id', 'path', 'depth',
         'type', 'statement_line', 'currency',
-        'postable', 'requires_dimension', 'reconcilable', 'blocked',
+        'postable', 'requires_dimension', 'reconcilable', 'blocked', 'monetary',
     ];
 
     protected $casts = [
@@ -46,6 +46,11 @@ final class Account extends TenantModel
         'requires_dimension' => 'boolean',
         'reconcilable' => 'boolean',
         'blocked' => 'boolean',
+        // Nullable on purpose: null is "not classified", which is reported
+        // by fx:revalue rather than treated as non-monetary. See the
+        // migration note - a silent default here is wrong in whichever
+        // direction it happens to point.
+        'monetary' => 'boolean',
     ];
 
     /** @return BelongsTo<self, $this> */

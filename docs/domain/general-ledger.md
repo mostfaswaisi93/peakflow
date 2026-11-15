@@ -262,12 +262,28 @@ Every rule below is owned by `Ledger` and registered by the module that raises t
 
 ### Period-end and year-end
 
-**`RevaluationRun`** (IAS 21) — monetary items only, reversed and recomputed each period
+**`ledger.fx_revaluation`** (IAS 21) — monetary items only, reversed and recomputed each period
 
-| Dr/Cr | Account | Amount |
-|-------|---------|--------|
-| Dr | `accounts_receivable` | 1,800 |
-| Cr | `fx_revaluation` | (1,800) |
+A customer owes **EUR 10,000**, invoiced at **4.00** and so booked at SAR 40,000. At the period end the rate is **4.10**, making the receivable worth SAR 41,000.
+
+| Dr/Cr | Account | Amount | Currency | Rate |
+|-------|---------|--------|----------|------|
+| Dr | `accounts_receivable` | 1,000.0000 | **SAR** | *none* |
+| Cr | `fx_revaluation` | (1,000.0000) | **SAR** | *none* |
+
+Three things about those two lines are easy to get wrong.
+
+**The lines are in the functional currency and carry no rate.** This is not a transaction in euro: the exposure has not changed, the customer still owes exactly EUR 10,000. What changed is what those euro are worth in riyal, and that difference is a riyal amount with no euro counterpart. Posting it as a EUR line with a rate would claim a further EUR amount arose - making the euro balance wrong in order to make the riyal balance right. `assert_line_translation()` refuses a rate on a functional-currency line, so the mistake is unrepresentable rather than discouraged.
+
+**One line to the revaluation account, not one per account.** A line per account makes the revaluation account's own history fifty entries per close where one belongs, and the figure that reaches profit or loss is the total.
+
+**Monetary items only, and deferred revenue is not one.** It is settled by delivering goods and services, not by paying money, so it is never restated - the account most often wrongly revalued. Property, inventory, prepayments and equity are likewise non-monetary. Suspense is excluded for a different reason: it holds items nobody has identified, and revaluing an unidentified item asserts a classification that has not been made.
+
+The classification is a column on the account (`accounts.monetary`) because it cannot be derived - property and receivables are both assets, and a prepayment is both current and non-monetary. An account holding a foreign balance with **no** classification is reported by `fx:revalue` and left alone; a default would be wrong in whichever direction it pointed.
+
+**Re-running it inside an open period reverses the previous run in full and posts a fresh computation.** An unrealized difference is an opinion about today's rate; next period the rate differs and so does the opinion, and adding this period's to last period's gives a figure that is neither. Run it three times on three days and exactly one adjustment stands - and a database trigger refuses a run that supersedes another without reversing its entry, so that stays true of the data and not only of the code.
+
+Each run keeps its workings - exposure, rate, rate date, booked value, restated value, difference per account and currency - because "why is there a 1,000 revaluation in March" is asked at every close, and reconstructing it from the journal means re-deriving the balances as they were at the time.
 
 **`InterEntityPosted`** — two mirrored entries, each balanced in its own entity's functional currency
 

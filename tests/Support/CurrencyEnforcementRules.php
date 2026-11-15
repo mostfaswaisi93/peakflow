@@ -16,7 +16,16 @@ use App\Tenant\Catalog\Models\FxRate;
 use App\Tenant\Catalog\Services\CurrencyPolicy;
 use App\Tenant\Catalog\Services\ExchangeRates;
 use App\Tenant\Catalog\Services\RateFetcher;
+use App\Tenant\Ledger\Models\Period;
 use App\Tenant\Ledger\Services\FiscalCalendarGenerator;
+use App\Tenant\Ledger\Posting\PostingContext;
+use App\Tenant\Ledger\Posting\PostingLine;
+use App\Tenant\Ledger\Posting\PostingRule;
+use App\Tenant\Ledger\Posting\PostingRuleRegistry;
+use App\Tenant\Ledger\Posting\RuleDescription;
+use App\Tenant\Ledger\Services\MonetaryRevaluation;
+use App\Tenant\Ledger\Services\Poster;
+use App\Tenant\Ledger\Services\TrialBalance;
 use App\Tenant\Tenancy\Models\Entity;
 use App\Tenant\Tenancy\Services\EntityContext;
 use Illuminate\Database\Connection;
@@ -50,6 +59,18 @@ use Throwable;
  * of a cent away from it, in the same direction, every single time. It
  * accumulates into a consolidation difference small enough to dismiss and
  * large enough to notice, which is the worst size a difference can be.
+ *
+ * ## Every check owns its accounts
+ *
+ * They all share one transaction, so they share the database. The
+ * classification check leaves an account unclassified on purpose; the
+ * accumulation check posts and reposts. Pointing both at the receivable made
+ * the second report "a rate moving from 4.00 to 4.10 produced no entry at
+ * all" - true, and caused entirely by the check before it.
+ *
+ * The same applies to dates. Rates are idempotent per pair, date, set and
+ * provider, so a check that records a rate for a day another check already
+ * used records nothing and then measures the other check's number.
  *
  * ## Why the checks run inside a rolled-back transaction
  *
@@ -108,22 +129,35 @@ final class CurrencyEnforcementRules
         try {
             $this->seed();
 
-            return [
+            /*
+             | Each check is run in its own try, not the whole set in one.
+             |
+             | A single try around everything turns one unexpected throw into
+             | one opaque failure and reports nothing about the other
+             | fourteen checks - which happened while proving these bite: a
+             | deliberately broken revaluation raised a constraint violation
+             | and the whole suite came back as "currency controls could not
+             | be checked", hiding the four checks that had already found the
+             | real problem.
+             */
+            return $this->runEach([
                 // FIRST. Every check below would pass with the guard off.
-                'the translation guard is enabled' => $this->guardIsEnabled(),
-                'a foreign line without a rate is refused, not read as 1' => $this->aMissingRateIsNeverOne(),
-                'a functional amount must follow from its own rate' => $this->theArithmeticMustAgree(),
-                'direction is stored, never inferred' => $this->directionIsNeverInferred(),
-                'a currency the entity has not enabled is refused' => $this->unenabledCurrenciesAreRefused(),
-                'the functional currency is always present and enabled' => $this->functionalCurrencyIsMirrored(),
-                'a stored rate is superseded, never edited' => $this->ratesAreImmutable(),
-                'the lookup is effective-dated and never reaches forward' => $this->lookupIsEffectiveDated(),
-                'a rate on a line says WHICH rate, not just what number' => $this->rateProvenanceIsRequired(),
-                'a feed outage does not stop the business trading' => $this->anOutageDoesNotStopTrading(),
-                'a degraded fetch raises an alert nobody can miss' => $this->degradationIsAlerted(),
-                'a feed sending an impossible rate is not partly believed' => $this->impossibleRatesAreRejected(),
-                'a finished fetch run cannot be rewritten' => $this->fetchRunsAreFinal(),
-            ];
+                'the translation guard is enabled' => fn (): array => $this->guardIsEnabled(),
+                'a foreign line without a rate is refused, not read as 1' => fn (): array => $this->aMissingRateIsNeverOne(),
+                'a functional amount must follow from its own rate' => fn (): array => $this->theArithmeticMustAgree(),
+                'direction is stored, never inferred' => fn (): array => $this->directionIsNeverInferred(),
+                'a currency the entity has not enabled is refused' => fn (): array => $this->unenabledCurrenciesAreRefused(),
+                'the functional currency is always present and enabled' => fn (): array => $this->functionalCurrencyIsMirrored(),
+                'a stored rate is superseded, never edited' => fn (): array => $this->ratesAreImmutable(),
+                'the lookup is effective-dated and never reaches forward' => fn (): array => $this->lookupIsEffectiveDated(),
+                'a rate on a line says WHICH rate, not just what number' => fn (): array => $this->rateProvenanceIsRequired(),
+                'a feed outage does not stop the business trading' => fn (): array => $this->anOutageDoesNotStopTrading(),
+                'a degraded fetch raises an alert nobody can miss' => fn (): array => $this->degradationIsAlerted(),
+                'a feed sending an impossible rate is not partly believed' => fn (): array => $this->impossibleRatesAreRejected(),
+                'a finished fetch run cannot be rewritten' => fn (): array => $this->fetchRunsAreFinal(),
+                'only monetary items are revalued' => fn (): array => $this->onlyMonetaryItemsAreRevalued(),
+                'a revaluation is reversed and recomputed, never accumulated' => fn (): array => $this->revaluationDoesNotAccumulate(),
+            ]);
         } catch (Throwable $e) {
             return ['currency controls could not be checked' => [
                 Str::limit(preg_replace('/\s+/', ' ', $e->getMessage()) ?? '', 200),
@@ -131,6 +165,39 @@ final class CurrencyEnforcementRules
         } finally {
             $this->connection->rollBack();
         }
+    }
+
+    /**
+     * Run each check, keeping an unexpected throw to that check.
+     *
+     * A failure inside one check is reported as that check's violation with
+     * the message attached, and the rest still run. The savepoint matters as
+     * much as the try: a PostgreSQL error aborts the transaction, so without
+     * one every later check would report "current transaction is aborted".
+     *
+     * @param  array<string, callable(): list<string>>  $checks
+     * @return array<string, list<string>>
+     */
+    private function runEach(array $checks): array
+    {
+        $results = [];
+
+        foreach ($checks as $name => $check) {
+            try {
+                $this->connection->statement('SAVEPOINT check_boundary');
+                $results[$name] = $check();
+                $this->connection->statement('RELEASE SAVEPOINT check_boundary');
+            } catch (Throwable $e) {
+                $this->connection->statement('ROLLBACK TO SAVEPOINT check_boundary');
+
+                $results[$name] = [sprintf(
+                    'the check could not run: %s',
+                    Str::limit((string) preg_replace('/\s+/', ' ', $e->getMessage()), 200),
+                )];
+            }
+        }
+
+        return $results;
     }
 
     /** @return list<string> */
@@ -891,6 +958,273 @@ final class CurrencyEnforcementRules
     }
 
     /**
+     * PF-070: monetary items are restated, non-monetary ones are not.
+     *
+     * ## This is the whole of IAS 21 in one check
+     *
+     * Getting the distinction backwards produces no error. It produces a
+     * balance sheet that is wrong in a direction nobody notices, because
+     * both answers look like numbers.
+     *
+     * The account the check turns on is deferred revenue. It holds a foreign
+     * balance, it is a liability, and it is NOT monetary - it is settled by
+     * delivering goods and services rather than by paying money. It is the
+     * account most often wrongly revalued, and the resulting entry puts an
+     * exchange difference through profit or loss for an obligation that is
+     * not denominated in currency at all.
+     *
+     * @return list<string>
+     */
+    public function onlyMonetaryItemsAreRevalued(): array
+    {
+        $revaluation = app(MonetaryRevaluation::class);
+        $violations = [];
+
+        // EUR 10,000 receivable and EUR 5,000 deferred revenue, both at 4.00.
+        $this->postForeignBalance('1.1.2.1', '10000.0000');
+        $this->postForeignBalance('2.1.3', '-5000.0000');
+
+        $exposures = collect($revaluation->exposures($this->entityId, 'SAR', Carbon::parse($this->postingDate)));
+
+        if (! $exposures->contains(static fn (array $row): bool => $row['code'] === '1.1.2.1')) {
+            $violations[] = 'a foreign trade receivable was not picked up for revaluation, so a monetary '.
+                'balance stays at the rate it was booked at and the balance sheet reports last month\'s value';
+        }
+
+        if ($exposures->contains(static fn (array $row): bool => $row['code'] === '2.1.3')) {
+            $violations[] = 'deferred revenue was included for revaluation. It is settled by delivering goods '.
+                'and services, not by paying money, so IAS 21 does not restate it - revaluing it puts an '.
+                'exchange difference through profit or loss for an obligation that is not denominated in '.
+                'currency';
+        }
+
+        foreach (['1.2.1' => 'property, plant and equipment', '1.1.4' => 'suspense'] as $code => $what) {
+            if ($exposures->contains(static fn (array $row): bool => $row['code'] === $code)) {
+                $violations[] = sprintf('%s was included for revaluation, and it is not a monetary item', $what);
+            }
+        }
+
+        /*
+         | An unclassified account is REPORTED, not guessed at.
+         |
+         | A default would be wrong in whichever direction it pointed, and
+         | this is the one case where a human knows the answer in seconds.
+         */
+        $this->postForeignBalance('1.1.1.3', '2000.0000');
+
+        $this->connection->table('accounts')
+            ->where('entity_id', $this->entityId)
+            ->where('code', '1.1.1.3')
+            ->update(['monetary' => null]);
+
+        $unclassified = $revaluation->unclassified($this->entityId, 'SAR', Carbon::parse($this->postingDate));
+
+        if (! $this->mentions($unclassified, '1.1.1.3')) {
+            $violations[] = 'an account holding a foreign balance with no monetary classification was not '.
+                'reported, so it is being silently skipped or silently revalued and nobody is told which';
+        }
+
+        $stillIncluded = collect($revaluation->exposures($this->entityId, 'SAR', Carbon::parse($this->postingDate)))
+            ->contains(static fn (array $row): bool => $row['code'] === '1.1.1.3');
+
+        if ($stillIncluded) {
+            $violations[] = 'an unclassified account was revalued anyway, which asserts a classification '.
+                'nobody made';
+        }
+
+        return $violations;
+    }
+
+    /**
+     * PF-070: run it three times, one adjustment stands.
+     *
+     * An unrealized difference is an opinion about today's rate. Next period
+     * the rate is different and so is the opinion, and adding this period's
+     * to last period's gives a figure that is neither.
+     *
+     * @return list<string>
+     */
+    public function revaluationDoesNotAccumulate(): array
+    {
+        $revaluation = app(MonetaryRevaluation::class);
+        $rates = app(ExchangeRates::class);
+        $violations = [];
+
+        /*
+         | A closing date of its own, one day on.
+         |
+         | An earlier check already recorded a 4.0125 rate for EUR/SAR on
+         | the posting date, and the fetch is idempotent per pair, date, set
+         | and provider - so recording 4.10 for the same day inserted
+         | nothing and this check silently measured somebody else's rate. It
+         | reported the adjustments as accumulating when they were not.
+         */
+        $asAt = Carbon::parse($this->postingDate)->addDay();
+
+        /*
+         | Petty cash, not the receivable.
+         |
+         | Every check in this file shares one transaction, so they share the
+         | database too - and the check above posts to the receivable and
+         | leaves an account unclassified. The first version of this one
+         | reported "a rate moving from 4.00 to 4.10 produced no entry at
+         | all", which was true and was caused entirely by the check before
+         | it. Each check owns its accounts.
+         */
+        $this->postForeignBalance('1.1.1.1', '10000.0000');
+
+        $rates->record('EUR', 'SAR', $asAt, '4.100000000000', rateSet: $this->rateSet);
+        $closing = $rates->rateFor('EUR', 'SAR', $asAt, $this->rateSet);
+
+        $period = $this->period();
+
+        $first = $revaluation->revalue($this->entity, $period, $asAt, ['EUR/SAR' => $closing], $this->rateSet);
+
+        if ($first['entry'] === null) {
+            return ['a rate moving from 4.00 to 4.10 on a EUR 10,000 receivable produced no entry at all'];
+        }
+
+        $afterOne = $this->netBalance('1.1.1.1', $asAt);
+
+        if ($afterOne !== '41000.0000') {
+            $violations[] = sprintf(
+                'after one revaluation the cash account is %s; EUR 10,000 at 4.10 is SAR 41,000',
+                $afterOne,
+            );
+        }
+
+        // Twice more, same rate, same period.
+        $second = $revaluation->revalue($this->entity, $period, $asAt, ['EUR/SAR' => $closing], $this->rateSet);
+        $revaluation->revalue($this->entity, $period, $asAt, ['EUR/SAR' => $closing], $this->rateSet);
+
+        if ($second['reversal'] === null) {
+            $violations[] = 'the second run did not reverse the first, so two adjustments now stand for one '.
+                'period and the figure is neither run\'s answer';
+        }
+
+        $afterThree = $this->netBalance('1.1.1.1', $asAt);
+
+        if ($afterThree !== '41000.0000') {
+            $violations[] = sprintf(
+                'after three runs in the same period the balance is %s rather than SAR 41,000 - the '.
+                'adjustments are accumulating, which makes the balance a function of how many times somebody '.
+                'ran the close',
+                $afterThree,
+            );
+        }
+
+        $current = $this->connection->table('fx_revaluation_runs')
+            ->where('entity_id', $this->entityId)
+            ->where('is_current', true)
+            ->count();
+
+        if ($current !== 1) {
+            $violations[] = sprintf('%d revaluation runs are marked current for one period', $current);
+        }
+
+        /*
+         | The database refuses a supersession with no reversal.
+         |
+         | Belt and braces: the service does it in the right order, and this
+         | is what holds if a later change to the service does not.
+         */
+        $unreversed = $this->refusal(fn () => $this->connection->table('fx_revaluation_runs')->insert([
+            'id' => (string) Str::ulid(),
+            'entity_id' => $this->entityId,
+            'period_id' => (string) $period->getKey(),
+            'rate_set' => $this->rateSet,
+            'revalued_at' => $this->postingDate,
+            'journal_entry_id' => null,
+            'reversal_entry_id' => null,
+            'supersedes_run_id' => $first['run_id'],
+            'is_current' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]));
+
+        if ($unreversed === null) {
+            $violations[] = 'a run superseded another without reversing its entry, so both adjustments stand';
+        }
+
+        return $violations;
+    }
+
+    /**
+     * Post a foreign-currency balance onto an account, at 4.00.
+     *
+     * Through the POSTER and a registered rule, not by inserting lines.
+     *
+     * The first version inserted directly and was refused: trade receivables
+     * and deferred revenue are both control accounts, and a control account
+     * may only be reached by a posting rule. That guard is right, and getting
+     * round it by setting the session variable the poster sets would have
+     * made this check pass while proving the ledger accepts something it
+     * must not.
+     *
+     * Posting properly also means the translation invariant runs on these
+     * lines, which is what the rest of this file is about.
+     */
+    private function postForeignBalance(string $code, string $amount): void
+    {
+        app(Poster::class)->post(
+            entity: $this->entity,
+            ruleKey: CurrencyCheckBalanceRule::KEY,
+            event: [
+                'account_id' => $this->accountId($code),
+                'contra_id' => $this->accountId('4.1'),
+                'amount' => $amount,
+                'rate' => $this->bookingRate(),
+            ],
+            accountingDate: Carbon::parse($this->postingDate),
+        );
+    }
+
+    /**
+     * The rate the probe balances were booked at: 4.00 flat.
+     *
+     * Constructed rather than fetched, because the rate a posting used is a
+     * property of that posting. Looking it up here would make the check
+     * depend on the lookup it is not testing.
+     */
+    private function bookingRate(): Rate
+    {
+        return new Rate(
+            from: 'EUR',
+            to: 'SAR',
+            value: '4.000000000000',
+            date: new \DateTimeImmutable($this->postingDate),
+            provider: 'manual',
+            rateSet: $this->rateSet,
+        );
+    }
+
+    private function netBalance(string $code, Carbon $asAt): string
+    {
+        $row = collect(app(TrialBalance::class)->for($this->entityId, 'SAR', $asAt)['rows'])
+            ->firstWhere('code', $code);
+
+        // net_debit, not debit: the gross columns are movements, and after a
+        // reversal plus a fresh adjustment the account appears in both.
+        return (string) ($row['net_debit'] ?? '0.0000');
+    }
+
+    private function accountId(string $code): string
+    {
+        return $this->accounts[$code] ??= (string) $this->connection->table('accounts')
+            ->where('entity_id', $this->entityId)
+            ->where('code', $code)
+            ->value('id');
+    }
+
+    private function period(): Period
+    {
+        /** @var Period $period */
+        $period = Period::query()->findOrFail($this->periodId);
+
+        return $period;
+    }
+
+    /**
      * Write an entry with the given lines, returning the refusal or null.
      *
      * The provenance columns are derived from the rate rather than passed,
@@ -1009,6 +1343,8 @@ final class CurrencyEnforcementRules
 
         app(CurrencyPolicy::class)->enable($entity, 'EUR');
 
+        app(PostingRuleRegistry::class)->register(new CurrencyCheckBalanceRule());
+
         /*
          | A rate set of its own.
          |
@@ -1052,7 +1388,7 @@ final class CurrencyEnforcementRules
             ->where('code', 'GEN')
             ->value('id');
 
-        foreach (['1.1.1.1', '4.1'] as $code) {
+        foreach (['1.1.1.1', '1.1.1.3', '4.1', '1.1.2.1', '2.1.3', '1.2.1', '1.1.4'] as $code) {
             $this->accounts[$code] = (string) $this->connection->table('accounts')
                 ->where('entity_id', $this->entityId)
                 ->where('code', $code)
@@ -1067,6 +1403,50 @@ final class CurrencyEnforcementRules
         } catch (Throwable) {
             return null;
         }
+    }
+}
+
+/**
+ * A posting rule for the checks, so control accounts can be reached properly.
+ *
+ * Trade receivables and deferred revenue are both control accounts, and the
+ * ledger refuses a manual posting to either - the invariant that keeps a
+ * subledger equal to its control account. A check needs a balance on them, so
+ * it posts the way the product does, through a rule.
+ *
+ * The rate arrives in the event rather than being looked up, because `Ledger`
+ * must not know what the catalog is.
+ */
+final class CurrencyCheckBalanceRule implements PostingRule
+{
+    public const KEY = 'check.currency.foreign_balance';
+
+    public function key(): string
+    {
+        return self::KEY;
+    }
+
+    public function describe(): RuleDescription
+    {
+        return RuleDescription::of(self::KEY, 'رصيد أجنبي للفحص', 'A foreign balance, for the checks', [
+            ['Dr/Cr', 'the account under test', 'the foreign amount, translated'],
+            ['Dr/Cr', 'revenue', 'the other side, at the same rate'],
+        ]);
+    }
+
+    /**
+     * @param  array{account_id: string, contra_id: string, amount: string, rate: Rate}  $event
+     * @return list<PostingLine>
+     */
+    public function lines(array $event, PostingContext $context): array
+    {
+        $policy = RoundingPolicy::halfUp(Scale::Amount);
+        $amount = Money::of($event['amount'], 'EUR');
+
+        return [
+            PostingLine::translated($event['account_id'], $amount, $event['rate'], $policy),
+            PostingLine::translated($event['contra_id'], $amount->negated(), $event['rate'], $policy),
+        ];
     }
 }
 

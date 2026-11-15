@@ -41,9 +41,11 @@ final class TrialBalance
      *     from: ?string,
      *     includes_adjusting: bool,
      *     currency: string,
-     *     rows: Collection<int, array{code: string, name_ar: string, name_en: string, type: string, debit: string, credit: string, balance: string}>,
+     *     rows: Collection<int, array{code: string, name_ar: string, name_en: string, type: string, debit: string, credit: string, balance: string, net_debit: string, net_credit: string}>,
      *     total_debit: string,
      *     total_credit: string,
+     *     total_net_debit: string,
+     *     total_net_credit: string,
      *     balances: bool,
      * }
      */
@@ -126,6 +128,26 @@ final class TrialBalance
             $totalDebit = $totalDebit->plus($debit);
             $totalCredit = $totalCredit->plus($credit);
 
+            /*
+             | The NET columns, which are what a trial balance actually is.
+             |
+             | `debit` and `credit` above are gross MOVEMENTS: an account
+             | with 42,000 of debits and 1,000 of credits shows both. That is
+             | useful and it is not a trial balance - no accountant expects
+             | one account to appear in both columns, and a statement built
+             | from the gross figures prints inflated totals that still
+             | balance, so the totals check cannot catch it.
+             |
+             | The case that made this concrete: a receivable revalued twice,
+             | where the reversal and the fresh adjustment both land on the
+             | account. Gross: 42,000 Dr and 1,000 Cr. Net, which is the
+             | balance: 41,000 Dr.
+             |
+             | Both are returned, named for what they are, so a caller cannot
+             | pick the wrong pair by accident.
+             */
+            $balance = Money::of((string) $row->balance, $functionalCurrency);
+
             return [
                 'code' => (string) $row->code,
                 'name_ar' => (string) $row->name_ar,
@@ -133,7 +155,9 @@ final class TrialBalance
                 'type' => (string) $row->type,
                 'debit' => (string) $debit->amount,
                 'credit' => (string) $credit->amount,
-                'balance' => (string) $row->balance,
+                'balance' => (string) $balance->amount,
+                'net_debit' => (string) ($balance->isPositive() ? $balance->amount : Money::zero($functionalCurrency)->amount),
+                'net_credit' => (string) ($balance->isNegative() ? $balance->negated()->amount : Money::zero($functionalCurrency)->amount),
             ];
         });
 
@@ -149,6 +173,18 @@ final class TrialBalance
             'rows' => $mapped,
             'total_debit' => (string) $totalDebit->amount,
             'total_credit' => (string) $totalCredit->amount,
+            'total_net_debit' => (string) $mapped->reduce(
+                static fn (Money $carry, array $row): Money => $carry->plus(
+                    Money::of($row['net_debit'], $functionalCurrency),
+                ),
+                Money::zero($functionalCurrency),
+            )->amount,
+            'total_net_credit' => (string) $mapped->reduce(
+                static fn (Money $carry, array $row): Money => $carry->plus(
+                    Money::of($row['net_credit'], $functionalCurrency),
+                ),
+                Money::zero($functionalCurrency),
+            )->amount,
             'balances' => $totalDebit->equals($totalCredit),
         ];
     }

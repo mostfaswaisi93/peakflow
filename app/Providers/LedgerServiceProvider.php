@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Providers;
 
 use App\Tenant\Ledger\Posting\PostingRuleRegistry;
+use App\Tenant\Ledger\Posting\Rules\ForeignCurrencyRevaluationRule;
 use App\Tenant\Ledger\Posting\Rules\OpeningBalanceRule;
 use Illuminate\Support\ServiceProvider;
 
@@ -32,5 +33,14 @@ final class LedgerServiceProvider extends ServiceProvider
         $registry = $this->app->make(PostingRuleRegistry::class);
 
         $registry->register(new OpeningBalanceRule());
+
+        /*
+         | Revaluation belongs to the ledger for the same reason opening
+         | balances do: no document produces it. It is a consequence of a
+         | period ending and a rate having moved, and the rate arrives in the
+         | event rather than being looked up here - which is what keeps the
+         | ledger from needing to know what the catalog is.
+         */
+        $registry->register(new ForeignCurrencyRevaluationRule());
     }
 }

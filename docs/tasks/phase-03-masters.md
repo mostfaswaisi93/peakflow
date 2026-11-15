@@ -103,10 +103,10 @@ The highest-value fraud surface in the product.
 ### PF-070 · Period-end revaluation
 `Catalog` · **5 pts** · depends: PF-068, PF-050 · standards: IAS 21 · `type:posting`
 
-- [ ] `fx:revalue` restates **monetary items only** at the closing rate - receivables, payables, bank balances. Non-monetary items are not revalued, which is the distinction IAS 21 turns on
-- [ ] The unrealized difference posts to a dedicated revaluation account, and is **reversed and recomputed** each period rather than accumulated
-- [ ] Re-runnable within an open period without double-posting
-- [ ] The posting is written out as debits and credits in [`../domain/general-ledger.md`](../domain/general-ledger.md)
+- [x] `fx:revalue` restates **monetary items only** at the closing rate - receivables, payables, bank balances. Non-monetary items are not revalued, which is the distinction IAS 21 turns on
+- [x] The unrealized difference posts to a dedicated revaluation account, and is **reversed and recomputed** each period rather than accumulated
+- [x] Re-runnable within an open period without double-posting
+- [x] The posting is written out as debits and credits in [`../domain/general-ledger.md`](../domain/general-ledger.md)
 
 ### PF-071 · Numbering series
 `Catalog` · **5 pts** · depends: PF-025 · standards: — · `risk:high` `type:schema`

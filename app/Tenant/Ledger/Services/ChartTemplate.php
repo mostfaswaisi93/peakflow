@@ -41,54 +41,71 @@ final class ChartTemplate
      *
      * Four levels at most: statement, group, sub-group, posting account. Each
      * row is [code, parent code or null, type, Arabic name, English name,
-     * postable, control role or null].
+     * postable, control role or null, monetary].
      *
-     * @return list<array{0: string, 1: ?string, 2: AccountType, 3: string, 4: string, 5: bool, 6: ?ControlRole}>
+     * ## The last element is the IAS 21 classification, and it is stated
+     *
+     * Monetary items are restated at the closing rate at each period end and
+     * non-monetary items are not, so every account has to say which it is.
+     * It cannot be derived: property and receivables are both assets, and a
+     * prepayment is both current and non-monetary.
+     *
+     * Two rows are worth reading twice. **Deferred revenue is false**: it is
+     * settled by delivering goods and services, not by paying money, and
+     * revaluing it puts an exchange difference through profit or loss for an
+     * obligation that is not denominated in currency. It is the account most
+     * often wrongly marked monetary.
+     *
+     * **Suspense is false** for a different reason: it holds items nobody has
+     * identified, and revaluing an unidentified item asserts a
+     * classification that has not been made.
+     *
+     * @return list<array{0: string, 1: ?string, 2: AccountType, 3: string, 4: string, 5: bool, 6: ?ControlRole, 7: bool}>
      */
     private function generic(): array
     {
         return [
             // ---- Assets -------------------------------------------------
-            ['1', null, AccountType::Asset, 'الأصول', 'Assets', false, null],
-            ['1.1', '1', AccountType::Asset, 'الأصول المتداولة', 'Current assets', false, null],
-            ['1.1.1', '1.1', AccountType::Asset, 'النقد وما في حكمه', 'Cash and cash equivalents', false, null],
-            ['1.1.1.1', '1.1.1', AccountType::Asset, 'الصندوق', 'Petty cash', true, null],
-            ['1.1.1.2', '1.1.1', AccountType::Asset, 'البنك', 'Bank', true, ControlRole::Bank],
-            ['1.1.1.3', '1.1.1', AccountType::Asset, 'مدفوعات قيد التحصيل', 'Payments in transit', true, ControlRole::PaymentsInTransit],
-            ['1.1.2', '1.1', AccountType::Asset, 'الذمم المدينة', 'Receivables', false, null],
-            ['1.1.2.1', '1.1.2', AccountType::Asset, 'ذمم العملاء', 'Trade receivables', true, ControlRole::AccountsReceivable],
-            ['1.1.2.2', '1.1.2', AccountType::Asset, 'مخصص الخسائر الائتمانية', 'Expected credit loss provision', true, ControlRole::EclProvision],
-            ['1.1.3', '1.1', AccountType::Asset, 'ضريبة القيمة المضافة المدخلة', 'Input VAT', true, ControlRole::VatInput],
-            ['1.1.4', '1.1', AccountType::Asset, 'حسابات وسيطة', 'Suspense', true, ControlRole::Suspense],
-            ['1.1.5', '1.1', AccountType::Asset, 'حسابات جارية بين الشركات', 'Inter-entity', true, ControlRole::InterEntity],
-            ['1.2', '1', AccountType::Asset, 'الأصول غير المتداولة', 'Non-current assets', false, null],
-            ['1.2.1', '1.2', AccountType::Asset, 'الممتلكات والمعدات', 'Property, plant and equipment', true, null],
+            ['1', null, AccountType::Asset, 'الأصول', 'Assets', false, null, false],
+            ['1.1', '1', AccountType::Asset, 'الأصول المتداولة', 'Current assets', false, null, false],
+            ['1.1.1', '1.1', AccountType::Asset, 'النقد وما في حكمه', 'Cash and cash equivalents', false, null, false],
+            ['1.1.1.1', '1.1.1', AccountType::Asset, 'الصندوق', 'Petty cash', true, null, true],
+            ['1.1.1.2', '1.1.1', AccountType::Asset, 'البنك', 'Bank', true, ControlRole::Bank, true],
+            ['1.1.1.3', '1.1.1', AccountType::Asset, 'مدفوعات قيد التحصيل', 'Payments in transit', true, ControlRole::PaymentsInTransit, true],
+            ['1.1.2', '1.1', AccountType::Asset, 'الذمم المدينة', 'Receivables', false, null, false],
+            ['1.1.2.1', '1.1.2', AccountType::Asset, 'ذمم العملاء', 'Trade receivables', true, ControlRole::AccountsReceivable, true],
+            ['1.1.2.2', '1.1.2', AccountType::Asset, 'مخصص الخسائر الائتمانية', 'Expected credit loss provision', true, ControlRole::EclProvision, true],
+            ['1.1.3', '1.1', AccountType::Asset, 'ضريبة القيمة المضافة المدخلة', 'Input VAT', true, ControlRole::VatInput, true],
+            ['1.1.4', '1.1', AccountType::Asset, 'حسابات وسيطة', 'Suspense', true, ControlRole::Suspense, false],
+            ['1.1.5', '1.1', AccountType::Asset, 'حسابات جارية بين الشركات', 'Inter-entity', true, ControlRole::InterEntity, true],
+            ['1.2', '1', AccountType::Asset, 'الأصول غير المتداولة', 'Non-current assets', false, null, false],
+            ['1.2.1', '1.2', AccountType::Asset, 'الممتلكات والمعدات', 'Property, plant and equipment', true, null, false],
 
             // ---- Liabilities --------------------------------------------
-            ['2', null, AccountType::Liability, 'الالتزامات', 'Liabilities', false, null],
-            ['2.1', '2', AccountType::Liability, 'الالتزامات المتداولة', 'Current liabilities', false, null],
-            ['2.1.1', '2.1', AccountType::Liability, 'ذمم الموردين', 'Trade payables', true, ControlRole::AccountsPayable],
-            ['2.1.2', '2.1', AccountType::Liability, 'ضريبة القيمة المضافة المخرجة', 'Output VAT', true, ControlRole::VatOutput],
-            ['2.1.3', '2.1', AccountType::Liability, 'إيرادات مؤجلة', 'Deferred revenue', true, ControlRole::DeferredRevenue],
+            ['2', null, AccountType::Liability, 'الالتزامات', 'Liabilities', false, null, false],
+            ['2.1', '2', AccountType::Liability, 'الالتزامات المتداولة', 'Current liabilities', false, null, false],
+            ['2.1.1', '2.1', AccountType::Liability, 'ذمم الموردين', 'Trade payables', true, ControlRole::AccountsPayable, true],
+            ['2.1.2', '2.1', AccountType::Liability, 'ضريبة القيمة المضافة المخرجة', 'Output VAT', true, ControlRole::VatOutput, true],
+            ['2.1.3', '2.1', AccountType::Liability, 'إيرادات مؤجلة', 'Deferred revenue', true, ControlRole::DeferredRevenue, false],
 
             // ---- Equity --------------------------------------------------
-            ['3', null, AccountType::Equity, 'حقوق الملكية', 'Equity', false, null],
-            ['3.1', '3', AccountType::Equity, 'رأس المال', 'Share capital', true, null],
-            ['3.2', '3', AccountType::Equity, 'الأرباح المحتجزة', 'Retained earnings', true, ControlRole::RetainedEarnings],
+            ['3', null, AccountType::Equity, 'حقوق الملكية', 'Equity', false, null, false],
+            ['3.1', '3', AccountType::Equity, 'رأس المال', 'Share capital', true, null, false],
+            ['3.2', '3', AccountType::Equity, 'الأرباح المحتجزة', 'Retained earnings', true, ControlRole::RetainedEarnings, false],
 
             // ---- Revenue -------------------------------------------------
-            ['4', null, AccountType::Revenue, 'الإيرادات', 'Revenue', false, null],
-            ['4.1', '4', AccountType::Revenue, 'إيرادات المبيعات', 'Sales revenue', true, null],
-            ['4.2', '4', AccountType::Revenue, 'إيرادات أخرى', 'Other income', true, null],
+            ['4', null, AccountType::Revenue, 'الإيرادات', 'Revenue', false, null, false],
+            ['4.1', '4', AccountType::Revenue, 'إيرادات المبيعات', 'Sales revenue', true, null, false],
+            ['4.2', '4', AccountType::Revenue, 'إيرادات أخرى', 'Other income', true, null, false],
 
             // ---- Expenses ------------------------------------------------
-            ['5', null, AccountType::Expense, 'المصروفات', 'Expenses', false, null],
-            ['5.1', '5', AccountType::Expense, 'تكلفة المبيعات', 'Cost of sales', true, null],
-            ['5.2', '5', AccountType::Expense, 'مصروفات إدارية', 'Administrative expenses', true, null],
-            ['5.3', '5', AccountType::Expense, 'فروق العملة', 'Foreign exchange gain or loss', true, ControlRole::FxGainLoss],
-            ['5.4', '5', AccountType::Expense, 'إعادة تقييم العملة', 'FX revaluation', true, ControlRole::FxRevaluation],
-            ['5.5', '5', AccountType::Expense, 'فروق التقريب', 'Rounding difference', true, ControlRole::RoundingDifference],
-            ['5.6', '5', AccountType::Expense, 'ديون معدومة', 'Bad debt', true, ControlRole::BadDebt],
+            ['5', null, AccountType::Expense, 'المصروفات', 'Expenses', false, null, false],
+            ['5.1', '5', AccountType::Expense, 'تكلفة المبيعات', 'Cost of sales', true, null, false],
+            ['5.2', '5', AccountType::Expense, 'مصروفات إدارية', 'Administrative expenses', true, null, false],
+            ['5.3', '5', AccountType::Expense, 'فروق العملة', 'Foreign exchange gain or loss', true, ControlRole::FxGainLoss, false],
+            ['5.4', '5', AccountType::Expense, 'إعادة تقييم العملة', 'FX revaluation', true, ControlRole::FxRevaluation, false],
+            ['5.5', '5', AccountType::Expense, 'فروق التقريب', 'Rounding difference', true, ControlRole::RoundingDifference, false],
+            ['5.6', '5', AccountType::Expense, 'ديون معدومة', 'Bad debt', true, ControlRole::BadDebt, false],
         ];
     }
 
@@ -134,7 +151,7 @@ final class ChartTemplate
             $byCode = [];
             $roles = 0;
 
-            foreach ($this->generic() as [$code, $parentCode, $type, $nameAr, $nameEn, $postable, $role]) {
+            foreach ($this->generic() as [$code, $parentCode, $type, $nameAr, $nameEn, $postable, $role, $monetary]) {
                 $parent = $parentCode === null ? null : $byCode[$parentCode];
 
                 $account = Account::create([
@@ -151,6 +168,7 @@ final class ChartTemplate
                     'type' => $type->value,
                     'statement_line' => $type->statement(),
                     'postable' => $postable,
+                    'monetary' => $monetary,
                 ]);
 
                 $byCode[$code] = $account;
