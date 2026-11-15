@@ -105,12 +105,13 @@ The engine's organising principle is that **tax is data, not code**. A rate that
 ### PF-082 · Tax computation
 `Tax` · **8 pts** · depends: PF-081, PF-078 · standards: EN 16931 `BG-23`, `BR-CO-14` · `risk:high` `type:compliance`
 
-- [ ] Tax is accumulated **unrounded** per `(category, rate)` group, then rounded once per group - not per line and not once per document
-- [ ] The result is a VAT breakdown matching EN 16931 `BG-23`, with one entry per unique category-and-rate combination
-- [ ] `BR-CO-14` is asserted directly: the document's tax total equals the sum of the breakdown entries
-- [ ] Line-level and document-level discounts, charges and allowances are apportioned across rate groups before tax, with the apportionment residual assigned deterministically rather than left to float
-- [ ] Property-based test: for any generated document, the sum of line nets equals the document net, the breakdown sums to the tax total, and recomputing the document twice gives identical output
-- [ ] Mixed-rate documents, negative lines and a 100% discount line each have a named test
+- [x] Tax is accumulated **unrounded** per `(category, rate)` group, then rounded once per group - not per line and not once per document
+- [x] The result is a VAT breakdown matching EN 16931 `BG-23`, with one entry per unique category-and-rate combination. Keyed on the category **and** the rate: keyed on the category alone a 15%/5% document has one entry reporting a rate that applies to neither, and `15` and `15.00` are normalised into one group. The entries come out in **first-appearance order**, not sorted, because a sort on equal keys is where "recomputing gives identical output" quietly stops being true
+- [x] `BR-CO-14` is asserted directly: the document's tax total equals the sum of the breakdown entries - structurally, because there is no second accumulator, and recomputed anyway, because "it cannot differ by construction" is a claim about today's code while the rule is a claim about the document
+- [x] Line-level and document-level discounts, charges and allowances are apportioned across rate groups before tax, with the apportionment residual assigned deterministically rather than left to float. By each group's **positive** taxable amount: apportioning by absolute value spreads a discount onto credit lines and makes the credit larger, measured at a net of **-11.00** for a -10.00 line with a 1.00 discount. The shares are allocated at the **storage** scale, since they are intermediate and rounding them first rounds twice
+- [x] Property-based test: for any generated document, the sum of line nets equals the document net, the breakdown sums to the tax total, and recomputing the document twice gives identical output. 200 documents per run, and the coverage was **measured** rather than assumed - 195 of 200 compute, 100 with adjustments, 100 with a negative line, one to four entries each. A property check that skips everything passes trivially
+- [x] Mixed-rate documents, negative lines and a 100% discount line each have a named test - with exact expected figures, including a negative entry of -2.00 for a credit line at a different rate, and a document whose only line is free (its entry has to survive, or the recipient's validator rejects a category that is missing from `BG-23`)
+- [x] Found on the way: one bite did **not** fire. Stopping the per-line basis from seeing the apportioned lines left a document reporting a taxable amount of 140.00 with tax computed on 150.00 - and `BR-CO-14` still held, because every entry was consistent with itself and the document was consistent with nothing. The check now asserts the figure (16.33, not 17.50); the invariant does not notice
 
 ### PF-083 · Withholding tax
 `Tax` · **5 pts** · depends: PF-082 · standards: — · `type:compliance`

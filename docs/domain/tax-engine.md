@@ -188,6 +188,30 @@ Per-line rounding gives a different and usually wrong answer. The worked example
 
 Cases with their own named tests: mixed-rate documents, negative lines, a 100% discount line, a document-level discount that does not divide evenly across groups, and a line in a three-decimal currency.
 
+### As built (PF-082)
+
+`TaxCalculator::compute()` takes lines, a rounding policy and document-level adjustments, and returns a `TaxBreakdown` whose entries are `BG-23` field by field — `BT-116` taxable, `BT-117` tax, `BT-118` category, `BT-119` rate, `BT-120`/`BT-121` the exemption reason.
+
+**The group key is category AND rate.** A document with 15% and 5% standard lines has two entries; keyed on the category alone it would have one, reporting a rate that applies to neither. `15` and `15.00` are one group, because the rate is normalised before it is keyed.
+
+**The entries come out in first-appearance order**, not sorted. A sort on equal keys is where "recomputing gives identical output" quietly stops being true.
+
+**Document adjustments are apportioned by each group's positive taxable amount.** A credit line gets no share of a discount: apportioning by absolute value would spread the discount onto the credit and make the credit *larger*, which is the opposite of what was asked for. Measured with that mutation in place: a -10.00 line with a 1.00 discount produced a net of **-11.00**. Where no group has a positive taxable amount the computation refuses, because a document that is entirely credits needs its adjustment on the lines.
+
+The shares are allocated at the **storage** scale, not the currency's. They are intermediate — they change a taxable amount that is itself rounded later — and rounding them first rounds twice, which is how a 7% discount across a hundred lines ends up a cent away from 7%. The residual goes to the heaviest weight, first on a tie, by `Money::allocate()`'s rule.
+
+Under a **per-line** jurisdiction the lines move with their group, so its tax comes from the apportioned amounts. Without that, a per-line document reports a taxable amount of 140.00 with tax computed on 150.00 and still satisfies BR-CO-14 — every entry consistent with itself and the document consistent with nothing. The check asserts the figure (16.33, not 17.50) rather than the invariant, because the invariant does not notice.
+
+**Six refusals**, each of which would otherwise produce a valid-looking object that would be filed: no lines, two currencies on one document, a zero category carrying a rate, a standard-rated line at 0%, an adjustment in another currency, and a discount with nothing positive to spread it across.
+
+#### The generated half
+
+200 documents per run — one to four rate groups, one to five lines each, mixed categories, magnitudes across six orders, one line in ten negative, half carrying a document adjustment, in SAR, EUR, JOD or JPY. Measured coverage on a fixed seed: **195 of 200 compute**, 100 with adjustments, 100 with a negative line, breakdowns of one to four entries.
+
+For each: `BR-CO-14` holds, the taxable amounts sum to the document net, the net equals the lines plus adjustments, the gross is net plus tax, and computing the same document twice gives byte-identical JSON. The seed is printed in every failure message.
+
+Both the dropped-residual and the wrong-scale mutations were caught by this half as well as by the named case — with seeds, on documents nobody wrote.
+
 ## Reverse charge, both halves
 
 The half most systems get right:

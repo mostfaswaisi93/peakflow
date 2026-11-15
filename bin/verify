@@ -181,6 +181,7 @@ if ($only === 'all' || $only === 'tax') {
     $suites['Reverse charge'] = $suite(static fn (): array => (new Tests\Support\ReverseChargeRules())->all());
     $suites['Evidence and exemptions'] = $suite(static fn (): array => (new Tests\Support\TaxEvidenceRules())->all());
     $suites['Rounding policy'] = $suite(static fn (): array => (new Tests\Support\RoundingPolicyRules())->all());
+    $suites['Tax computation'] = $suite(static fn (): array => (new Tests\Support\TaxComputationRules())->all());
 }
 
 if ($only === 'all' || $only === 'ops') {
