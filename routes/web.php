@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Tenant\Identity\Http\Controllers\LoginController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -57,3 +58,25 @@ Route::get('/health', static fn () => response()->json([
     'application' => config('app.name'),
     'status' => 'ok',
 ]))->name('health');
+
+/*
+| Tenant authentication - PF-029.
+|
+| `tenant.session` runs first because the users table lives in the tenant's
+| own database; the guard would otherwise query the platform one. The entity
+| scope does NOT apply here: a user signing in has no entity yet, and which
+| entities they may act in is read from the roles this sign-in establishes.
+*/
+Route::middleware(['tenant.session'])->group(static function (): void {
+    Route::get('/login', [LoginController::class, 'show'])
+        ->middleware('guest')
+        ->name('login');
+
+    Route::post('/login', [LoginController::class, 'store'])
+        ->middleware('guest')
+        ->name('login.store');
+
+    Route::post('/logout', [LoginController::class, 'destroy'])
+        ->middleware('auth')
+        ->name('logout');
+});

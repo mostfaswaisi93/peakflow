@@ -8,10 +8,15 @@ use App\Platform\Enums\PlanFeature;
 use App\Platform\Exceptions\PlanDoesNotInclude;
 use App\Platform\Models\Plan;
 use App\Platform\Models\Tenant;
+use App\Platform\Services\TenantConnectionResolver;
+use App\Tenant\Identity\Http\Controllers\LoginController;
 use Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\Console\Output\NullOutput;
 use Throwable;
 use Illuminate\Contracts\Foundation\Application;
@@ -50,6 +55,7 @@ final class WiringRules
             'exchange and pdf default to their stubs' => $this->driversDefaultToStubs(),
             'the plan gate refuses with an upgrade path, not a 403' => $this->planGateOffersAnUpgrade(),
             'every reporting command actually runs' => $this->reportingCommandsRun(),
+            'the login form is not an account oracle' => $this->loginIsNotAnOracle(),
         ];
     }
 
@@ -212,6 +218,126 @@ final class WiringRules
                     Str::limit(preg_replace('/\s+/', ' ', $e->getMessage()) ?? '', 140),
                 );
             }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * Every way of failing to sign in must look the same from outside.
+     *
+     * Wrong password, no such user, unknown workspace, no workspace given:
+     * one message, one exception type, therefore one status code.
+     * Distinguishing them turns the form into an oracle answering "does this
+     * company bank with you" to anyone who types a name - a disclosure about
+     * the customer before it is a step towards an attack.
+     *
+     * The unknown-workspace path is the one this check exists for. It threw a
+     * database error rather than a validation failure, because the refusal
+     * was recorded in a tenant audit log that does not exist when no tenant
+     * resolved. The message was identical and the STATUS CODE was not: 302
+     * for a wrong password, 500 for a workspace that is not a customer.
+     *
+     * @return list<string>
+     */
+    public function loginIsNotAnOracle(): array
+    {
+        $tenant = Tenant::query()->whereHas('connection')->orderBy('slug')->first();
+
+        if ($tenant === null) {
+            return [];
+        }
+
+        $attempts = [
+            'wrong password' => [$tenant->slug, 'definitely-not-a-user@invalid.test', 'wrong'],
+            'unknown user' => [$tenant->slug, 'also-not-a-user@invalid.test', 'wrong'],
+            'unknown workspace' => ['no-such-workspace-'.bin2hex(random_bytes(4)), 'someone@invalid.test', 'wrong'],
+            'no workspace at all' => ['', 'someone@invalid.test', 'wrong'],
+        ];
+
+        $violations = [];
+        $messages = [];
+
+        /*
+         | A fresh address from TEST-NET-1 (RFC 5737, reserved for
+         | documentation and guaranteed never to be routed) on every run.
+         |
+         | Without this the check throttles ITSELF: four attempts per run
+         | against a fixed address exhausts the per-address budget after a few
+         | runs, and every refusal then reads "wait N seconds". That does not
+         | just produce a false failure - it produced a false PASS first,
+         | because four identical throttle messages satisfy a check looking
+         | for four identical messages. A check whose own side effects change
+         | what it measures is worse than no check.
+         */
+        $probeIp = sprintf('192.0.2.%d', random_int(1, 254));
+
+        foreach ($attempts as $label => [$workspace, $email, $password]) {
+            /*
+             | Each attempt starts from NO tenant, because each sign-in is a
+             | separate request with a fresh container.
+             |
+             | Resetting once before the loop is not enough and hid the bug
+             | twice over: the first attempt uses a real workspace, which
+             | re-binds `currentTenant` and re-points the connections, so
+             | every later attempt saw a tenant and never reached the path
+             | being tested. The check passed against code that answered 500
+             | to an unknown workspace.
+             |
+             | The audit connection is cleared too. Left configured, a
+             | tenant-less refusal writes into whichever tenant it still
+             | points at and returns perfectly cleanly - which in a
+             | long-running worker is the real shape of this failure: not an
+             | error, but one tenant's audit log quietly receiving another
+             | request's refusal.
+             */
+            app(TenantConnectionResolver::class)->forget();
+            config(['database.connections.tenant_audit' => null]);
+            DB::purge('tenant_audit');
+
+            $request = Request::create(
+                '/login',
+                'POST',
+                ['workspace' => $workspace, 'email' => $email, 'password' => $password],
+                server: ['REMOTE_ADDR' => $probeIp],
+            );
+            $request->setLaravelSession(app('session')->driver('array'));
+
+            try {
+                app(LoginController::class)->store($request);
+
+                $violations[] = sprintf('"%s" was ACCEPTED', $label);
+            } catch (ValidationException $e) {
+                $messages[$label] = implode(' ', $e->errors()['email'] ?? ['(no message)']);
+            } catch (Throwable $e) {
+                // The actual bug: a refusal that fails differently is a
+                // refusal that tells the caller something.
+                $violations[] = sprintf(
+                    '"%s" threw %s instead of refusing cleanly, so it answers with a different status code '.
+                    'than the other refusals: %s',
+                    $label,
+                    class_basename($e),
+                    Str::limit(preg_replace('/\s+/', ' ', $e->getMessage()) ?? '', 120),
+                );
+            }
+        }
+
+        // Give back what the probe spent, so a run leaves the limiter as it
+        // found it and a real user sharing the address is unaffected.
+        foreach (array_keys($attempts) as $label) {
+            [, $email] = $attempts[$label];
+            RateLimiter::clear('login:account:'.hash('sha256', Str::lower(trim((string) $email))));
+        }
+
+        RateLimiter::clear('login:ip:'.hash('sha256', $probeIp));
+
+        $distinct = array_unique($messages);
+
+        if (count($distinct) > 1) {
+            $violations[] = 'the refusals do not read alike: '.json_encode(
+                $messages,
+                JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+            );
         }
 
         return $violations;

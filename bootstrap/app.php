@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Http\Middleware\EnforceSessionPolicy;
 use App\Http\Middleware\EnsurePlanAllows;
 use App\Http\Middleware\RequireStepUp;
 use App\Http\Middleware\ResolveEntity;
@@ -102,6 +103,14 @@ return Application::configure(basePath: dirname(__DIR__))
             after: \Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests::class,
             append: ResolveEntity::class,
         );
+
+        /*
+        | The session policy runs in the web group, after the guard has had a
+        | chance to resolve a user - it has nothing to enforce against an
+        | anonymous request, and running it earlier would mean checking an
+        | absolute timeout on a session with no authentication in it.
+        */
+        $middleware->web(append: [EnforceSessionPolicy::class]);
 
         $middleware->alias([
             'tenant.session' => ResolveTenantFromSession::class,

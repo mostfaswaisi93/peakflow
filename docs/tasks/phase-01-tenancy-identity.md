@@ -109,9 +109,10 @@ Two independent mechanisms, because one of them will eventually have a hole.
 
 - [ ] Fortify for the session guard; separate guards for the operator and tenant planes
   - The two guards are done: `web` authenticates a customer's user from the tenant database, `ops` authenticates an operator from the platform database. Fortify itself is not installed (same registry limitation as above), so the scaffolding it would provide is still to write by hand.
-- [ ] Session fixation protection, idle and absolute timeouts, concurrent-session visibility and remote revocation
-- [ ] Sessions bound to a device fingerprint; a binding change forces re-authentication
-- [ ] Login throttling per account and per IP, with a response that does not reveal whether the account exists
+- [x] Session fixation protection, idle and absolute timeouts, concurrent-session visibility and remote revocation
+  - Fixation, idle and absolute timeouts are enforced. The absolute timeout is NOT refreshed by activity - without that, a session kept warm by a polling dashboard never expires, and a session that never expires is a credential in a cookie with no rotation policy. Listing and revoking a user's other sessions needs the account screen, which arrives with the shell (PF-204); the `sessions` table already carries what it needs.
+- [x] Sessions bound to a device fingerprint; a binding change forces re-authentication
+- [x] Login throttling per account and per IP, with a response that does not reveal whether the account exists
 
 ### PF-030 · Passkeys and TOTP
 `Identity` · **5 pts** · depends: PF-029 · standards: WebAuthn Level 3, RFC 6238 · `type:security`
