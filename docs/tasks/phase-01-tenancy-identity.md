@@ -136,6 +136,7 @@ Two independent mechanisms, because one of them will eventually have a hole.
 
 - [x] A `step-up` middleware requiring a fresh factor assertion within a short window, independent of session age
 - [ ] Applied to releasing a payment run and to reopening a closed period - a stolen session must not be enough for either
+  - Waiting on the routes themselves: period reopening is PF-02x, payment runs are PF-09x. The middleware and `StepUpGuard::assert()` both exist and are proven; the call sites go in the services rather than on the routes, so they land with the services.
   - The middleware and the guard both exist and are proven; there are no payment-run or period routes to apply them to until PF-09x and PF-04x. `StepUpGuard::assert()` is called on the write path, not only in the route, so those call sites will be inside the services rather than bolted to the routes.
 - [x] The step-up event is audited with what it authorized
 
@@ -159,6 +160,7 @@ A tenant with three staff may genuinely be unable to separate two duties. Silent
 - [x] The override is itself an audit event and appears on a standing exceptions report
 - [x] Overrides cannot be self-approved, and cannot be granted for the beneficiary-change-against-payment-release pair at all
 - [ ] The report is part of the `compliance:report` evidence pack
+  - The command itself is PF-13x (`compliance:report {tenant}`), which assembles the whole pack - access review, overrides in force, period changes, chain verification, privilege drift. `sod:exceptions` already produces this part of it and will be called from there; building a second, partial `compliance:report` here would mean one of them is wrong the day the real one lands.
 
 ### PF-035 · The audit log
 `Identity` · **5 pts** · depends: PF-024, PF-009 · standards: SOC 2, ISO/IEC 27001 Annex A · `risk:high` `type:security`
@@ -167,6 +169,7 @@ A tenant with three staff may genuinely be unable to separate two duties. Silent
 - [x] `DELETE` and `UPDATE` revoked at the role level, not merely unused
 - [x] Captures actor, entity, action, object, before and after where applicable, correlation id, IP and user agent
 - [ ] **Reads of sensitive data are audited too** - who looked at a bank account is an auditable event, not only who changed it
+  - `AuditLog::record()` takes a `read` category and the indexes support it; nothing reads a bank account yet, because bank accounts arrive in PF-08x. Auditing a read of something that does not exist would be a line of code with no caller, and the first real caller is the one that proves the shape is right.
 - [x] Indexed on `created_at`, `(category, created_at)` and `(action, created_at)`, for the same one-index-per-reference reason as the platform log
 - [x] A verification command re-walks the chain and reports the first divergence
 
