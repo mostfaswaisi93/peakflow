@@ -6,6 +6,7 @@ namespace App\Platform\Services;
 
 use App\Platform\Models\PlatformSetting;
 use App\Support\Limits\Ceilings;
+use Brick\Math\BigDecimal;
 use Illuminate\Support\Collection;
 
 /**
@@ -27,18 +28,67 @@ use Illuminate\Support\Collection;
  */
 final class PlatformCeilings implements Ceilings
 {
-    /** @var array<string, int> */
+    /**
+     * The fallbacks, as STRINGS.
+     *
+     * Strings because several of these are money or a ratio, and a decimal
+     * default typed as a PHP float here would be the one place in the money
+     * path where a float exists. `int()` casts; `decimal()` does not.
+     *
+     * @var array<string, string>
+     */
     private const DEFAULTS = [
-        'ceiling.sod_override_days' => 30,
-        'ceiling.step_up_lifetime_seconds' => 900,
-        'ceiling.session_absolute_minutes' => 720,
-        'ceiling.recovery_codes' => 10,
+        'ceiling.sod_override_days' => '30',
+        'ceiling.step_up_lifetime_seconds' => '900',
+        'ceiling.session_absolute_minutes' => '720',
+        'ceiling.recovery_codes' => '10',
+
+        /*
+         | The tenant-configurable risk bounds - PF-074.
+         |
+         | Each is the furthest a customer may go, and the reason is the
+         | same in every case: the setting makes a tedious job easier and,
+         | past some point, makes a loss invisible. A write-off tolerance of
+         | 5.00 absorbs rounding; 5,000.00 absorbs theft one invoice at a
+         | time, and every individual write-off looks like housekeeping.
+         */
+        'ceiling.writeoff_tolerance' => '50.00',
+        'ceiling.auto_match_tolerance' => '25.00',
+        'ceiling.dunning_escalations' => '8',
+        'ceiling.fx_fallback_window_days' => '90',
+        'ceiling.period_reopen_days' => '365',
     ];
 
     /** @var ?Collection<string, PlatformSetting> */
     private ?Collection $settings = null;
 
     public function int(string $key): int
+    {
+        return (int) $this->raw($key);
+    }
+
+    /**
+     * An amount or a ratio ceiling, as a decimal string.
+     *
+     * Never a float: a ceiling of 0.50 read through a float and compared
+     * against 0.50 is a comparison that can go either way depending on how
+     * each side got there, and the one that matters is the side that admits
+     * a value over the limit.
+     */
+    public function decimal(string $key): string
+    {
+        return (string) BigDecimal::of($this->raw($key));
+    }
+
+    /**
+     * The stored value, or the declared fallback.
+     *
+     * Falling back to the DEFAULT rather than to "unlimited" is the whole
+     * point: a missing ceiling that reads as no limit is a ceiling removed
+     * by a deployment accident, and the symptom is that nothing stops
+     * working - which is exactly why nobody would notice.
+     */
+    private function raw(string $key): string
     {
         $setting = $this->all()->get($key);
 
@@ -51,7 +101,9 @@ final class PlatformCeilings implements Ceilings
                 ));
         }
 
-        return (int) $setting->typedValue();
+        $value = $setting->typedValue();
+
+        return is_scalar($value) ? (string) $value : '0';
     }
 
     /**

@@ -6,6 +6,7 @@ namespace App\Providers;
 
 use App\Platform\Models\Tenant;
 use App\Platform\Services\PlatformCeilings;
+use App\Tenant\Tenancy\Services\Settings;
 use App\Support\Limits\Ceilings;
 use App\Tenant\Identity\Models\User;
 use App\Tenant\Identity\Services\PermissionCatalogue;
@@ -41,6 +42,14 @@ final class TenancyServiceProvider extends ServiceProvider
          | that a platform database exists.
          */
         $this->app->scoped(Ceilings::class, PlatformCeilings::class);
+
+        /*
+         | Request-scoped, so a setting read in a loop over five hundred
+         | invoice lines is one query - and, more importantly, is the SAME
+         | value for every line. A per-read lookup cannot promise that once
+         | somebody can change a setting mid-request.
+         */
+        $this->app->scoped(Settings::class);
     }
 
     public function boot(): void

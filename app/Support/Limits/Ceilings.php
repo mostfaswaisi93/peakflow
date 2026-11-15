@@ -24,6 +24,18 @@ interface Ceilings
     public function int(string $key): int;
 
     /**
+     * A ceiling that is an amount or a ratio, as a decimal STRING.
+     *
+     * A string, not a float. Several ceilings are money - the largest
+     * residual a write-off may absorb, the largest difference an automatic
+     * bank match may swallow - and the money path forbids a float end to
+     * end. A ceiling compared through a float is a ceiling that admits a
+     * value one ten-millionth over it, which is harmless, and a ceiling
+     * read as 0.49999999999 when it says 0.50, which is not.
+     */
+    public function decimal(string $key): string;
+
+    /**
      * Clamp a requested value, and report whether it was reduced.
      *
      * Both, because a caller that only receives the clamped number cannot

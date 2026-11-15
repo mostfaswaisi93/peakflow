@@ -28,6 +28,7 @@ declare(strict_types=1);
  |   php bin/verify numbering  what a numbering series guarantees
  |   php bin/verify terms      what payment terms produce
  |   php bin/verify catalog    items, and which price wins
+ |   php bin/verify settings   what a tenant may and may not decide
  |   php bin/verify examples   worked examples only
  |
  | Exits non-zero on any violation.
@@ -104,12 +105,16 @@ if ($only === 'all' || $only === 'catalog') {
     $suites['Items and prices'] = (new Tests\Support\CatalogRules())->all();
 }
 
+if ($only === 'all' || $only === 'settings') {
+    $suites['Settings and ceilings'] = (new Tests\Support\SettingsRules())->all();
+}
+
 if ($only === 'all' || $only === 'examples') {
     $suites['Worked examples'] = (new Tests\Support\WorkedExamples())->all();
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | examples | rollback\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | examples | rollback\n");
     exit(2);
 }
 

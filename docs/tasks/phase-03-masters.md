@@ -138,8 +138,8 @@ The storage and configuration; the allocation algorithm is `PF-093`.
 ### PF-074 · Tenant settings with platform ceilings
 `Tenancy` · **5 pts** · depends: PF-022 · standards: —
 
-- [ ] A typed settings registry: key, type, scope (tenant or entity), default, validation, bilingual description
-- [ ] A tenant may override anything it may legitimately decide - dunning policy, matching thresholds, numbering formats, rounding tolerance, enabled jurisdictions
-- [ ] Risk-bearing settings carry a **platform-enforced ceiling**: a tenant may lower a write-off tolerance but not raise it past the operator's maximum
-- [ ] Every change is audited; a settings diff is part of the compliance evidence pack
-- [ ] Resolution order is entity, then tenant, then platform config, resolved once per request
+- [x] A typed settings registry: key, type, scope (tenant or entity), default, validation, bilingual description
+- [x] A tenant may override anything it may legitimately decide - dunning policy, matching thresholds, numbering formats, rounding tolerance, enabled jurisdictions
+- [x] Risk-bearing settings carry a **platform-enforced ceiling**: a tenant may lower a write-off tolerance but not raise it past the operator's maximum
+- [x] Every change is audited; a settings diff is part of the compliance evidence pack
+- [x] Resolution order is entity, then tenant, then platform config, resolved once per request
