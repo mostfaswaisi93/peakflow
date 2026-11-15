@@ -29,6 +29,22 @@ final class ActivityLog extends PlatformModel
         'context', 'ip_address', 'correlation_id', 'created_at',
     ];
 
+    /**
+     * `created_at` is stamped here, not left to the caller.
+     *
+     * The table has no `updated_at` - the log is append-only, so there is
+     * nothing to update - which means `$timestamps = false` and Laravel stops
+     * filling `created_at` too. Every caller then has to remember a NOT NULL
+     * column, and the one that forgets finds out at runtime, in whichever
+     * scheduled job happened to be the first to log something.
+     */
+    protected static function booted(): void
+    {
+        static::creating(function (self $log): void {
+            $log->created_at ??= now();
+        });
+    }
+
     public function operator(): BelongsTo
     {
         return $this->belongsTo(Operator::class);

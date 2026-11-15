@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Support;
 
+use App\Platform\Enums\SubscriptionStatus;
+use App\Platform\Models\Subscription;
 use App\Support\Hashing\ChainLink;
 use App\Support\Hashing\ChainWalker;
 use App\Support\Iso\CurrencyRegistry;
@@ -46,6 +48,7 @@ final class WorkedExamples
             'currency exponents' => $this->currencyExponents(),
             'IBAN check digits' => $this->ibanCheckDigits(),
             'hash chain tamper detection' => $this->hashChainTamperDetection(),
+            'a subscription is valid THROUGH its end date' => $this->subscriptionBoundary(),
         ];
     }
 
@@ -290,6 +293,69 @@ final class WorkedExamples
     }
 
     /** @param list<Money> $parts */
+    /**
+     * The off-by-one that cuts a paying customer off a day early.
+     *
+     * A subscription ending on the 31st is usable all day on the 31st. Get it
+     * wrong one way and a customer who has paid is locked out, which generates
+     * a support ticket they are entirely right to open; the other way and a
+     * lapsed account gets a free day.
+     *
+     * Checked in memory, with no database: the rule is a property of the model
+     * and wants to be checkable without provisioning anything.
+     *
+     * @return list<string>
+     */
+    public function subscriptionBoundary(): array
+    {
+        $violations = [];
+
+        $on = function (string $endsOn): Subscription {
+            $subscription = new Subscription();
+            $subscription->forceFill([
+                'status' => SubscriptionStatus::Active,
+                'starts_on' => now()->subYear()->toDateString(),
+                'ends_on' => $endsOn,
+            ]);
+
+            return $subscription;
+        };
+
+        $cases = [
+            'the last day of the subscription' => [now()->toDateString(), true],
+            'the day after it ended' => [now()->subDay()->toDateString(), false],
+            'a month from now' => [now()->addMonth()->toDateString(), true],
+            'a month ago' => [now()->subMonth()->toDateString(), false],
+        ];
+
+        foreach ($cases as $label => [$endsOn, $expected]) {
+            $actual = $on($endsOn)->entitlesAccess();
+
+            if ($actual !== $expected) {
+                $violations[] = sprintf(
+                    'a subscription ending %s (%s) %s access; it should%s',
+                    $endsOn,
+                    $label,
+                    $actual ? 'entitles' : 'does not entitle',
+                    $expected ? '' : ' not',
+                );
+            }
+        }
+
+        // And a status that does not entitle access overrides the dates
+        // entirely - an expired row with a future end date is still expired,
+        // because somebody or something expired it on purpose.
+        $suspended = $on(now()->addYear()->toDateString());
+        $suspended->forceFill(['status' => SubscriptionStatus::Suspended]);
+
+        if ($suspended->entitlesAccess()) {
+            $violations[] = 'a suspended subscription with a future end date still entitles access; '.
+                'the status must override the dates';
+        }
+
+        return $violations;
+    }
+
     private function sum(array $parts): Money
     {
         $total = Money::zero($parts[0]->currency);

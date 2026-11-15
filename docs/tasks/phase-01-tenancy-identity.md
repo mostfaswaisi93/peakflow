@@ -47,10 +47,11 @@ For managed hosting where `CREATE DATABASE` is not available.
 ### PF-022 · Subscription lifecycle and plan gating
 `Platform` · **3 pts** · depends: PF-021 · standards: —
 
-- [ ] States: `trial`, `active`, `past_due`, `suspended`, `expired`, `migrating`
-- [ ] A subscription is valid **through** its end date, so the expiry comparison is strictly `<`; the boundary has its own test
-- [ ] `subscriptions:expire` is idempotent and writes one activity log row per transition
-- [ ] A `plan` middleware gates features by plan, with a clear upgrade message rather than a 403
+- [x] States: `trial`, `active`, `past_due`, `suspended`, `expired`, `cancelled`
+  - **Amended as built.** `migrating` is not a subscription state - it is a *tenant* state, and it lives on `TenantStatus`. Conflating them would mean a tenant mid-migration had to have its billing touched, and a restore would have to guess which of the two concerns a `migrating` row described. A tenant is either servable or not; a subscription either entitles access or does not. The resolver checks both independently and `cancelled` takes the slot, because a subscription that was deliberately ended is a different fact from one that lapsed.
+- [x] A subscription is valid **through** its end date, so the expiry comparison is strictly `<`; the boundary has its own test
+- [x] `subscriptions:expire` is idempotent and writes one activity log row per transition
+- [x] A `plan` middleware gates features by plan, with a clear upgrade message rather than a 403
 
 ### PF-023 · Tenant migrations at scale
 `Platform` · **5 pts** · depends: PF-019 · standards: —

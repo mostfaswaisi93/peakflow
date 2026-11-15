@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Support;
 
+use App\Platform\Enums\PlanFeature;
+use App\Platform\Exceptions\PlanDoesNotInclude;
+use App\Platform\Models\Plan;
 use Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests;
+use Illuminate\Http\Request;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Contracts\Http\Kernel as HttpKernel;
 use Illuminate\Session\Middleware\StartSession;
@@ -39,6 +43,7 @@ final class WiringRules
             'the application does not connect as the migrator' => $this->applicationIsNotMigrator(),
             'problem types have unique URIs and sane statuses' => $this->problemTypesAreWellFormed(),
             'exchange and pdf default to their stubs' => $this->driversDefaultToStubs(),
+            'the plan gate refuses with an upgrade path, not a 403' => $this->planGateOffersAnUpgrade(),
         ];
     }
 
@@ -92,6 +97,69 @@ final class WiringRules
         }
 
         return [];
+    }
+
+    /**
+     * A plan refusal must be answerable by the customer.
+     *
+     * "Forbidden" is what you say to someone attempting an intrusion. A
+     * customer on the starter plan who reached a consolidation screen is a
+     * person who would like to buy something and cannot work out how, so the
+     * refusal is a 402 that names the feature and the cheapest plan including
+     * it - computed from the catalogue, because a hardcoded "upgrade to
+     * Business" goes stale the first time packaging changes and still reads
+     * plausibly.
+     *
+     * @return list<string>
+     */
+    public function planGateOffersAnUpgrade(): array
+    {
+        $plans = Plan::query()->where('active', true)->orderBy('sort_order')->get();
+
+        if ($plans->count() < 2) {
+            return ['fewer than two active plans are seeded, so gating cannot be checked'];
+        }
+
+        $cheapest = $plans->first();
+        $violations = [];
+
+        // A feature the cheapest plan does not have, but some plan does.
+        $gated = collect(PlanFeature::cases())
+            ->first(fn (PlanFeature $f): bool => ! $cheapest->has($f)
+                && $plans->contains(fn (Plan $p): bool => $p->has($f)));
+
+        if ($gated === null) {
+            return ['the cheapest plan includes every feature any plan does, so there is nothing to gate'];
+        }
+
+        $exception = PlanDoesNotInclude::feature($gated, $cheapest);
+        $response = $exception->render(Request::create('/'));
+
+        if ($response->getStatusCode() !== 402) {
+            $violations[] = sprintf(
+                'a plan refusal answered %d; it must be 402 Payment Required, because 403 tells a paying '.
+                'customer they are suspected of something',
+                $response->getStatusCode(),
+            );
+        }
+
+        if (str_contains(strtolower($exception->getMessage()), 'forbidden')) {
+            $violations[] = 'a plan refusal says "forbidden" to a customer who simply has not bought the feature';
+        }
+
+        if ($exception->cheapestPlanWithIt === null) {
+            $violations[] = sprintf(
+                'the refusal for "%s" names no plan that includes it, although one exists, so the customer is '.
+                'told no and not told how',
+                $gated->value,
+            );
+        }
+
+        if ($exception->cheapestPlanWithIt === $cheapest->key) {
+            $violations[] = 'the refusal points at the plan the customer is already on';
+        }
+
+        return $violations;
     }
 
     public function resolversBeforeAuth(): array
