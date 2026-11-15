@@ -52,12 +52,16 @@ The dependency table in the README is the configuration, not a description of it
 Each of these is a rule that a code review will eventually miss.
 
 - [x] No `float` or `double` type declaration anywhere under the money path; no `(float)` cast; no `floatval`
-- [ ] No Eloquent cast to `float`/`real` on a column in the money path
-- [ ] Every migration creating a table in the financial schema group declares a non-nullable `entity_id`
+- [x] No Eloquent cast to `float`/`real` on a column in the money path. Matched as `=> 'float'|'real'|'double'` in a `casts()` array, which is a *string* and so invisible to a type-declaration scan - the two halves of the rule look for different things
+- [x] Every migration creating a table in the financial schema group declares a non-nullable `entity_id`. **Non-nullable is the part that matters**: NULL equals nothing in SQL, so an RLS policy comparing `entity_id = current_entity()` hides the row from every entity *including the one that wrote it* - and the write succeeds. A posting that disappears is worse than one that is refused
+- [x] Both spellings are checked, because both are used: a Blueprint chain (`->nullable()`) and raw DDL for the tables needing partitioning or triggers the builder cannot express. The Blueprint defaults to NOT NULL and raw SQL defaults to nullable, which is the trap - the two spellings of the same column disagree by default
 - [x] Every model under `app/Tenant` declares `getConnectionName(): 'tenant'`
 - [x] Nothing in `app/Tenant/Reporting` performs a write (`save`, `insert`, `update`, `delete`, `DB::statement`)
 - [x] No module reaches into another module's `Models` namespace
-- [ ] Blade and Livewire templates contain no physical CSS property and no untranslated literal string
+- [x] Blade and Livewire templates contain no physical CSS property and no untranslated literal string. The second half is a different rule from "the catalogs agree": that one checks every `__()` key exists in both files and cannot see a string never passed to `__()` at all - and the failures look nothing alike. A missing key renders the key, which somebody notices; a literal renders perfectly in the author's language and is simply absent from the other
+- [x] In an Arabic-first product the literal is usually Arabic, so the **English** page is the one that silently shows Arabic - and the people who would report it are the ones not reading that page
+- [x] Attributes are checked rather than skipped. Stripping tags wholesale is the easy implementation and it misses the strings most likely to be left behind: `placeholder`, `title`, `alt` and `aria-label` are user-visible, are not in the flow of the page, and are exactly what an author forgets to wrap
+- [x] Found on the way: the Blade blanker used `/[^\n]/u`, so each two-byte Arabic letter became one space and the string got **shorter**. Every offset after it shifted, the next directive was blanked in the wrong place, and `@section` was reported as untranslated text on line 1. Blanking exists to preserve offsets; a blanker that does not is worse than none, because the violations it reports point somewhere else
 
 ### PF-006 · The money support layer
 `Support/Money` · **5 pts** · depends: PF-001 · standards: ISO 4217 · `risk:high`

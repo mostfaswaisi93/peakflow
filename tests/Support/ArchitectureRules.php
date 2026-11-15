@@ -40,6 +40,7 @@ final class ArchitectureRules
             'the tenant plane does not depend on the platform plane' => $this->tenantDoesNotDependOnPlatform(),
             'every ceiling is enforced somewhere' => $this->ceilingsAreEnforced(),
             'no physical CSS property' => $this->noPhysicalCssProperties(),
+            'no untranslated text in a template' => $this->templatesHaveNoUntranslatedText(),
             'financial tables carry entity_id' => $this->financialTablesCarryEntityId(),
             'no migration is unsafe to run against live traffic' => $this->migrationsAreSafeToRunLive(),
             'the built assets are not stale' => $this->builtAssetsAreNotStale(),
@@ -641,6 +642,45 @@ final class ArchitectureRules
                 $violations[] = $this->relative($file).' is marked @financial but declares no entity_id';
             }
 
+            /*
+             | And the column must be NOT NULL - PF-005.
+             |
+             | A nullable `entity_id` is a row scoped to no entity, and the
+             | row-level security policy compares it to `current_entity()`.
+             | NULL is not equal to anything in SQL, so the row becomes
+             | invisible to every entity INCLUDING the one that wrote it -
+             | and the write succeeds. A posting that disappears is worse
+             | than one that is refused.
+             |
+             | Two spellings, because both are used: a Blueprint chain and
+             | raw DDL for the tables that need partitioning or triggers the
+             | builder cannot express.
+             */
+            if (preg_match_all('/->\s*(?:ulid|char|uuid|string|foreignUlid)\s*\(\s*[\'"]entity_id[\'"][^;]*?->\s*nullable\s*\(/s', $source, $nullable, PREG_OFFSET_CAPTURE)) {
+                foreach ($nullable[0] as [, $offset]) {
+                    $violations[] = sprintf(
+                        '%s:%d declares a NULLABLE entity_id in an @financial migration. NULL equals '.
+                        'nothing in SQL, so the RLS policy hides the row from every entity including the '.
+                        'one that wrote it - and the write succeeds.',
+                        $this->relative($file),
+                        $this->lineAt($source, $offset),
+                    );
+                }
+            }
+
+            if (preg_match_all('/^\s*entity_id\s+(?:char|uuid|varchar|text)\s*(?:\([0-9]+\))?\s*(?!.*not\s+null)[,\n]/im', $source, $rawNullable, PREG_OFFSET_CAPTURE)) {
+                foreach ($rawNullable[0] as [$match, $offset]) {
+                    $violations[] = sprintf(
+                        '%s:%d declares entity_id in raw DDL without NOT NULL (%s) in an @financial '.
+                        'migration. The Blueprint defaults to NOT NULL and raw SQL defaults to nullable, '.
+                        'which is the trap: the two spellings of the same column disagree.',
+                        $this->relative($file),
+                        $this->lineAt($source, $offset),
+                        trim($match, " \n,"),
+                    );
+                }
+            }
+
             // Either spelled out, or via the helper that migration 000500
             // installs - which is the form a new financial migration should
             // use, since it also FORCES RLS and adds the migrator bypass.
@@ -654,6 +694,204 @@ final class ArchitectureRules
         }
 
         return $violations;
+    }
+
+    /**
+     * No user-visible text in a template may be a literal - PF-005.
+     *
+     * ## Why this is not the same rule as "the catalogs agree"
+     *
+     * That rule checks that every `__()` key exists in both files. It cannot
+     * see a string that was never passed to `__()` at all, and the two
+     * failures look nothing alike: a missing key renders the key, which
+     * somebody notices, while a literal renders perfectly in the author's
+     * language and is simply absent from the other one.
+     *
+     * In an Arabic-first product the literal is usually Arabic, so the English
+     * page is the one that silently shows Arabic - and the people who would
+     * report it are the ones not reading that page.
+     *
+     * ## Attributes are checked, not skipped
+     *
+     * Stripping tags wholesale is the easy implementation and it misses the
+     * strings most likely to be left behind: `placeholder`, `title`, `alt`
+     * and `aria-label` are user-visible, are not in the flow of the page, and
+     * are exactly what an author forgets to wrap. So tag contents are scanned
+     * for those attributes specifically, and everything else inside a tag -
+     * class names, `dir`, `role`, `type` - is ignored.
+     *
+     * @return list<string>
+     */
+    public function templatesHaveNoUntranslatedText(): array
+    {
+        $violations = [];
+
+        /*
+         | The attributes a person actually reads.
+         |
+         | `value` is deliberately absent: it is `{{ old(...) }}` in every
+         | form in this codebase, and a literal `value="1"` has no letters, so
+         | including it would only add a way to be wrong about a submit
+         | button's label - which should be the button's text anyway.
+         */
+        $visible = ['placeholder', 'title', 'alt', 'aria-label', 'aria-description', 'aria-placeholder', 'aria-roledescription'];
+
+        foreach ($this->filesMatching('resources/views', '/\.blade\.php$/') as $file) {
+            $original = (string) file_get_contents($file);
+            $relative = $this->relative($file);
+            $source = $this->withoutBladeOutput($original);
+
+            foreach ($this->textAndAttributes($source, $visible) as [$text, $offset, $what]) {
+                if (preg_match('/\p{L}{2,}/u', $text) !== 1) {
+                    continue;
+                }
+
+                if ($this->lineIsAnnotated($original, $offset)) {
+                    continue;
+                }
+
+                $violations[] = sprintf(
+                    '%s:%d has the untranslated %s "%s". In an Arabic-first product a literal renders '.
+                    'perfectly for its author and is simply absent from the other language - and the '.
+                    'people who would report it are the ones not reading that page.',
+                    $relative,
+                    $this->lineAt($source, $offset),
+                    $what,
+                    trim(preg_replace('/\s+/u', ' ', $text) ?? ''),
+                );
+            }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * Blank every Blade construct, keeping byte offsets.
+     *
+     * Blanked rather than removed for the same reason comments are: the line
+     * numbers in a violation still point at the right line, and the
+     * `@arch-allow` annotation is looked up in the original at the same
+     * offset.
+     */
+    private function withoutBladeOutput(string $source): string
+    {
+        /*
+         | Byte-wise, deliberately: no `/u` flag.
+         |
+         | With `/u` the pattern matches a CHARACTER, so each two-byte Arabic
+         | letter was replaced by one space and the string got shorter.
+         | Measured: `@extends('layouts.plain', ['title' => __('تسجيل
+         | الدخول')])` shrank by nine bytes, every offset after it shifted,
+         | and the next directive was blanked at the wrong place - so
+         | `@section` survived and was reported as untranslated text on line 1.
+         |
+         | Blanking exists to preserve offsets. A blanker that does not is
+         | worse than none, because the violations it reports point somewhere
+         | else.
+         */
+        $blank = static fn (array $m): string => (string) preg_replace('/[^\n]/', ' ', $m[0]);
+
+        // Comments first: they can contain anything, including Blade echoes.
+        $source = (string) preg_replace_callback('/\{\{--.*?--\}\}/s', $blank, $source);
+        $source = (string) preg_replace_callback('/<!--.*?-->/s', $blank, $source);
+        $source = (string) preg_replace_callback('/@php\b.*?@endphp/s', $blank, $source);
+        $source = (string) preg_replace_callback('/\{!!.*?!!\}/s', $blank, $source);
+        $source = (string) preg_replace_callback('/\{\{.*?\}\}/s', $blank, $source);
+
+        /*
+         | Directives, with a balanced argument list.
+         |
+         | `@error('email')` and `@if ($a && str_contains($b, ")"))` both have
+         | to go, and a non-greedy `\(.*?\)` stops at the first `)` inside a
+         | string. So the parentheses are matched by depth.
+         */
+        $out = $source;
+        $offset = 0;
+
+        while (preg_match('/@[A-Za-z_]\w*/', $out, $m, PREG_OFFSET_CAPTURE, $offset) === 1) {
+            [$directive, $at] = $m[0];
+            $end = $at + \strlen($directive);
+
+            // An optional argument list, which may itself contain parentheses.
+            $probe = $end;
+
+            while ($probe < \strlen($out) && $out[$probe] === ' ') {
+                $probe++;
+            }
+
+            if ($probe < \strlen($out) && $out[$probe] === '(') {
+                $depth = 0;
+
+                for ($i = $probe; $i < \strlen($out); $i++) {
+                    if ($out[$i] === '(') {
+                        $depth++;
+                    } elseif ($out[$i] === ')') {
+                        $depth--;
+
+                        if ($depth === 0) {
+                            $end = $i + 1;
+
+                            break;
+                        }
+                    }
+                }
+            }
+
+            $out = substr($out, 0, $at)
+                .(string) preg_replace('/[^\n]/', ' ', substr($out, $at, $end - $at))
+                .substr($out, $end);
+
+            $offset = $end;
+        }
+
+        // Entities, so `&nbsp;` is not a word.
+        return (string) preg_replace_callback('/&(?:[A-Za-z]+|#\d+);/', $blank, $out);
+    }
+
+    /**
+     * Every text node, and every user-visible attribute value, with offsets.
+     *
+     * @param  list<string>  $visible
+     * @return list<array{string, int, string}>
+     */
+    private function textAndAttributes(string $source, array $visible): array
+    {
+        $found = [];
+        $length = \strlen($source);
+        $textStart = 0;
+
+        for ($i = 0; $i < $length; $i++) {
+            if ($source[$i] !== '<') {
+                continue;
+            }
+
+            $close = strpos($source, '>', $i);
+
+            if ($close === false) {
+                break;
+            }
+
+            if ($i > $textStart) {
+                $found[] = [substr($source, $textStart, $i - $textStart), $textStart, 'text'];
+            }
+
+            $tag = substr($source, $i, $close - $i + 1);
+
+            foreach ($visible as $attribute) {
+                if (preg_match('/\b'.preg_quote($attribute, '/').'\s*=\s*"([^"]*)"/', $tag, $m, PREG_OFFSET_CAPTURE) === 1) {
+                    $found[] = [$m[1][0], $i + $m[1][1], $attribute.' attribute'];
+                }
+            }
+
+            $i = $close;
+            $textStart = $close + 1;
+        }
+
+        if ($textStart < $length) {
+            $found[] = [substr($source, $textStart), $textStart, 'text'];
+        }
+
+        return $found;
     }
 
     /**
