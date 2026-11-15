@@ -53,6 +53,104 @@ final class RepositoryRules
 
     private string $temporary = '';
 
+    /**
+     * The progress table in docs/tasks/README.md, against the phase files.
+     *
+     * ## Why this is a check and not a convention
+     *
+     * A progress table is read INSTEAD of the files it summarises - that is
+     * what it is for - so one that has drifted is worse than none at all. And
+     * it drifts silently: ticking a criterion is the last step of a task, the
+     * table is somewhere else, and nothing about the tick suggests a second
+     * edit.
+     *
+     * What is checked is the arithmetic, not the prose: the per-phase counts
+     * of met and open criteria, and how many tasks have no open criterion
+     * left. The written claims around the table - which phases have been
+     * worked, why an open criterion in a worked phase is acceptable - are
+     * judgement and belong to whoever wrote them.
+     *
+     * @return list<string>
+     */
+    public function theProgressTableIsHonest(): array
+    {
+        $violations = [];
+        $readme = $this->base().'/docs/tasks/README.md';
+        $contents = is_file($readme) ? (string) file_get_contents($readme) : '';
+
+        if (! str_contains($contents, '## Progress')) {
+            return ['docs/tasks/README.md has no progress table, and the phase files are the only '.
+                'record of what is done'];
+        }
+
+        $files = glob($this->base().'/docs/tasks/phase-*.md') ?: [];
+        sort($files);
+
+        $totals = ['complete' => 0, 'tasks' => 0, 'met' => 0, 'open' => 0];
+
+        foreach ($files as $file) {
+            $phase = $this->phaseFileCounts((string) file_get_contents($file));
+            $name = basename($file);
+            $number = substr($name, 6, 2);
+
+            $totals['complete'] += $phase['complete'];
+            $totals['tasks'] += $phase['tasks'];
+            $totals['met'] += $phase['met'];
+            $totals['open'] += $phase['open'];
+
+            $expected = sprintf(
+                '| [%s](%s) | %d / %d | %d | %d |',
+                $number, $name, $phase['complete'], $phase['tasks'], $phase['met'], $phase['open'],
+            );
+
+            if (! str_contains($contents, $expected)) {
+                $violations[] = sprintf(
+                    'the progress table does not hold "%s". Phase %s has %d of %d tasks complete, %d '.
+                    'criteria met and %d open, and the table is what people read instead of the file',
+                    $expected, $number, $phase['complete'], $phase['tasks'], $phase['met'], $phase['open'],
+                );
+            }
+        }
+
+        $expected = sprintf(
+            '| **all** | **%d / %d** | **%d** | **%d** |',
+            $totals['complete'], $totals['tasks'], $totals['met'], $totals['open'],
+        );
+
+        if (! str_contains($contents, $expected)) {
+            $violations[] = sprintf('the progress table\'s total row is not "%s"', $expected);
+        }
+
+        return $violations;
+    }
+
+    /**
+     * @return array{tasks: int, complete: int, met: int, open: int}
+     */
+    private function phaseFileCounts(string $source): array
+    {
+        $met = preg_match_all('/^- \[x\]/m', $source);
+        $open = preg_match_all('/^- \[ \]/m', $source);
+
+        $blocks = preg_split('/^### PF-\d+/m', $source);
+        $blocks = \is_array($blocks) ? array_slice($blocks, 1) : [];
+
+        $complete = 0;
+
+        foreach ($blocks as $block) {
+            if (! str_contains($block, '- [ ]')) {
+                $complete++;
+            }
+        }
+
+        return [
+            'tasks' => \count($blocks),
+            'complete' => $complete,
+            'met' => \is_int($met) ? $met : 0,
+            'open' => \is_int($open) ? $open : 0,
+        ];
+    }
+
     /** @return array<string, list<string>> */
     public function all(): array
     {
@@ -69,6 +167,7 @@ final class RepositoryRules
                 'the laptop setup is documented with measured numbers' => $this->theLaptopSetupIsDocumented(),
                 'nothing is fetched from a third party at runtime' => $this->nothingIsFetchedAtRuntime(),
                 'static analysis has no baseline, and the rule is written down' => $this->staticAnalysisHasNoBaseline(),
+                'the backlog progress table agrees with the phase files' => $this->theProgressTableIsHonest(),
             ];
         } finally {
             foreach (glob($this->temporary.'/*') ?: [] as $file) {

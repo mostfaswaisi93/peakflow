@@ -24,6 +24,32 @@
 
 A flat, sortable view of every task is in [`backlog.md`](backlog.md).
 
+## Progress
+
+Counted from the checkboxes in the phase files. `php bin/verify repo` asserts that this table still agrees with them, because a progress table that has drifted is worse than no progress table: it is read instead of the files.
+
+A criterion is ticked only when something in `bin/verify` fails if the behaviour is removed.
+
+| Phase | Tasks complete | Criteria met | Criteria open |
+|---|---|---|---|
+| [00](phase-00-foundations.md) | 15 / 17 | 175 | 5 |
+| [01](phase-01-tenancy-identity.md) | 16 / 19 | 83 | 3 |
+| [02](phase-02-ledger.md) | 19 / 22 | 143 | 3 |
+| [03](phase-03-masters.md) | 13 / 16 | 61 | 9 |
+| [04](phase-04-tax.md) | 8 / 14 | 109 | 8 |
+| [05](phase-05-sales.md) | 0 / 21 | 0 | 97 |
+| [06](phase-06-einvoicing.md) | 0 / 20 | 0 | 79 |
+| [07](phase-07-purchasing.md) | 0 / 15 | 0 | 65 |
+| [08](phase-08-banking.md) | 0 / 21 | 0 | 91 |
+| [09](phase-09-settlement.md) | 0 / 16 | 0 | 72 |
+| [10](phase-10-reporting.md) | 0 / 17 | 0 | 76 |
+| [11](phase-11-design-system.md) | 0 / 18 | 0 | 92 |
+| [12](phase-12-api-exchange.md) | 0 / 14 | 0 | 64 |
+| [13](phase-13-hardening.md) | 0 / 16 | 0 | 73 |
+| **all** | **71 / 246** | **571** | **737** |
+
+Phases 00 to 04 are the ones that have been worked. An open criterion in a worked phase is one that depends on a later phase and says so in its own task file, with the task that brings it - never one that was skipped.
+
 ## Task format
 
 ```
