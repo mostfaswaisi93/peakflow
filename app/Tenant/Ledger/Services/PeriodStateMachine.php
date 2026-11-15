@@ -6,6 +6,8 @@ namespace App\Tenant\Ledger\Services;
 
 use App\Support\Audit\AuditTrail;
 use App\Tenant\Ledger\Enums\PeriodState;
+use App\Tenant\Ledger\Events\PeriodClosed;
+use App\Tenant\Ledger\Events\PeriodReopened;
 use App\Tenant\Ledger\Exceptions\PeriodTransitionRefused;
 use App\Tenant\Ledger\Models\Period;
 use Illuminate\Support\Facades\DB;
@@ -181,6 +183,37 @@ final class PeriodStateMachine
                 entityId: (string) $period->entity_id,
                 periodId: (string) $period->getKey(),
             );
+
+            /*
+             | Dispatched INSIDE the transaction, deliberately.
+             |
+             | A posting listener must see the period in its new state and
+             | must fail the transition if it fails - a reporting pack built
+             | from a period that was still open when it was built is a pack
+             | that will be rebuilt and will not match.
+             |
+             | Side-effect listeners are queued, and Laravel's queue
+             | dispatcher defers the push until commit, so a rolled-back
+             | transition sends no notification about a close that did not
+             | happen.
+             */
+            event($reopening
+                ? new PeriodReopened(
+                    entityId: (string) $period->entity_id,
+                    periodId: (string) $period->getKey(),
+                    periodLabel: (string) $period->label,
+                    fromState: $from->value,
+                    reason: $reason,
+                    byUserId: $userId === null ? null : (string) $userId,
+                )
+                : new PeriodClosed(
+                    entityId: (string) $period->entity_id,
+                    periodId: (string) $period->getKey(),
+                    periodLabel: (string) $period->label,
+                    state: $to->value,
+                    reason: $reason,
+                    byUserId: $userId === null ? null : (string) $userId,
+                ));
 
             return $period->refresh();
         });

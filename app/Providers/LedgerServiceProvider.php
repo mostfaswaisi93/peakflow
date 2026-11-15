@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace App\Providers;
 
+use App\Tenant\Ledger\Events\RevaluationRun;
+use App\Tenant\Ledger\Listeners\CheckBalancesAfterARevaluation;
 use App\Tenant\Ledger\Posting\PostingRuleRegistry;
 use App\Tenant\Ledger\Posting\Rules\ForeignCurrencyRevaluationRule;
 use App\Tenant\Ledger\Posting\Rules\OpeningBalanceRule;
 use App\Tenant\Ledger\Posting\Rules\YearEndCloseRule;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 
 /**
@@ -51,5 +54,18 @@ final class LedgerServiceProvider extends ServiceProvider
          | read, drilled into and reversed.
          */
         $registry->register(new YearEndCloseRule());
+
+        /*
+         | The one queued listener in the ledger, and it verifies rather
+         | than posts.
+         |
+         | Queued because it is a side effect per PF-048: it compares the
+         | balance read model against the journal, and the journal is the
+         | ledger. An architecture rule enforces the pairing both ways - a
+         | listener on a financial event that is queued without being marked
+         | SideEffect fails the build, and so does a SideEffect that is not
+         | queued.
+         */
+        Event::listen(RevaluationRun::class, CheckBalancesAfterARevaluation::class);
     }
 }

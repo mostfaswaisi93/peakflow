@@ -46,7 +46,179 @@ final class ArchitectureRules
             'translation catalogs agree' => $this->translationCatalogsAgree(),
             'strict types everywhere' => $this->strictTypesDeclared(),
             'no exchange rate is ever inverted' => $this->ratesAreNeverInverted(),
+            'a posting is never queued, and a side effect always is' => $this->postingIsNeverDeferred(),
+            'an event carries no other module\'s models' => $this->eventsCarryNoModels(),
         ];
+    }
+
+    /**
+     * Postings are synchronous; side effects are not - PF-048.
+     *
+     * ## The rule
+     *
+     * **A posting that is eventually consistent with the document that
+     * caused it is not a ledger.** An invoice that exists for four seconds
+     * with no journal entry is an invoice whose VAT is not in the return,
+     * whose receivable is not in the aging, and whose customer is not over
+     * their credit limit. Four seconds is enough for a report to be run,
+     * and a queue that is down is enough for a day.
+     *
+     * The other half matters as much in the other direction: a mail
+     * listener run synchronously inside the posting transaction turns a mail
+     * server timeout into a rolled-back invoice. Nobody intends that; it
+     * happens because the queue is an inconvenience during development and
+     * the change gets committed.
+     *
+     * ## Why a rule rather than a convention
+     *
+     * Because the mistake is invisible in review. `implements ShouldQueue`
+     * on a listener is one line that reads like good practice, and it is -
+     * except on the one class where it silently makes the ledger eventually
+     * consistent.
+     *
+     * @return list<string>
+     */
+    public function postingIsNeverDeferred(): array
+    {
+        $violations = [];
+
+        foreach ($this->phpFiles('app') as $file) {
+            $original = (string) file_get_contents($file);
+
+            if (! str_contains($original, 'Listener') && ! str_contains($original, '\\Listeners\\')) {
+                continue;
+            }
+
+            $source = $this->withoutComments($original);
+            $relative = $this->relative($file);
+
+            $isSideEffect = (bool) preg_match('/implements[^{]*\bSideEffect\b/', $source);
+            $isQueued = (bool) preg_match('/implements[^{]*\bShouldQueue\b/', $source);
+
+            /*
+             | A listener that handles a FinancialEvent and is queued.
+             |
+             | Detected from the handle() signature rather than from a
+             | marker on the listener, because the listener does not get to
+             | decide: the event says the ledger depends on it.
+             */
+            $handlesFinancial = (bool) preg_match(
+                /*
+                 | `[^)]*` rather than a namespace pattern.
+                 |
+                 | Matching an optionally-qualified class name means
+                 | matching backslashes, and a backslash inside a
+                 | single-quoted PHP string inside a regex is three levels
+                 | of escaping that took two attempts to get wrong in both
+                 | directions. The parameter list cannot contain a `)`
+                 | before the type, so this is both simpler and exact.
+                 */
+                '/function\s+handle\s*\([^)]*\b'.
+                '(PeriodClosed|PeriodReopened|YearClosed|RevaluationRun|InvoiceIssued|CreditNoteIssued|'.
+                'BillApproved|PaymentReceived|PaymentReleased|StatementLineMatched)\b/',
+                $source,
+            );
+
+            if ($handlesFinancial && $isQueued && ! $isSideEffect) {
+                $violations[] = sprintf(
+                    '%s handles a financial event and implements ShouldQueue. A posting that is eventually '.
+                    'consistent with the document that caused it is not a ledger - and the window is long '.
+                    'enough for a report to be run in. If this listener is a side effect, say so by '.
+                    'implementing SideEffect as well',
+                    $relative,
+                );
+            }
+
+            if ($isSideEffect && ! $isQueued) {
+                $violations[] = sprintf(
+                    '%s is marked SideEffect and is not queued, so a failure in it can fail or roll back '.
+                    'the posting. A mail server being down has no business reversing a journal entry',
+                    $relative,
+                );
+            }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * A cross-module event carries primitives, not models - PF-048.
+     *
+     * ## Why
+     *
+     * A `Period` on an event makes every listener depend on `Ledger`'s
+     * models - including the ones the module graph forbids from doing that,
+     * and including a tenant's webhook payload, which would then be a
+     * serialised Eloquent model with whatever relations happened to be
+     * loaded.
+     *
+     * It also breaks on a queue: a model serialises as a class and an id,
+     * and deserialises in a worker that may be running the next release
+     * against a row that has since changed - so the listener sees a
+     * different state from the one that caused the event.
+     *
+     * Support value objects are fine. `Money` and `Rate` are values with no
+     * database behind them, which is the whole reason they live in Support.
+     *
+     * @return list<string>
+     */
+    public function eventsCarryNoModels(): array
+    {
+        $violations = [];
+
+        foreach ($this->phpFiles('app') as $file) {
+            if (! str_contains($file, '/Events/')) {
+                continue;
+            }
+
+            $original = (string) file_get_contents($file);
+            $source = $this->withoutComments($original);
+            $relative = $this->relative($file);
+
+            /*
+             | A constructor-promoted property typed as a module model.
+             |
+             | Matched on the namespace rather than on a list of class
+             | names, so a model added next month is covered without this
+             | rule being edited - which is the difference between a rule
+             | and a snapshot.
+             */
+            /*
+             | The type is captured and then tested with str_contains.
+             |
+             | Same reason as above: a namespace pattern needs backslashes,
+             | and `'Models\\'` in a plain string is unambiguous where the
+             | same thing inside a regex is not.
+             */
+            if (preg_match_all(
+                '/(?:public|private|protected)\s+(?:readonly\s+)?([^\s$()]+)\s+\$\w+/',
+                $source,
+                $matches,
+                PREG_OFFSET_CAPTURE,
+            )) {
+                foreach ($matches[1] as [$class, $offset]) {
+                    if (! str_contains($class, 'Models\\')) {
+                        continue;
+                    }
+
+                    if ($this->lineIsAnnotated($original, $offset)) {
+                        continue;
+                    }
+
+                    $violations[] = sprintf(
+                        '%s:%d carries %s. An event with a model on it makes every listener depend on that '.
+                        "module's models, and serialises onto a queue as a class and an id that deserialises ".
+                        'against a row which has since changed - so the listener sees a different state from '.
+                        'the one that caused the event. Carry ids and Support value objects',
+                        $relative,
+                        $this->lineAt($source, $offset),
+                        $class,
+                    );
+                }
+            }
+        }
+
+        return $violations;
     }
 
     /**

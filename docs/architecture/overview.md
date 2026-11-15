@@ -156,4 +156,5 @@ Three failure states are handled explicitly rather than as errors:
 
 - [`multi-tenancy.md`](multi-tenancy.md) — provisioning, resolution and migrating at scale
 - [`money-and-precision.md`](money-and-precision.md) — the three scales and the rounding rule
+- [`events-and-queues.md`](events-and-queues.md) — postings are synchronous, side effects are queued, and the tenant travels with the job
 - [`decisions/`](decisions/) — why each of the above is the way it is, and what lost

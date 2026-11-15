@@ -11,6 +11,7 @@ Start with the [root README](../README.md) for the whole system in one pass. Com
 | [`architecture/overview.md`](architecture/overview.md) | The three planes, the twelve modules, how they communicate, and what is deliberately not allowed |
 | [`architecture/multi-tenancy.md`](architecture/multi-tenancy.md) | Provisioning, connection resolution, entity scoping, migrating thousands of databases |
 | [`architecture/money-and-precision.md`](architecture/money-and-precision.md) | The three decimal scales, where rounding happens, and the currency cases that break naive implementations |
+| [`architecture/events-and-queues.md`](architecture/events-and-queues.md) | The split between a posting and a side effect, both enforced, and why a queued job that loses its tenant is the worst bug this architecture can have |
 | [`architecture/decisions/`](architecture/decisions/) | Architecture decision records - the choices, their alternatives, and why the alternatives lost |
 
 ## Domain

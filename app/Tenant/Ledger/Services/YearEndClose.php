@@ -6,6 +6,7 @@ namespace App\Tenant\Ledger\Services;
 
 use App\Support\Audit\AuditTrail;
 use App\Tenant\Ledger\Enums\PeriodState;
+use App\Tenant\Ledger\Events\YearClosed;
 use App\Tenant\Ledger\Exceptions\YearEndCloseRefused;
 use App\Tenant\Ledger\Models\FiscalYear;
 use App\Tenant\Ledger\Models\JournalEntry;
@@ -193,6 +194,17 @@ final class YearEndClose
                 ),
                 entityId: $entityId,
             );
+
+            event(new YearClosed(
+                entityId: $entityId,
+                fiscalYearId: (string) $year->getKey(),
+                yearLabel: (string) $year->label,
+                entryId: (string) $entry->getKey(),
+                entryNumber: (string) $entry->number,
+                carriedToRetainedEarnings: $result,
+                currency: $functional,
+                accountsClosed: count($balances),
+            ));
 
             return [
                 'entry' => $entry,

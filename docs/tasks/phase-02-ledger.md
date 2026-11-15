@@ -108,9 +108,14 @@ The mechanism that lets `Ledger` know nothing about invoices.
 `Ledger` · **3 pts** · depends: PF-047, PF-003 · standards: —
 
 - [ ] `InvoiceIssued`, `CreditNoteIssued`, `BillApproved`, `PaymentReceived`, `PaymentReleased`, `StatementLineMatched`, `RevaluationRun`, `PeriodClosed` and the rest, each a typed event
-- [ ] Posting listeners are **synchronous and inside the originating transaction**. A posting that is eventually consistent with the document that caused it is not a ledger
-- [ ] Deptrac proves no module calls into `Ledger`'s models directly
-- [ ] Non-financial side effects of the same events - email, webhooks, search indexing - are queued, and a failure in them can never fail or roll back the posting
+  - `RevaluationRun`, `PeriodClosed`, `PeriodReopened` and `YearClosed` exist and dispatch. The six document events belong to the modules that raise them - `InvoiceIssued` to Phase 05, `BillApproved` to Phase 07, `PaymentReceived` and `StatementLineMatched` to Phases 08-09 - and are named in the architecture rule now, so the first one added arrives already bound by it. Left open deliberately: ticking it here would claim events that have no module to be raised from yet
+- [x] Posting listeners are **synchronous and inside the originating transaction**. A posting that is eventually consistent with the document that caused it is not a ledger
+- [x] Deptrac proves no module calls into `Ledger`'s models directly
+- [x] Non-financial side effects of the same events - email, webhooks, search indexing - are queued, and a failure in them can never fail or roll back the posting
+- [x] The split is a build failure either way: a listener on a `FinancialEvent` that implements `ShouldQueue` without being marked `SideEffect`, and a `SideEffect` that is not queued. Both proved by removing each marker and watching the rule fail
+- [x] An event carries ids and `Support` value objects, never another module's models - also a build failure
+- [x] A queued side effect runs against the tenant that queued it: the tenant is stamped on every payload and restored before every job. A job arriving with no tenant **fails** rather than inheriting the previous job's connection; measured with the forgetting removed, where a tenantless job read another tenant's database and wrote a row into it
+- [x] The hooks restore the caller's tenant rather than blanking it, so a job dispatched synchronously inside a request leaves that request working - the bug the first version of this had
 
 ### PF-049 · Fiscal years and periods
 `Ledger` · **5 pts** · depends: PF-025 · standards: IAS 1 · `type:schema`

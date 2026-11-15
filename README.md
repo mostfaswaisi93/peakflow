@@ -1164,6 +1164,7 @@ See [`docs/tasks/README.md`](docs/tasks/README.md) for the task format, the esti
 | [`docs/architecture/overview.md`](docs/architecture/overview.md) | Planes, modules, boundaries, cross-cutting concerns |
 | [`docs/architecture/multi-tenancy.md`](docs/architecture/multi-tenancy.md) | Provisioning, resolution, entity scoping, migration at scale |
 | [`docs/architecture/money-and-precision.md`](docs/architecture/money-and-precision.md) | Scales, rounding, currency edge cases, worked examples |
+| [`docs/architecture/events-and-queues.md`](docs/architecture/events-and-queues.md) | Why a posting is synchronous, why a side effect is queued, and how the tenant travels with a job |
 | [`docs/architecture/decisions/`](docs/architecture/decisions/) | ADRs - the decisions, their alternatives and why they lost |
 | [`docs/domain/general-ledger.md`](docs/domain/general-ledger.md) | Accounts, journals, posting rules, periods, close |
 | [`docs/domain/invoicing.md`](docs/domain/invoicing.md) | Lifecycle, numbering, hash chain, recognition, dunning |

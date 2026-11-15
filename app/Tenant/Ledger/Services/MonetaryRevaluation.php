@@ -8,6 +8,7 @@ use App\Support\Money\Money;
 use App\Support\Money\Rate;
 use App\Support\Money\RoundingPolicy;
 use App\Support\Money\Scale;
+use App\Tenant\Ledger\Events\RevaluationRun;
 use App\Tenant\Ledger\Models\JournalEntry;
 use App\Tenant\Ledger\Models\Period;
 use App\Tenant\Ledger\Posting\Rules\ForeignCurrencyRevaluationRule;
@@ -318,6 +319,18 @@ final class MonetaryRevaluation
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
+
+            event(new RevaluationRun(
+                entityId: $entityId,
+                periodId: (string) $period->getKey(),
+                runId: $runId,
+                rateSet: $rateSet,
+                revaluedAt: $asAt->toDateString(),
+                entryId: $entry === null ? null : (string) $entry->getKey(),
+                accountsRestated: count($payload),
+                missingRates: $missing,
+                unclassified: $this->unclassified($entityId, $functional, $asAt),
+            ));
 
             return [
                 'run_id' => $runId,
