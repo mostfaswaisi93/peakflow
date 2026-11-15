@@ -68,6 +68,48 @@ return [
     |
     */
 
+    /*
+    |---------------------------------------------------------------------------
+    | Tax point basis (PF-077)
+    |---------------------------------------------------------------------------
+    |
+    | Which of a document's dates fixes its TAX POINT - EN 16931 BT-7 - and so
+    | which return period the supply belongs to. Not the invoice date by
+    | definition: a document issued on the 1st for a supply on the 30th of the
+    | previous month belongs to the earlier return in many jurisdictions, and a
+    | system that files by invoice date files it a month late.
+    |
+    | The five shapes the engine implements:
+    |
+    |   invoice_date                     the document's own date
+    |   delivery_date                    the date of the supply
+    |   payment_date                     the date the money arrived
+    |   earlier_of_invoice_and_delivery  whichever came first
+    |   earlier_of_invoice_and_payment   the prepayment rule - money received
+    |                                    before invoicing fixes the tax point
+    |                                    at receipt
+    |
+    | A profile naming a shape the engine does not implement THROWS rather than
+    | falling back, because guessing would apply a rule nobody wrote. A profile
+    | that is absent falls back to the default profile's basis, because the
+    | alternative is a document that cannot be issued over a misspelled key.
+    |
+    | `generic` is the invoice date because EN 16931's own default BT-8 code is
+    | `3`. The others are the invoice date too, pending the per-jurisdiction
+    | source each one needs - a basis asserted without a citation is the same
+    | problem as a rate without one, and PF-085 requires the citation.
+    |
+    */
+
+    'tax_point' => [
+        'generic' => 'invoice_date',
+        'peppol' => 'invoice_date',
+        'zatca' => 'invoice_date',
+        'facturx' => 'invoice_date',
+        'eta' => 'invoice_date',
+        'jofotara' => 'invoice_date',
+    ],
+
     'rounding' => [
         'generic' => 'half_up',
         'peppol' => 'half_up',

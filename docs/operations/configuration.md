@@ -140,6 +140,7 @@ the live configuration by `bin/verify config`.
 | `exchange.xml.max_bytes` | `16777216` | 1 MiB–64 MiB | 16 MiB is a very large invoice. Above that the parse is a memory decision, not a correctness one |
 | `pdf.gotenberg.timeout_seconds` | `60` | 10–300 | A 200-page statement is slow. Longer holds a worker; shorter fails the render that mattered |
 | `telemetry.sampling.ratio` | `0.1` | 0–1 | Financial events are always sampled regardless (`telemetry.sampling.always_sample`), so this governs the ordinary traffic around them |
+| `jurisdictions.tax_point.generic` | `invoice_date` | one of five bases | Which date fixes the **tax point**, and so which return period a supply belongs to. A profile naming a basis the engine does not implement throws rather than falling back, because guessing applies a rule nobody wrote; a profile that is absent falls back to the default's, because the alternative is a document nobody can issue over a misspelled key |
 | `fx.fallback_window_days` | `30` | 1–90 | How stale a rate may be when every provider is down. "The last known rate" from eleven months ago is not resilience, it is a wrong number with a long paper trail |
 | `pdf.page.margin_mm.inline_start` | `14` | 8–30 | Logical, not physical: `inline_start` is the right-hand side in Arabic. A physical `left` here would put an Arabic invoice's margin on the wrong edge |
 

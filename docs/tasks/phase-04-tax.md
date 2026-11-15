@@ -37,9 +37,14 @@ The engine's organising principle is that **tax is data, not code**. A rate that
 `Tax` · **5 pts** · depends: PF-076 · standards: EN 16931 (`BT-7`) · `risk:high` `type:compliance`
 
 - [ ] The tax point is its own field, distinct from the invoice date and the delivery date
-- [ ] Derivation is a per-jurisdiction rule: invoice date, delivery date, payment date, or the earlier of a pair
+- [x] Derivation is a per-jurisdiction rule: invoice date, delivery date, payment date, or the earlier of a pair. Five bases in `TaxPointBasis`, read from `config/jurisdictions.php` per profile, and `TaxPoint::derive()` returns a `TaxPointDecision` carrying the date, the basis, **which input won** and the profile it came from
 - [ ] The derived value is **stored on the document**, not recomputed - a document issued on the 1st for a supply on the 30th belongs to the earlier return in many jurisdictions, and that decision must be frozen
 - [ ] The tax point determines the period the document falls into for the return, which can differ from its accounting period; both are stored
+- [x] A missing date **refuses** rather than falls back. The delivery-date basis with no delivery date used to return the invoice date, which is the single worst failure available here: it is silent, it is plausible, and it puts the supply in the wrong return. `TaxPointUndeterminable::missingDates()` names the profile and the basis
+- [x] Found on the way: the two "earlier of" bases have **no UNCL 2005 code**. `3` is the invoice date, `35` the delivery date, `432` the payment date, and "the earlier of the invoice date and the delivery date" is not one of them - so `documentCode()` reports the code of the date that actually **won**, not the rule that chose it. A document that declared `3` while the delivery date won would be wrong on `BT-8`
+- [x] Found on the way: an **unknown basis string** and an **unlisted profile** are different mistakes. A profile nobody has configured yet should fall back to the invoice date; a configured profile whose basis is a typo should not, because the fallback would hide it. So the profile name falls back and the basis string throws, and both are checked. `jofotara` had no entry at all and now has one
+
+> The two open criteria are a column on a document, and documents arrive in Phase 05 (PF-089 onwards). What exists now is the decision and the period it falls into - `TaxPoint::fallsInMonth()` - and `TaxPointDecision` is `JsonSerializable` precisely so the whole decision, not just its date, can be frozen onto the row when there is a row to freeze it onto.
 
 ### PF-078 · Place of supply
 `Tax` · **8 pts** · depends: PF-077, PF-060 · standards: — · `risk:high` `type:compliance`

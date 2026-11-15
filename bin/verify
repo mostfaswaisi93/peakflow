@@ -147,6 +147,7 @@ if ($only === 'all' || $only === 'iban') {
 
 if ($only === 'all' || $only === 'tax') {
     $suites['Tax codes'] = (new Tests\Support\TaxCodeRules())->all();
+    $suites['Tax point'] = (new Tests\Support\TaxPointRules())->all();
 }
 
 if ($only === 'all' || $only === 'ops') {
