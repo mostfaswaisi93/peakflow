@@ -139,20 +139,20 @@ Two independent mechanisms, because one of them will eventually have a hole.
 
 A permission answers *may this user do X*. An SoD rule answers *may the same user do X and then Y to the same object*. Conflating them is the classic hole: a clerk who may both create a supplier and release a payment can pay themselves.
 
-- [ ] Incompatible duty pairs declared as data, evaluated at the moment of the second act against the audit trail of the first
-- [ ] The shipped pairs: supplier create or bank-detail change against payment release; bill create against bill approve; payment prepare against payment release; journal post against period close; credit note against the invoice's own issuer; reconciliation match against write-off
-- [ ] A conflict is **refused, logged and explained** - the message names the conflicting act, who performed it and when, so the user knows who to ask
-- [ ] Scope is per object where that is the meaningful unit, and per period where it is not
-- [ ] Tests cover both directions of every pair and the case where the two acts are performed by different users
+- [x] Incompatible duty pairs declared as data, evaluated at the moment of the second act against the audit trail of the first
+- [x] The shipped pairs: supplier create or bank-detail change against payment release; bill create against bill approve; payment prepare against payment release; journal post against period close; credit note against the invoice's own issuer; reconciliation match against write-off
+- [x] A conflict is **refused, logged and explained** - the message names the conflicting act, who performed it and when, so the user knows who to ask
+- [x] Scope is per object where that is the meaningful unit, and per period where it is not
+- [x] Tests cover both directions of every pair and the case where the two acts are performed by different users
 
 ### PF-034 · SoD overrides and the exceptions report
 `Identity` · **3 pts** · depends: PF-033 · standards: SOC 2 · `type:security`
 
 A tenant with three staff may genuinely be unable to separate two duties. Silently allowing it and silently blocking it are both wrong.
 
-- [ ] A documented override requires a reason, a specified approver and an expiry
-- [ ] The override is itself an audit event and appears on a standing exceptions report
-- [ ] Overrides cannot be self-approved, and cannot be granted for the beneficiary-change-against-payment-release pair at all
+- [x] A documented override requires a reason, a specified approver and an expiry
+- [x] The override is itself an audit event and appears on a standing exceptions report
+- [x] Overrides cannot be self-approved, and cannot be granted for the beneficiary-change-against-payment-release pair at all
 - [ ] The report is part of the `compliance:report` evidence pack
 
 ### PF-035 · The audit log

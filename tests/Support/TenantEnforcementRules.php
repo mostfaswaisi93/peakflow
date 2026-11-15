@@ -7,10 +7,12 @@ namespace Tests\Support;
 use App\Platform\Models\Tenant;
 use App\Platform\Services\TenantConnectionResolver;
 use App\Tenant\Identity\Models\Role;
+use App\Tenant\Identity\Models\SodRule;
 use App\Tenant\Identity\Models\User;
 use App\Tenant\Identity\Models\UserEntityRole;
 use App\Tenant\Identity\Services\AuditChainVerifier;
 use App\Tenant\Identity\Services\AuditLog;
+use App\Tenant\Identity\Services\SodEngine;
 use App\Tenant\Tenancy\Exceptions\EntityNotInScope;
 use App\Tenant\Tenancy\Models\EntitySetting;
 use App\Tenant\Tenancy\Services\EntityContext;
@@ -78,6 +80,9 @@ final class TenantEnforcementRules
             'permissions resolve per entity' => [],
             'every entity-scoped table has a forced RLS policy' => [],
             'the audit chain verifies, and a written record reads back identically' => [],
+            'segregation of duties reads the audit trail' => [],
+            'the unoverridable rules are the right two' => [],
+            'every duty pair is refused in both directions' => [],
         ];
 
         foreach ($tenants as $tenant) {
@@ -114,6 +119,9 @@ final class TenantEnforcementRules
                 'permissions resolve per entity' => $this->permissionsResolvePerEntity(),
                 'every entity-scoped table has a forced RLS policy' => $this->everyScopedTableHasAPolicy(),
                 'the audit chain verifies, and a written record reads back identically' => $this->auditChainVerifies(),
+                'segregation of duties reads the audit trail' => $this->sodReadsTheAuditTrail(),
+                'the unoverridable rules are the right two' => $this->unoverridableRulesAreCorrect(),
+                'every duty pair is refused in both directions' => $this->everyPairBothDirections(),
             ];
         } finally {
             $this->connection->rollBack();
@@ -646,6 +654,281 @@ final class TenantEnforcementRules
         }
 
         return $violations;
+    }
+
+    /**
+     * The engine must find a conflict that exists only in the audit trail,
+     * and must find it across DIFFERENT documents when the rule is
+     * party-scoped.
+     *
+     * `wouldRefuse()` is used rather than `assert()` on purpose: a real
+     * refusal is written out-of-band so it survives the rollback it causes,
+     * which is correct behaviour and would mean this check appended rows to
+     * the audit log every time it ran. The prior duty IS written through
+     * `record()`, which joins this transaction and is rolled back with it.
+     *
+     * @return list<string>
+     */
+    public function sodReadsTheAuditTrail(): array
+    {
+        $engine = app(SodEngine::class);
+        $audit = app(AuditLog::class);
+
+        $actor = $this->probeUser('sod-probe');
+
+        if ($actor === null) {
+            return ['could not create a probe user, so SoD could not be checked'];
+        }
+
+        $violations = [];
+        $payment = (string) Str::ulid();
+        $supplier = (string) Str::ulid();
+
+        app(EntityContext::class)->use($this->entityA);
+
+        // Nothing has happened yet, so nothing conflicts.
+        if ($engine->wouldRefuse('payment.release', 'Payment', $payment, $supplier, null, $actor) !== null) {
+            $violations[] = 'a duty was refused before any conflicting duty had been performed';
+        }
+
+        // The same person prepares it. Object scope, and not overridable.
+        $audit->record(
+            category: 'payment',
+            action: 'payment.prepare',
+            subjectType: 'Payment',
+            subjectId: $payment,
+            subjectLabel: 'enforcement probe payment',
+            partyId: $supplier,
+            entityId: $this->entityA,
+            actor: $actor,
+        );
+
+        $refusedBy = $engine->wouldRefuse('payment.release', 'Payment', $payment, $supplier, null, $actor);
+
+        if ($refusedBy?->key !== 'prepare_then_release') {
+            $violations[] = sprintf(
+                'the preparer of a payment was not refused its release; got %s',
+                $refusedBy?->key ?? 'no refusal at all',
+            );
+        }
+
+        // A different person is not blocked by what the first one did.
+        $other = $this->probeUser('sod-probe-other');
+
+        if ($other !== null && $engine->wouldRefuse('payment.release', 'Payment', $payment, $supplier, null, $other) !== null) {
+            $violations[] = 'a second person was refused a release they had no part in preparing';
+        }
+
+        /*
+         | The party scope, which is the one that catches what object scope
+         | cannot: changing a supplier's bank details and releasing a payment
+         | are two duties on two DIFFERENT documents, and the conflict exists
+         | only in the party they share.
+         */
+        $otherPayment = (string) Str::ulid();
+
+        $audit->record(
+            category: 'party',
+            action: 'supplier.bank_details.update',
+            subjectType: 'Party',
+            subjectId: $supplier,
+            subjectLabel: 'enforcement probe supplier',
+            partyId: $supplier,
+            entityId: $this->entityA,
+            actor: $actor,
+        );
+
+        $crossDocument = $engine->wouldRefuse('payment.release', 'Payment', $otherPayment, $supplier, null, $actor);
+
+        if ($crossDocument === null) {
+            $violations[] = 'whoever changed a supplier\'s bank details was allowed to release a payment to that '.
+                'supplier on a different document; the party-scoped rule is not matching';
+        }
+
+        // A party-scoped rule cannot be evaluated without a party, and
+        // skipping it silently would disable the control.
+        try {
+            $engine->wouldRefuse('payment.release', 'Payment', $payment, null, null, $actor);
+
+            $violations[] = 'a party-scoped rule was evaluated with no party id instead of refusing to guess';
+        } catch (\LogicException) {
+            // Correct.
+        }
+
+        return $violations;
+    }
+
+    /**
+     * The two rules that may never be overridden, checked by name.
+     *
+     * Both describe the same fraud from different angles: arranging where
+     * money goes and then sending it. An override mechanism for either would
+     * be the first thing an insider reached for, so the engine refuses to
+     * create one - and this check exists because marking them overridable
+     * would be a one-word change in a seeder with no other symptom.
+     *
+     * @return list<string>
+     */
+    public function unoverridableRulesAreCorrect(): array
+    {
+        $expected = ['beneficiary_then_release', 'prepare_then_release'];
+
+        $actual = SodRule::query()
+            ->where('overridable', false)
+            ->orderBy('key')
+            ->pluck('key')
+            ->all();
+
+        if ($actual === $expected) {
+            return [];
+        }
+
+        $violations = [];
+
+        foreach (array_diff($expected, $actual) as $missing) {
+            $violations[] = sprintf('"%s" must never be overridable, but it is', $missing);
+        }
+
+        foreach (array_diff($actual, $expected) as $unexpected) {
+            $violations[] = sprintf(
+                '"%s" is marked non-overridable; only %s should be, so either the seeder or this check is wrong',
+                $unexpected,
+                implode(' and ', $expected),
+            );
+        }
+
+        return $violations;
+    }
+
+    /**
+     * Every seeded pair, in BOTH directions, plus the case where the two acts
+     * are performed by different people.
+     *
+     * Both directions matter and are easy to get wrong. A rule is stored as
+     * duty_a then duty_b, and an implementation that only ever compares the
+     * attempted duty against duty_a would enforce half of every rule while
+     * appearing to work: "created then approved" would be caught and
+     * "approved then created" would sail through. The engine resolves the
+     * pair with `conflictingDuty()`, which is direction-agnostic, and this is
+     * what holds it to that.
+     *
+     * The different-users case is the control's whole purpose: if it refuses
+     * two people as readily as one, it is not segregating duties, it is just
+     * blocking work.
+     *
+     * @return list<string>
+     */
+    public function everyPairBothDirections(): array
+    {
+        $engine = app(SodEngine::class);
+        $audit = app(AuditLog::class);
+
+        $first = $this->probeUser('pairs-first');
+        $second = $this->probeUser('pairs-second');
+
+        if ($first === null || $second === null) {
+            return ['could not create probe users, so the duty pairs could not be checked'];
+        }
+
+        app(EntityContext::class)->use($this->entityA);
+
+        $rules = SodRule::query()->where('active', true)->orderBy('key')->get();
+
+        if ($rules->isEmpty()) {
+            return ['no active SoD rules are seeded, so this check is not checking anything'];
+        }
+
+        $violations = [];
+
+        foreach ($rules as $rule) {
+            foreach ([[$rule->duty_a, $rule->duty_b], [$rule->duty_b, $rule->duty_a]] as [$performed, $attempted]) {
+                // A fresh subject per direction, so one direction's history
+                // cannot satisfy the other's check.
+                $subjectId = (string) Str::ulid();
+                $keys = [
+                    'subjectType' => 'PairProbe',
+                    'subjectId' => $subjectId,
+                    'partyId' => (string) Str::ulid(),
+                    'periodId' => (string) Str::ulid(),
+                ];
+
+                $audit->record(
+                    category: 'pair-probe',
+                    action: $performed,
+                    subjectType: $keys['subjectType'],
+                    subjectId: $keys['subjectId'],
+                    subjectLabel: 'duty pair probe',
+                    entityId: $this->entityA,
+                    partyId: $keys['partyId'],
+                    periodId: $keys['periodId'],
+                    actor: $first,
+                );
+
+                $refusedSame = $engine->wouldRefuse(
+                    $attempted,
+                    $keys['subjectType'],
+                    $keys['subjectId'],
+                    $keys['partyId'],
+                    $keys['periodId'],
+                    $first,
+                );
+
+                if ($refusedSame === null) {
+                    $violations[] = sprintf(
+                        '%s: performing "%s" then attempting "%s" was NOT refused for the same user',
+                        $rule->key,
+                        $performed,
+                        $attempted,
+                    );
+                }
+
+                $refusedOther = $engine->wouldRefuse(
+                    $attempted,
+                    $keys['subjectType'],
+                    $keys['subjectId'],
+                    $keys['partyId'],
+                    $keys['periodId'],
+                    $second,
+                );
+
+                if ($refusedOther !== null) {
+                    $violations[] = sprintf(
+                        '%s: a DIFFERENT user was refused "%s" after %s performed "%s"; the rule is blocking work '.
+                        'rather than separating duties',
+                        $rule->key,
+                        $attempted,
+                        $first->name,
+                        $performed,
+                    );
+                }
+            }
+        }
+
+        return $violations;
+    }
+
+    private function probeUser(string $handle): ?User
+    {
+        $role = Role::query()->where('key', 'controller')->first();
+
+        if ($role === null) {
+            return null;
+        }
+
+        $user = User::create([
+            'name' => 'Enforcement '.$handle,
+            'email' => $handle.'-'.bin2hex(random_bytes(5)).'@invalid.test',
+            'password' => Str::password(32),
+            'active' => true,
+        ]);
+
+        UserEntityRole::create([
+            'user_id' => $user->getKey(),
+            'entity_id' => $this->entityA,
+            'role_id' => $role->getKey(),
+        ]);
+
+        return $user;
     }
 
     private function tenants(): array

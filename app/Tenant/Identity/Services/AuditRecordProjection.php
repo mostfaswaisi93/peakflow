@@ -51,6 +51,7 @@ final class AuditRecordProjection
     public const FIELDS = [
         'id', 'entity_id', 'actor_user_id', 'actor_name', 'impersonated_by',
         'category', 'action', 'subject_type', 'subject_id', 'subject_label',
+        'party_id', 'period_id',
         'before_state', 'after_state', 'reason', 'correlation_id',
         'ip_address', 'user_agent', 'created_at',
     ];

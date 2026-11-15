@@ -74,6 +74,15 @@ return new class extends Migration
                 subject_id        char(26),
                 subject_label     text,
 
+                -- The scope keys a segregation-of-duties rule matches on.
+                -- They live here rather than in a separate index table so the
+                -- audit log remains the single source of truth for "did this
+                -- person do this", which is what an SoD rule asks. Both are
+                -- legally significant - which supplier, which period - so
+                -- both are inside the hash.
+                party_id          char(26),
+                period_id         char(26),
+
                 -- `before` and `after` are the projections that matter, not the
                 -- whole row: an audit entry that copies every column becomes
                 -- a second database with none of the first one's constraints.
@@ -108,6 +117,15 @@ return new class extends Migration
             CREATE INDEX audit_log_category_created_idx ON audit_log (category, created_at DESC);
             CREATE INDEX audit_log_action_created_idx  ON audit_log (action, created_at DESC);
             CREATE INDEX audit_log_subject_idx         ON audit_log (subject_type, subject_id, created_at DESC);
+
+            -- The three shapes a segregation-of-duties check asks for: did
+            -- THIS actor perform THIS duty on this object / party / period.
+            -- Each leads with the actor and the action because both are always
+            -- known, and ends with created_at so the most recent conflicting
+            -- duty is the first row read.
+            CREATE INDEX audit_log_sod_object_idx ON audit_log (actor_user_id, action, subject_type, subject_id, created_at DESC);
+            CREATE INDEX audit_log_sod_party_idx  ON audit_log (actor_user_id, action, party_id, created_at DESC) WHERE party_id IS NOT NULL;
+            CREATE INDEX audit_log_sod_period_idx ON audit_log (actor_user_id, action, period_id, created_at DESC) WHERE period_id IS NOT NULL;
             CREATE UNIQUE INDEX audit_log_chain_idx    ON audit_log (chain_index, created_at);
         SQL);
 

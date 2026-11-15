@@ -64,6 +64,9 @@ final class AuditLog
         ?array $after = null,
         ?string $reason = null,
         ?string $entityId = null,
+        ?string $partyId = null,
+        ?string $periodId = null,
+        ?User $actor = null,
     ): string {
         return $this->append(
             DB::connection('tenant'),
@@ -76,6 +79,9 @@ final class AuditLog
             $after,
             $reason,
             $entityId,
+            $partyId,
+            $periodId,
+            $actor,
         );
     }
 
@@ -101,6 +107,9 @@ final class AuditLog
         ?array $after = null,
         ?string $reason = null,
         ?string $entityId = null,
+        ?string $partyId = null,
+        ?string $periodId = null,
+        ?User $actor = null,
     ): string {
         return $this->append(
             $this->outOfBandConnection(),
@@ -113,6 +122,9 @@ final class AuditLog
             $after,
             $reason,
             $entityId,
+            $partyId,
+            $periodId,
+            $actor,
         );
     }
 
@@ -131,8 +143,22 @@ final class AuditLog
         ?array $after,
         ?string $reason,
         ?string $entityId,
+        ?string $partyId,
+        ?string $periodId,
+        ?User $actor,
     ): string {
-        $actor = $this->actor();
+        /*
+         | The actor is normally the signed-in user, and is passed explicitly
+         | only when there is no session to read it from: a queued job acting
+         | on behalf of the person who enqueued it, an import attributed to
+         | whoever uploaded the file, or a check that needs a specific actor.
+         |
+         | Attributing such work to nobody would be worse than wrong - a
+         | segregation-of-duties rule asks "did THIS person already do that",
+         | and a duty recorded with no actor is a duty that conflicts with
+         | nothing and silently weakens every rule that would have matched it.
+         */
+        $actor ??= $this->actor();
         $request = $this->request();
 
         $row = [
@@ -146,6 +172,8 @@ final class AuditLog
             'subject_type' => $subjectType,
             'subject_id' => $subjectId,
             'subject_label' => $subjectLabel,
+            'party_id' => $partyId,
+            'period_id' => $periodId,
             'before_state' => $before === null ? null : json_encode($before, JSON_THROW_ON_ERROR),
             'after_state' => $after === null ? null : json_encode($after, JSON_THROW_ON_ERROR),
             'reason' => $reason,
