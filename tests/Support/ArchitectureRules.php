@@ -844,6 +844,17 @@ final class ArchitectureRules
             $offset = $end;
         }
 
+        /*
+         | Style and script bodies, which are text nodes and not prose.
+         |
+         | The error layout's inline CSS was reported as untranslated text -
+         | several hundred characters of it - which is correct about where the
+         | letters are and wrong about what they mean. A `<style>` body is not
+         | something a reader reads.
+         */
+        $out = (string) preg_replace_callback('#<style\b[^>]*>.*?</style>#is', $blank, $out);
+        $out = (string) preg_replace_callback('#<script\b[^>]*>.*?</script>#is', $blank, $out);
+
         // Entities, so `&nbsp;` is not a word.
         return (string) preg_replace_callback('/&(?:[A-Za-z]+|#\d+);/', $blank, $out);
     }
