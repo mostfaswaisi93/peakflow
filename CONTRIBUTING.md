@@ -48,6 +48,24 @@ php artisan test                  # unit, arch, feature
 
 > **Run the full Pint pass, not `--dirty`.** `--dirty` only inspects files you changed, which is convenient locally and hides drift.
 
+### A PHPStan baseline entry needs a reviewer and a task
+
+There is no `baseline.neon` and `phpstan.neon` deliberately includes none, so
+generating one is a visible change to a tracked file rather than a side effect of
+a command. If a finding genuinely cannot be fixed now:
+
+1. **A reviewer approves the entry**, by name, in the pull request. Not the
+   author - the point is that somebody else agreed the debt is worth taking.
+2. **The entry carries a `PF-###`** for the task that removes it. A baseline
+   line with no task is a line nobody will ever delete, because nobody can tell
+   whether it is still needed.
+3. **The level stays at `max`.** Lowering the level to pass is the same decision
+   as a baseline entry, taken silently and applied to the whole codebase.
+
+A baseline is a record of debt, not a way to pass. The failure mode is not that
+it hides one problem: it is that the file grows, nobody reads it, and the
+analyser's output stops meaning anything.
+
 > **Never run `npm run build` straight after `php artisan view:clear`.** The stylesheet scans compiled Blade via `@source`. With that directory emptied, the build succeeds, says nothing, and ships a stylesheet missing every utility that only appears in compiled templates. Run `php artisan view:cache` first, or build before clearing.
 
 Hard refusals, each from an architecture test rather than from a reviewer's attention:

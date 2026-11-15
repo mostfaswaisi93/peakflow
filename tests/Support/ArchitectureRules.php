@@ -38,6 +38,7 @@ final class ArchitectureRules
             'Reporting never writes' => $this->reportingNeverWrites(),
             'no module reaches into another module\'s models' => $this->noCrossModuleModelAccess(),
             'the tenant plane does not depend on the platform plane' => $this->tenantDoesNotDependOnPlatform(),
+            'the layer rules bite, proved on every run' => $this->theLayerRulesBite(),
             'every ceiling is enforced somewhere' => $this->ceilingsAreEnforced(),
             'no physical CSS property' => $this->noPhysicalCssProperties(),
             'no untranslated text in a template' => $this->templatesHaveNoUntranslatedText(),
@@ -558,6 +559,136 @@ final class ArchitectureRules
         }
 
         return $violations;
+    }
+
+    /**
+     * The layer rules are proved on every run, by violating them - PF-003.
+     *
+     * ## Why this is a rule rather than a procedure
+     *
+     * PF-003 asks that "a deliberate violation added in a scratch branch
+     * fails the check". That is a procedure somebody performs once, writes
+     * down, and never repeats - and a layer rule that silently stops matching
+     * is indistinguishable from a codebase with no violations. Both report
+     * nothing, which is the state a clean codebase is supposed to be in.
+     *
+     * So the violation is added here, on every run, in a file that is deleted
+     * again: a scratch file in `app/Tenant/Ledger` importing a model from
+     * `Platform` and one from `Parties`, which the ruleset permits neither of.
+     * If the rules do not object to it, they are not working, and the suite
+     * says so instead of passing quietly.
+     *
+     * ## The file is removed in a `finally`, and a stale one is removed first
+     *
+     * A scratch file left behind would fail every subsequent run with a real
+     * violation in a file nobody wrote, which is a confusing way to discover
+     * that a check crashed. So the name is distinctive, anything matching it
+     * is deleted before the probe is written, and the write is undone whatever
+     * happens.
+     *
+     * @return list<string>
+     */
+    public function theLayerRulesBite(): array
+    {
+        $problems = [];
+        $directory = $this->basePath.'/app/Tenant/Ledger';
+
+        if (! is_dir($directory)) {
+            return ['app/Tenant/Ledger does not exist, so the layer rules have nothing to be proved against.'];
+        }
+
+        // Anything left by a crashed run.
+        foreach (glob($directory.'/PeakflowLayerProbe*.php') ?: [] as $stale) {
+            @unlink($stale);
+        }
+
+        $path = $directory.'/PeakflowLayerProbe.php';
+
+        /*
+         | Two violations in one file, because the two rules catch different
+         | shapes: one reads the Deptrac ruleset for cross-module references,
+         | the other forbids the tenant plane from naming the platform plane
+         | at all. A probe that only tripped one would leave the other
+         | unproved.
+         */
+        $probe = <<<'PHP'
+            <?php
+
+            declare(strict_types=1);
+
+            namespace App\Tenant\Ledger;
+
+            use App\Platform\Models\Tenant;
+            use App\Tenant\Parties\Models\Party;
+
+            /** A deliberate layer violation, written and deleted by ArchitectureRules. */
+            final class PeakflowLayerProbe
+            {
+                public function __construct(public Tenant $tenant, public Party $party) {}
+            }
+            PHP;
+
+        file_put_contents($path, $probe."
+");
+
+        try {
+            $crossModule = $this->noCrossModuleModelAccess();
+            $planes = $this->tenantDoesNotDependOnPlatform();
+
+            $caughtCrossModule = false;
+
+            foreach ($crossModule as $violation) {
+                if (str_contains($violation, 'PeakflowLayerProbe')) {
+                    $caughtCrossModule = true;
+
+                    break;
+                }
+            }
+
+            if (! $caughtCrossModule) {
+                $problems[] = 'A file in app/Tenant/Ledger importing App\Tenant\Parties\Models\Party '.
+                    'was not reported by the cross-module rule. The Deptrac ruleset does not permit '.
+                    'Ledger to depend on Parties, so either the rule stopped matching or the ruleset '.
+                    'changed - and a layer rule that reports nothing looks exactly like a clean codebase.';
+            }
+
+            $caughtPlanes = false;
+
+            foreach ($planes as $violation) {
+                if (str_contains($violation, 'PeakflowLayerProbe')) {
+                    $caughtPlanes = true;
+
+                    break;
+                }
+            }
+
+            if (! $caughtPlanes) {
+                $problems[] = 'A file in app/Tenant importing App\Platform\Models\Tenant was not '.
+                    'reported by the plane rule. The tenant plane must not name the platform plane: a '.
+                    'tenant query that reaches the platform database reads another customer\'s row and '.
+                    'returns it as data.';
+            }
+        } finally {
+            @unlink($path);
+        }
+
+        /*
+         | And the rules must be quiet again once the probe is gone.
+         |
+         | Without this, a rule that reported every file would pass the two
+         | checks above and be useless - "it objects to the probe" is only
+         | half the claim.
+         */
+        $after = array_merge($this->noCrossModuleModelAccess(), $this->tenantDoesNotDependOnPlatform());
+
+        foreach ($after as $violation) {
+            if (str_contains($violation, 'PeakflowLayerProbe')) {
+                $problems[] = 'The layer rules still report the probe after it was deleted, so they are '.
+                    'reading something other than the files on disk.';
+            }
+        }
+
+        return $problems;
     }
 
     /**
