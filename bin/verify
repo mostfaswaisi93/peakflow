@@ -25,6 +25,8 @@ declare(strict_types=1);
  |   php bin/verify ledger     what the ledger refuses
  |   php bin/verify parties    the controls around party bank details
  |   php bin/verify currency   what the currency and FX layer refuses
+ |   php bin/verify numbering  what a numbering series guarantees
+ |   php bin/verify terms      what payment terms produce
  |   php bin/verify examples   worked examples only
  |
  | Exits non-zero on any violation.
@@ -89,12 +91,20 @@ if ($only === 'all' || $only === 'currency') {
     $suites['Currency and FX'] = (new Tests\Support\CurrencyEnforcementRules())->all();
 }
 
+if ($only === 'all' || $only === 'numbering') {
+    $suites['Numbering'] = (new Tests\Support\NumberingRules())->all();
+}
+
+if ($only === 'all' || $only === 'terms') {
+    $suites['Payment terms'] = (new Tests\Support\PaymentTermRules())->all();
+}
+
 if ($only === 'all' || $only === 'examples') {
     $suites['Worked examples'] = (new Tests\Support\WorkedExamples())->all();
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | examples | rollback\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | examples | rollback\n");
     exit(2);
 }
 

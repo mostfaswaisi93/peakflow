@@ -71,10 +71,10 @@ The highest-value fraud surface in the product.
 ### PF-066 · Payment terms and due dates
 `Catalog` · **3 pts** · depends: PF-059 · standards: UNCL 2475, EN 16931
 
-- [ ] Terms as data: net days, end-of-month plus days, fixed day of month, instalments, and early-settlement discount terms
-- [ ] Due date derived from the terms and the document date, with the derivation shown rather than a bare date
-- [ ] Instalment terms produce multiple due dates on one invoice, each separately dunnable and separately allocatable - which the aging report must handle
-- [ ] Non-business-day handling is a per-entity policy with a holiday calendar, not a hard-coded weekend
+- [x] Terms as data: net days, end-of-month plus days, fixed day of month, instalments, and early-settlement discount terms
+- [x] Due date derived from the terms and the document date, with the derivation shown rather than a bare date
+- [x] Instalment terms produce multiple due dates on one invoice, each separately dunnable and separately allocatable - which the aging report must handle
+- [x] Non-business-day handling is a per-entity policy with a holiday calendar, not a hard-coded weekend
 
 ### PF-067 · Currencies per entity
 `Catalog` · **2 pts** · depends: PF-007, PF-025 · standards: ISO 4217
@@ -113,11 +113,11 @@ The highest-value fraud surface in the product.
 
 The storage and configuration; the allocation algorithm is `PF-093`.
 
-- [ ] `number_series` per entity, per document type, per year, optionally per branch - so two entities or two document types never contend on one lock
-- [ ] Format template (`INV-{entity}-{YYYY}-{seq:6}`) with a preview
-- [ ] The format is **frozen once the series has issued its first document**, because changing the shape of a sequence mid-year breaks its own gaplessness
-- [ ] A series records its last issued number, its first number and its gap-check status
-- [ ] A gap report per series, which is what an auditor asks for
+- [x] `number_series` per entity, per document type, per year, optionally per branch - so two entities or two document types never contend on one lock
+- [x] Format template (`INV-{entity}-{YYYY}-{seq:6}`) with a preview
+- [x] The format is **frozen once the series has issued its first document**, because changing the shape of a sequence mid-year breaks its own gaplessness
+- [x] A series records its last issued number, its first number and its gap-check status
+- [x] A gap report per series, which is what an auditor asks for
 
 ### PF-072 · Global search
 `—` · **5 pts** · depends: PF-059, PF-064 · standards: WCAG 2.2 AA · `type:a11y`
