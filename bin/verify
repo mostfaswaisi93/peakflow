@@ -31,6 +31,7 @@ declare(strict_types=1);
  |   php bin/verify settings   what a tenant may and may not decide
  |   php bin/verify queue      the tenant travels with the job
  |   php bin/verify charts     the chart templates, and the charts they produce
+ |   php bin/verify property   the balanced-entry invariant over generated entries
  |   php bin/verify examples   worked examples only
  |
  | Exits non-zero on any violation.
@@ -107,6 +108,10 @@ if ($only === 'all' || $only === 'catalog') {
     $suites['Items and prices'] = (new Tests\Support\CatalogRules())->all();
 }
 
+if ($only === 'all' || $only === 'property') {
+    $suites['The balanced-entry property'] = (new Tests\Support\BalanceProperty())->all();
+}
+
 if ($only === 'all' || $only === 'charts') {
     $suites['Chart templates'] = (new Tests\Support\ChartTemplateRules())->all();
 }
@@ -124,7 +129,7 @@ if ($only === 'all' || $only === 'examples') {
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | charts | queue | examples | rollback\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | charts | queue | property | examples | rollback\n");
     exit(2);
 }
 

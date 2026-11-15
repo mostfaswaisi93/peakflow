@@ -74,7 +74,11 @@ The invariant that keeps a subledger equal to its control account, and the one t
 - [x] The deferral is the whole mechanism: an entry is transiently unbalanced while its lines are being inserted, so a per-statement trigger would reject every multi-line entry ever written. A comment in the migration says so, so nobody "fixes" it later
 - [x] The invariant applies to the **functional** amount only. A single entry recording a USD receipt against an EUR invoice is correctly unbalanced in both USD and EUR and must balance in the entity's functional currency, the difference being the FX line
 - [x] An attempt to commit an unbalanced entry raises a named exception the application translates into a readable error
-- [ ] Property-based test: any generated set of lines summing to zero commits; any set not summing to zero is refused, including by raw SQL
+- [x] Property-based test: any generated set of lines summing to zero commits; any set not summing to zero is refused, including by raw SQL. `bin/verify property` generates 240 entries a run - 2 to 8 lines, signs and magnitudes over ten orders of magnitude, amounts built from integers scaled by ten thousand so the generator's own arithmetic cannot be the thing under test
+- [x] Written with **raw SQL**, not through the Poster. The Poster refuses an unbalanced set before writing anything, which is correct and is not the claim: a backfill script, a migration, a psql session and a future bug all write rows the same way, and the trigger is the only thing between them and a ledger that never ties again
+- [x] The imbalance spans 0.0001 to millions, and `0.0001` on top of 0, 1,000 and 999,999,999.9999 is asserted on its own. A trigger comparing rounded values, or comparing through a float, passes the large cases and fails only on the small ones - which is the failure that reaches production
+- [x] The seed is chosen per run and printed in every message, so a failure is reproducible. A fixed seed would check the same 240 entries forever, which is a regression test wearing a property test's clothes
+- [x] Proved by disabling the constraint trigger: entries summing to -8.18, 965,200.00 and 1.1810 all committed, and the check named each one
 
 ### PF-044 · Closed periods are closed in the database
 `Ledger` · **3 pts** · depends: PF-043, PF-049 · standards: IAS 10 · `risk:high`
