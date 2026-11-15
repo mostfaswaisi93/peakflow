@@ -1,0 +1,95 @@
+{
+    "_readme": [
+        "A worked rounding example per shipped jurisdiction profile - PF-081.",
+        "",
+        "Every number here was produced by the code and then written down, and the check in",
+        "tests/Support/RoundingPolicyRules.php compares the code against this file rather than",
+        "against itself. That is the whole point of committing it: a check that computed the",
+        "expected value the same way it computes the actual one asserts that multiplication is",
+        "deterministic.",
+        "",
+        "`per_rate_group` and `per_line` are the same lines under the two bases. Every example",
+        "DIFFERS between them, deliberately - an example where they agree proves nothing about",
+        "the policy, and the check refuses one. Note the direction is not consistent: the group",
+        "figure is higher for SAR, EGP and JOD here and lower for the EUR cases, which is why",
+        "a per-line total cannot be corrected afterwards by a rounding adjustment.",
+        "",
+        "`tax` is the answer for the profile as configured. If a profile's basis changes in",
+        "config/jurisdictions.php, this value changes with it and the check says so."
+    ],
+    "recorded_on": "2026-11-15",
+    "examples": [
+        {
+            "profile": "generic",
+            "note": "EN 16931's own baseline. Three lines that round down individually and up together.",
+            "currency": "EUR",
+            "rate": "21",
+            "lines": ["10.03", "10.03", "10.03"],
+            "net": "30.0900",
+            "per_rate_group": "6.32",
+            "per_line": "6.33",
+            "basis": "per_rate_group",
+            "tax": "6.32"
+        },
+        {
+            "profile": "peppol",
+            "note": "A price just under fifty, which is where a cent of drift is easiest to miss.",
+            "currency": "EUR",
+            "rate": "21",
+            "lines": ["49.99", "49.99", "49.99"],
+            "net": "149.9700",
+            "per_rate_group": "31.49",
+            "per_line": "31.50",
+            "basis": "per_rate_group",
+            "tax": "31.49"
+        },
+        {
+            "profile": "zatca",
+            "note": "The Saudi standard rate. This is the example in docs/domain/tax-engine.md.",
+            "currency": "SAR",
+            "rate": "15",
+            "lines": ["10.03", "10.03", "10.03"],
+            "net": "30.0900",
+            "per_rate_group": "4.51",
+            "per_line": "4.50",
+            "basis": "per_rate_group",
+            "tax": "4.51"
+        },
+        {
+            "profile": "facturx",
+            "note": "The French standard rate, on lines that total a round hundred. The per-line answer is a cent over.",
+            "currency": "EUR",
+            "rate": "20",
+            "lines": ["33.33", "33.33", "33.33"],
+            "net": "99.9900",
+            "per_rate_group": "20.00",
+            "per_line": "20.01",
+            "basis": "per_rate_group",
+            "tax": "20.00"
+        },
+        {
+            "profile": "eta",
+            "note": "The Egyptian standard rate.",
+            "currency": "EGP",
+            "rate": "14",
+            "lines": ["123.45", "123.45", "123.45"],
+            "net": "370.3500",
+            "per_rate_group": "51.85",
+            "per_line": "51.84",
+            "basis": "per_rate_group",
+            "tax": "51.85"
+        },
+        {
+            "profile": "jofotara",
+            "note": "A three-decimal currency. JOD has three because ISO 4217 says so, not because of Jordan's VAT rules - which is why the scale is not a per-jurisdiction setting.",
+            "currency": "JOD",
+            "rate": "16",
+            "lines": ["10.0025", "10.0025", "10.0025"],
+            "net": "30.0075",
+            "per_rate_group": "4.801",
+            "per_line": "4.800",
+            "basis": "per_rate_group",
+            "tax": "4.801"
+        }
+    ]
+}

@@ -132,6 +132,41 @@ payable             = ¥12,573
 
 `JPY` has no minor unit, so the presentation exponent is zero and the payable amount is an integer. The stored value still carries four decimals, and the API returns `"12573.0000"` with `"currency": "JPY"` - the client formats, the server does not pre-format.
 
+### As built: the basis is configuration (PF-081)
+
+A rounding policy is three things, and a document needs all three before two systems agree on its tax: the **mode**, the **scale** and the **basis**.
+
+| | Where it comes from | Why |
+|---|---|---|
+| mode | `config/jurisdictions.php`, half away from zero by default | EN 16931 and most VAT regimes specify it; IEEE 754 and most language defaults use half-even |
+| basis | `config/jurisdictions.php`, per rate group by default | `BR-CO-14`. A jurisdiction that computes per line is a row, not a branch |
+| scale | the **currency**, through `Money::toPresentation()` | `JOD` has three decimals because ISO 4217 says so, not because of Jordan's VAT rules |
+
+The scale is deliberately **not** a per-jurisdiction setting. A regime that mandates rounding a total to something other than its currency's exponent — to the nearest five fils, or Switzerland's 0.05 — is a real thing and is not shipped; it would be a third key in that file rather than a branch anywhere.
+
+`RoundingPolicy::forProfile()` reads both keys. A profile with no row falls back to the platform default, because refusing to round would make a new jurisdiction unusable until somebody noticed and the noticing would happen on an invoice. A basis somebody **wrote and spelled wrong** throws instead: that is a decision that was made and then silently discarded, and the discarding shows up as a cent on a return that cannot be traced.
+
+`TaxRounding::taxOn()` is where all three get used, and it rounds to the **currency's** exponent rather than the storage scale — rounding to four places per line and summing gives the same answer as rounding once, which would make the class look like it worked while doing nothing.
+
+#### The committed fixtures
+
+One worked example per shipped jurisdiction lives in [`tests/Golden/rounding/jurisdictions.json`](../../tests/Golden/rounding/jurisdictions.json), with its lines, its net and its tax under **both** bases:
+
+| Profile | Currency | Rate | Lines | Per rate group | Per line |
+|---|---|---|---|---|---|
+| `generic` | EUR | 21% | 3 × 10.03 | **6.32** | 6.33 |
+| `peppol` | EUR | 21% | 3 × 49.99 | **31.49** | 31.50 |
+| `zatca` | SAR | 15% | 3 × 10.03 | **4.51** | 4.50 |
+| `facturx` | EUR | 20% | 3 × 33.33 | **20.00** | 20.01 |
+| `eta` | EGP | 14% | 3 × 123.45 | **51.85** | 51.84 |
+| `jofotara` | JOD | 16% | 3 × 10.0025 | **4.801** | 4.800 |
+
+Every row differs between the two bases, and the check refuses one that does not: an example where they agree demonstrates nothing while sitting in a fixture file looking like evidence.
+
+Note that the **direction is not consistent** — the group figure is higher for SAR, EGP and JOD here and lower for the two EUR cases. That is why a per-line total cannot be corrected afterwards by a rounding adjustment: the drift depends on the fractions of the individual lines, so it does not accumulate predictably.
+
+The numbers were produced by the code and then written down by hand. The check compares the code against the file rather than against itself, because a check that computed its expected value the same way it computes the actual one asserts only that multiplication is deterministic.
+
 ## Three consequences that are easy to get wrong
 
 **1. The displayed total is a view, not a stored second total.** There is exactly one gross amount per document, at the amount scale. The presentation exponent is applied at render and at payment time.

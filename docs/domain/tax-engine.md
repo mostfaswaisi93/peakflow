@@ -180,6 +180,8 @@ document_gross = document_net + document_tax
 
 **Tax is accumulated unrounded per `(category, rate)` group and rounded once per group** — not per line, and not once per document. EN 16931 requires a VAT breakdown (`BG-23`) with one entry per unique category-and-rate combination, and `BR-CO-14` states the document's tax total equals the sum of those entries.
 
+**As built (PF-081):** the basis is configuration rather than a constant — `config/jurisdictions.php` declares a mode and a basis per profile with the rule it comes from, and a worked example per jurisdiction is committed in `tests/Golden/rounding/jurisdictions.json` with its answer under both bases. The scale is the currency's, not the jurisdiction's. See [`money-and-precision.md`](../architecture/money-and-precision.md#as-built-the-basis-is-configuration-pf-081).
+
 Per-line rounding gives a different and usually wrong answer. The worked example is in [`money-and-precision.md`](../architecture/money-and-precision.md#worked-example-why-per-line-rounding-fails): three lines of 10.03 at 15% give 4.51 computed per group and 4.50 computed per line. One cent per document, across 50,000 documents a quarter, is a reconciliation difference between the ledger and the filed return that nobody can locate — because every individual document looks correct.
 
 **Half-up, not banker's rounding**, and it is a jurisdiction setting rather than a preference. EN 16931 and most VAT regimes specify half away from zero; IEEE 754 and many language defaults use half-even. `brick/money` requires the mode explicitly, which is why it was chosen over a hand-rolled helper — there is no default to get wrong silently.

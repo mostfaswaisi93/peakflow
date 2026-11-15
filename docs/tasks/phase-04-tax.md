@@ -94,10 +94,13 @@ The engine's organising principle is that **tax is data, not code**. A rate that
 ### PF-081 · The rounding policy
 `Tax` · **5 pts** · depends: PF-006, PF-075 · standards: EN 16931, ISO 4217 · `risk:high` `type:compliance`
 
-- [ ] `RoundingPolicy` resolved per jurisdiction: the mode (half-up by default, because EN 16931 and most VAT regimes specify it, not half-even), the scale, and whether tax is computed per line or per rate group
-- [ ] The policy is **configuration**, so a jurisdiction that differs is a row and not a branch
-- [ ] A worked example per shipped jurisdiction is committed as a fixture with its expected output to the cent
-- [ ] A test proves that the two policies produce different, specified answers on the same document - so the policy is demonstrably doing something
+- [x] `RoundingPolicy` resolved per jurisdiction: the mode (half-up by default, because EN 16931 and most VAT regimes specify it, not half-even), the scale, and whether tax is computed per line or per rate group. The mode existed from PF-006; PF-081 added the **basis**, which is the element that gets forgotten - a mode and a scale are not enough to make two systems agree on a document
+- [x] The policy is **configuration**, so a jurisdiction that differs is a row and not a branch. An unconfigured profile falls back to the platform default, because refusing to round would make a new jurisdiction unusable until somebody noticed and the noticing happens on an invoice; a basis somebody **wrote and spelled wrong** throws, because that is a decision that was made and then discarded
+- [x] A worked example per shipped jurisdiction is committed as a fixture with its expected output to the cent - `tests/Golden/rounding/jurisdictions.json`, six profiles, each with its lines, its net and its tax under **both** bases. The numbers were produced by the code and then written down by hand, so the check compares the code against the file rather than against itself
+- [x] A test proves that the two policies produce different, specified answers on the same document - so the policy is demonstrably doing something. Every fixture differs between the bases and the check **refuses one that does not**: an example where they agree demonstrates nothing while sitting in a fixture file looking like evidence
+- [x] The **scale is not a per-jurisdiction setting**, deliberately. JOD has three decimals because ISO 4217 says so, not because of Jordan's VAT rules. A regime that mandates rounding to something other than its currency's exponent - the nearest five fils, or Switzerland's 0.05 - is real, is not shipped, and would be a third key in the file rather than a branch anywhere
+- [x] `TaxRounding::taxOn()` rounds to the **currency's exponent**, not to the storage scale. Rounding to four places per line and summing gives the same answer as rounding once, which would make the class look like it worked while doing nothing - and that bite fired on exactly that mutation
+- [x] The drift between the two bases has **no consistent direction**: the per-group figure is higher for the SAR, EGP and JOD fixtures and lower for the two EUR ones. A check asserts both directions appear, because a per-line total that was always higher could be corrected afterwards with a rounding adjustment and this one cannot
 
 ### PF-082 · Tax computation
 `Tax` · **8 pts** · depends: PF-081, PF-078 · standards: EN 16931 `BG-23`, `BR-CO-14` · `risk:high` `type:compliance`

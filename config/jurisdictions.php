@@ -170,13 +170,69 @@ return [
         ],
     ],
 
+    /*
+    |---------------------------------------------------------------------------
+    | The rounding policy - PF-081
+    |---------------------------------------------------------------------------
+    |
+    | Three things, and a document needs all three before two systems agree on
+    | its tax: the mode, the scale and the basis.
+    |
+    | `mode` is half away from zero by default, because EN 16931 and most VAT
+    | regimes specify it. IEEE 754 and most language defaults use half-even;
+    | the difference shows on roughly one document in a hundred and compounds
+    | across a return.
+    |
+    | `basis` is where tax is rounded - once per rate group, or on each line.
+    | EN 16931 `BR-CO-14` settles it for a conformant invoice: the category's
+    | tax is its taxable amount times its rate, computed once. Three lines of
+    | 10.03 at 15% are 4.51 per group and 4.50 per line, and a system that sums
+    | rounded line tax produces a document the recipient's validator rejects.
+    |
+    | The SCALE is not here, deliberately. It comes from the currency: JOD has
+    | three decimals because ISO 4217 says so, not because of Jordan's VAT
+    | rules. A regime that mandates rounding a total to something other than
+    | its currency's exponent - to the nearest five fils, or Switzerland's
+    | 0.05 - is a real thing and is not shipped; it would be a third key here
+    | rather than a branch anywhere.
+    |
+    | A profile may still declare a bare string, which is read as the mode
+    | alone. A misspelled key INSIDE the array is not accepted: the basis is
+    | read by name and an unknown one throws, because a basis somebody wrote
+    | and spelled wrong is a decision that was made and then discarded, and the
+    | discarding shows up as a cent on a return that cannot be traced.
+    */
     'rounding' => [
-        'generic' => 'half_up',
-        'peppol' => 'half_up',
-        'zatca' => 'half_up',
-        'facturx' => 'half_up',
-        'eta' => 'half_up',
-        'jofotara' => 'half_up',
+        'generic' => [
+            'mode' => 'half_up',
+            'basis' => 'per_rate_group',
+            'source' => 'EN 16931 BR-CO-14 (VAT category tax amount), with half away from zero',
+        ],
+        'peppol' => [
+            'mode' => 'half_up',
+            'basis' => 'per_rate_group',
+            'source' => 'EN 16931 BR-CO-14, as profiled by Peppol BIS Billing 3.0',
+        ],
+        'zatca' => [
+            'mode' => 'half_up',
+            'basis' => 'per_rate_group',
+            'source' => 'KSA E-Invoicing Resolution, which adopts the EN 16931 data model and BR-CO-14',
+        ],
+        'facturx' => [
+            'mode' => 'half_up',
+            'basis' => 'per_rate_group',
+            'source' => 'EN 16931 BR-CO-14, as profiled by Factur-X 1.0 (EN 16931 profile)',
+        ],
+        'eta' => [
+            'mode' => 'half_up',
+            'basis' => 'per_rate_group',
+            'source' => 'Egypt ETA e-invoicing specification - basis unverified here; set to the EN 16931 baseline it is aligned to',
+        ],
+        'jofotara' => [
+            'mode' => 'half_up',
+            'basis' => 'per_rate_group',
+            'source' => 'Jordan JoFotara specification - basis unverified here; set to the EN 16931 baseline it is aligned to',
+        ],
     ],
 
     /*

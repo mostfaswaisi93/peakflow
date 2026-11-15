@@ -34,29 +34,33 @@ final readonly class RoundingPolicy
     private function __construct(
         public RoundingMode $mode,
         public Scale $scale,
+        public RoundingBasis $basis = RoundingBasis::PerRateGroup,
     ) {}
 
-    public static function of(RoundingMode $mode, Scale $scale): self
-    {
-        return new self($mode, $scale);
+    public static function of(
+        RoundingMode $mode,
+        Scale $scale,
+        RoundingBasis $basis = RoundingBasis::PerRateGroup,
+    ): self {
+        return new self($mode, $scale, $basis);
     }
 
     /** Round half away from zero. What EN 16931 and most VAT regimes specify. */
-    public static function halfUp(Scale $scale): self
+    public static function halfUp(Scale $scale, RoundingBasis $basis = RoundingBasis::PerRateGroup): self
     {
-        return new self(RoundingMode::HalfUp, $scale);
+        return new self(RoundingMode::HalfUp, $scale, $basis);
     }
 
     /** Banker's rounding. Only where a jurisdiction actually mandates it. */
-    public static function halfEven(Scale $scale): self
+    public static function halfEven(Scale $scale, RoundingBasis $basis = RoundingBasis::PerRateGroup): self
     {
-        return new self(RoundingMode::HalfEven, $scale);
+        return new self(RoundingMode::HalfEven, $scale, $basis);
     }
 
     /** Toward zero. Used by allocation, so the residual is explicit. */
-    public static function down(Scale $scale): self
+    public static function down(Scale $scale, RoundingBasis $basis = RoundingBasis::PerRateGroup): self
     {
-        return new self(RoundingMode::Down, $scale);
+        return new self(RoundingMode::Down, $scale, $basis);
     }
 
     /**
@@ -74,11 +78,18 @@ final readonly class RoundingPolicy
      * The mode a jurisdiction profile declares, falling back to the platform
      * default - which is half-up, for the reason above.
      */
-    public static function forJurisdiction(?string $mode, Scale $scale): self
-    {
+    public static function forJurisdiction(
+        ?string $mode,
+        Scale $scale,
+        ?string $basis = null,
+    ): self {
         $mode ??= self::configuredDefault();
 
-        return new self(self::modeFromName($mode), $scale);
+        return new self(
+            self::modeFromName($mode),
+            $scale,
+            $basis === null ? RoundingBasis::PerRateGroup : RoundingBasis::fromName($basis),
+        );
     }
 
     /**
@@ -109,6 +120,28 @@ final readonly class RoundingPolicy
             ? config('jurisdictions.rounding.'.$profile)
             : null;
 
+        /*
+         | A profile declares a mode AND a basis - PF-081.
+         |
+         | A bare string is still read as the mode alone, because that is what
+         | the configuration held before the basis existed and a profile that
+         | states only a mode is stating something true. What is NOT accepted
+         | is a misspelled key inside the array: `basis` is read by name, and
+         | `RoundingBasis::fromName()` throws rather than falling back, because
+         | a basis somebody wrote and spelled wrong is a decision that was made
+         | and then silently discarded.
+         */
+        if (\is_array($declared)) {
+            $mode = $declared['mode'] ?? null;
+            $basis = $declared['basis'] ?? null;
+
+            return self::forJurisdiction(
+                \is_string($mode) && $mode !== '' ? $mode : null,
+                $scale,
+                \is_string($basis) && $basis !== '' ? $basis : null,
+            );
+        }
+
         return self::forJurisdiction(
             is_string($declared) && $declared !== '' ? $declared : null,
             $scale,
@@ -117,12 +150,28 @@ final readonly class RoundingPolicy
 
     public function withScale(Scale $scale): self
     {
-        return new self($this->mode, $scale);
+        return new self($this->mode, $scale, $this->basis);
+    }
+
+    public function withBasis(RoundingBasis $basis): self
+    {
+        return new self($this->mode, $this->scale, $basis);
+    }
+
+    /** Is tax computed once per rate group, as EN 16931 BR-CO-14 requires? */
+    public function isPerRateGroup(): bool
+    {
+        return $this->basis === RoundingBasis::PerRateGroup;
     }
 
     public function describe(): string
     {
-        return sprintf('%s @ %d dp', $this->mode->name, $this->scale->value);
+        return sprintf(
+            '%s @ %d dp, %s',
+            $this->mode->name,
+            $this->scale->value,
+            $this->basis->label('en'),
+        );
     }
 
     private static function configuredDefault(): string
