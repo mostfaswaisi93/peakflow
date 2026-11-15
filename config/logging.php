@@ -63,6 +63,20 @@ return [
             'path' => storage_path('logs/laravel.log'),
             'level' => env('LOG_LEVEL', 'debug'),
             'replace_placeholders' => true,
+            /*
+             | JSON lines, and the field allowlist - PF-014.
+             |
+             | The tap pushes a processor onto the LOGGER rather than onto one
+             | handler, so a stack with two channels cannot redact one copy
+             | and not the other - which is the worst available outcome,
+             | because it looks redacted.
+             |
+             | Declared per channel rather than as a global processor: a
+             | global one is a single `Log::pushProcessor()` away from being
+             | replaced, and the replacement looks like a reasonable
+             | refactor.
+             */
+            'tap' => [App\Support\Telemetry\JsonLog::class],
         ],
 
         'daily' => [
@@ -71,6 +85,7 @@ return [
             'level' => env('LOG_LEVEL', 'debug'),
             'max_files' => env('LOG_DAILY_DAYS', 14),
             'replace_placeholders' => true,
+            'tap' => [App\Support\Telemetry\JsonLog::class],
         ],
 
         'monthly' => [

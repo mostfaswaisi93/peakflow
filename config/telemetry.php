@@ -71,6 +71,40 @@ return [
         'transport',
         'sql_shape',
         'exception_class',
+
+        /*
+         | The fields the invariant alerts actually use - PF-014, PF-053.
+         |
+         | Added because the allowlist was declared before anything logged
+         | through it, and the first real callers wanted names that were not
+         | on it: the drift alert's `findings`, `kinds` and `sample`, and the
+         | revaluation's `run_id` and `rate_set`.
+         |
+         | Every one of them is a count, an id or a classification. The test
+         | that an IBAN, a token and a password produce none of themselves in
+         | a log line is what keeps that true as the list grows - a name
+         | added here still cannot carry a secret past it, because the test
+         | passes the secret under an allowlisted name too.
+         */
+        'findings',
+        'kinds',
+        'sample',
+        'checked',
+        'run_id',
+        'rate_set',
+        'as_of',
+        'accounts_restated',
+        'provider_failures',
+        'from_fallback',
+        'unresolved',
+        'rows',
+        'entries',
+        'partition',
+        'lines',
+        'reference',
+        'kind',
+        'key',
+        'count',
     ],
 
     /*

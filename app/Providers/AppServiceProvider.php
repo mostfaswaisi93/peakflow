@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace App\Providers;
 
 use App\Support\Audit\AuditTrail;
+use App\Support\Telemetry\CorrelationId;
 use App\Tenant\Identity\Services\AuditLog;
-
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\ServiceProvider;
+use Psr\Http\Message\RequestInterface;
 use RuntimeException;
 
 final class AppServiceProvider extends ServiceProvider
@@ -35,6 +37,8 @@ final class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->propagateTheCorrelationIdOutbound();
+
         $this->enforceModelDiscipline();
         $this->guardAgainstFloatMoney();
     }
@@ -83,6 +87,42 @@ final class AppServiceProvider extends ServiceProvider
                     ));
                 }
             }
+        });
+    }
+
+    /**
+     * Send the correlation id on every outbound HTTP request - PF-014.
+     *
+     * ## Why this matters more than it sounds
+     *
+     * The outbound calls in a financial system are the ones that go wrong:
+     * an e-invoicing clearance, a bank payment initiation, a rate feed. When
+     * one of them fails, the question is what WE sent and what they say they
+     * received - and a shared id is what lets their support team find it.
+     *
+     * ZATCA and most payment gateways log request headers. Sending the id
+     * means a disputed clearance can be looked up on both sides by the same
+     * value, rather than by a timestamp and a hope.
+     *
+     * ## A global middleware, so no call site can forget
+     *
+     * `Http::globalRequestMiddleware()` runs for every request the client
+     * makes, including inside a package. Adding the header per call site is a
+     * convention, and the call that matters is the one somebody adds in a
+     * hurry.
+     *
+     * The header is NOT overwritten when a caller set one deliberately -
+     * passing a specific id through is a legitimate thing to do when
+     * forwarding somebody else's trace.
+     */
+    private function propagateTheCorrelationIdOutbound(): void
+    {
+        Http::globalRequestMiddleware(static function (RequestInterface $request): RequestInterface {
+            if ($request->hasHeader(CorrelationId::HEADER)) {
+                return $request;
+            }
+
+            return $request->withHeader(CorrelationId::HEADER, CorrelationId::current());
         });
     }
 }

@@ -8,6 +8,7 @@ use App\Http\Middleware\RequireStepUp;
 use App\Http\Middleware\ResolveEntity;
 use App\Http\Middleware\ResolveTenantFromHeader;
 use App\Http\Middleware\ResolveTenantFromSession;
+use App\Http\Middleware\AssignCorrelationId;
 use App\Http\Middleware\SetLocale;
 use App\Support\Http\Problem;
 use App\Support\Http\ProblemType;
@@ -42,6 +43,16 @@ return Application::configure(basePath: dirname(__DIR__))
         | default. It is idempotent, so running it twice costs one extra
         | header parse and buys correct language on error responses.
         */
+        /*
+         | The correlation id FIRST, before anything that might log - PF-014.
+         |
+         | Prepended ahead of the locale middleware because a failure in any
+         | later middleware is logged, and a log line with no correlation id
+         | is a line that cannot be joined to the request that produced it -
+         | which is exactly the request somebody is trying to understand.
+         */
+        $middleware->prepend(AssignCorrelationId::class);
+
         $middleware->prepend(SetLocale::class);
 
         $middleware->web(append: [

@@ -7,6 +7,7 @@ namespace App\Providers;
 use App\Platform\Services\QueueTenantContext;
 use App\Platform\Services\TenantConnectionResolver;
 use App\Support\Tenancy\TenantContext;
+use App\Support\Telemetry\CorrelationId;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\ServiceProvider;
@@ -53,6 +54,17 @@ final class QueueTenancyServiceProvider extends ServiceProvider
 {
     /** The payload key. Prefixed, because the payload is Laravel's. */
     private const KEY = 'peakflow_tenant';
+
+    /**
+     * The correlation id's payload key - PF-014.
+     *
+     * Carried on the same payload as the tenant, for the same reason: an
+     * invoice that posts a journal entry and queues a PDF render is one
+     * causal chain, and the question afterwards is "what happened to invoice
+     * 4471". A job that generates its own id answers that with a second id
+     * nobody can join to the first.
+     */
+    private const CORRELATION = 'peakflow_correlation_id';
 
     /**
      * What was established before each job in flight, innermost last.
@@ -109,7 +121,10 @@ final class QueueTenancyServiceProvider extends ServiceProvider
                 $key = null;
             }
 
-            return [self::KEY => $key];
+            return [
+                self::KEY => $key,
+                self::CORRELATION => CorrelationId::current(),
+            ];
         });
     }
 
@@ -149,6 +164,16 @@ final class QueueTenancyServiceProvider extends ServiceProvider
              */
             $resolver->forget();
 
+            /*
+             | The id is ADOPTED from the payload, not generated.
+             |
+             | So the job's log lines carry the id of the request that queued
+             | it. A job generating its own would be correct and useless: two
+             | ids for one causal chain cannot be joined, which is the one
+             | thing a correlation id exists for.
+             */
+            CorrelationId::adopt($event->job->payload()[self::CORRELATION] ?? null);
+
             $key = $event->job->payload()[self::KEY] ?? null;
 
             if (! is_string($key) || $key === '') {
@@ -181,6 +206,8 @@ final class QueueTenancyServiceProvider extends ServiceProvider
             $resolver = $this->app->make(TenantConnectionResolver::class);
 
             $resolver->forget();
+
+            CorrelationId::forget();
 
             $previous = array_pop($this->previous);
 
