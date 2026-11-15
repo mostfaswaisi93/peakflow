@@ -285,6 +285,28 @@ Withholding is deducted **by the payer from the payment**, not from the invoice.
 
 Rates are per party, per item type and per jurisdiction, effective-dated.
 
+### As built (PF-083)
+
+Two tables. `withholding_rates` carries a jurisdiction, an optional party, an optional item type, a rate, a **base** and a half-open validity range; `withholding_certificates` carries the evidence the payee files with its own return.
+
+**The rate resolves by specificity, and a party beats an item type.** Four shapes of row can match one payment — this party and this item type, this party, this item type, or neither — and a party-specific row is normally a treaty rate or an exemption certificate. A generic rule about professional services must not override it; the reverse ordering would withhold 20% from a supplier holding a certificate that says 5%. Two rows of equal specificity cannot both match, because the exclusion constraint refuses overlapping validity for the same four keys, so the order is total without a tie-break.
+
+The constraint uses `COALESCE(party_id::text, '-')` rather than the nullable columns directly: `NULL` is not equal to `NULL` under `=`, so an exclusion over them would let two "any party, any item" rows cover the same dates. The cast to text avoids `char(26)`'s blank padding making the sentinel a different value from itself.
+
+**No rate configured is not a rate of zero.** `rateFor()` returns null for a jurisdiction nobody has set up, and a zero rate is how an exemption is recorded — dated and sourced. A payer that withholds nothing because of the first is liable for what it should have withheld, and `deduct()` takes a rate rather than looking one up so a caller cannot skip the distinction by accident.
+
+**The base is the regime's choice.** Some withhold on the net, some on the gross, and the difference is the whole VAT amount rather than a rounding difference: 1,000 net with 150 of VAT at 10% is 100 withheld on the net and 115 on the gross.
+
+**Nothing in the document-total path mentions withholding**, and a check asserts it by reading the source of `TaxCalculator`, `TaxBreakdown`, `TaxBreakdownEntry` and `TaxableLine`. The moment a document total can see it, somebody puts it on an invoice — and an invoice that nets off withholding understates the receivable and the VAT base at the same time.
+
+**The certificate's period is the deduction's**, taken from the payment date. An invoice raised in March and paid in May produces a May certificate; reporting it in March gives the payee a credit the authority will not match. Its number comes from the numbering series, because the payee files it and the authority matches the two.
+
+**Its own reporting.** `totalsFor()` reads the certificates — not the ledger, which holds the posting, and not a VAT accumulator, which is right only where the two filing cycles happen to coincide. Void certificates drop out, because the payee cannot claim against one.
+
+The allocation half — an invoice settled in full against short cash — is PF-120 in Phase 09, and `payment_reference` is free text until it adds the payment key beside it. The arithmetic it depends on is asserted here: the payable plus the withheld comes back to the base exactly.
+
+Checked by `php bin/verify tax`: ten rules in `tests/Support/WithholdingRules.php`, each proven to fail when the behaviour is removed.
+
 ## Returns
 
 A return is a period's **box-by-box summary with drill-down from every box to the journal lines behind it.**

@@ -182,6 +182,7 @@ if ($only === 'all' || $only === 'tax') {
     $suites['Evidence and exemptions'] = $suite(static fn (): array => (new Tests\Support\TaxEvidenceRules())->all());
     $suites['Rounding policy'] = $suite(static fn (): array => (new Tests\Support\RoundingPolicyRules())->all());
     $suites['Tax computation'] = $suite(static fn (): array => (new Tests\Support\TaxComputationRules())->all());
+    $suites['Withholding'] = $suite(static fn (): array => (new Tests\Support\WithholdingRules())->all());
 }
 
 if ($only === 'all' || $only === 'ops') {

@@ -116,11 +116,17 @@ The engine's organising principle is that **tax is data, not code**. A rate that
 ### PF-083 · Withholding tax
 `Tax` · **5 pts** · depends: PF-082 · standards: — · `type:compliance`
 
-- [ ] Withholding is deducted by the **payer from the payment**, not from the invoice - so it lives in the settlement path, not in the document total
-- [ ] A rate per party, per item type and per jurisdiction, effective-dated
+- [x] Withholding is deducted by the **payer from the payment**, not from the invoice - so it lives in the settlement path, not in the document total. Asserted architecturally: a check reads the source of `TaxCalculator`, `TaxBreakdown`, `TaxBreakdownEntry` and `TaxableLine` and refuses any mention of withholding. The moment a document total can see it, somebody puts it on an invoice - and an invoice that nets it off understates the receivable and the VAT base at once
+- [x] A rate per party, per item type and per jurisdiction, effective-dated. Resolved by **specificity**, and a party-specific row beats an item-specific one: a party row is normally a treaty rate or an exemption certificate, and the reverse ordering would withhold 20% from a supplier holding a certificate that says 5%
 - [ ] An invoice total that does not equal the cash received is **correct** when withholding applies, and the allocation logic must handle it rather than treating the shortfall as a short payment
-- [ ] A withholding certificate is generated and tracked, because the payee needs it to claim the credit
-- [ ] Its own reporting, separate from VAT
+- [x] A withholding certificate is generated and tracked, because the payee needs it to claim the credit. Numbered from the series, and its **period is the deduction's**: an invoice raised in March and paid in May produces a May certificate, and reporting it in March gives the payee a credit the authority will not match
+- [x] Its own reporting, separate from VAT. `totalsFor()` reads the certificates - not the ledger, which holds the posting, and not a VAT accumulator, which is right only where the two filing cycles happen to coincide. Void certificates drop out, because the payee cannot claim against one
+- [x] **No rate configured is not a rate of zero.** `rateFor()` returns null for a jurisdiction nobody has set up; a zero rate is how an exemption is recorded, dated and sourced. A payer that withholds nothing because of the first is liable for what it should have withheld, and `deduct()` takes a rate rather than looking one up so a caller cannot skip the distinction
+- [x] The **base** is the regime's choice - the net or the gross - and the difference is the whole VAT amount rather than a rounding difference: 1,000 net with 150 of VAT at 10% is 100 withheld on the net and 115 on the gross
+- [x] The overlap constraint uses `COALESCE(party_id::text, '-')` rather than the nullable columns: `NULL` is not equal to `NULL` under `=`, so an exclusion over them directly would let two "any party, any item" rows cover the same dates. The cast to text avoids `char(26)`'s blank padding making the sentinel a different value from itself. A successor that **abuts** the predecessor is accepted, because a constraint that made a rate change impossible is a constraint somebody drops
+- [x] A certificate for a deduction of zero is **refused**: it tells the payee it may claim nothing, which it can work out without a document, and an exemption belongs on the rate table
+
+> The open criterion is the allocation path, which is PF-120 in Phase 09 - an invoice settled in full against short cash. `payment_reference` is free text until it adds the payment key beside it, and the arithmetic the allocation depends on is asserted here: the payable plus the withheld comes back to the base exactly.
 
 ### PF-084 · Tax accounts and posting
 `Tax` · **3 pts** · depends: PF-082, PF-047 · standards: — · `type:posting`
