@@ -67,6 +67,40 @@ Not misuse cases. These are what someone with legitimate access would actually t
 
 **Erasure is reconciled against statutory retention, which wins** — and the product says so in the UI rather than pretending to delete. A tax authority requiring seven years of invoice retention overrides a deletion request, and a system that silently ignores the request while appearing to honour it is the worse outcome.
 
+## Reading a bank account is an auditable event
+
+Not only changing one. **The fraud this guards against needs no write at all**: somebody who can read a supplier's IBAN can use it anywhere, and the change log shows nothing because nothing changed.
+
+It is also the question an investigation starts from. "Who had this number" is answerable only if every disclosure was recorded, and a log of writes alone answers it with silence — which reads as "nobody", which is worse than "we do not know".
+
+### One caller, enforced
+
+`PartyBankAccount::revealIban()` decrypts and returns the number. `BankDetailDisclosure` is the only thing allowed to call it, and an architecture rule enforces that — because the natural thing for a future payment-file builder to do is reach for the model, in one line, with no trace.
+
+The decryption stays on the model rather than moving into the service: the model is where the encryption lives, and splitting the pair across two classes would put the key handling further from the field it protects. The accessor being public and unaudited is the trade, and the rule is the price paid for it.
+
+### What the entry says, and what it must not
+
+| recorded | not recorded |
+|----------|--------------|
+| who read it, and when | **the number** |
+| which account (masked, plus the last four) | |
+| which field — IBAN or domestic number | |
+| which party and entity | |
+| **why**, in at least ten characters | |
+
+The number's absence is asserted across every column of the entry rather than the ones it was expected in. A log that copies the secret it is protecting has doubled the places it can leak from, in the one place nobody can delete from.
+
+The last four digits **are** there, because an entry nobody can tie to an account is an entry nobody can use.
+
+### Three decisions worth stating
+
+**The audit entry is written before the value is returned.** A disclosure that fails to audit must fail to disclose. Returning first means an exception between the two hands out the number with no record; this way the failure mode is a recorded read that did not happen — a confusing log entry rather than an unrecorded disclosure.
+
+**There is no weaker "may view" permission.** Reading and changing are the same risk, and a view-only permission would be handed out widely for convenience, which is precisely how the number escapes. `bank.manage` covers both.
+
+**The reads are readable from the party screen.** A read log nobody can see deters nobody, and deterrence is most of what it is for.
+
 ## Application hardening
 
 ```

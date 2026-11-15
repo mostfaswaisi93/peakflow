@@ -170,8 +170,11 @@ A tenant with three staff may genuinely be unable to separate two duties. Silent
 - [x] Append-only, hash-chained, declaratively partitioned by month
 - [x] `DELETE` and `UPDATE` revoked at the role level, not merely unused
 - [x] Captures actor, entity, action, object, before and after where applicable, correlation id, IP and user agent
-- [ ] **Reads of sensitive data are audited too** - who looked at a bank account is an auditable event, not only who changed it
-  - `AuditLog::record()` takes a `read` category and the indexes support it; nothing reads a bank account yet, because bank accounts arrive in PF-08x. Auditing a read of something that does not exist would be a line of code with no caller, and the first real caller is the one that proves the shape is right.
+- [x] **Reads of sensitive data are audited too** - who looked at a bank account is an auditable event, not only who changed it. `BankDetailDisclosure` records the read under the `read` category with the actor, the party, which field and **why**, and an architecture rule confines the raw `revealIban()` accessor to that one caller - so the payment-file builder arriving in PF-08x cannot read a supplier's account without a trace, which is the natural one-line thing to do otherwise
+  - The fraud this guards against needs **no write**: somebody who can read a supplier's IBAN can use it anywhere, and the change log would show nothing because nothing changed. "Who had this number" is answerable only if every disclosure was recorded, and a log of writes alone answers it with silence - which reads as "nobody"
+  - The number itself is **not** in the entry, asserted across every column of it rather than the ones it was expected in. A log that copies the secret it is protecting has doubled the places it can leak from, in the one place nobody can delete from. The last four digits are there, so a reader can tell which account was disclosed
+  - A read with no reason of at least ten characters is refused, and there is deliberately no weaker "may view" permission: it would be handed out widely for convenience, which is precisely how the number escapes
+  - The reads are readable from the party screen. A read log nobody can see deters nobody, and deterrence is most of what it is for
 - [x] Indexed on `created_at`, `(category, created_at)` and `(action, created_at)`, for the same one-index-per-reference reason as the platform log
 - [x] A verification command re-walks the chain and reports the first divergence
 

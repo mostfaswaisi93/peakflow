@@ -50,6 +50,7 @@ final class ArchitectureRules
             'an event carries no other module\'s models' => $this->eventsCarryNoModels(),
             'a subtree is read as a range, never as a LIKE' => $this->subtreesAreReadAsRanges(),
             'a suite that posts ends with the global proof' => $this->postingSuitesProveTheLedger(),
+            'a bank account is read only through the disclosure service' => $this->bankReadsAreAudited(),
         ];
     }
 
@@ -1285,6 +1286,77 @@ final class ArchitectureRules
                 'withTheLedgerProof()',
                 $this->relative($file),
             );
+        }
+
+        return $violations;
+    }
+
+    /**
+     * A bank account's full number is read in ONE place - PF-035.
+     *
+     * ## Why the rule rather than trusting the call sites
+     *
+     * `PartyBankAccount::revealIban()` decrypts and returns a supplier's
+     * account number. Who LOOKED at it is an auditable event, not only who
+     * changed it: the fraud this guards against needs no write at all, and
+     * the change log would show nothing because nothing changed.
+     *
+     * So the audit entry lives in `BankDetailDisclosure`, and this rule
+     * confines the raw accessor's callers to it. Without the rule, the future
+     * payment-file builder reaches for the model - which is the natural thing
+     * to do, is one line, and reads a supplier's account with no trace.
+     *
+     * ## The model keeps the raw method
+     *
+     * Rather than the decryption moving into the service. The model is where
+     * the encryption lives and splitting the pair across two classes would
+     * put the key handling further from the field it protects. The accessor
+     * being public and unaudited is the trade, and this rule is the price
+     * paid for it.
+     *
+     * @return list<string>
+     */
+    public function bankReadsAreAudited(): array
+    {
+        $violations = [];
+
+        foreach ($this->phpFiles('app') as $file) {
+            $original = (string) file_get_contents($file);
+            $relative = $this->relative($file);
+
+            // The model declares them; the disclosure service is the one
+            // caller the rule exists to permit.
+            if (str_ends_with($relative, 'Models/PartyBankAccount.php')
+                || str_ends_with($relative, 'Services/BankDetailDisclosure.php')) {
+                continue;
+            }
+
+            $source = $this->withoutComments($original);
+
+            if (preg_match_all(
+                '/->(revealIban|revealAccountNumber)\s*\(/',
+                $source,
+                $matches,
+                PREG_OFFSET_CAPTURE,
+            ) === 0) {
+                continue;
+            }
+
+            foreach ($matches[1] as [$method, $offset]) {
+                if ($this->lineIsAnnotated($original, $offset)) {
+                    continue;
+                }
+
+                $violations[] = sprintf(
+                    '%s:%d calls %s() directly. Who LOOKED at a bank account is an auditable event - the '.
+                    'fraud this guards against needs no write, and the change log would show nothing '.
+                    'because nothing changed. Read it through BankDetailDisclosure, which records the '.
+                    'read, the actor and the reason without copying the number into the log',
+                    $relative,
+                    $this->lineOf($original, $offset),
+                    $method,
+                );
+            }
         }
 
         return $violations;

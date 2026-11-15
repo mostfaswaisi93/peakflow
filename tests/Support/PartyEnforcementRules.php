@@ -14,6 +14,7 @@ use App\Tenant\Identity\Models\UserEntityRole;
 use App\Tenant\Parties\Exceptions\BankAccountNotVerified;
 use App\Tenant\Parties\Models\Party;
 use App\Tenant\Parties\Exceptions\CreditRefused;
+use App\Tenant\Parties\Services\BankDetailDisclosure;
 use App\Tenant\Parties\Services\BankDetailRegistry;
 use App\Tenant\Parties\Services\CreditControl;
 use App\Tenant\Parties\Services\DocumentDelivery;
@@ -96,6 +97,7 @@ final class PartyEnforcementRules
                 'a dispute suspends dunning and keeps the debt' => $this->disputesSuspendOnly(),
                 'a merge keeps the loser, and exposure sums across the chain' => $this->mergeKeepsHistory(),
                 "a document goes out in the RECIPIENT's language" => $this->deliveryUsesTheirLanguage(),
+                'who LOOKED at a bank account is recorded too' => $this->readsAreAudited(),
             ], $this->entityId);
         } catch (Throwable $e) {
             return ['party controls could not be checked' => [
@@ -903,6 +905,152 @@ final class PartyEnforcementRules
      * ledger refuses a manual posting to one - the invariant that keeps the
      * subledger equal to its control account.
      */
+    /**
+     * A read of a bank account is audited - PF-035.
+     *
+     * ## The fraud this guards against needs no write
+     *
+     * Somebody who can read a supplier's IBAN can use it anywhere, and the
+     * change log would show nothing because nothing changed. "Who had this
+     * number" is answerable only if every disclosure was recorded - and a log
+     * of writes alone answers it with silence, which reads as "nobody".
+     *
+     * ## Four things are asserted, and the third is the one that gets dropped
+     *
+     * That the read is recorded; that it is recorded under the `read`
+     * category so an investigation can filter for it; that **the number is
+     * not in the entry**; and that a read with no reason is refused.
+     *
+     * The third is the one a reasonable implementation gets wrong, because
+     * putting the value in the log makes the log more useful - and doubles
+     * the number of places the secret can leak from, in the one place nobody
+     * can delete from.
+     *
+     * @return list<string>
+     */
+    public function readsAreAudited(): array
+    {
+        $violations = [];
+        $disclosure = app(BankDetailDisclosure::class);
+
+        $iban = 'SA0380000000608010167519';
+        $account = $this->newAccount($iban);
+
+        /*
+         | The permission first, as somebody who does not hold it.
+         |
+         | Both users this suite seeds hold `controller`, which includes
+         | `bank.manage` - so asserting the refusal needs a third person. A
+         | receivables clerk is the realistic one: they manage parties and
+         | record payments, and they have no business reading a supplier's
+         | full account number.
+         */
+        $receivablesClerk = $this->userHolding('ar_clerk');
+        $authorised = auth()->guard('web')->user();
+
+        auth()->guard('web')->setUser($receivablesClerk);
+
+        $refused = $this->refusal(fn () => $disclosure->revealIban(
+            $account,
+            'reading it as a receivables clerk, who should not be able to',
+        ));
+
+        if ($refused === null) {
+            $violations[] = 'a receivables clerk read a supplier\'s full account number. There is no '.
+                'weaker "may view" permission on purpose: somebody who can see the number can use it '.
+                'anywhere, and the change log would show nothing because nothing changed';
+        }
+
+        $authorised === null
+            ? auth()->guard('web')->setUser($this->clerk)
+            : auth()->guard('web')->setUser($authorised);
+
+        $before = $this->connection->table('audit_log')
+            ->where('category', 'read')
+            ->where('subject_id', $account->getKey())
+            ->count();
+
+        $revealed = $disclosure->revealIban($account, 'preparing the October payment run for this supplier');
+
+        if ($revealed !== $iban) {
+            $violations[] = sprintf('the disclosure returned "%s" rather than the stored account', $revealed);
+        }
+
+        $entries = $this->connection->table('audit_log')
+            ->where('category', 'read')
+            ->where('subject_id', $account->getKey())
+            ->get(['action', 'subject_label', 'after_state', 'reason', 'party_id']);
+
+        if ($entries->count() !== $before + 1) {
+            $violations[] = sprintf(
+                'reading a bank account wrote %d audit entries. Who looked at it is an auditable event, '.
+                'not only who changed it',
+                $entries->count() - $before,
+            );
+
+            return $violations;
+        }
+
+        $entry = $entries->last();
+
+        if ((string) $entry->action !== 'party.bank_account.disclosed') {
+            $violations[] = sprintf('the read was recorded as "%s"', (string) $entry->action);
+        }
+
+        /*
+         | The number must not be in the entry, anywhere in it.
+         |
+         | Checked across every column rather than the ones it was expected
+         | in: a log that copies the secret it is protecting has doubled the
+         | places it can leak from, and this is the one place nobody can
+         | delete from.
+         */
+        $serialised = json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '';
+
+        if (str_contains($serialised, $iban)) {
+            $violations[] = 'the audit entry for the read contains the account number. The log would then '.
+                'be a second copy of the secret, in the one place nobody can delete from';
+        }
+
+        if (! str_contains($serialised, '7519')) {
+            $violations[] = 'the audit entry does not carry even the last four digits, so nobody reading '.
+                'it can tell which account was disclosed';
+        }
+
+        if ((string) $entry->party_id !== (string) $account->party_id) {
+            $violations[] = 'the read was not recorded against the party, so "who saw this supplier\'s '.
+                'account" cannot be answered from the party screen';
+        }
+
+        if (! str_contains((string) $entry->reason, 'payment run')) {
+            $violations[] = 'the reason given was not recorded. The question an investigation asks is not '.
+                'whether it was read but why';
+        }
+
+        $thin = $this->refusal(fn () => $disclosure->revealIban($account, 'look'));
+
+        if ($thin === null || ! str_contains($thin, 'at least ten characters')) {
+            $violations[] = 'a read with no real reason was allowed. A reason nobody typed is a question '.
+                'nobody can answer';
+        }
+
+        /*
+         | And the reads are readable, by the people who own the
+         | relationship.
+         |
+         | A read log nobody can see deters nobody, and deterrence is most of
+         | what it is for.
+         */
+        $reads = $disclosure->readsOf($account);
+
+        if ($reads === [] || ($reads[0]['field'] ?? '') !== 'iban') {
+            $violations[] = 'the disclosure log cannot be read back, so the people who own the '.
+                'relationship cannot see who looked at their supplier\'s account';
+        }
+
+        return $violations;
+    }
+
     private function customerOwing(string $amount): Party
     {
         $party = Party::create([
@@ -959,6 +1107,30 @@ final class PartyEnforcementRules
         }
 
         return null;
+    }
+
+    /**
+     * A user holding one seeded role, for a permission assertion.
+     *
+     * Both users the suite seeds hold `controller`, which includes
+     * `bank.manage` - so asserting a refusal needs somebody who does not.
+     */
+    private function userHolding(string $role): User
+    {
+        $user = User::create([
+            'name' => 'Party '.$role,
+            'email' => $role.'-'.bin2hex(random_bytes(5)).'@invalid.test',
+            'password' => Str::password(32),
+            'active' => true,
+        ]);
+
+        UserEntityRole::create([
+            'user_id' => $user->getKey(),
+            'entity_id' => $this->entityId,
+            'role_id' => Role::query()->where('key', $role)->firstOrFail()->getKey(),
+        ]);
+
+        return $user;
     }
 
     private function newAccount(string $iban): \App\Tenant\Parties\Models\PartyBankAccount
