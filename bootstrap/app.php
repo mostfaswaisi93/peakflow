@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Http\Middleware\EnsurePlanAllows;
+use App\Http\Middleware\RequireStepUp;
 use App\Http\Middleware\ResolveEntity;
 use App\Http\Middleware\ResolveTenantFromHeader;
 use App\Http\Middleware\ResolveTenantFromSession;
@@ -107,6 +108,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'tenant.header' => ResolveTenantFromHeader::class,
             'entity.scope' => ResolveEntity::class,
             'plan' => EnsurePlanAllows::class,
+            'step-up' => RequireStepUp::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

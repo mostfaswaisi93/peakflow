@@ -37,7 +37,17 @@ use JsonException;
  * - timestamps become UTC, microsecond precision, one fixed format
  * - JSON becomes a decoded structure, which the RFC 8785 canonicalizer then
  *   orders deterministically - so `jsonb` reordering the keys cannot matter
+ * - `char(n)` columns are right-trimmed, because PostgreSQL SPACE-PADS a
+ *   fixed-width CHAR and the padding is not data: in SQL, `'PV-1'::char(26)`
+ *   equals `'PV-1'`, so a hash must not depend on which of the two it saw
  * - everything else becomes a string, or null
+ *
+ * The CHAR padding was the third separate instance of this same bug, and the
+ * most instructive. A `subject_id` holding a 26-character ULID fills the
+ * column exactly and needs no padding, so every check passed - until a caller
+ * passed a document number like `PV-1`, which came back with 22 trailing
+ * spaces and a hash that could never match. A round-trip check is only worth
+ * as much as the values it round-trips.
  *
  * ## The field SET is permanent
  *
@@ -49,7 +59,7 @@ final class AuditRecordProjection
 {
     /** @var list<string> */
     public const FIELDS = [
-        'id', 'entity_id', 'actor_user_id', 'actor_name', 'impersonated_by',
+        'id', 'chain', 'entity_id', 'actor_user_id', 'actor_name', 'impersonated_by',
         'category', 'action', 'subject_type', 'subject_id', 'subject_label',
         'party_id', 'period_id',
         'before_state', 'after_state', 'reason', 'correlation_id',
@@ -60,6 +70,17 @@ final class AuditRecordProjection
     private const JSON_FIELDS = ['before_state', 'after_state'];
 
     private const TIMESTAMP_FIELDS = ['created_at'];
+
+    /**
+     * Columns declared `char(n)`, which PostgreSQL pads with spaces.
+     *
+     * Trailing spaces are never meaningful in an identifier, and the SQL
+     * standard says CHAR comparison ignores them, so trimming here makes the
+     * hash agree with what the database considers the same value.
+     */
+    private const PADDED_FIELDS = [
+        'id', 'entity_id', 'actor_user_id', 'subject_id', 'party_id', 'period_id',
+    ];
 
     /**
      * @param  array<string, mixed>|object  $record  a row about to be written, or one read back
@@ -78,6 +99,7 @@ final class AuditRecordProjection
                 in_array($field, self::TIMESTAMP_FIELDS, true) => self::normalizeTimestamp($raw),
                 in_array($field, self::JSON_FIELDS, true) => self::normalizeJson($raw),
                 $raw === null => null,
+                in_array($field, self::PADDED_FIELDS, true) => self::normalizePadded($raw),
                 default => (string) $raw,
             };
         }
@@ -104,6 +126,20 @@ final class AuditRecordProjection
             : new DateTimeImmutable((string) $value);
 
         return $date->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:s.u\Z');
+    }
+
+    /**
+     * A `char(n)` value without its storage padding.
+     *
+     * An all-space value becomes null rather than an empty string: a CHAR
+     * column holding only padding held nothing, and `''` and `null` must not
+     * hash differently for the same absence.
+     */
+    private static function normalizePadded(mixed $value): ?string
+    {
+        $trimmed = rtrim((string) $value, ' ');
+
+        return $trimmed === '' ? null : $trimmed;
     }
 
     /**

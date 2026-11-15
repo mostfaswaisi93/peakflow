@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Support;
 
 use App\Platform\Enums\SubscriptionStatus;
+use App\Support\Mfa\Base32;
+use App\Support\Mfa\Totp;
 use App\Platform\Models\Subscription;
 use App\Support\Hashing\ChainLink;
 use App\Support\Hashing\ChainWalker;
@@ -49,6 +51,7 @@ final class WorkedExamples
             'IBAN check digits' => $this->ibanCheckDigits(),
             'hash chain tamper detection' => $this->hashChainTamperDetection(),
             'a subscription is valid THROUGH its end date' => $this->subscriptionBoundary(),
+            'TOTP against the RFC 6238 test vectors' => $this->totpTestVectors(),
         ];
     }
 
@@ -351,6 +354,86 @@ final class WorkedExamples
         if ($suspended->entitlesAccess()) {
             $violations[] = 'a suspended subscription with a future end date still entitles access; '.
                 'the status must override the dates';
+        }
+
+        return $violations;
+    }
+
+    /**
+     * The published test vectors from RFC 6238, Appendix B.
+     *
+     * An authentication primitive verified only against itself is verified
+     * against nothing: a consistent off-by-one in the counter packing, or a
+     * truncation that reads from the wrong offset, produces codes that are
+     * stable, self-consistent and rejected by every authenticator app in the
+     * world. These are the numbers the standard publishes, so matching them
+     * means the implementation agrees with Google Authenticator, 1Password and
+     * Aegis rather than with itself.
+     *
+     * The secret is the ASCII string "12345678901234567890", base32-encoded,
+     * which is what the RFC specifies for the SHA-1 column.
+     *
+     * @return list<string>
+     */
+    public function totpTestVectors(): array
+    {
+        $secret = Base32::encode('12345678901234567890');
+
+        $vectors = [
+            59 => '287082',
+            1111111109 => '081804',
+            1111111111 => '050471',
+            1234567890 => '005924',
+            2000000000 => '279037',
+            // Past 2038, which is where a 32-bit counter or a signed shift
+            // would quietly start producing the wrong answer.
+            20000000000 => '353130',
+        ];
+
+        $violations = [];
+
+        foreach ($vectors as $time => $expected) {
+            $actual = Totp::at($secret, $time);
+
+            if ($actual !== $expected) {
+                $violations[] = sprintf(
+                    'RFC 6238 vector T=%d: got %s, the standard says %s',
+                    $time,
+                    $actual,
+                    $expected,
+                );
+            }
+        }
+
+        // The window accepts one step either side and nothing further. Two
+        // steps out must fail, or the window has been widened - which is the
+        // usual response to support tickets and the wrong one.
+        $now = 1111111111;
+        $code = Totp::at($secret, $now);
+
+        if (Totp::verify($secret, $code, $now) === null) {
+            $violations[] = 'a code is not accepted at the moment it was generated';
+        }
+
+        if (Totp::verify($secret, $code, $now + Totp::PERIOD) === null) {
+            $violations[] = 'a code is not accepted one step later, so a slow typist is refused';
+        }
+
+        if (Totp::verify($secret, $code, $now - Totp::PERIOD) === null) {
+            $violations[] = 'a code is not accepted one step earlier, so a fast clock is refused';
+        }
+
+        if (Totp::verify($secret, $code, $now + (Totp::PERIOD * 3)) !== null) {
+            $violations[] = sprintf(
+                'a code is still accepted %d seconds later; the window has been widened beyond one step either side',
+                Totp::PERIOD * 3,
+            );
+        }
+
+        // The step is returned, not a boolean, because replay prevention needs
+        // to know WHICH step was used.
+        if (Totp::verify($secret, $code, $now) !== Totp::stepAt($now)) {
+            $violations[] = 'verify() does not return the step the code belongs to, so a replay cannot be refused';
         }
 
         return $violations;

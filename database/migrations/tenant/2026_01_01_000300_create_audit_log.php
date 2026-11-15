@@ -94,6 +94,11 @@ return new class extends Migration
                 -- Hash chain. Each entry is hashed over its own canonical form
                 -- plus the previous entry's hash, which makes insertion,
                 -- deletion and alteration all detectable.
+                -- Which chain this record belongs to. Part of what the
+                -- record means - "this was prevented" is a different claim
+                -- from "this happened" - so it is inside the hash.
+                chain             varchar(16)  NOT NULL DEFAULT 'events',
+
                 canonical_hash    char(64)     NOT NULL,
                 previous_hash     char(64)     NOT NULL,
                 chain_index       bigint       NOT NULL,
@@ -126,7 +131,7 @@ return new class extends Migration
             CREATE INDEX audit_log_sod_object_idx ON audit_log (actor_user_id, action, subject_type, subject_id, created_at DESC);
             CREATE INDEX audit_log_sod_party_idx  ON audit_log (actor_user_id, action, party_id, created_at DESC) WHERE party_id IS NOT NULL;
             CREATE INDEX audit_log_sod_period_idx ON audit_log (actor_user_id, action, period_id, created_at DESC) WHERE period_id IS NOT NULL;
-            CREATE UNIQUE INDEX audit_log_chain_idx    ON audit_log (chain_index, created_at);
+            CREATE UNIQUE INDEX audit_log_chain_idx    ON audit_log (chain, chain_index, created_at);
         SQL);
 
         // Partitions for the current year and the next, created ahead of time.
@@ -152,40 +157,50 @@ return new class extends Migration
         $connection->unprepared('CREATE TABLE audit_log_default PARTITION OF audit_log DEFAULT;');
 
         /*
-         | The chain head: one row, locked to serialize appends.
+         | The chain heads: one row PER CHAIN, locked to serialize appends.
          |
          | Two concurrent writers that each read "the last hash" would both
          | compute index N+1 and the chain would fork - and a forked chain is
          | indistinguishable from a tampered one, so the damage is permanent.
+         | So an append takes `SELECT ... FOR UPDATE` on its chain's row, the
+         | same shape as gapless numbering (ADR-0009). No I/O under the lock.
          |
-         | So an append takes `SELECT ... FOR UPDATE` on this row, the same
-         | shape as gapless numbering (ADR-0009), and for the same reason: the
-         | thing being allocated must be allocated by exactly one writer at a
-         | time. No I/O happens under the lock.
+         | It is also what makes finding a head O(1). `ORDER BY chain_index
+         | DESC LIMIT 1` would touch all 25 partitions on every append, since
+         | the planner cannot know which partition holds the maximum.
          |
-         | It is also what makes finding the head O(1). `ORDER BY chain_index
-         | DESC LIMIT 1` would touch all 25 partitions on every single append,
-         | because the planner cannot know which partition holds the maximum.
+         | ## Why there are TWO chains and not one
          |
-         | A rolled-back transaction rolls this row back with it, so an
-         | allocated-then-abandoned index is reused rather than left as a gap.
-         | That is deliberate: a gap in the chain index is evidence of deletion,
-         | and an ordinary rollback must not look like one.
+         | An event is recorded inside the caller's transaction, because an
+         | action that was rolled back did not happen. A refusal is recorded on
+         | a connection of its own, because refusing ABORTS that transaction
+         | and an in-transaction refusal would vanish with it.
+         |
+         | With a single head those two writers deadlock against each other,
+         | inside one request: the caller's transaction holds the head lock
+         | until it commits, and the out-of-band refusal waits for a lock that
+         | will not be released until the refusal returns. That is not a race -
+         | it happens every time, and it did.
+         |
+         | Separate chains remove the contention entirely, and the split is
+         | honest about the evidence: what happened, and what was prevented.
+         | Each is verified independently.
          */
         $connection->unprepared(<<<SQL
             CREATE TABLE audit_chain_head (
-                id            boolean PRIMARY KEY DEFAULT true,
+                chain         varchar(16) PRIMARY KEY,
                 last_hash     char(64) NOT NULL,
                 last_index    bigint   NOT NULL,
                 updated_at    timestamptz NOT NULL DEFAULT now(),
-                CONSTRAINT audit_chain_head_singleton CHECK (id)
+                CONSTRAINT audit_chain_head_known CHECK (chain IN ('events', 'refusals'))
             );
 
-            INSERT INTO audit_chain_head (id, last_hash, last_index)
-            VALUES (true, '{$genesis}', 0);
+            INSERT INTO audit_chain_head (chain, last_hash, last_index) VALUES
+                ('events',   '{$genesis}', 0),
+                ('refusals', '{$genesis}', 0);
 
             COMMENT ON TABLE audit_chain_head IS
-                'peakflow:tenant-scoped - the single lockable head of the audit hash chain. One row, by constraint.';
+                'peakflow:tenant-scoped - the lockable head of each audit hash chain, one row per chain.';
         SQL);
 
         $connection->unprepared(<<<'SQL'

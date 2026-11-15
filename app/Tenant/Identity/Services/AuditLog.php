@@ -37,6 +37,12 @@ use Illuminate\Support\Str;
  */
 final class AuditLog
 {
+    /** What happened. Written inside the caller's transaction. */
+    public const CHAIN_EVENTS = 'events';
+
+    /** What was prevented. Written on its own connection so it survives the rollback. */
+    public const CHAIN_REFUSALS = 'refusals';
+
     public function __construct(
         private readonly EntityContext $entities,
     ) {}
@@ -70,6 +76,7 @@ final class AuditLog
     ): string {
         return $this->append(
             DB::connection('tenant'),
+            self::CHAIN_EVENTS,
             $category,
             $action,
             $subjectType,
@@ -113,6 +120,7 @@ final class AuditLog
     ): string {
         return $this->append(
             $this->outOfBandConnection(),
+            self::CHAIN_REFUSALS,
             $category,
             $action,
             $subjectType,
@@ -134,6 +142,7 @@ final class AuditLog
      */
     private function append(
         Connection $connection,
+        string $chain,
         string $category,
         string $action,
         ?string $subjectType,
@@ -171,6 +180,7 @@ final class AuditLog
             'action' => $action,
             'subject_type' => $subjectType,
             'subject_id' => $subjectId,
+            'chain' => $chain,
             'subject_label' => $subjectLabel,
             'party_id' => $partyId,
             'period_id' => $periodId,
@@ -187,14 +197,17 @@ final class AuditLog
             'created_at' => (new DateTimeImmutable())->format('Y-m-d H:i:s.uP'),
         ];
 
-        $write = function () use ($connection, $row): string {
+        $write = function () use ($connection, $row, $chain): string {
             /*
              | Lock the head, allocate, insert, advance. Nothing else happens
              | between the lock and the release - no HTTP call, no file write,
              | no event dispatch - because every microsecond under this lock is
              | a microsecond no other request can append.
              */
-            $head = $connection->selectOne('SELECT last_hash, last_index FROM audit_chain_head WHERE id = true FOR UPDATE');
+            $head = $connection->selectOne(
+                'SELECT last_hash, last_index FROM audit_chain_head WHERE chain = ? FOR UPDATE',
+                [$chain],
+            );
 
             $previous = ChainLink::fromStored(
                 hash: (string) $head->last_hash,
@@ -216,7 +229,7 @@ final class AuditLog
                 'chain_index' => (int) $head->last_index + 1,
             ]);
 
-            $connection->table('audit_chain_head')->where('id', true)->update([
+            $connection->table('audit_chain_head')->where('chain', $chain)->update([
                 'last_hash' => $link->hash,
                 'last_index' => (int) $head->last_index + 1,
                 'updated_at' => now(),
@@ -238,8 +251,21 @@ final class AuditLog
      */
     private function outOfBandConnection(): Connection
     {
-        if (! config()->has('database.connections.tenant_audit')) {
-            config(['database.connections.tenant_audit' => (array) config('database.connections.tenant')]);
+        /*
+         | Re-cloned from the CURRENT tenant connection every time, and purged.
+         |
+         | Caching this once per process was a cross-tenant leak waiting to
+         | happen: anything that iterates tenants - `tenants:migrate`, a
+         | nightly job, the enforcement checks - would keep writing refusals
+         | into the first tenant's database long after it had moved on.
+         */
+        $current = (array) config('database.connections.tenant');
+        $existing = (array) config('database.connections.tenant_audit', []);
+
+        if (($existing['database'] ?? null) !== ($current['database'] ?? null)
+            || ($existing['username'] ?? null) !== ($current['username'] ?? null)) {
+            config(['database.connections.tenant_audit' => $current]);
+            DB::purge('tenant_audit');
         }
 
         $connection = DB::connection('tenant_audit');

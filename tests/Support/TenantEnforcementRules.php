@@ -6,12 +6,16 @@ namespace Tests\Support;
 
 use App\Platform\Models\Tenant;
 use App\Platform\Services\TenantConnectionResolver;
+use App\Support\Mfa\Totp;
+use App\Tenant\Identity\Models\Authenticator;
+use App\Tenant\Identity\Models\Permission;
 use App\Tenant\Identity\Models\Role;
 use App\Tenant\Identity\Models\SodRule;
 use App\Tenant\Identity\Models\User;
 use App\Tenant\Identity\Models\UserEntityRole;
 use App\Tenant\Identity\Services\AuditChainVerifier;
 use App\Tenant\Identity\Services\AuditLog;
+use App\Tenant\Identity\Services\MfaService;
 use App\Tenant\Identity\Services\SodEngine;
 use App\Tenant\Tenancy\Exceptions\EntityNotInScope;
 use App\Tenant\Tenancy\Models\EntitySetting;
@@ -83,6 +87,9 @@ final class TenantEnforcementRules
             'segregation of duties reads the audit trail' => [],
             'the unoverridable rules are the right two' => [],
             'every duty pair is refused in both directions' => [],
+            'money-moving permissions demand a second factor' => [],
+            'a TOTP code works exactly once' => [],
+            'a refusal inside a transaction does not deadlock' => [],
         ];
 
         foreach ($tenants as $tenant) {
@@ -122,6 +129,9 @@ final class TenantEnforcementRules
                 'segregation of duties reads the audit trail' => $this->sodReadsTheAuditTrail(),
                 'the unoverridable rules are the right two' => $this->unoverridableRulesAreCorrect(),
                 'every duty pair is refused in both directions' => $this->everyPairBothDirections(),
+                'money-moving permissions demand a second factor' => $this->moneyMoversDemandAFactor(),
+                'a TOTP code works exactly once' => $this->totpCodeWorksOnce(),
+                'a refusal inside a transaction does not deadlock' => $this->refusalDoesNotDeadlock(),
             ];
         } finally {
             $this->connection->rollBack();
@@ -626,24 +636,45 @@ final class TenantEnforcementRules
         // Written inside the enclosing transaction, so it is rolled back with
         // everything else. Verified on the same connection, because another
         // one cannot see an uncommitted row.
+        /*
+         | The values here are chosen to break the hash if any of the three
+         | round-trip hazards comes back:
+         |
+         | - `subjectId` is SHORT. It is a char(26) column, which PostgreSQL
+         |   space-pads, and a full-length ULID fills it exactly - so a check
+         |   using a ULID cannot see padding at all. That is precisely how
+         |   this bug survived two earlier round-trip checks.
+         | - the JSON has keys in descending order, so `jsonb` reordering them
+         |   shows up.
+         | - the timestamp is written by the application and read back in
+         |   PostgreSQL's own `timestamptz` rendering.
+         */
         app(AuditLog::class)->record(
             category: 'enforcement',
             action: 'enforcement.projection.round_trip',
             subjectType: 'EntityProbe',
-            subjectId: $this->entityA,
+            subjectId: 'SHORT-1',
             subjectLabel: 'round-trip probe',
-            before: ['b' => 'before', 'nested' => ['z' => 1, 'a' => 2]],
-            after: ['a' => 'after', 'nested' => ['z' => 3, 'a' => 4]],
+            before: ['z' => 'before', 'nested' => ['z' => 1, 'a' => 2]],
+            after: ['z' => 'after', 'a' => 1, 'nested' => ['z' => 3, 'a' => 4]],
             reason: 'proves the written hash survives a database round-trip',
             entityId: $this->entityA,
+            partyId: 'SHORT-2',
+            periodId: 'SHORT-3',
         );
 
         $after = app(AuditChainVerifier::class)->verify();
 
         if (! $after->isIntact) {
+            // Only claim the writer/verifier disagreement when the chain was
+            // sound BEFORE the write. Otherwise this is the earlier damage
+            // showing up again, and naming the wrong cause sends whoever
+            // reads it to the wrong file.
             $violations[] = 'a record written in this transaction does not verify when read back: '.
                 $after->summary().
-                ' - the writer and the verifier have stopped agreeing about what is hashed';
+                ($before->isIntact
+                    ? ' - the writer and the verifier have stopped agreeing about what is hashed'
+                    : ' (the chain was already broken before this write, so that is the thing to fix first)');
         }
 
         if ($after->recordsChecked !== $before->recordsChecked + 1) {
@@ -902,6 +933,214 @@ final class TenantEnforcementRules
                     );
                 }
             }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * The permissions that can move money, or hide that money moved, must
+     * require a second factor - PF-031.
+     *
+     * A password is the one credential an attacker can obtain without
+     * touching the user's device, so for these acts it is not sufficient
+     * evidence of who is present. This is a configuration check because
+     * clearing one of these flags is a one-word edit in a seeder with no
+     * other visible symptom: everything keeps working, slightly less safely,
+     * and nothing says so.
+     *
+     * The step-up set must also be a SUBSET of the MFA set. A permission that
+     * demands re-authentication but not enrolment is incoherent - there would
+     * be no factor to re-authenticate with.
+     *
+     * @return list<string>
+     */
+    public function moneyMoversDemandAFactor(): array
+    {
+        $mustRequireMfa = [
+            'payment.release',
+            'supplier.bank_details.update',
+            'journal.post',
+            'journal.reverse',
+            'period.close',
+            'period.reopen',
+            'tax_return.file',
+            'user.manage',
+            'role.manage',
+        ];
+
+        $violations = [];
+        $catalogue = Permission::query()->get()->keyBy('key');
+
+        foreach ($mustRequireMfa as $key) {
+            $permission = $catalogue->get($key);
+
+            if ($permission === null) {
+                $violations[] = sprintf('the permission "%s" is not in the catalogue at all', $key);
+
+                continue;
+            }
+
+            if (! $permission->requires_mfa) {
+                $violations[] = sprintf(
+                    '"%s" can move money or conceal that it moved, but does not require a second factor',
+                    $key,
+                );
+            }
+        }
+
+        foreach ($catalogue as $key => $permission) {
+            if ($permission->requires_step_up && ! $permission->requires_mfa) {
+                $violations[] = sprintf(
+                    '"%s" requires step-up but not MFA, so there would be no factor to step up with',
+                    $key,
+                );
+            }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * Enrolment proves the loop works before anything depends on it, and a
+     * correct code is accepted exactly once - PF-030.
+     *
+     * The replay half is the one worth guarding. A TOTP code stays valid for
+     * its whole 30-second step, so a code read over a shoulder or relayed by
+     * a phishing proxy works again seconds later unless the last accepted
+     * step is remembered and anything at or below it refused.
+     *
+     * @return list<string>
+     */
+    public function totpCodeWorksOnce(): array
+    {
+        $mfa = app(MfaService::class);
+        $user = $this->probeUser('totp-probe');
+
+        if ($user === null) {
+            return ['could not create a probe user, so TOTP could not be checked'];
+        }
+
+        app(EntityContext::class)->use($this->entityA);
+
+        $violations = [];
+        $enrolment = $mfa->beginTotpEnrolment($user, 'enforcement probe');
+
+        if ($mfa->hasConfirmedFactor($user)) {
+            $violations[] = 'an authenticator counts as usable before any code from it has been accepted, '.
+                'so a user whose app has the wrong clock would be locked out';
+        }
+
+        if ($mfa->confirmTotpEnrolment($enrolment['authenticator'], '000000')) {
+            $violations[] = 'enrolment was confirmed by a code that is almost certainly wrong';
+        }
+
+        if (! $mfa->confirmTotpEnrolment($enrolment['authenticator'], Totp::at($enrolment['secret']))) {
+            $violations[] = 'a correct code did not confirm enrolment';
+
+            return $violations;
+        }
+
+        if (! $mfa->hasConfirmedFactor($user)) {
+            $violations[] = 'the authenticator is still not usable after a correct code confirmed it';
+        }
+
+        // Confirmation consumed the current step, so rewind the counter to
+        // stand in for the next 30 seconds arriving.
+        Authenticator::findOrFail($enrolment['authenticator']->getKey())
+            ->forceFill(['sign_count' => 0])
+            ->save();
+
+        $code = Totp::at($enrolment['secret']);
+
+        if ($mfa->verifyCode($user, $code) === null) {
+            $violations[] = 'a correct code was refused on first use';
+        }
+
+        if ($mfa->verifyCode($user, $code) !== null) {
+            $violations[] = 'the same correct code was accepted twice; a code relayed by a phishing proxy '.
+                'would still work';
+        }
+
+        // And the secret must not be reachable by anything that iterates
+        // attributes, because that is how a secret reaches a log line.
+        if (array_key_exists('secret_encrypted', $enrolment['authenticator']->toArray())) {
+            $violations[] = 'the TOTP secret appears in toArray(), so it will eventually reach a log';
+        }
+
+        return $violations;
+    }
+
+    /**
+     * An event and a refusal written in the same transaction must not block
+     * each other.
+     *
+     * This shipped broken, and it was not a race - it happened every time.
+     * An event is written inside the caller's transaction, which holds its
+     * chain head lock until commit. A refusal is written on a connection of
+     * its own so it survives the rollback that refusing causes. With one
+     * shared chain head, the refusal waited for a lock that would only be
+     * released once the refusal returned: a self-deadlock inside one request,
+     * reachable from any SoD check that ran after an audit write.
+     *
+     * Separate chains remove the contention. This check proves it, and does
+     * so with `lock_timeout` set on the out-of-band connection so that a
+     * regression fails in seconds instead of hanging the whole run - a check
+     * that hangs is a check people disable.
+     *
+     * @return list<string>
+     */
+    public function refusalDoesNotDeadlock(): array
+    {
+        $audit = app(AuditLog::class);
+
+        /*
+         | Pre-create the out-of-band connection with the config the writer
+         | would clone, so `lock_timeout` is already set on it and survives -
+         | the writer only purges when the database or username differs.
+         */
+        config(['database.connections.tenant_audit' => (array) config('database.connections.tenant')]);
+        DB::purge('tenant_audit');
+        DB::connection('tenant_audit')->statement("SET lock_timeout = '5s'");
+
+        $violations = [];
+
+        try {
+            $audit->record(
+                category: 'enforcement',
+                action: 'enforcement.deadlock.event',
+                reason: 'holds the events chain head for the rest of this transaction',
+                entityId: $this->entityA,
+            );
+
+            $audit->refusal(
+                category: 'enforcement',
+                action: 'enforcement.deadlock.refusal',
+                reason: 'must not wait on a lock the enclosing transaction holds',
+                entityId: $this->entityA,
+            );
+        } catch (Throwable $e) {
+            $violations[] = sprintf(
+                'writing a refusal after an event in the same transaction failed: %s - if this is a lock '.
+                'timeout, the two writers are sharing a chain head again',
+                Str::limit(preg_replace('/\s+/', ' ', $e->getMessage()) ?? '', 160),
+            );
+        }
+
+        // And the structural property behind it, so the reason survives even
+        // if someone 'simplifies' the probe away.
+        $heads = DB::connection('tenant')
+            ->table('audit_chain_head')
+            ->orderBy('chain')
+            ->pluck('chain')
+            ->all();
+
+        if ($heads !== [AuditLog::CHAIN_EVENTS, AuditLog::CHAIN_REFUSALS]) {
+            $violations[] = sprintf(
+                'the audit chain heads are [%s]; events and refusals each need their own, or the in-transaction '.
+                'writer and the out-of-band writer contend for one lock',
+                implode(', ', $heads),
+            );
         }
 
         return $violations;

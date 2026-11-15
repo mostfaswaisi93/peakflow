@@ -85,7 +85,7 @@ final class SodExceptionsReport
                 'u.name as user_name',
             ]);
 
-        $overrides = SodOverride::withoutEntityScope()
+        $overrides = SodOverride::query()
             ->with(['rule', 'user'])
             ->where('entity_id', $entityId)
             ->orderByDesc('approved_at')

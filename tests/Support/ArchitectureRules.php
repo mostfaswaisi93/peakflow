@@ -180,8 +180,8 @@ final class ArchitectureRules
 
     /**
      * Modules communicate through domain events and application services. A
-     * module that reaches into another's Eloquent models has dissolved the
-     * boundary that Deptrac compiles.
+     * module that reaches into another's models, traits, scopes or enums has
+     * dissolved the boundary that Deptrac compiles.
      *
      * @return list<string>
      */
@@ -199,14 +199,29 @@ final class ArchitectureRules
                         continue;
                     }
 
-                    $needle = 'App\\Tenant\\'.$other.'\\Models\\';
+                    /*
+                     | Models are the obvious boundary breach and were the only
+                     | one this rule checked. They are not the only one: a
+                     | trait, a scope or an enum reached across a module
+                     | dissolves the boundary just as completely, and more
+                     | quietly, because nothing in the code looks like a query.
+                     |
+                     | That gap let an Identity model use a Tenancy trait while
+                     | this rule reported nothing. Services are excluded
+                     | deliberately - calling another module's application
+                     | service IS the sanctioned route, and Deptrac enforces
+                     | the direction of those calls.
+                     */
+                    foreach (['Models', 'Concerns', 'Scopes', 'Enums'] as $kind) {
+                        $needle = 'App\\Tenant\\'.$other.'\\'.$kind.'\\';
 
-                    if (str_contains($source, $needle)) {
-                        $violations[] = sprintf(
-                            '%s references %s directly; go through a domain event or an application service',
-                            $this->relative($file),
-                            $needle,
-                        );
+                        if (str_contains($source, $needle)) {
+                            $violations[] = sprintf(
+                                '%s references %s directly; go through a domain event or an application service',
+                                $this->relative($file),
+                                $needle,
+                            );
+                        }
                     }
                 }
             }

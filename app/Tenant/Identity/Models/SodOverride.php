@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Tenant\Identity\Models;
 
 use App\Support\Database\TenantModel;
-use App\Tenant\Tenancy\Concerns\BelongsToEntity;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
@@ -21,13 +20,25 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * rather than here, because the message a user needs to read when it happens
  * belongs with the refusal.
  *
+ * ## No entity scope trait, deliberately
+ *
+ * This row carries an `entity_id` and is NOT scoped by Tenancy's
+ * `BelongsToEntity`. Identity sits below Tenancy in the module graph - Tenancy
+ * depends on Identity, not the reverse - so an Identity model reaching for a
+ * Tenancy trait inverts the dependency. It also did so invisibly, because an
+ * architecture rule that only looked for cross-module MODELS saw nothing.
+ *
+ * Nothing is lost. `SodEngine` filters by entity explicitly, which it did
+ * anyway, and PostgreSQL enforces the real boundary with a forced row-level
+ * security policy on this table. The Eloquent scope was the convenience layer,
+ * not the control.
+ *
  * @property ?\Illuminate\Support\Carbon $approved_at
  * @property \Illuminate\Support\Carbon $expires_at
  * @property ?\Illuminate\Support\Carbon $revoked_at
  */
 final class SodOverride extends TenantModel
 {
-    use BelongsToEntity;
 
     protected $table = 'sod_overrides';
 

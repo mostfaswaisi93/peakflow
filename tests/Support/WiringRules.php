@@ -7,8 +7,13 @@ namespace Tests\Support;
 use App\Platform\Enums\PlanFeature;
 use App\Platform\Exceptions\PlanDoesNotInclude;
 use App\Platform\Models\Plan;
+use App\Platform\Models\Tenant;
 use Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Str;
+use Symfony\Component\Console\Output\NullOutput;
+use Throwable;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Contracts\Http\Kernel as HttpKernel;
 use Illuminate\Session\Middleware\StartSession;
@@ -44,6 +49,7 @@ final class WiringRules
             'problem types have unique URIs and sane statuses' => $this->problemTypesAreWellFormed(),
             'exchange and pdf default to their stubs' => $this->driversDefaultToStubs(),
             'the plan gate refuses with an upgrade path, not a 403' => $this->planGateOffersAnUpgrade(),
+            'every reporting command actually runs' => $this->reportingCommandsRun(),
         ];
     }
 
@@ -157,6 +163,55 @@ final class WiringRules
 
         if ($exception->cheapestPlanWithIt === $cheapest->key) {
             $violations[] = 'the refusal points at the plan the customer is already on';
+        }
+
+        return $violations;
+    }
+
+    /**
+     * Run each read-only command and assert it does not blow up.
+     *
+     * Added because a refactor removed a method that only the exceptions
+     * report called, and every check still passed - nothing in the suite had
+     * ever executed that command. A report that throws is worse than a report
+     * that is wrong, because it is the thing somebody reaches for during an
+     * incident.
+     *
+     * The exit code is NOT asserted: `mfa:status` returns 1 when somebody is
+     * missing a factor and `audit:verify` returns 1 on a broken chain, and
+     * both are correct answers. What is asserted is that the command reaches
+     * an answer at all.
+     *
+     * @return list<string>
+     */
+    public function reportingCommandsRun(): array
+    {
+        $tenant = Tenant::query()->whereHas('connection')->orderBy('slug')->first();
+
+        if ($tenant === null) {
+            return [];
+        }
+
+        $commands = [
+            'subscriptions:expire' => ['--pretend' => true],
+            'audit:verify' => ['--all' => true],
+            'sod:exceptions' => ['tenant' => $tenant->slug],
+            'mfa:status' => ['tenant' => $tenant->slug],
+        ];
+
+        $violations = [];
+
+        foreach ($commands as $command => $arguments) {
+            try {
+                Artisan::call($command, $arguments, new NullOutput());
+            } catch (Throwable $e) {
+                $violations[] = sprintf(
+                    '`%s` threw %s: %s',
+                    $command,
+                    class_basename($e),
+                    Str::limit(preg_replace('/\s+/', ' ', $e->getMessage()) ?? '', 140),
+                );
+            }
         }
 
         return $violations;

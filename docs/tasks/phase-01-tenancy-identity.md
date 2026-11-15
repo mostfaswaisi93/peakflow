@@ -108,6 +108,7 @@ Two independent mechanisms, because one of them will eventually have a hole.
 `Identity` · **3 pts** · depends: PF-024 · standards: OWASP ASVS 5.0 · `type:security`
 
 - [ ] Fortify for the session guard; separate guards for the operator and tenant planes
+  - The two guards are done: `web` authenticates a customer's user from the tenant database, `ops` authenticates an operator from the platform database. Fortify itself is not installed (same registry limitation as above), so the scaffolding it would provide is still to write by hand.
 - [ ] Session fixation protection, idle and absolute timeouts, concurrent-session visibility and remote revocation
 - [ ] Sessions bound to a device fingerprint; a binding change forces re-authentication
 - [ ] Login throttling per account and per IP, with a response that does not reveal whether the account exists
@@ -116,24 +117,26 @@ Two independent mechanisms, because one of them will eventually have a hole.
 `Identity` · **5 pts** · depends: PF-029 · standards: WebAuthn Level 3, RFC 6238 · `type:security`
 
 - [ ] WebAuthn passkey enrolment and authentication, multiple credentials per user, with a readable credential manager
-- [ ] TOTP as the fallback, with recovery codes issued once and stored hashed
-- [ ] SMS is deliberately **not** offered, and the reason is documented
-- [ ] Enrolment and removal are audited; removing the last factor from a user holding a money-moving permission is refused
+  - **Blocked, not skipped.** The schema is in place (`authenticators.credential_id`, `public_key`, `sign_count`, which already carries the monotonic-counter invariant both factor types share). Attestation parsing and COSE key handling are not things to hand-write in the authentication path, and the library cannot be installed in this environment - the build reaches `api.github.com`, which the network policy refuses. See `docs/architecture/authentication.md`.
+- [x] TOTP as the fallback, with recovery codes issued once and stored hashed
+- [x] SMS is deliberately **not** offered, and the reason is documented
+- [x] Enrolment and removal are audited; removing the last factor from a user holding a money-moving permission is refused
 
 ### PF-031 · Binding MFA to money-moving permissions
 `Identity` · **3 pts** · depends: PF-030, PF-028 · standards: OWASP ASVS 5.0 · `risk:high` `type:security`
 
-- [ ] A permission can be marked as requiring an enrolled second factor
-- [ ] Granting such a permission to a user with no factor is refused at the point of granting, with a message explaining what to do - not at the point of use, where it blocks real work
-- [ ] `payment.release`, `journal.post`, `period.close`, `period.reopen`, `supplier.bank_details.update`, `reconciliation.write_off` and `tax_return.file` are marked
-- [ ] A report lists users holding marked permissions and their factor status
+- [x] A permission can be marked as requiring an enrolled second factor
+- [x] Granting such a permission to a user with no factor is refused at the point of granting, with a message explaining what to do - not at the point of use, where it blocks real work
+- [x] `payment.release`, `journal.post`, `period.close`, `period.reopen`, `supplier.bank_details.update`, `reconciliation.write_off` and `tax_return.file` are marked
+- [x] A report lists users holding marked permissions and their factor status
 
 ### PF-032 · Step-up re-authentication
 `Identity` · **3 pts** · depends: PF-030 · standards: OWASP ASVS 5.0 · `type:security`
 
-- [ ] A `step-up` middleware requiring a fresh factor assertion within a short window, independent of session age
+- [x] A `step-up` middleware requiring a fresh factor assertion within a short window, independent of session age
 - [ ] Applied to releasing a payment run and to reopening a closed period - a stolen session must not be enough for either
-- [ ] The step-up event is audited with what it authorized
+  - The middleware and the guard both exist and are proven; there are no payment-run or period routes to apply them to until PF-09x and PF-04x. `StepUpGuard::assert()` is called on the write path, not only in the route, so those call sites will be inside the services rather than bolted to the routes.
+- [x] The step-up event is audited with what it authorized
 
 ### PF-033 · The segregation-of-duties engine
 `Identity` · **8 pts** · depends: PF-028, PF-035 · standards: ISO/IEC 27001 Annex A, SOC 2 · `risk:high` `type:security`

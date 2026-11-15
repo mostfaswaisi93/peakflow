@@ -306,7 +306,11 @@ final class SodEngine
 
     private function usableOverride(SodRule $rule, User $user, ?string $entityId): ?SodOverride
     {
-        return SodOverride::withoutEntityScope()
+        // A plain query: SodOverride carries no Eloquent entity scope to
+        // remove, because Identity sits below Tenancy and must not use its
+        // trait. The entity is filtered explicitly here - as it already was -
+        // and PostgreSQL enforces the boundary with a forced RLS policy.
+        return SodOverride::query()
             ->where('sod_rule_id', $rule->getKey())
             ->where('user_id', $user->getKey())
             ->when($entityId !== null, fn ($q) => $q->where('entity_id', $entityId))

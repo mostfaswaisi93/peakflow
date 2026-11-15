@@ -18,7 +18,30 @@ use Illuminate\Support\Facades\DB;
  */
 final class AuditChainVerifier
 {
+    /**
+     * Verify every chain, and report the first divergence found in any.
+     *
+     * Both chains must hold. A system where events verify and refusals do not
+     * is a system where somebody removed the record of being stopped.
+     */
     public function verify(?int $limit = null, string $connectionName = 'tenant'): AuditChainVerdict
+    {
+        $checked = 0;
+
+        foreach ([AuditLog::CHAIN_EVENTS, AuditLog::CHAIN_REFUSALS] as $chain) {
+            $verdict = $this->verifyChain($chain, $limit, $connectionName);
+
+            if (! $verdict->isIntact) {
+                return $verdict;
+            }
+
+            $checked += $verdict->recordsChecked;
+        }
+
+        return AuditChainVerdict::intact($checked);
+    }
+
+    public function verifyChain(string $chain, ?int $limit = null, string $connectionName = 'tenant'): AuditChainVerdict
     {
         // The connection is a parameter so a check can verify records it wrote
         // inside an uncommitted transaction - another connection would not see
@@ -27,6 +50,7 @@ final class AuditChainVerifier
 
         $query = $connection->table('audit_log')
             ->select(array_merge(AuditRecordProjection::FIELDS, ['canonical_hash', 'previous_hash', 'chain_index']))
+            ->where('chain', $chain)
             ->orderBy('chain_index');
 
         if ($limit !== null) {
@@ -83,7 +107,10 @@ final class AuditChainVerifier
             $expectedIndex++;
         }
 
-        $head = $connection->selectOne('SELECT last_hash, last_index FROM audit_chain_head WHERE id = true');
+        $head = $connection->selectOne(
+            'SELECT last_hash, last_index FROM audit_chain_head WHERE chain = ?',
+            [$chain],
+        );
 
         // The head must agree with the chain, when the whole chain was walked.
         // A head ahead of the log means records were deleted from the end -
@@ -95,8 +122,9 @@ final class AuditChainVerifier
                 null,
                 $checked,
                 sprintf(
-                    'the chain head records %d entries but only %d exist; %s removed from the END of the log, '.
+                    'the "%s" chain head records %d entries but only %d exist; %s removed from the END of the log, '.
                     'which breaks no link and is why the head is checked separately',
+                    $chain,
                     (int) $head->last_index,
                     $checked,
                     (int) $head->last_index - $checked === 1
