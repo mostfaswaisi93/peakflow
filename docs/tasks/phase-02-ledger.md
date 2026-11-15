@@ -145,10 +145,10 @@ The mechanism that lets `Ledger` know nothing about invoices.
 ### PF-053 · Balance read models
 `Ledger` · **5 pts** · depends: PF-042 · standards: — · `risk:high`
 
-- [ ] Materialized balances per `(entity, period, account, dimension set)`, maintained incrementally on posting
-- [ ] **Rebuildable from the journal by definition** - `ledger:rebuild-balances` recomputes from scratch
-- [ ] A nightly `--check` run diffs the rebuilt values against the live ones and **reports** drift rather than silently repairing it, because silent repair hides the bug that caused it
-- [ ] Drift raises an alert; the alert is listed in [`../operations/observability.md`](../operations/observability.md)
+- [x] Materialized balances per `(entity, period, account, dimension set)`, maintained incrementally on posting
+- [x] **Rebuildable from the journal by definition** - `ledger:rebuild-balances` recomputes from scratch
+- [x] A nightly `--check` run diffs the rebuilt values against the live ones and **reports** drift rather than silently repairing it, because silent repair hides the bug that caused it
+- [x] Drift raises an alert; the alert is listed in [`../operations/observability.md`](../operations/observability.md)
 
 ### PF-054 · `ledger:verify`
 `Ledger` · **5 pts** · depends: PF-053, PF-038 · standards: — · `risk:high`

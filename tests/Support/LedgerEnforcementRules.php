@@ -16,6 +16,7 @@ use App\Tenant\Ledger\Posting\PostingLine;
 use App\Tenant\Ledger\Posting\PostingRule;
 use App\Tenant\Ledger\Posting\PostingRuleRegistry;
 use App\Tenant\Ledger\Posting\RuleDescription;
+use App\Tenant\Ledger\Services\BalanceRebuilder;
 use App\Tenant\Ledger\Services\ChartTemplate;
 use App\Tenant\Ledger\Services\LedgerVerifier;
 use App\Tenant\Ledger\Services\PeriodStateMachine;
@@ -99,6 +100,7 @@ final class LedgerEnforcementRules
                 'every period transition is recorded, with a reason' => $this->transitionsAreRecorded(),
                 'a reopening is flagged and reaches the compliance report' => $this->reopeningsAreVisible(),
                 'a year closes once, reversibly, in a reserved journal' => $this->yearEndCloseHolds(),
+                'the balance read model follows the journal, and drift is reported' => $this->balancesFollowTheJournal(),
             ];
         } catch (Throwable $e) {
             return ['ledger invariants could not be checked' => [
@@ -674,6 +676,214 @@ final class LedgerEnforcementRules
             $violations[] = 'an arbitrary rule posted into the reserved closing journal. A closing entry '.
                 'typed by hand is indistinguishable from the real one, and is found a year later by whoever '.
                 "compares this year's opening to last year's closing";
+        }
+
+        /*
+         | Leave a period open for the checks that follow.
+         |
+         | This check closes every period of the year in order to close the
+         | year - and the next check posts. Without this it was refused
+         | silently, and the next check reported "the read model did not
+         | move" rather than "the posting was refused", which sent the
+         | reading in entirely the wrong direction.
+         */
+        $machine->transition(
+            $this->period(),
+            PeriodState::Open,
+            'reopened after the year-end checks; the checks that follow need a period that accepts postings',
+        );
+
+        return $violations;
+    }
+
+    /**
+     * PF-053: a read model is a cache, and a cache is a second source of truth.
+     *
+     * ## Three claims, each of which fails differently
+     *
+     * **The increments run in the database.** A read model maintained by one
+     * write path drifts the first time somebody uses another - an import, a
+     * correction script, a restore - and the drift is found by whoever
+     * compares a report to the journal.
+     *
+     * **A draft has not happened.** Counting one overstates every figure
+     * between entering a manual journal and posting it, which is exactly the
+     * window somebody looks at a screen in.
+     *
+     * **Drift is reported, never repaired.** A silent repair hides the bug
+     * that caused it, and the bug is what matters: a figure that was wrong
+     * for a week was on a report for a week, and the repair erases the only
+     * evidence of how long.
+     *
+     * @return list<string>
+     */
+    public function balancesFollowTheJournal(): array
+    {
+        $rebuilder = app(BalanceRebuilder::class);
+        $violations = [];
+
+        /*
+         | Everything the other checks posted is already in the read model.
+         |
+         | So the baseline is "it agrees now", which is a stronger starting
+         | point than an empty table - it means the increments have survived
+         | every posting, reversal and refusal this file has performed.
+         */
+        $baseline = $rebuilder->check($this->entityId);
+
+        if (! $baseline['clean']) {
+            $violations[] = sprintf(
+                'the read model already disagrees with the journal after the postings this file made: %s',
+                json_encode(array_slice($baseline['findings'], 0, 3), JSON_THROW_ON_ERROR),
+            );
+        }
+
+        /*
+         | A line written WITHOUT the posting service.
+         |
+         | The import path. If the increments lived in the service this
+         | would drift, and nothing would say so until a report disagreed
+         | with the journal.
+         */
+        $entryId = (string) Str::ulid();
+        $before = (string) ($this->connection->table('account_balances')
+            ->where('entity_id', $this->entityId)
+            ->where('account_id', $this->accounts['1.1.1.1'])
+            ->whereNull('dimension_1')
+            ->value('net') ?? '0');
+
+        /*
+         | The refusal is captured, not ignored.
+         |
+         | The first version threw the return value away, so when an earlier
+         | check left every period closed this one reported "the read model
+         | did not move" - true, and the cause was that nothing was written.
+         | A check that cannot tell those apart sends the reader to the
+         | wrong place.
+         */
+        $written = $this->writeEntry([['1.1.1.1', '42.0000'], ['4.1', '-42.0000']], entryId: $entryId);
+
+        if ($written !== null) {
+            return ['the check could not post a line to measure the read model with: '.$written];
+        }
+
+        $after = (string) ($this->connection->table('account_balances')
+            ->where('entity_id', $this->entityId)
+            ->where('account_id', $this->accounts['1.1.1.1'])
+            ->whereNull('dimension_1')
+            ->value('net') ?? '0');
+
+        if (! BigDecimal::of($after)->isEqualTo(BigDecimal::of($before)->plus('42.0000'))) {
+            $violations[] = sprintf(
+                'a line written without the posting service did not move the read model (%s then %s). An '.
+                'import, a correction script and a restore all write lines that way, and a cache only one '.
+                'write path maintains is a cache that drifts',
+                $before,
+                $after,
+            );
+        }
+
+        if (! $rebuilder->check($this->entityId)['clean']) {
+            $violations[] = 'the read model disagrees with the journal after a direct line insert';
+        }
+
+        /*
+         | Drift, introduced and then looked for.
+         |
+         | One hundredth, because that is the size that matters: it is too
+         | small to notice on a screen and large enough to be a real
+         | difference in a filed return.
+         */
+        $this->connection->table('account_balances')
+            ->where('entity_id', $this->entityId)
+            ->where('account_id', $this->accounts['1.1.1.1'])
+            ->whereNull('dimension_1')
+            ->update(['net' => BigDecimal::of($after)->plus('0.01')]);
+
+        $drifted = $rebuilder->check($this->entityId);
+
+        if ($drifted['clean']) {
+            $violations[] = 'a balance one hundredth out of step with the journal was not detected. That is '.
+                'the size that matters: too small to notice on a screen, large enough to be a real '.
+                'difference in a filed return';
+        }
+
+        $wrong = array_values(array_filter(
+            $drifted['findings'],
+            static fn (array $finding): bool => $finding['kind'] === 'wrong',
+        ));
+
+        if ($wrong === []) {
+            $violations[] = 'the drift was reported as something other than "wrong", so the three kinds - a '.
+                'missing increment, a doubled one and an arithmetic error - cannot be told apart';
+        }
+
+        /*
+         | And it must NOT have been repaired.
+         |
+         | Defaulted, because the row can be absent - which is what
+         | happens when the maintenance trigger is disabled, and the first
+         | version of this line then threw "the number must not be empty"
+         | and took the whole suite down instead of reporting a finding. A
+         | check that explodes when the thing it guards is removed proves
+         | nothing about the guard.
+         */
+        $stillDrifted = (string) ($this->connection->table('account_balances')
+            ->where('entity_id', $this->entityId)
+            ->where('account_id', $this->accounts['1.1.1.1'])
+            ->whereNull('dimension_1')
+            ->value('net') ?? '0');
+
+        if (BigDecimal::of($stillDrifted)->isEqualTo(BigDecimal::of($after))) {
+            $violations[] = 'the check repaired the drift. A silent repair hides the bug that caused it, and '.
+                'the bug is what matters - a figure that was wrong for a week was on a report for a week, '.
+                'and the repair erases the only evidence of how long';
+        }
+
+        if (! $this->connection->table('balance_drift_findings')->where('entity_id', $this->entityId)->exists()) {
+            $violations[] = 'the drift was not recorded, so "which account, in which period, by how much, '.
+                'and since when" cannot be answered';
+        }
+
+        // The rebuild is the specification, and it clears an extra row too.
+        $this->connection->table('account_balances')->insert([
+            'id' => (string) Str::ulid(),
+            'entity_id' => $this->entityId,
+            'period_id' => $this->periodId,
+            'account_id' => $this->accounts['4.1'],
+            'dimension_key' => 'CHKGHOST|-|-|-|-|-|-|-',
+            'net' => '5.0000',
+            'debits' => '5.0000',
+            'credits' => '0.0000',
+            'line_count' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $withExtra = $rebuilder->check($this->entityId);
+
+        $extras = array_filter(
+            $withExtra['findings'],
+            static fn (array $finding): bool => $finding['kind'] === 'extra',
+        );
+
+        if ($extras === []) {
+            $violations[] = 'a balance row the journal does not justify was not reported as extra - which is '.
+                'what a delta applied twice looks like';
+        }
+
+        $rebuilder->rebuild($this->entityId);
+
+        if (! $rebuilder->check($this->entityId)['clean']) {
+            $violations[] = 'a rebuild did not restore agreement with the journal, which is the one thing it '.
+                'is for - and it is also the definition of what the increments should have produced';
+        }
+
+        if ($this->connection->table('account_balances')
+            ->where('dimension_key', 'CHKGHOST|-|-|-|-|-|-|-')
+            ->exists()) {
+            $violations[] = 'the rebuild left behind a row the journal does not justify. An upsert cannot '.
+                'clear one, which is why the rebuild deletes first';
         }
 
         return $violations;
