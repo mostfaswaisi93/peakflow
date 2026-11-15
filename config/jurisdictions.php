@@ -49,6 +49,36 @@ return [
 
     /*
     |---------------------------------------------------------------------------
+    | Rounding, per profile - PF-006
+    |---------------------------------------------------------------------------
+    |
+    | The platform default is half-up, which is what `config('money')` says and
+    | what almost every tax authority specifies. A profile declares otherwise
+    | only where a jurisdiction actually mandates it: banker's rounding exists
+    | in this list because a jurisdiction may require it, not because it is a
+    | better default.
+    |
+    | Declared here rather than in code so that adding a country is a profile
+    | plus fixtures, as ADR-0007 says, and never a change to the money layer.
+    |
+    | A profile not named here gets the platform default - which is the right
+    | behaviour and is why the fallback is explicit rather than an exception:
+    | refusing to round because a profile forgot to declare a mode would make
+    | a new jurisdiction unusable until somebody noticed.
+    |
+    */
+
+    'rounding' => [
+        'generic' => 'half_up',
+        'peppol' => 'half_up',
+        'zatca' => 'half_up',
+        'facturx' => 'half_up',
+        'eta' => 'half_up',
+        'jofotara' => 'half_up',
+    ],
+
+    /*
+    |---------------------------------------------------------------------------
     | Validation artefacts
     |---------------------------------------------------------------------------
     |

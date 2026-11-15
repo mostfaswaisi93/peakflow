@@ -230,13 +230,37 @@ The exit code is non-zero on a degraded run. That is an alert on the **job**, no
 
 The alert is the part that is easy to drop, and the reason it is not: a month of invoices at a three-week-old rate produces a difference that is found at the close, is material, and is explained by nobody - while every individual invoice looked fine at the time. So a degraded run writes the provider attempts onto `fx_rate_fetch_runs`, writes an append-only audit entry beside the documents it explains, logs a warning, and exits non-zero.
 
+## Reading a number somebody typed
+
+`format()` and `parse()` are one pair, not two features. A form renders an amount with `format()` and takes it back from a text field, so whatever `format()` produced has to read back as the same value - in the locale it was rendered in, with the digits, separators and invisible marks that locale puts there.
+
+That is the property `bin/verify examples` asserts: generated amounts crossed with eight currencies and two locales, the seed printed on failure so a red run is reproducible rather than folklore. The set is chosen for the cases that break the naive implementation - `JOD` and `BHD` at three decimals, `JPY` at none, negatives, and `ar` with Arabic-Indic digits, where the formatted string carries `U+200F`, `U+061C` and a narrow no-break space that nobody would type by hand but every Arabic form will hand back.
+
+**The round trip is of the displayed value, not the stored one.** `format()` renders the currency's exponent, so 1234.5678 SAR displays as `1,234.57` and reads back as 1234.5700. Asserting the stored value round-trips would make the property false for most amounts in a ledger that stores four places - and the honest statement is the useful one: what the user sees is what the user can type back.
+
+### Two guards, both load-bearing, both found by measurement
+
+**ICU has to consume the whole string.** `NumberFormatter::parse()` parses as far as it can and tells you where it stopped; it does not refuse a string it only partly understood. Measured: `about 12k` read back as 12, and `١٢٬٥٠٠٫٥٠` under an `en` formatter read back as 12500. The second is a wrong number with a plausible shape. The first is worse, because twelve riyals posts, balances, and reconciles against nothing. So the parse requires full consumption - after stripping only the directional marks and non-breaking spaces ICU itself emits - and refuses anything with a remainder.
+
+**The fallback whitelists characters rather than stripping the rest.** The first version removed everything that was not a digit or a dot, which turns `about 12k` into 12 by a different route. The pass now permits only the separators people and ICU actually produce - comma, apostrophe, the spaces, the directional marks, the sign characters - and what remains must match a plain decimal or the whole value is refused. A figure the software invented is a figure nobody can trace.
+
+Both guards were re-broken deliberately and each one failed a check on its own. A guard whose removal changes nothing is documentation, not a control.
+
+### One implementation
+
+`ManualJournal` had its own normaliser for the same job, which is how a codebase ends up with two answers to "is `12k` a number" - and the second copy was the one that stripped letters. It now calls `Money::normaliseTypedAmount()`, which parses or refuses, and returns a reason when it refuses so the form can say which line it could not read.
+
+### Rounding resolves per jurisdiction, from configuration
+
+`RoundingPolicy::forProfile()` reads `config('jurisdictions.rounding')`, so a new country is a profile entry plus fixtures and never a change to the money layer. A profile that declares no mode falls back to the platform default instead of throwing: refusing to round because a configuration file is incomplete would make a jurisdiction unusable until somebody noticed, and the noticing would happen on an invoice.
+
 ## How this is tested
 
 | Layer | Asserts |
 |-------|---------|
 | Unit | Each scale's boundary behaviour; half-up versus half-even producing specified different answers |
 | Unit, per currency | Exponent 0, 2 and 3, plus `MGA`/`MRU`, each with a named test |
-| Property-based | `format` then `parse` round-trips exactly for any amount and currency; recomputing a document twice is identical; any balanced line set still balances after a storage round trip |
+| Property-based | `format` then `parse` round-trips the **displayed** value for any amount, currency and locale, seed printed on failure; recomputing a document twice is identical; any balanced line set still balances after a storage round trip |
 | Golden file | Jurisdiction rounding fixtures with expected output **to the cent**, from official corpora where one exists |
 | Mutation | A minimum score gate on `Support\Money`, `Tax` and `Settlement`. A money suite that still passes against mutated arithmetic is not testing the arithmetic |
 | Architecture | No `float` declaration, cast or coercion in the money path; no fourth scale |

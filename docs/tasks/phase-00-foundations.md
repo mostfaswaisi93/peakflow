@@ -64,10 +64,15 @@ Each of these is a rule that a code review will eventually miss.
 
 - [x] `Money`, `Rate` and `Scale` value objects wrapping `brick/money` and `brick/math`
 - [x] Every arithmetic operation requires an explicit `RoundingPolicy`; there is no default parameter
-- [ ] `RoundingPolicy` carries the mode (half-up, half-even, down) and the target scale, and is resolvable per jurisdiction
+- [x] `RoundingPolicy` carries the mode (half-up, half-even, down) and the target scale, and is resolvable per jurisdiction. `forProfile()` reads `config('jurisdictions.rounding')`, so adding a country is a profile plus fixtures and never an edit to the money layer. An unknown profile falls back to the platform default rather than throwing - refusing to round because a profile forgot to declare a mode would make a new jurisdiction unusable until somebody noticed, and the noticing would happen on an invoice
 - [x] Amount, unit-price and rate scales are the only three that exist, and a fourth cannot be constructed
 - [x] Currencies with exponent 0 (`JPY`, `KRW`, `VND`, `CLP`, `ISK`), exponent 3 (`BHD`, `JOD`, `KWD`, `OMR`, `TND`, `LYD`, `IQD`) and the non-decimal `MGA`/`MRU` each have a passing test
-- [ ] Property-based test: for any amount and any currency, `format` then `parse` round-trips exactly
+- [x] Property-based test: for any amount and any currency, `format` then `parse` round-trips exactly. Generated amounts crossed with eight currencies and two locales, seed printed on failure - three-decimal currencies, zero-exponent currencies, negatives, and an Arabic locale whose formatted output carries bidirectional marks and a narrow non-breaking space that nothing else would think to type
+- [x] The round trip is of the **displayed** value. `format()` renders the currency's own exponent, so 1234.5678 SAR displays as 1,234.57 and reads back as 1234.5700; claiming the stored value round-trips would make the property false for most amounts in a ledger that stores four places
+- [x] `Money::parse()` exists because a form shows what `format()` produced and takes back what somebody typed, and those have to be the same value. ICU first - it knows the locale's separators, digit shape and accounting-negative form - then a normalising pass for what people actually type: Latin digits pasted into an Arabic form, a thousands separator left in, the whole field copied with its symbol
+- [x] **ICU must consume the whole string.** It parses as far as it can and reports where it stopped, so `about 12k` read back as 12 and an Arabic-formatted amount under an English locale read back as its first two digits. Both measured. A form that accepts "about 12k" as twelve riyals is the worse of the two, because the figure is plausible, it posts, and nobody can trace where it came from
+- [x] The fallback uses a **whitelist of permitted characters**, not a strip of everything else. Stripping non-digits turned `about 12k` into 12 as well, so anything outside the separators people and ICU actually produce now refuses the whole value
+- [x] One implementation of "what counts as a number somebody typed". `ManualJournal` carried its own normaliser - the second copy of the same rules, and the copy that stripped letters
 
 ### PF-007 · ISO code registries
 `Support/Iso` · **3 pts** · depends: PF-006 · standards: ISO 4217, ISO 3166-1, ISO 639-1, UN/CEFACT Rec 20 & 21

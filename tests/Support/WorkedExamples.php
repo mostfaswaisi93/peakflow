@@ -55,6 +55,9 @@ final class WorkedExamples
             'a subscription is valid THROUGH its end date' => $this->subscriptionBoundary(),
             'TOTP against the RFC 6238 test vectors' => $this->totpTestVectors(),
             'a fiscal year starting late in the month does not overflow' => $this->fiscalYearBoundaries(),
+            'format then parse round-trips, for generated amounts' => $this->moneyRoundTrips(),
+            'what a form may take, and what it must refuse' => $this->typedAmountsAreReadOrRefused(),
+            'a jurisdiction profile resolves a rounding policy' => $this->roundingResolvesPerProfile(),
         ];
     }
 
@@ -544,5 +547,235 @@ final class WorkedExamples
         }
 
         return sprintf('%s was NOT refused', $label);
+    }
+
+    /**
+     * `format` then `parse` round-trips, for generated amounts - PF-006.
+     *
+     * ## Why generated and not a list
+     *
+     * The list somebody writes contains the cases they thought of, and the
+     * interesting ones here are combinations: a three-decimal currency in an
+     * Arabic locale with a negative amount, a zero-exponent currency with a
+     * thousands separator, an amount whose formatted form contains a
+     * non-breaking space that ICU emitted and nothing else would think to
+     * type.
+     *
+     * So the amounts, the currencies and the locales are crossed, and the
+     * seed is printed on failure.
+     *
+     * ## The round trip is of the DISPLAYED value
+     *
+     * `format()` renders the currency's own exponent, so 1234.5678 in SAR
+     * displays as 1,234.57 and reads back as 1234.5700. Claiming the stored
+     * value round-trips would make the property false for every amount with
+     * more precision than its currency shows - which is most of them in a
+     * ledger that stores four places.
+     *
+     * ## And the failures found by writing it
+     *
+     * ICU parses as far as it can and reports where it stopped, so `about
+     * 12k` read back as 12 and an Arabic-formatted amount under an English
+     * locale read back as its first two digits. Both were accepted before
+     * this check required ICU to consume the whole string.
+     *
+     * @return list<string>
+     */
+    public function moneyRoundTrips(): array
+    {
+        $violations = [];
+        $seed = random_int(1, PHP_INT_MAX);
+        mt_srand($seed);
+
+        $currencies = ['SAR', 'USD', 'EUR', 'JOD', 'KWD', 'JPY', 'KRW', 'GBP'];
+        $locales = ['en', 'ar'];
+
+        $amounts = ['0.0100', '1.0000', '999999999.9900'];
+
+        for ($i = 0; $i < 40; $i++) {
+            $units = mt_rand(0, 999_999_999);
+            $fraction = mt_rand(0, 9999);
+
+            $amounts[] = sprintf('%d.%04d', $units, $fraction);
+            $amounts[] = sprintf('-%d.%04d', $units, $fraction);
+        }
+
+        $previous = app()->getLocale();
+
+        try {
+            foreach ($locales as $locale) {
+                app()->setLocale($locale);
+
+                foreach ($currencies as $currency) {
+                    foreach ($amounts as $amount) {
+                        $money = Money::of($amount, $currency);
+                        $formatted = $money->format($locale);
+                        $read = Money::parse($formatted, $currency, $locale);
+
+                        if ($read === null) {
+                            $violations[] = sprintf(
+                                'seed %d: %s %s formatted as "%s" in %s and could not be read back',
+                                $seed,
+                                $amount,
+                                $currency,
+                                $formatted,
+                                $locale,
+                            );
+
+                            continue;
+                        }
+
+                        if (! $money->toPresentation()->isEqualTo($read->toPresentation())) {
+                            $violations[] = sprintf(
+                                'seed %d: %s %s formatted as "%s" in %s and read back as %s',
+                                $seed,
+                                $amount,
+                                $currency,
+                                $formatted,
+                                $locale,
+                                (string) $read->amount,
+                            );
+                        }
+
+                        if (! $money->roundTrips($locale)) {
+                            $violations[] = sprintf(
+                                'seed %d: roundTrips() disagrees with its own parse for %s %s in %s',
+                                $seed,
+                                $amount,
+                                $currency,
+                                $locale,
+                            );
+                        }
+
+                        if (count($violations) >= 6) {
+                            return $violations;
+                        }
+                    }
+                }
+            }
+        } finally {
+            app()->setLocale($previous);
+        }
+
+        return $violations;
+    }
+
+    /**
+     * What a form may take, and what it must refuse - PF-006.
+     *
+     * The refusals matter more than the acceptances. `about 12k` parsed as 12
+     * before the character set was whitelisted, and a form accepting it is a
+     * journal line for twelve riyals that nobody can trace.
+     *
+     * @return list<string>
+     */
+    public function typedAmountsAreReadOrRefused(): array
+    {
+        $violations = [];
+
+        $accepted = [
+            '1,500.00' => '1500.0000',
+            '1 500.00' => '1500.0000',
+            '١٢٬٥٠٠٫٥٠' => '12500.5000',
+            '۱۲۵۰۰٫۵۰' => '12500.5000',
+            '(1,234.56)' => '-1234.5600',
+            '1234.56 SAR' => '1234.5600',
+            '-0.01' => '-0.0100',
+            '.5' => '0.5000',
+        ];
+
+        $refused = ['about 12k', '12k', '', 'SAR', '1.2.3', '١٢ ألف', '12,00,000x'];
+
+        foreach ($accepted as $typed => $expected) {
+            $read = Money::parse((string) $typed, 'SAR', 'en');
+
+            if ($read === null) {
+                $violations[] = sprintf('"%s" was refused and is a number somebody typed', $typed);
+
+                continue;
+            }
+
+            if ((string) $read->amount !== $expected) {
+                $violations[] = sprintf(
+                    '"%s" read as %s where %s belongs',
+                    $typed,
+                    (string) $read->amount,
+                    $expected,
+                );
+            }
+        }
+
+        foreach ($refused as $typed) {
+            $read = Money::parse($typed, 'SAR', 'en');
+
+            if ($read !== null) {
+                $violations[] = sprintf(
+                    '"%s" was read as %s. A figure the software invented is a figure nobody can trace',
+                    $typed,
+                    (string) $read->amount,
+                );
+            }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * A jurisdiction profile resolves a rounding policy - PF-006.
+     *
+     * @return list<string>
+     */
+    public function roundingResolvesPerProfile(): array
+    {
+        $violations = [];
+        $declared = (array) config('jurisdictions.rounding', []);
+
+        if ($declared === []) {
+            return ['no jurisdiction profile declares a rounding mode, so the resolution is a constant'];
+        }
+
+        foreach (array_keys((array) config('jurisdictions.enabled', [])) as $profile) {
+            if (! array_key_exists((string) $profile, $declared)) {
+                $violations[] = sprintf(
+                    'profile "%s" is listed as a jurisdiction and declares no rounding mode. It falls '.
+                    'back to the platform default, which is correct and silent - so the omission is '.
+                    'reported here rather than discovered on an invoice',
+                    (string) $profile,
+                );
+            }
+        }
+
+        /*
+         | An unknown profile falls back rather than throwing.
+         |
+         | Refusing to round because a profile forgot to declare a mode would
+         | make a new jurisdiction unusable until somebody noticed, and the
+         | noticing would happen on an invoice.
+         */
+        $unknown = RoundingPolicy::forProfile('no-such-profile', Scale::Amount);
+
+        if ($unknown->mode !== RoundingPolicy::halfUp(Scale::Amount)->mode) {
+            $violations[] = 'an unknown profile does not fall back to the platform default';
+        }
+
+        /*
+         | And a declared mode is actually read.
+         |
+         | Every shipped profile declares half-up today, so asserting the
+         | resolution against them would pass with the lookup deleted. This
+         | sets one and reads it back.
+         */
+        config(['jurisdictions.rounding.check-profile' => 'half_even']);
+
+        $resolved = RoundingPolicy::forProfile('check-profile', Scale::Amount);
+
+        if ($resolved->mode !== RoundingPolicy::halfEven(Scale::Amount)->mode) {
+            $violations[] = sprintf(
+                'a profile declaring half_even resolved to %s, so the declaration is not being read',
+                $resolved->describe(),
+            );
+        }
+
+        return $violations;
     }
 }

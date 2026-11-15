@@ -9,6 +9,7 @@ use App\Support\Money\Exceptions\CurrencyMismatch;
 use App\Support\Money\Exceptions\InvalidAllocation;
 use App\Support\Money\Exceptions\PrecisionLoss;
 use Brick\Math\BigDecimal;
+use Brick\Math\Exception\MathException;
 use Brick\Math\BigNumber;
 use Brick\Math\Exception\RoundingNecessaryException;
 use Brick\Math\RoundingMode;
@@ -363,6 +364,318 @@ final readonly class Money implements JsonSerializable, Stringable
      * a string replacement also mangles any digit inside an identifier in the
      * same label, and it cannot be reversed for parsing.
      */
+    /**
+     * Read a formatted amount back into a `Money` - PF-006.
+     *
+     * ## Why this exists at all
+     *
+     * Because a form shows what `format()` produced and takes back what
+     * somebody typed into it, and those two have to be the same value. A
+     * field that renders `١٢٬٥٠٠٫٥٠ ر.س.‏` and cannot read it back is a field
+     * that loses the amount the moment anybody edits anything else on the
+     * page.
+     *
+     * ## ICU first, then a deliberate fallback
+     *
+     * `NumberFormatter::parseCurrency()` understands the locale's separators,
+     * its digit shape and its accounting-negative form, which is a long list
+     * of things not to reimplement. What it does not do is cope with the
+     * forms people actually type: a Latin-digit amount pasted into an Arabic
+     * form, a thousands separator left in, a space where a non-breaking space
+     * belongs.
+     *
+     * So ICU is tried, and a normalising pass handles the rest. The order
+     * matters: ICU is correct where it applies, and the fallback is a
+     * concession to how typing works rather than a replacement for it.
+     *
+     * ## It returns null rather than guessing
+     *
+     * `about 12k` is not an amount. A figure the software invented is a
+     * figure nobody can trace, and the caller - a form - has a field to put
+     * the complaint next to.
+     */
+    public static function parse(string $formatted, string $currency, ?string $locale = null): ?self
+    {
+        $currency = mb_strtoupper(trim($currency));
+
+        if ($formatted === '') {
+            return null;
+        }
+
+        $decimal = self::parseToDecimal($formatted, $currency, $locale);
+
+        if ($decimal === null) {
+            return null;
+        }
+
+        /*
+         | Scaled to the Amount scale with HalfUp, not Unnecessary.
+         |
+         | A formatted value carries the currency's own exponent - two places
+         | for SAR, three for JOD, none for JPY - and the stored scale is
+         | four. Going from fewer places to more is exact, so the rounding
+         | mode never engages; it is named rather than left to a default
+         | because `Unnecessary` would throw on an input with five decimals,
+         | and a form should refuse that with a message rather than a
+         | stack trace.
+         */
+        return new self($decimal->toScale(Scale::Amount->value, RoundingMode::HalfUp), $currency);
+    }
+
+    /**
+     * Whether a formatted amount reads back as the same value.
+     *
+     * For a check, and for a form deciding whether to re-render the field
+     * from the stored value or leave what somebody typed.
+     */
+    public function roundTrips(?string $locale = null): bool
+    {
+        $read = self::parse($this->format($locale), $this->currency, $locale);
+
+        if ($read === null) {
+            return false;
+        }
+
+        /*
+         | Compared at the PRESENTATION scale, because that is what was
+         | formatted.
+         |
+         | `format()` renders the currency's exponent - two places for SAR -
+         | so 1234.5678 formats as 1,234.57 and reads back as 1234.5700. The
+         | round trip is of the DISPLAYED value, and claiming otherwise would
+         | make the property false for every amount with more precision than
+         | its currency shows.
+         */
+        return $this->toPresentation()->isEqualTo($read->toPresentation());
+    }
+
+    private static function parseToDecimal(string $formatted, string $currency, ?string $locale): ?BigDecimal
+    {
+        $locale = self::localeWithDigits($locale ?? self::localeNow());
+
+        /*
+         | ICU, with the currency parser first.
+         |
+         | `parseCurrency` strips the symbol wherever the locale puts it and
+         | understands the accounting-negative parenthesis form, which a
+         | regular expression gets wrong for exactly the locales this
+         | product serves.
+         */
+        $trimmed = trim($formatted);
+
+        foreach ([NumberFormatter::CURRENCY, NumberFormatter::DECIMAL] as $style) {
+            $formatter = new NumberFormatter($locale, $style);
+
+            $parsedCurrency = $currency;
+            $position = 0;
+
+            $value = $style === NumberFormatter::CURRENCY
+                ? $formatter->parseCurrency($trimmed, $parsedCurrency, $position)
+                : $formatter->parse($trimmed, NumberFormatter::TYPE_DOUBLE, $position);
+
+            if ($value === false || ! is_numeric((string) $value)) {
+                continue;
+            }
+
+            /*
+             | ICU has to have consumed the WHOLE string.
+             |
+             | It parses as far as it can and reports where it stopped - so
+             | without this it reads `about 12k` as 12 and
+             | `١٢٬٠٠٠٫٥٠` under an English locale as 12, stopping at the
+             | first character it does not recognise. Both were measured, and
+             | a form accepting "about 12k" as twelve riyals is the worse of
+             | the two.
+             |
+             | The remainder is allowed to be whitespace and the
+             | bidirectional marks ICU itself emits, and nothing else.
+             */
+            $remainder = (string) preg_replace(
+                '/[\s\x{200E}\x{200F}\x{061C}\x{00A0}\x{202F}]+/u',
+                '',
+                mb_substr($trimmed, $position),
+            );
+
+            if ($remainder !== '') {
+                continue;
+            }
+
+            /*
+             | ICU hands back a FLOAT, and a float is not a value to store.
+             |
+             | It is used only to establish the digits, which are then taken
+             | from the string form: the amount has already been rounded to
+             | the currency's exponent by whatever formatted it, so the float
+             | is exact at that scale and the conversion is a transcription
+             | rather than an arithmetic.
+             */
+            try {
+                // @arch-allow: ICU returns a float and has no decimal API.
+                // Safe here and only here: the value came from a string that
+                // was formatted at the currency's own exponent, so the float
+                // is exact at that scale, and the result is immediately
+                // scaled and stored as a decimal. @arch-allow
+                return BigDecimal::of(sprintf('%.6F', $value)); // @arch-allow
+            } catch (MathException) {
+                continue;
+            }
+        }
+
+        /*
+         | The fallback: normalise what people type.
+         |
+         | Arabic-Indic and Eastern Arabic-Indic digits, the Arabic decimal
+         | and thousands separators, the Latin separators, the spaces -
+         | including the non-breaking and narrow non-breaking spaces that
+         | ICU itself emits - and the currency's own symbol or code left in
+         | place by somebody who copied the whole field.
+         */
+        $normalised = self::normaliseTypedAmount($formatted, $currency);
+
+        if ($normalised === null) {
+            return null;
+        }
+
+        try {
+            return BigDecimal::of($normalised);
+        } catch (MathException) {
+            return null;
+        }
+    }
+
+    /**
+     * Turn what somebody typed into something `BigDecimal` accepts.
+     *
+     * Returns null when what is left is not a number, rather than returning
+     * zero - a silent zero in a journal line is a line that balances against
+     * nothing.
+     */
+    public static function normaliseTypedAmount(string $amount, ?string $currency = null): ?string
+    {
+        $arabicIndic = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
+        $easternArabicIndic = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
+
+        $value = str_replace($arabicIndic, range(0, 9), $amount);
+        $value = str_replace($easternArabicIndic, range(0, 9), $value);
+
+        // The Arabic decimal separator becomes a point; the Arabic thousands
+        // separator goes.
+        $value = str_replace(['٫', '٬'], ['.', ''], $value);
+
+        if ($currency !== null && $currency !== '') {
+            $value = str_ireplace($currency, '', $value);
+        }
+
+        /*
+         | The currency SYMBOL as well as its code, from the registry.
+         |
+         | Somebody who selects the whole field and pastes it brings the
+         | symbol, and `ر.س.` is three characters and two full stops - which
+         | a digits-and-points filter would turn into part of the number.
+         */
+        foreach (self::symbolsFor($currency) as $symbol) {
+            if ($symbol !== '') {
+                $value = str_replace($symbol, '', $value);
+            }
+        }
+
+        /*
+         | The accounting negative, before the digits are isolated.
+         |
+         | `(1,234.56)` is how an accounting locale renders a credit, and
+         | stripping the parentheses as punctuation would turn it into a
+         | positive - which is the sign error that balances.
+         */
+        $negative = false;
+
+        if (preg_match('/^\s*\(.*\)\s*$/u', $value) === 1) {
+            $negative = true;
+            $value = (string) preg_replace('/[()]/u', '', $value);
+        }
+
+        if (str_contains($value, '-') || str_contains($value, "\u{2212}")) {
+            $negative = true;
+        }
+
+        /*
+         | A WHITELIST of permitted characters, not a strip of the rest.
+         |
+         | Stripping everything that is not a digit turned `about 12k` into
+         | 12 - measured, and a form accepting "about 12k" as twelve riyals
+         | is the worst outcome available here: the figure is plausible, it
+         | posts, and nobody can trace where it came from.
+         |
+         | So anything outside this set refuses the whole value. The set is
+         | the separators people and ICU actually produce: the comma, the
+         | apostrophe some locales use, the four space widths, the Arabic
+         | thousands separator (already replaced above), the bidirectional
+         | marks, the minus signs.
+         */
+        $stripped = (string) preg_replace(
+            '/[,\x{2019}\x{0027} \x{00A0}\x{202F}\x{2009}\x{200E}\x{200F}\x{061C}\x{2212}+-]/u',
+            '',
+            $value,
+        );
+
+        if ($stripped === '' || preg_match('/^[0-9]+(?:\.[0-9]+)?$|^\.[0-9]+$/', $stripped) !== 1) {
+            return null;
+        }
+
+        return ($negative ? '-' : '').$stripped;
+    }
+
+    /**
+     * The symbols a currency might arrive wearing.
+     *
+     * Asked of ICU rather than listed, because a symbol is a locale fact:
+     * the riyal is `ر.س.` in Arabic and `SAR` in English, and the euro sign
+     * is the same in both. Both locales are tried because a pasted value
+     * does not say which one rendered it.
+     *
+     * @return list<string>
+     */
+    private static function symbolsFor(?string $currency): array
+    {
+        if ($currency === null || $currency === '') {
+            return [];
+        }
+
+        $symbols = [];
+
+        foreach (['en', 'ar'] as $locale) {
+            $formatter = new NumberFormatter($locale, NumberFormatter::CURRENCY);
+            $formatter->setTextAttribute(NumberFormatter::CURRENCY_CODE, $currency);
+
+            $symbol = $formatter->getSymbol(NumberFormatter::CURRENCY_SYMBOL);
+
+            if (is_string($symbol) && $symbol !== '') {
+                $symbols[] = $symbol;
+            }
+        }
+
+        return array_values(array_unique($symbols));
+    }
+
+    private static function localeWithDigits(string $locale): string
+    {
+        $digits = \function_exists('config')
+            ? (string) (config('money.display.digits') ?? 'latn')
+            : 'latn';
+
+        if ($digits === '' || str_contains($locale, '-u-') || str_contains($locale, '@')) {
+            return $locale;
+        }
+
+        return $locale.'-u-nu-'.$digits;
+    }
+
+    private static function localeNow(): string
+    {
+        return \function_exists('app') && app()->bound('translator')
+            ? app()->getLocale()
+            : 'en';
+    }
+
     private function withNumberingSystem(string $locale): string
     {
         $digits = \function_exists('config')

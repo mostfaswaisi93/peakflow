@@ -81,6 +81,40 @@ final readonly class RoundingPolicy
         return new self(self::modeFromName($mode), $scale);
     }
 
+    /**
+     * The policy a named jurisdiction profile declares - PF-006.
+     *
+     * ## Why the profile and not the country
+     *
+     * A country can be served by more than one profile - an entity in Saudi
+     * Arabia may issue under `zatca` for its domestic invoices and `generic`
+     * for an export - and the rounding belongs to the rule set the document
+     * conforms to, not to where the entity is registered.
+     *
+     * ## An unknown profile gets the default, and does not throw
+     *
+     * Refusing to round because a profile forgot to declare a mode would
+     * make a new jurisdiction unusable until somebody noticed, and the
+     * noticing would happen on an invoice. The platform default is half-up,
+     * which is what almost every tax authority specifies - so the fallback
+     * is the common case rather than a guess.
+     */
+    public static function forProfile(?string $profile, Scale $scale): self
+    {
+        if ($profile === null || $profile === '') {
+            return self::forJurisdiction(null, $scale);
+        }
+
+        $declared = \function_exists('config')
+            ? config('jurisdictions.rounding.'.$profile)
+            : null;
+
+        return self::forJurisdiction(
+            is_string($declared) && $declared !== '' ? $declared : null,
+            $scale,
+        );
+    }
+
     public function withScale(Scale $scale): self
     {
         return new self($this->mode, $scale);

@@ -308,15 +308,28 @@ final class ManualJournal
         }
 
         /*
-         | Thousands separators and Arabic-Indic digits are normalised, and
-         | nothing else is.
+         | Through `Money::normaliseTypedAmount()`, which is shared.
          |
-         | Somebody typing 12٬500 or ١٢٥٠٠ has typed a number and the form
-         | should take it. Somebody typing "about 12k" has not, and guessing
-         | would be worse than refusing - a figure the software invented is
-         | a figure nobody can trace.
+         | This was a private normaliser here first, and it was the second
+         | implementation of the same rules - the first being inside
+         | `Money::parse()`, which a form also needs. Two copies of "what
+         | counts as a number somebody typed" is one copy that is wrong, and
+         | the one that was wrong here stripped letters: `about 12k` came out
+         | as 12.
          */
-        $normalised = $this->normalise($line->amount);
+        $normalised = Money::normaliseTypedAmount($line->amount, $line->currency);
+
+        if ($normalised === null) {
+            $problems[] = LineProblem::of(
+                $number,
+                'amount',
+                'amount_unreadable',
+                sprintf('"%s" ليس مبلغًا.', $line->amount),
+                sprintf('"%s" is not an amount.', $line->amount),
+            );
+
+            return null;
+        }
 
         try {
             $amount = BigDecimal::of($normalised);
@@ -365,22 +378,6 @@ final class ManualJournal
 
             return null;
         }
-
-        return $amount;
-    }
-
-    private function normalise(string $amount): string
-    {
-        $arabicIndic = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
-        $easternArabicIndic = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
-
-        $amount = str_replace($arabicIndic, range(0, 9), $amount);
-        $amount = str_replace($easternArabicIndic, range(0, 9), $amount);
-
-        // The Arabic decimal separator and thousands separator, and the Latin
-        // thousands separators people actually type.
-        $amount = str_replace(['٫', '٬'], ['.', ''], $amount);
-        $amount = str_replace([',', ' ', "\u{00A0}", "\u{202F}"], '', $amount);
 
         return $amount;
     }
