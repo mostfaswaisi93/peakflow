@@ -20,7 +20,7 @@ final class AccountRole extends TenantModel
 
     protected $table = 'account_roles';
 
-    protected $fillable = ['entity_id', 'role', 'account_id'];
+    protected $fillable = ['entity_id', 'role', 'account_id', 'jurisdiction'];
 
     protected $casts = ['role' => ControlRole::class];
 

@@ -131,9 +131,14 @@ The engine's organising principle is that **tax is data, not code**. A rate that
 ### PF-084 · Tax accounts and posting
 `Tax` · **3 pts** · depends: PF-082, PF-047 · standards: — · `type:posting`
 
-- [ ] Separate `vat_input` and `vat_output` control accounts per jurisdiction per entity
-- [ ] Posting rules for sales tax, purchase tax, reverse charge (both sides) and withholding, each written out as debits and credits
-- [ ] A non-recoverable portion posts to expense rather than to the input account, which is what makes the input account reconcilable to the return
+- [x] Separate `vat_input` and `vat_output` control accounts per jurisdiction per entity. `account_roles` gained a `jurisdiction` column, **required** for the VAT pair and **refused** for every other role - both halves of one CHECK, because a VAT account with no jurisdiction is unreconcilable and a bank account with one is a value the next reader has to interpret. The unique index collapses `NULL` to a sentinel, since `NULL` is not equal to `NULL` and a plain index would permit two bank roles
+- [x] Posting rules for sales tax, purchase tax, reverse charge (both sides) and withholding, each written out as debits and credits - in `RuleDescription`, in Arabic and English, for the inspection screen where an accountant checks a rule without reading PHP. Posted through the real `Poster` in the checks, because a rule can return a balanced set of lines that the poster then refuses
+- [x] A non-recoverable portion posts to expense rather than to the input account, which is what makes the input account reconcilable to the return. Irrecoverable tax with **no account to put it on is refused**: the alternative is that it goes somewhere nobody named
+- [x] The chart template stamps the entity's **own country** on the VAT roles at provisioning. A template cannot know it - `ifrs-generic` is used by entities anywhere - and what is true at provisioning is that the entity is registered where it is incorporated. A second jurisdiction is a row an operator adds, and a check proves it can be added without disturbing the first
+- [x] `PostingContext::account()` takes the jurisdiction and **refuses to default it**. The bite that defaulted it to whatever the entity had assigned was accepted silently, which is exactly the failure: one authority's VAT in the other's return, with a figure that looks plausible in both
+- [x] The reverse charge is **one rule, not two**, because the legs are not independently correct: the input without the output reports a claim with no liability, which is the shape of a refund request an authority investigates. For a fully recoverable business they net to nothing - which is why forgetting the output leg is invisible on a trial balance - and for a partly exempt one the output liability is still the whole tax
+- [x] No payable line on a reverse charge. The supplier is owed the net and nothing more; crediting the payable shows them as owed money that goes to the authority
+- [x] Withholding clears the counterparty account **in full** on both sides, with the deduction on its own control account. Two roles were added - `withholding_receivable` and `withholding_payable` - and assigned in all three chart templates; the Saudi and Jordanian charts already had a withholding payable account with no role
 
 ### PF-085 · Return periods and box mapping
 `Tax` · **5 pts** · depends: PF-084 · standards: — · `type:compliance`

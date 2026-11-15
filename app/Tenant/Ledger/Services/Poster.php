@@ -157,7 +157,7 @@ final class Poster
 
             foreach ($lines as $line) {
                 $accountId = $line->role !== null
-                    ? $context->account($line->role)
+                    ? $context->account($line->role, $line->jurisdiction)
                     : (string) $line->accountId;
 
                 /*

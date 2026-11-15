@@ -537,7 +537,7 @@ final class BalanceProperty
             ->where('entity_id', $this->entityId)
             ->where('postable', true)
             ->whereNotIn('code', ['1.1.1.2', '1.1.1.3', '1.1.2.1', '1.1.2.2', '1.1.3', '1.1.4', '1.1.5',
-                '2.1.1', '2.1.2', '2.1.3', '3.2', '5.3', '5.4', '5.5', '5.6'])
+                '1.1.6', '2.1.1', '2.1.2', '2.1.3', '2.1.7', '3.2', '5.3', '5.4', '5.5', '5.6'])
             ->pluck('id')
             ->map(static fn (mixed $id): string => (string) $id)
             ->all();

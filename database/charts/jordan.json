@@ -1,6 +1,6 @@
 {
   "key": "jordan",
-  "version": 1,
+  "version": 2,
   "name_ar": "دليل حسابات للمملكة الأردنية الهاشمية",
   "name_en": "Jordan chart of accounts",
   "countries": [
@@ -136,6 +136,17 @@
       "monetary": true
     },
     {
+      "code": "1.1.6",
+      "parent": "1.1",
+      "type": "asset",
+      "name_ar": "الضريبة المحتجزة من مستحقاتنا",
+      "name_en": "Tax withheld at source, receivable",
+      "postable": true,
+      "role": "withholding_receivable",
+      "monetary": true,
+      "note": "Withholding deducted by our customers from payments to us - a credit we claim against our own liability, which is an asset until the return that claims it. PF-083 records the certificate; this is where the credit sits."
+    },
+    {
       "code": "1.2",
       "parent": "1",
       "type": "asset",
@@ -246,8 +257,9 @@
       "name_ar": "ضريبة مقتطعة مستحقة",
       "name_en": "Tax withheld at source, payable",
       "postable": true,
-      "role": null,
-      "monetary": true
+      "role": "withholding_payable",
+      "monetary": true,
+      "note": "Withholding we deducted from payments to suppliers and owe to the authority. The supplier's invoice is settled in full; this is the part that goes to the authority instead of to them."
     },
     {
       "code": "2.1.8",

@@ -41,22 +41,44 @@ final class PostingContext
      *
      * @throws ControlAccountNotConfigured
      */
-    public function account(ControlRole $role): string
+    public function account(ControlRole $role, ?string $jurisdiction = null): string
     {
-        if (isset($this->resolved[$role->value])) {
-            return $this->resolved[$role->value];
+        /*
+         | A per-jurisdiction role without one is refused, and so is the
+         | reverse - PF-084.
+         |
+         | Not defaulted to the entity's country: an entity registered in two
+         | jurisdictions would then post one of them to the other's account,
+         | and the figure would look plausible in both returns. A rule that
+         | posts VAT has to say which authority's VAT it is.
+         */
+        if ($role->isPerJurisdiction() && ($jurisdiction === null || $jurisdiction === '')) {
+            throw ControlAccountNotConfigured::needsAJurisdiction($role);
+        }
+
+        if (! $role->isPerJurisdiction() && $jurisdiction !== null) {
+            throw ControlAccountNotConfigured::hasNoJurisdiction($role, $jurisdiction);
+        }
+
+        $key = $role->value.'@'.($jurisdiction ?? '');
+
+        if (isset($this->resolved[$key])) {
+            return $this->resolved[$key];
         }
 
         $accountId = AccountRole::query()
             ->where('entity_id', $this->entityId)
             ->where('role', $role->value)
+            ->when($jurisdiction !== null, fn ($q) => $q->where('jurisdiction', $jurisdiction))
             ->value('account_id');
 
         if ($accountId === null) {
-            throw ControlAccountNotConfigured::forRole($role);
+            throw $jurisdiction === null
+                ? ControlAccountNotConfigured::forRole($role)
+                : ControlAccountNotConfigured::forRoleIn($role, $jurisdiction);
         }
 
-        return $this->resolved[$role->value] = (string) $accountId;
+        return $this->resolved[$key] = (string) $accountId;
     }
 
     /** A zero in the functional currency, for accumulating. */

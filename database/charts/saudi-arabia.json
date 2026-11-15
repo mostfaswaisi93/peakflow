@@ -1,6 +1,6 @@
 {
   "key": "saudi-arabia",
-  "version": 1,
+  "version": 2,
   "name_ar": "دليل حسابات للمملكة العربية السعودية",
   "name_en": "Saudi Arabia chart of accounts",
   "countries": [
@@ -135,6 +135,17 @@
       "monetary": true
     },
     {
+      "code": "1.1.6",
+      "parent": "1.1",
+      "type": "asset",
+      "name_ar": "ضريبة الاستقطاع المحتجزة من مستحقاتنا",
+      "name_en": "Withholding tax receivable",
+      "postable": true,
+      "role": "withholding_receivable",
+      "monetary": true,
+      "note": "Withholding deducted by our customers from payments to us - a credit we claim against our own liability, which is an asset until the return that claims it. PF-083 records the certificate; this is where the credit sits."
+    },
+    {
       "code": "1.2",
       "parent": "1",
       "type": "asset",
@@ -245,9 +256,9 @@
       "name_ar": "ضريبة الاستقطاع المستحقة",
       "name_en": "Withholding tax payable",
       "postable": true,
-      "role": null,
+      "role": "withholding_payable",
       "monetary": true,
-      "note": "Withheld from a payment to a non-resident and owed to ZATCA, so it is the supplier's tax and the entity's liability. Netting it against the payable loses the amount that has to be declared."
+      "note": "Withholding we deducted from payments to suppliers and owe to the authority. The supplier's invoice is settled in full; this is the part that goes to the authority instead of to them."
     },
     {
       "code": "2.1.8",

@@ -307,6 +307,42 @@ The allocation half — an invoice settled in full against short cash — is PF-
 
 Checked by `php bin/verify tax`: ten rules in `tests/Support/WithholdingRules.php`, each proven to fail when the behaviour is removed.
 
+## Tax accounts and posting
+
+### As built (PF-084)
+
+**The VAT control accounts are per jurisdiction per entity.** An entity registered in two jurisdictions files two returns, and each has to reconcile to an account; one output account holding both makes neither reconcilable, because the figure in it is the sum of two authorities' liabilities and splitting it afterwards means re-reading every document.
+
+`account_roles` gained a `jurisdiction` column, required for `vat_input` and `vat_output` and refused for every other role — both halves of one `CHECK`. A VAT account with no jurisdiction is the unreconcilable case; a bank account with one is a value the next reader has to interpret. The unique index collapses `NULL` to a sentinel, because `NULL` is not equal to `NULL` and a plain index over the nullable column would permit two bank roles.
+
+The chart template stamps the entity's **own country** on the VAT roles at provisioning: a template cannot know it, since `ifrs-generic` is used by entities anywhere, and what is true at provisioning is that the entity is registered where it is incorporated. A second jurisdiction is a row an operator adds when the registration happens, and a check proves it can be added without disturbing the first.
+
+`PostingContext::account()` takes the jurisdiction and refuses to default it. A posting that defaulted to the entity's country would put one authority's VAT in the other's return with a figure that looks plausible in both.
+
+### The five rules
+
+| Rule | Dr | Cr |
+|---|---|---|
+| `tax.sales_tax` | accounts_receivable | vat_output @ jurisdiction |
+| `tax.purchase_tax` | vat_input @ jurisdiction, **expense** | accounts_payable |
+| `tax.reverse_charge_self_assessment` | vat_input @ jurisdiction, **expense** | vat_output @ jurisdiction |
+| `tax.withholding_on_payment` | accounts_payable (**in full**) | bank, withholding_payable |
+| `tax.withholding_on_receipt` | bank, withholding_receivable | accounts_receivable (**in full**) |
+
+Each writes its own debits and credits into `RuleDescription`, in Arabic and English, for the inspection screen — which is where an accountant checks what a rule does without reading PHP.
+
+**The non-recoverable portion goes to expense, and that is what makes the input account reconcilable.** The input VAT account is supposed to equal what the business is claiming back. Post an unrecoverable 40% of a restaurant bill's VAT into it and the account overstates the claim by exactly that, every month, in an amount nobody can derive without re-reading the bills — and the usual response is a quarter-end journal that moves an estimate to expense, which is the reconciliation the account was supposed to provide, done by hand and approximately. It is also economically right: tax a business cannot reclaim is a cost of what it bought. Irrecoverable tax with no account to put it on is **refused**.
+
+**The reverse charge posts both sides in one rule**, because the two legs are not independently correct: the input without the output reports a claim with no liability, which is the shape of a refund request an authority investigates. For a fully recoverable business they net to nothing, which is why the omission is invisible on a trial balance — the P&L and the balance sheet are both right and both VAT boxes are understated by the same amount. For a partly exempt one it is not neutral, and the output liability is still the whole tax.
+
+There is **no payable line** on a reverse charge. The supplier is owed the net and nothing more; crediting the payable with the tax shows them as owed money that goes to the authority.
+
+**Withholding clears the counterparty account in full.** On a payment, the payable is cleared for the whole invoice and the deduction becomes a liability to the authority on its own control account — clearing only what was transferred leaves the supplier showing a balance it will chase until somebody writes it off. On a receipt, the receivable closes for the whole invoice and the shortfall becomes `withholding_receivable`, because the certificate makes it claimable. Writing it off as bad debt instead closes the invoice and destroys the credit: the certificate is still in a drawer and nobody claims it.
+
+Two control roles were added for this — `withholding_receivable` and `withholding_payable` — and assigned in all three chart templates. The Saudi and Jordanian charts already had a withholding payable account with no role; it has one now.
+
+Checked by `php bin/verify tax`: eleven rules in `tests/Support/TaxPostingRules.php`, posted through the real `Poster` against a real chart into an open period, because a rule can return a balanced set of lines that the poster then refuses.
+
 ## Returns
 
 A return is a period's **box-by-box summary with drill-down from every box to the journal lines behind it.**

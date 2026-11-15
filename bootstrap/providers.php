@@ -3,6 +3,7 @@
 use App\Providers\AppServiceProvider;
 use App\Providers\LedgerServiceProvider;
 use App\Providers\QueueTenancyServiceProvider;
+use App\Providers\TaxServiceProvider;
 use App\Providers\TenancyServiceProvider;
 
 return [
@@ -10,4 +11,5 @@ return [
     TenancyServiceProvider::class,
     QueueTenancyServiceProvider::class,
     LedgerServiceProvider::class,
+    TaxServiceProvider::class,
 ];

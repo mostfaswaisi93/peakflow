@@ -26,6 +26,52 @@ final class ControlAccountNotConfigured extends DomainException
         parent::__construct($message);
     }
 
+    /** A VAT role asked for without naming an authority - PF-084. */
+    public static function needsAJurisdiction(ControlRole $role): self
+    {
+        return new self(
+            sprintf(
+                'The "%s" role is per jurisdiction, and this posting did not say which. Not defaulted to the '.
+                'entity\'s country: an entity registered in two jurisdictions would post one authority\'s VAT '.
+                'to the other\'s account, and the figure would look plausible in both returns while neither '.
+                'reconciled.',
+                $role->value,
+            ),
+            $role->value,
+        );
+    }
+
+    /** A role that has no jurisdiction asked for with one - PF-084. */
+    public static function hasNoJurisdiction(ControlRole $role, string $jurisdiction): self
+    {
+        return new self(
+            sprintf(
+                'The "%s" role was asked for in %s, and there is one of these per entity rather than per '.
+                'jurisdiction. A bank account is a bank account wherever the entity is registered, and a '.
+                'jurisdiction here is a value the next reader has to work out the meaning of.',
+                $role->value,
+                $jurisdiction,
+            ),
+            $role->value,
+        );
+    }
+
+    /** The role exists, but not for that authority - PF-084. */
+    public static function forRoleIn(ControlRole $role, string $jurisdiction): self
+    {
+        return new self(
+            sprintf(
+                'This entity has no "%s" account for %s. It may well have one for another jurisdiction, and '.
+                'posting to that would put one authority\'s VAT in another\'s return. Assign the account for '.
+                '%s before posting anything taxed there.',
+                $role->value,
+                $jurisdiction,
+                $jurisdiction,
+            ),
+            $role->value,
+        );
+    }
+
     public static function forRole(ControlRole $role): self
     {
         return new self(

@@ -57,6 +57,17 @@ final readonly class PostingLine
          * entity's accountant; it simply sits there, growing.
          */
         public ?string $interEntityTransactionId = null,
+
+        /**
+         * Which authority's control account, for the roles that have one per
+         * jurisdiction - PF-084.
+         *
+         * Carried on the line rather than resolved by the poster from the
+         * entity's country, because an entity registered in two jurisdictions
+         * would otherwise post one authority's VAT to the other's account -
+         * and the figure would look plausible in both returns.
+         */
+        public ?string $jurisdiction = null,
     ) {}
 
     /**
@@ -67,8 +78,28 @@ final readonly class PostingLine
         Money $amount,
         ?string $partyId = null,
         ?string $narration = null,
+        ?string $taxCodeId = null,
     ): self {
-        return new self($amount, $role, null, $partyId, $narration);
+        return new self($amount, $role, null, $partyId, $narration, $taxCodeId);
+    }
+
+    /**
+     * A line against a control account in a named jurisdiction - PF-084.
+     *
+     * For `vat_input` and `vat_output`, which exist once per jurisdiction per
+     * entity because each files its own return.
+     */
+    public static function toRoleIn(
+        ControlRole $role,
+        string $jurisdiction,
+        Money $amount,
+        ?string $partyId = null,
+        ?string $narration = null,
+        ?string $taxCodeId = null,
+    ): self {
+        return new self(
+            $amount, $role, null, $partyId, $narration, $taxCodeId, [], null, null, $jurisdiction,
+        );
     }
 
     /**

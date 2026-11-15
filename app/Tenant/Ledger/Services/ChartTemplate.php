@@ -134,10 +134,25 @@ final class ChartTemplate
                 ]);
 
                 if ($account->role !== null) {
+                    /*
+                     | The VAT roles are stamped with the entity's own
+                     | country - PF-084.
+                     |
+                     | A template cannot know it: `ifrs-generic` is used by
+                     | entities in any country, and even the Saudi template
+                     | is used by a Saudi entity that may later register
+                     | abroad. What is true at provisioning is that the
+                     | entity is registered where it is incorporated, and a
+                     | second jurisdiction is a row an operator adds when the
+                     | registration happens.
+                     */
                     AccountRole::create([
                         'entity_id' => $entityId,
                         'role' => $account->role->value,
                         'account_id' => $created[$account->code]->getKey(),
+                        'jurisdiction' => $account->role->isPerJurisdiction()
+                            ? $this->countryOf($entityId)
+                            : null,
                     ]);
 
                     $roles++;
