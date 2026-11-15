@@ -205,6 +205,11 @@ if ($only === 'all' || $only === 'sales') {
     $suites['Invoice schema'] = $suite(static fn (): array => (new Tests\Support\InvoiceSchemaRules())->all());
     $suites['Invoice validation'] = $suite(static fn (): array => (new Tests\Support\InvoiceValidationRules())->all());
     $suites['Issuing a document'] = $suite(static fn (): array => (new Tests\Support\InvoiceIssuingRules())->all());
+    $suites['Credit notes'] = $suite(static fn (): array => (new Tests\Support\CreditNoteRules())->all());
+}
+
+if ($only === 'all' || $only === 'sod') {
+    $suites['Duty coverage'] = $suite(static fn (): array => (new Tests\Support\SodCoverageRules())->all());
 }
 
 if ($only === 'all' || $only === 'ops') {

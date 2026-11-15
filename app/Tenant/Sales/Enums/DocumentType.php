@@ -101,6 +101,72 @@ enum DocumentType: string
         };
     }
 
+    /**
+     * The permission key issuing this type exercises - PF-033.
+     *
+     * Distinct per type because the segregation rules are: whoever issued an
+     * invoice must not credit it, which is only a rule if the two acts are
+     * two duties.
+     */
+    public function duty(): string
+    {
+        return match ($this) {
+            self::CreditNote => 'credit_note.issue',
+            self::DebitNote => 'debit_note.issue',
+            self::CorrectedInvoice => 'corrected_invoice.issue',
+            default => 'invoice.issue',
+        };
+    }
+
+    /**
+     * How the audit trail records issuing this type.
+     *
+     * In the past tense, because the audit trail says what happened and is
+     * read by people. `config/sod.php` maps the duty above to this, and a
+     * check fails the build if a duty maps to an action nothing writes - the
+     * engine used to match permission keys against this column and found
+     * nothing, which made every object-scoped control unable to fire.
+     */
+    public function auditAction(): string
+    {
+        return match ($this) {
+            self::CreditNote => 'credit_note.issued',
+            self::DebitNote => 'debit_note.issued',
+            self::CorrectedInvoice => 'corrected_invoice.issued',
+            self::PrepaymentInvoice => 'prepayment_invoice.issued',
+            self::SelfBilledInvoice => 'self_billed_invoice.issued',
+            default => 'invoice.issued',
+        };
+    }
+
+    /**
+     * The posting rule that posts this type.
+     *
+     * A credit note is NOT the invoice rule with negated amounts: it is its
+     * own rule, because "reverse the original posting" and "post the mirror
+     * of these lines" differ the moment a partial credit exists, and
+     * negating rows produces an entry that reads as a correction to the
+     * original rather than as a document of its own.
+     */
+    public function postingRuleKey(): string
+    {
+        return match ($this) {
+            self::CreditNote => 'sales.credit_note_issued',
+            default => 'sales.invoice_issued',
+        };
+    }
+
+    /** The reference kind this type must carry - EN 16931 BT-25. */
+    public function referenceKind(): ?string
+    {
+        return match ($this) {
+            self::CreditNote => 'credits',
+            self::DebitNote => 'charges',
+            self::CorrectedInvoice => 'corrects',
+            default => null,
+        };
+    }
+
     /** The numbering series a type draws from, so two types never share one. */
     public function seriesKey(): string
     {

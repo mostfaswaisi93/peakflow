@@ -318,7 +318,17 @@ final class SodEngine implements SegregatesDuties
     ): ?object {
         $query = DB::connection('tenant')->table('audit_log')
             ->where('actor_user_id', $user->getKey())
-            ->where('action', $conflictingDuty)
+            /*
+             | The ACTIONS that constitute performing the duty, not the duty's
+             | own key - see config/sod.php.
+             |
+             | The audit trail says what happened, in the past tense, because
+             | people read it: `invoice.issued`. A permission key says what
+             | somebody may do: `invoice.issue`. Matching the second against
+             | the first matched nothing, which made every object-scoped rule
+             | over a real flow a control that could not fire.
+             */
+            ->whereIn('action', $this->actionsFor($conflictingDuty))
             // A refusal is not a performance of the duty. Without this, being
             // refused once would itself become the conflicting history.
             ->where('category', '!=', 'sod');
@@ -349,6 +359,26 @@ final class SodEngine implements SegregatesDuties
         }
 
         return $scoped->orderByDesc('created_at')->first(['id', 'created_at', 'subject_label']);
+    }
+
+    /**
+     * The audit actions that count as having performed a duty.
+     *
+     * A duty with no mapping falls back to its own key, which is both the
+     * old behaviour and the right default for a duty recorded under its own
+     * name. `SodCoverageRules` is what stops that default from becoming a
+     * silent hole.
+     *
+     * @return list<string>
+     */
+    private function actionsFor(string $duty): array
+    {
+        /** @var array<string, list<string>> $map */
+        $map = (array) config('sod.performed_as', []);
+
+        $actions = $map[$duty] ?? [];
+
+        return $actions === [] ? [$duty] : array_values(array_unique([...$actions, $duty]));
     }
 
     private function usableOverride(SodRule $rule, User $user, ?string $entityId): ?SodOverride

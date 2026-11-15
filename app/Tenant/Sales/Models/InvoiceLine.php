@@ -37,6 +37,7 @@ final class InvoiceLine extends TenantModel
 
     protected $fillable = [
         'entity_id', 'invoice_id', 'line_no', 'item_id', 'item_code', 'description',
+        'credits_line_id',
         'unit_code', 'quantity', 'unit_price', 'net_amount', 'revenue_account_id',
         'tax_code_id', 'tax_category', 'tax_rate', 'tax_point',
         'place_of_supply', 'place_of_supply_rule',
@@ -53,6 +54,12 @@ final class InvoiceLine extends TenantModel
     ];
 
     /** @return BelongsTo<Invoice, $this> */
+    /** The line of another document this one credits - PF-097. */
+    public function creditsLine(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'credits_line_id');
+    }
+
     public function invoice(): BelongsTo
     {
         return $this->belongsTo(Invoice::class);

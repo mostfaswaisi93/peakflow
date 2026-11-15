@@ -98,6 +98,28 @@ final class Invoice extends TenantModel
     }
 
     /** @return BelongsTo<Party, $this> */
+    /**
+     * The credit notes issued against this document - PF-097.
+     *
+     * Through the references, because that is where the link legally lives
+     * (EN 16931 BT-25) and a second, denormalised pointer would be a second
+     * answer to the same question.
+     *
+     * @return HasManyThrough<Invoice, InvoiceReference, $this>
+     */
+    public function credits(): \Illuminate\Database\Eloquent\Relations\HasManyThrough
+    {
+        return $this->hasManyThrough(
+            self::class,
+            InvoiceReference::class,
+            'referenced_invoice_id',
+            'id',
+            'id',
+            'invoice_id',
+        )->where('invoices.status', 'issued')
+            ->where('invoice_references.kind', 'credits');
+    }
+
     public function party(): BelongsTo
     {
         return $this->belongsTo(Party::class);

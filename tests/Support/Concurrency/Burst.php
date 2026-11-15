@@ -12,6 +12,7 @@ use App\Tenant\Sales\Models\InvoiceLine;
 use App\Tenant\Sales\Models\InvoiceTaxBreakdownRow;
 use App\Tenant\Tax\Models\TaxCode;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 /**
  * The document the concurrency workers issue - PF-094.
@@ -93,6 +94,76 @@ final class Burst
             'category' => 'S',
             'rate' => '15.000000',
         ];
+    }
+
+    /**
+     * The first issued invoice with no issued credit note against it.
+     *
+     * Shared, because the suite and the worker processes must pick the same
+     * one: a check that credits invoice 1 while the workers credit invoice 2
+     * measures nothing and passes.
+     */
+    public static function uncreditedInvoice(string $entityId): ?Invoice
+    {
+        return Invoice::query()
+            ->where('entity_id', $entityId)
+            ->where('document_type', '380')
+            ->where('status', 'issued')
+            ->whereNotExists(static fn ($query) => $query
+                ->selectRaw('1')
+                ->from('invoice_references as r')
+                ->join('invoices as c', 'c.id', '=', 'r.invoice_id')
+                ->whereColumn('r.referenced_invoice_id', 'invoices.id')
+                ->where('r.kind', 'credits')
+                ->where('c.status', 'issued'))
+            ->orderBy('chain_index')
+            ->first();
+    }
+
+    /**
+     * Issue a prepared credit-note draft with one raw `UPDATE`.
+     *
+     * Deliberately not through `Issuer`: the claim being tested is that the
+     * DATABASE refuses an over-credit, and every path through the issuer is
+     * serialised by the number series lock before it ever reaches the
+     * trigger. A second crediting path - an import, an API endpoint, a
+     * correction script - would not be, and the guarantee has to hold for it
+     * too.
+     *
+     * The values are the minimum the CHECK constraints accept. This is not a
+     * document anybody would keep; it is the statement a careless second
+     * path would run.
+     */
+    public static function issueRawCredit(string $draftId, string $number): void
+    {
+        $connection = DB::connection('tenant');
+
+        $draft = Invoice::query()->findOrFail($draftId);
+        $credited = Invoice::query()->findOrFail(
+            (string) $draft->references()->where('kind', 'credits')->value('referenced_invoice_id'),
+        );
+
+        $index = (int) Invoice::query()
+            ->where('entity_id', (string) $draft->entity_id)
+            ->where('series_key', (string) $draft->series_key)
+            ->max('chain_index');
+
+        $canonical = json_encode(['number' => $number], JSON_THROW_ON_ERROR);
+
+        $connection->table('invoices')->where('id', $draftId)->update([
+            'status' => 'issued',
+            'number' => $number,
+            'issued_at' => now(),
+            'issued_by' => str_repeat('0', 26),
+            'supplier_snapshot' => json_encode($credited->supplier_snapshot, JSON_THROW_ON_ERROR),
+            'customer_snapshot' => json_encode($credited->customer_snapshot, JSON_THROW_ON_ERROR),
+            'tax_decision_snapshot' => json_encode($credited->tax_decision_snapshot, JSON_THROW_ON_ERROR),
+            'canonical' => $canonical,
+            'canonical_hash' => hash('sha256', $canonical),
+            'previous_hash' => str_repeat('0', 64),
+            'chain_index' => $index + 1,
+            'updated_at' => now(),
+        ]);
     }
 
     public static function customer(string $entityId): string

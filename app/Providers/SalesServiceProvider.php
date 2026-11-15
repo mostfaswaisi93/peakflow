@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Providers;
 
 use App\Tenant\Ledger\Posting\PostingRuleRegistry;
+use App\Tenant\Sales\Posting\Rules\CreditNoteIssuedRule;
 use App\Tenant\Sales\Posting\Rules\InvoiceIssuedRule;
 use Illuminate\Support\ServiceProvider;
 
@@ -21,6 +22,9 @@ final class SalesServiceProvider extends ServiceProvider
 {
     public function boot(): void
     {
-        $this->app->make(PostingRuleRegistry::class)->register(new InvoiceIssuedRule());
+        $registry = $this->app->make(PostingRuleRegistry::class);
+
+        $registry->register(new InvoiceIssuedRule());
+        $registry->register(new CreditNoteIssuedRule());
     }
 }

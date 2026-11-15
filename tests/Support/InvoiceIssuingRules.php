@@ -74,7 +74,6 @@ final class InvoiceIssuingRules
                 'a rolled-back transaction returns the number' => fn (): array => $this->aRollbackReturnsTheNumber(),
                 'issuing posts the receivable, the revenue and the output tax' => fn (): array => $this->thePosting(),
                 'each document links to the one before it in its series' => fn (): array => $this->theChainLinks(),
-                'a second series starts its own chain' => fn (): array => $this->seriesDoNotShareAChain(),
                 'the frozen bytes describe the stored row, not the model in memory' => fn (): array => $this->theBytesDescribeTheRow(),
                 'the frozen bytes cover the substance and not the cosmetics' => fn (): array => $this->whatTheHashCovers(),
                 'a document that no longer matches its bytes is caught, by field' => fn (): array => $this->tamperingIsCaught(),
@@ -453,43 +452,15 @@ final class InvoiceIssuingRules
         return $violations;
     }
 
-    /** @return list<string> */
-    public function seriesDoNotShareAChain(): array
-    {
-        $violations = [];
-        $genesis = str_repeat('0', 64);
-
-        $invoice = $this->issue();
-        $credit = $this->issue(DocumentType::CreditNote);
-
-        if ($credit->chain_index !== 1) {
-            $violations[] = sprintf(
-                'the first credit note is chain index %d. Each series has its own chain, or a gap in '.
-                'one would read as a gap in the other',
-                (int) $credit->chain_index,
-            );
-        }
-
-        if ((string) $credit->previous_hash !== $genesis) {
-            $violations[] = 'the first credit note links to an invoice. Two series sharing a chain '.
-                'means neither can be walked on its own';
-        }
-
-        if ($credit->series_key === $invoice->series_key) {
-            $violations[] = 'a credit note draws from the invoice series, so the two document types '.
-                'contend for one lock and share a numbering sequence';
-        }
-
-        foreach (['INV', 'CRN'] as $series) {
-            $walk = app(ChainVerifier::class)->verify($this->entityId, $series);
-
-            if (! $walk['verified']) {
-                $violations[] = sprintf('the %s chain does not verify', $series);
-            }
-        }
-
-        return $violations;
-    }
+    /*
+     | Two series not sharing a chain is proved in `CreditNoteRules`.
+     |
+     | It used to be proved here, by issuing a bare credit note - which the
+     | database now refuses, correctly: a credit note with no reference to
+     | the invoice it credits is not a credit note (EN 16931 BT-25). The
+     | claim is the same and the fixture has to be a real credit note, which
+     | belongs in the suite that builds one.
+     */
 
     /**
      * The hash is taken over the row, not over the model that wrote it.

@@ -19,6 +19,13 @@ declare(strict_types=1);
  |                        sequence cannot survive
  |   crash-after-lock     issue, then die without committing, the way a worker
  |                        killed by the OOM killer or a deploy does
+ |   credit-raw <draft>   issue a prepared credit-note draft with one raw
+ |                        UPDATE, bypassing the issuer - the path that is NOT
+ |                        serialised by the number series lock
+ |   credit-full          draft a FULL credit note against the entity's first
+ |                        issued invoice and issue it - two of these at once
+ |                        is what proves the over-credit cap holds under
+ |                        contention rather than only in one process
  |
  | One JSON object per attempt on stdout. Nothing else: the parent reads it.
  */
@@ -44,7 +51,7 @@ spl_autoload_register(static function (string $class) use ($base): void {
 $app = require $base.'/bootstrap/app.php';
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
-[$script, $tenantId, $entityId, $series, $count, $mode] = $argv + [null, null, null, null, '1', 'ok'];
+[$script, $tenantId, $entityId, $series, $count, $mode, $target] = $argv + [null, null, null, null, '1', 'ok', null];
 
 $tenant = App\Platform\Models\Tenant::query()->findOrFail((string) $tenantId);
 app(App\Platform\Services\TenantConnectionResolver::class)->point($tenant);
@@ -63,6 +70,45 @@ $say = static function (array $line): void {
 
 for ($i = 0; $i < (int) $count; $i++) {
     try {
+        if ($mode === 'credit-raw') {
+            /*
+             | One raw UPDATE, bypassing the issuer entirely.
+             |
+             | Every path through the issuer is serialised by the number
+             | series lock before it reaches the over-credit trigger, so a
+             | check that goes through it cannot tell a trigger that is
+             | correct from one that is correct only because something else
+             | serialised it. A second crediting path would not be
+             | serialised, and this is that path.
+             */
+            Tests\Support\Concurrency\Burst::issueRawCredit((string) $target, 'CRN-RAW-'.getmypid());
+
+            $say(['ok' => true, 'raw' => true]);
+
+            continue;
+        }
+
+        if ($mode === 'credit-full') {
+            $invoice = Tests\Support\Concurrency\Burst::uncreditedInvoice((string) $entityId);
+
+            if ($invoice === null) {
+                $say(['ok' => false, 'error' => 'no uncredited invoice to credit']);
+
+                continue;
+            }
+
+            $credit = $issuer->issue(
+                app(App\Tenant\Sales\Services\Crediting::class)->full($invoice, $date),
+                $entity,
+                str_repeat('0', 26),
+                Tests\Support\Concurrency\Burst::decision(),
+            );
+
+            $say(['ok' => true, 'number' => (string) $credit->number, 'credited' => (string) $credit->gross_amount]);
+
+            continue;
+        }
+
         if ($mode === 'ok') {
             $invoice = $issuer->issue(
                 Tests\Support\Concurrency\Burst::draft((string) $entityId, $type, $date),

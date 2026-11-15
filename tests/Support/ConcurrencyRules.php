@@ -13,6 +13,8 @@ use App\Tenant\Ledger\Services\PeriodStateMachine;
 use App\Tenant\Parties\Models\Party;
 use App\Tenant\Parties\Models\PartyTaxRegistration;
 use App\Tenant\Sales\Models\Invoice;
+use App\Tenant\Sales\Services\Crediting;
+use App\Tenant\Sales\Services\Issuer;
 use App\Tenant\Tax\Enums\TaxCategory;
 use App\Tenant\Tax\Services\ReturnPeriods;
 use App\Tenant\Tax\Services\TaxCodes;
@@ -100,6 +102,7 @@ final class ConcurrencyRules
                 'a failure past the lock point leaves the rest gapless' => $this->failuresPastTheLock(),
                 'a crashed worker consumes no number' => $this->aCrashedWorker(),
                 'one series under lock does not block another' => $this->twoSeriesDoNotBlock(),
+                'two credit notes cannot both take the last of an invoice' => $this->theOverCreditCap(),
             ], $this->entityId);
         } catch (Throwable $e) {
             return ['the gapless proof could not run' => [$e::class.': '.$e->getMessage()]];
@@ -466,7 +469,7 @@ final class ConcurrencyRules
              */
             app(NumberAllocator::class)->next($this->entityId, 'sales_document', 'INV', $this->date);
 
-            $lines = $this->run([['CRN', 1, 'ok']], timeout: 60);
+            $lines = $this->run([['CRN', 1, 'credit-full']], timeout: 120);
             $issued = array_values(array_filter($lines, static fn (array $l): bool => ($l['ok'] ?? false) === true));
 
             if ($issued === []) {
@@ -483,6 +486,124 @@ final class ConcurrencyRules
         } finally {
             $connection->rollBack();
         }
+    }
+
+    /**
+     * The over-credit cap, under contention - PF-097.
+     *
+     * ## Why this needs two processes
+     *
+     * "A credit note may not credit more than the invoice's remaining
+     * uncredited value" is a sum over other rows, and a sum read without the
+     * right kind of lock is a sum two transactions can both read before
+     * either writes. Two full credit notes against one invoice would then
+     * both succeed, and the receivable would end up negative - which reads as
+     * the customer being owed money.
+     *
+     * ## Why the interleaving is forced, and what this check does not prove
+     *
+     * Three workers started at once DID catch a real violation once: an
+     * invoice for 115.0000 ended up with 345.0000 credited against it. The
+     * same three workers then passed against the same trigger on the next
+     * run, because whether their statements overlap is a matter of
+     * milliseconds - which is why this check forces the overlap instead:
+     * one credit note is held in an open transaction until another backend
+     * is genuinely blocked, and only then committed.
+     *
+     * Forced, it is refused by both implementations of the cap - the running
+     * total and the locking read it replaced. So this is a check that the
+     * guarantee holds, not a check that distinguishes the two. The reason
+     * for preferring the total is written where it is implemented, in
+     * `2026_01_01_004200_invoice_credit_totals.php`, and it is not that the
+     * other one was observed to fail here.
+     *
+     * The worker takes the raw path - one `UPDATE`, no issuer - because
+     * every path through the issuer waits on the number series lock first,
+     * and a check that went through it would be measuring that lock.
+     *
+     * @return list<string>
+     */
+    public function theOverCreditCap(): array
+    {
+        $violations = [];
+        $invoice = \Tests\Support\Concurrency\Burst::uncreditedInvoice($this->entityId);
+
+        if ($invoice === null) {
+            return ['no uncredited invoice to credit, so the cap could not be tested'];
+        }
+
+        /*
+         | The second credit note is drafted BEFORE the transaction opens, so
+         | the worker can see it.
+         |
+         | And it is issued by the worker with one raw UPDATE rather than
+         | through the issuer, because every path through the issuer waits on
+         | the number series lock first - which would serialise the two
+         | credit notes and prove only that something else serialised them.
+         */
+        $second = (string) app(Crediting::class)->full($invoice, $this->date)->getKey();
+
+        $connection = DB::connection('tenant');
+        $connection->beginTransaction();
+
+        try {
+            app(Issuer::class)->issue(
+                app(Crediting::class)->full($invoice, $this->date),
+                $this->entity ?? throw new \RuntimeException('no entity'),
+                str_repeat('0', 26),
+                \Tests\Support\Concurrency\Burst::decision(),
+            );
+
+            $worker = $this->spawn('CRN', 1, 'credit-raw', $second);
+            $waited = $this->waitForABlockedBackend();
+
+            $connection->commit();
+
+            $lines = $this->collect([$worker], 120);
+            $issued = array_values(array_filter($lines, static fn (array $l): bool => ($l['ok'] ?? false) === true));
+
+            if (! $waited) {
+                return ['no backend ever blocked while a credit note was being issued, so the two '.
+                    'never collided and this check proved nothing'];
+            }
+
+            if ($issued !== []) {
+                $violations[] = sprintf(
+                    'a second full credit note was issued against invoice %s while the first was still '.
+                    'in flight, so %s is now credited against a document for %s. A receivable below '.
+                    'zero reads as the customer being owed money, and the figure it is owed came from '.
+                    'two documents neither of which is wrong on its own',
+                    (string) $invoice->number,
+                    (string) $this->creditedAgainst($invoice),
+                    (string) $invoice->gross_amount,
+                );
+            }
+
+            if ((string) $this->creditedAgainst($invoice) !== (string) $invoice->gross_amount) {
+                $violations[] = sprintf(
+                    'the invoice is for %s and %s has been credited against it',
+                    (string) $invoice->gross_amount,
+                    (string) $this->creditedAgainst($invoice),
+                );
+            }
+
+            return $violations;
+        } finally {
+            if ($connection->transactionLevel() > 0) {
+                $connection->rollBack();
+            }
+        }
+    }
+
+    /** What has been credited against an invoice, from the documents. */
+    private function creditedAgainst(Invoice $invoice): string
+    {
+        return (string) Invoice::query()
+            ->where('status', 'issued')
+            ->whereHas('references', fn ($q) => $q
+                ->where('kind', 'credits')
+                ->where('referenced_invoice_id', (string) $invoice->getKey()))
+            ->sum('gross_amount');
     }
 
     /**
@@ -507,18 +628,19 @@ final class ConcurrencyRules
      *
      * @return array{process: resource, pipes: array<int, resource>}|null
      */
-    private function spawn(string $series, int $count, string $mode): ?array
+    private function spawn(string $series, int $count, string $mode, ?string $target = null): ?array
     {
         $base = \dirname(__DIR__, 2);
 
         $command = sprintf(
-            'exec php %s %s %s %s %d %s',
+            'exec php %s %s %s %s %d %s %s',
             escapeshellarg($base.'/tests/Support/Concurrency/issue-worker.php'),
             escapeshellarg($this->tenantId),
             escapeshellarg($this->entityId),
             escapeshellarg($series),
             $count,
             escapeshellarg($mode),
+            escapeshellarg((string) $target),
         );
 
         $process = proc_open(
@@ -753,7 +875,11 @@ final class ConcurrencyRules
             DB::purge('probe_owner');
             $owner = DB::connection('probe_owner');
 
-            $immutable = ['invoices', 'invoice_lines', 'invoice_tax_breakdown', 'journal_entries', 'journal_lines'];
+            $immutable = [
+                'invoices', 'invoice_lines', 'invoice_tax_breakdown',
+                'invoice_references', 'invoice_allowances_charges',
+                'journal_entries', 'journal_lines',
+            ];
 
             /*
              | `ALTER TABLE ... DISABLE TRIGGER USER`, not

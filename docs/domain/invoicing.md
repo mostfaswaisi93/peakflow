@@ -139,6 +139,34 @@ Blocking and advisory are separate lists. `blocking()` is what the issuer consul
 | `reverse_charge_without_a_registration` | Blocks. Reverse charge shifts the liability to a counterparty who must be registered to receive it |
 | `evidence_required` | **Advisory.** A zero-rated export whose shipping paperwork has not arrived yet is still an invoice the business has to send. The gate is `PF-080`, at return time |
 
+## Credit notes
+
+A credit note is a document, not an undo. The invoice was correct when it was issued, it is in a return that may already be filed, and the goods really did come back — so both documents stay in the record and the receivable ends up where it should be by addition.
+
+Three ways to raise one, all of which go through the same issuer as any other document:
+
+| | What is given | What is derived |
+|---|---|---|
+| **Full** | the invoice | every line, in full |
+| **By line** | the net to credit per line | the tax, at each line's own rate and the jurisdiction's rounding; the quantity, in proportion |
+| **By amount** | the **gross** to credit | each line's share, then its net backed out at its own rate; each group's tax as the remainder |
+
+The third runs the arithmetic backwards on purpose. A settlement is agreed as "1,000 off invoice 41", tax included: computing the net from a rate and then the tax from the net gave 999.9952 and left 150.0048 creditable on a 1,150.00 invoice — a residue nobody can explain and nobody can clear.
+
+**The posting is its own rule**, not the invoice rule with negative figures and not `Reverser` over the invoice's entry:
+
+```
+Dr  the line's revenue account     each credited line's net
+Dr  vat_output @ the jurisdiction  each rate group's tax
+Cr  accounts_receivable            the gross no longer owed
+```
+
+The tax leg goes back to **output** tax. Posting it as input leaves both figures overstated by the same amount: the net due is right and both boxes of the return are wrong, which is the failure that reconciles perfectly.
+
+**The cap** — a credit note may not take an invoice's credited total past its gross — is enforced in the database, through a running total maintained by `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` on `invoice_credit_totals`. A locking read inside the trigger was tried first; three simultaneous full credit notes once left 345.00 credited against a 115.00 invoice. The total is kept because its correctness needs no reasoning about snapshots inside volatile functions, and no accidental serialisation by the numbering lock. The documents remain the record; a check asserts the counter agrees with them.
+
+**Segregation of duties**: whoever issued an invoice may not credit it (`PF-033`), asserted inside the issuing transaction before anything is consumed. Building this found that the engine could not see any real act at all — it matched permission keys (`invoice.issue`) against an audit trail that records past-tense actions (`invoice.issued`). `config/sod.php` maps the two, and `bin/verify sod` fails the build if a duty maps to an action nothing writes.
+
 ## Recurring billing
 
 A schedule is a template plus an RFC 5545 `RRULE`, which is why "the last working day of every quarter" is expressible rather than approximated:

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tenant\Sales\Services;
 
 use App\Support\Audit\AuditTrail;
+use App\Support\Authorization\SegregatesDuties;
 use App\Support\Hashing\Canonicalizer;
 use App\Support\Money\Money;
 use App\Tenant\Ledger\Models\JournalEntry;
@@ -14,7 +15,6 @@ use App\Tenant\Sales\Exceptions\IssueRefused;
 use App\Tenant\Sales\InvoiceFinding;
 use App\Tenant\Sales\Models\Invoice;
 use App\Tenant\Sales\Models\InvoiceLine;
-use App\Tenant\Sales\Posting\Rules\InvoiceIssuedRule;
 use App\Tenant\Tenancy\Models\Entity;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -71,6 +71,7 @@ final class Issuer
         private readonly NumberAllocator $numbers,
         private readonly Poster $poster,
         private readonly AuditTrail $audit,
+        private readonly SegregatesDuties $duties,
     ) {}
 
     /**
@@ -117,6 +118,29 @@ final class Issuer
              | check and a write - and the check that passed is the one
              | somebody would quote afterwards.
              */
+            /*
+             | 0. Whose duty this is - PF-033.
+             |
+             | Before validation, because being refused for a reason about
+             | the person is not a finding about the document: a validator
+             | that reported "you may not credit an invoice you issued"
+             | alongside "line 3 has no tax code" would invite somebody to
+             | fix the lines and try again.
+             |
+             | The subject is the document this one ACTS ON, not this one:
+             | the rule is "whoever issued invoice 41 must not credit invoice
+             | 41", and object scope compares subject ids. A document that
+             | acts on nothing - an ordinary invoice - is its own subject,
+             | which conflicts with nothing and is the right answer.
+             */
+            $this->duties->assert(
+                duty: $draft->document_type->duty(),
+                subjectType: 'invoice',
+                subjectId: $this->dutySubject($draft),
+                partyId: (string) $draft->party_id,
+                subjectLabel: $draft->document_type->label('en'),
+            );
+
             $findings = $this->validator->blocking($this->validator->validate($draft, $entity));
 
             if ($findings !== []) {
@@ -177,7 +201,7 @@ final class Issuer
 
             $this->audit->record(
                 category: 'sales',
-                action: 'invoice.issued',
+                action: $draft->document_type->auditAction(),
                 subjectType: 'invoice',
                 subjectId: (string) $draft->getKey(),
                 subjectLabel: $number,
@@ -193,6 +217,29 @@ final class Issuer
 
             return $draft->refresh();
         });
+    }
+
+    /**
+     * The document a duty is asserted against.
+     *
+     * A credit note's duty is about the invoice it credits. An invoice's is
+     * about itself, so nothing conflicts - which is the correct answer rather
+     * than an exemption: nobody has issued it yet.
+     */
+    private function dutySubject(Invoice $draft): string
+    {
+        $kind = $draft->document_type->referenceKind();
+
+        if ($kind === null) {
+            return (string) $draft->getKey();
+        }
+
+        $referenced = $draft->references()
+            ->where('kind', $kind)
+            ->whereNotNull('referenced_invoice_id')
+            ->value('referenced_invoice_id');
+
+        return (string) ($referenced ?? $draft->getKey());
     }
 
     /**
@@ -321,7 +368,7 @@ final class Issuer
 
         return $this->poster->post(
             $entity,
-            InvoiceIssuedRule::KEY,
+            $draft->document_type->postingRuleKey(),
             [
                 'invoice_id' => (string) $draft->getKey(),
                 'party_id' => (string) $draft->party_id,
