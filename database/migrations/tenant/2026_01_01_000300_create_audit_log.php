@@ -55,6 +55,8 @@ return new class extends Migration
      */
     public function up(): void
     {
+        $genesis = \App\Support\Hashing\ChainLink::GENESIS;
+
         $connection = DB::connection();
 
         $connection->unprepared(<<<'SQL'
@@ -131,6 +133,43 @@ return new class extends Migration
         // partitions would be worse than storing it in the wrong place.
         $connection->unprepared('CREATE TABLE audit_log_default PARTITION OF audit_log DEFAULT;');
 
+        /*
+         | The chain head: one row, locked to serialize appends.
+         |
+         | Two concurrent writers that each read "the last hash" would both
+         | compute index N+1 and the chain would fork - and a forked chain is
+         | indistinguishable from a tampered one, so the damage is permanent.
+         |
+         | So an append takes `SELECT ... FOR UPDATE` on this row, the same
+         | shape as gapless numbering (ADR-0009), and for the same reason: the
+         | thing being allocated must be allocated by exactly one writer at a
+         | time. No I/O happens under the lock.
+         |
+         | It is also what makes finding the head O(1). `ORDER BY chain_index
+         | DESC LIMIT 1` would touch all 25 partitions on every single append,
+         | because the planner cannot know which partition holds the maximum.
+         |
+         | A rolled-back transaction rolls this row back with it, so an
+         | allocated-then-abandoned index is reused rather than left as a gap.
+         | That is deliberate: a gap in the chain index is evidence of deletion,
+         | and an ordinary rollback must not look like one.
+         */
+        $connection->unprepared(<<<SQL
+            CREATE TABLE audit_chain_head (
+                id            boolean PRIMARY KEY DEFAULT true,
+                last_hash     char(64) NOT NULL,
+                last_index    bigint   NOT NULL,
+                updated_at    timestamptz NOT NULL DEFAULT now(),
+                CONSTRAINT audit_chain_head_singleton CHECK (id)
+            );
+
+            INSERT INTO audit_chain_head (id, last_hash, last_index)
+            VALUES (true, '{$genesis}', 0);
+
+            COMMENT ON TABLE audit_chain_head IS
+                'peakflow:tenant-scoped - the single lockable head of the audit hash chain. One row, by constraint.';
+        SQL);
+
         $connection->unprepared(<<<'SQL'
             CREATE OR REPLACE FUNCTION refuse_audit_mutation()
             RETURNS trigger
@@ -202,6 +241,7 @@ return new class extends Migration
     public function down(): void
     {
         DB::unprepared(<<<'SQL'
+            DROP TABLE IF EXISTS audit_chain_head;
             DROP TRIGGER IF EXISTS audit_log_append_only ON audit_log;
             DROP FUNCTION IF EXISTS refuse_audit_mutation();
             DROP TABLE IF EXISTS audit_log;

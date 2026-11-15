@@ -158,12 +158,12 @@ A tenant with three staff may genuinely be unable to separate two duties. Silent
 ### PF-035 · The audit log
 `Identity` · **5 pts** · depends: PF-024, PF-009 · standards: SOC 2, ISO/IEC 27001 Annex A · `risk:high` `type:security`
 
-- [ ] Append-only, hash-chained, declaratively partitioned by month
-- [ ] `DELETE` and `UPDATE` revoked at the role level, not merely unused
-- [ ] Captures actor, entity, action, object, before and after where applicable, correlation id, IP and user agent
+- [x] Append-only, hash-chained, declaratively partitioned by month
+- [x] `DELETE` and `UPDATE` revoked at the role level, not merely unused
+- [x] Captures actor, entity, action, object, before and after where applicable, correlation id, IP and user agent
 - [ ] **Reads of sensitive data are audited too** - who looked at a bank account is an auditable event, not only who changed it
-- [ ] Indexed on `created_at`, `(category, created_at)` and `(action, created_at)`, for the same one-index-per-reference reason as the platform log
-- [ ] A verification command re-walks the chain and reports the first divergence
+- [x] Indexed on `created_at`, `(category, created_at)` and `(action, created_at)`, for the same one-index-per-reference reason as the platform log
+- [x] A verification command re-walks the chain and reports the first divergence
 
 ### PF-036 · The operator console
 `Platform` · **5 pts** · depends: PF-022 · standards: — · `type:security`

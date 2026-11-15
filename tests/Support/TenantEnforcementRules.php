@@ -9,6 +9,8 @@ use App\Platform\Services\TenantConnectionResolver;
 use App\Tenant\Identity\Models\Role;
 use App\Tenant\Identity\Models\User;
 use App\Tenant\Identity\Models\UserEntityRole;
+use App\Tenant\Identity\Services\AuditChainVerifier;
+use App\Tenant\Identity\Services\AuditLog;
 use App\Tenant\Tenancy\Exceptions\EntityNotInScope;
 use App\Tenant\Tenancy\Models\EntitySetting;
 use App\Tenant\Tenancy\Services\EntityContext;
@@ -75,6 +77,7 @@ final class TenantEnforcementRules
             'the Eloquent scope fills and freezes entity_id' => [],
             'permissions resolve per entity' => [],
             'every entity-scoped table has a forced RLS policy' => [],
+            'the audit chain verifies, and a written record reads back identically' => [],
         ];
 
         foreach ($tenants as $tenant) {
@@ -110,6 +113,7 @@ final class TenantEnforcementRules
                 'the Eloquent scope fills and freezes entity_id' => $this->eloquentScopeFillsAndFreezes(),
                 'permissions resolve per entity' => $this->permissionsResolvePerEntity(),
                 'every entity-scoped table has a forced RLS policy' => $this->everyScopedTableHasAPolicy(),
+                'the audit chain verifies, and a written record reads back identically' => $this->auditChainVerifies(),
             ];
         } finally {
             $this->connection->rollBack();
@@ -580,6 +584,65 @@ final class TenantEnforcementRules
 
         if ($rows === []) {
             $violations[] = 'no entity-scoped tables were found at all, which means this check is not checking anything';
+        }
+
+        return $violations;
+    }
+
+    /**
+     * The chain must verify, AND a record written now must still hash the same
+     * once PostgreSQL has had it.
+     *
+     * The second half is the one that found a real bug. The writer hashed a
+     * PHP-formatted timestamp and a `json_encode` string; `timestamptz` renders
+     * in the server's own format and `jsonb` reorders keys by design, so
+     * nothing the writer wrote could ever be verified. The writer and verifier
+     * also held separate copies of the field list, which drifted immediately.
+     *
+     * Both now go through AuditRecordProjection, and this check fails if they
+     * ever stop agreeing - it writes a record, reads it back through the same
+     * connection and recomputes the hash from what the database returned.
+     *
+     * @return list<string>
+     */
+    public function auditChainVerifies(): array
+    {
+        $violations = [];
+
+        $before = app(AuditChainVerifier::class)->verify();
+
+        if (! $before->isIntact) {
+            $violations[] = 'the existing audit chain does not verify: '.$before->summary();
+        }
+
+        // Written inside the enclosing transaction, so it is rolled back with
+        // everything else. Verified on the same connection, because another
+        // one cannot see an uncommitted row.
+        app(AuditLog::class)->record(
+            category: 'enforcement',
+            action: 'enforcement.projection.round_trip',
+            subjectType: 'EntityProbe',
+            subjectId: $this->entityA,
+            subjectLabel: 'round-trip probe',
+            before: ['b' => 'before', 'nested' => ['z' => 1, 'a' => 2]],
+            after: ['a' => 'after', 'nested' => ['z' => 3, 'a' => 4]],
+            reason: 'proves the written hash survives a database round-trip',
+            entityId: $this->entityA,
+        );
+
+        $after = app(AuditChainVerifier::class)->verify();
+
+        if (! $after->isIntact) {
+            $violations[] = 'a record written in this transaction does not verify when read back: '.
+                $after->summary().
+                ' - the writer and the verifier have stopped agreeing about what is hashed';
+        }
+
+        if ($after->recordsChecked !== $before->recordsChecked + 1) {
+            $violations[] = sprintf(
+                'the chain grew by %d records when exactly 1 was written',
+                $after->recordsChecked - $before->recordsChecked,
+            );
         }
 
         return $violations;
