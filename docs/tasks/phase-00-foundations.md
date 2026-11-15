@@ -28,6 +28,31 @@ The application skeleton, plus the repository conventions that are annoying to i
 
 - [ ] Laravel Pint configured; `./vendor/bin/pint --test` is clean
 - [ ] PHPStan 2 with Larastan at level `max`, clean, with an **empty** baseline
+
+> **Blocked in this environment, with the failure measured.** `composer` cannot download these
+> packages' archives. Two distinct failures on the same host, from two attempts:
+>
+> ```
+> Failed to download laravel/pint from dist: Could not authenticate against github.com
+> curl error 28 while downloading https://api.github.com/repos/phpstan/phpstan/zipball/645a1bd…:
+>   SSL connection timeout
+> ```
+>
+> The dist URL for a Packagist package is an `api.github.com` zipball. This session's GitHub
+> credential is scoped to one repository, so a public package is refused; and the anonymous path
+> times out. Setting `use-github-api false` in a separate `COMPOSER_HOME` got further - the package
+> directories were created - and still did not complete, because `composer install` uses the dist
+> URL **recorded in `composer.lock`**, which is already an `api.github.com` zipball; the setting
+> only affects resolution.
+>
+> `vendor/laravel/pint` was left as an empty directory and was removed. The failed install broke
+> nothing: `bin/verify all` is 262 passed, 0 failed.
+>
+> **What unblocks it:** `api.github.com` and `codeload.github.com` reachable for anonymous archive
+> downloads, or the packages installed by the environment's setup script so a session starts with
+> them present. Everything around them is done and asserted - `pint.json` exists, `phpstan.neon` is
+> at `level: max` with no baseline and no baseline include, and the rule for adding one is in
+> `CONTRIBUTING.md` and checked by `bin/verify repo`.
 - [x] Rector 2 configured in `rector.php` for the PHP 8.3 and Laravel 13 rule sets. Moved to `suggest` because its Composer source could not be resolved through this environment's proxy; the config is committed and ready
 - [x] Stylelint with a rule banning physical CSS properties (`left`, `right`, `margin-left`, `padding-right`, `text-align: left|right`, `border-radius` long-hand corners)
 - [x] A documented rule that a new baseline entry requires a reviewer's approval and a linked task - `CONTRIBUTING.md`, with the three requirements stated and checked: a reviewer approves it **by name and not the author**, the entry carries the `PF-###` that removes it, and the level stays at `max`
@@ -56,6 +81,16 @@ The dependency table in the README is the configuration, not a description of it
 - [ ] `unit` and `arch` need no database and run in under 10 seconds
 - [ ] `feature` runs against a real PostgreSQL 16+ database, created and migrated by the harness, each test wrapped in a transaction that rolls back
 - [ ] `concurrency` runs with parallel processes and is excluded from the default run
+
+> **Blocked by the same cause as PF-002** - `pestphp/pest` cannot be downloaded in this
+> environment; see the note there for the measured failure.
+>
+> The suites are declared and the harness is written. What cannot be asserted here is a *timing*
+> and a *runner's* behaviour, which is the part that needs the runner. In its place `bin/verify`
+> runs the same rules with no runner at all - 262 checks, including the architecture rules, the
+> worked examples, and the database-backed invariants - and `bin/bench` holds the query budgets.
+> That is a substitute for the coverage, not for the criterion: "under 10 seconds" is a claim about
+> Pest, and it stays open until Pest runs.
 - [x] A documented note that the tenant suite **cannot** run on SQLite, and why - `docs/operations/testing-strategy.md`, stated first, before the layers: deferrable constraint triggers, row-level security, declarative partitioning and `numeric` semantics **are the thing under test**, so a suite that silently skipped them would report green while testing a different system
 - [x] It also states what a red run looks like with no server: several hundred tests failing **identically** with a connection error, which looks alarming and is not a code failure
 
