@@ -10,6 +10,7 @@ use App\Tenant\Sales\Posting\Rules\CorrectedInvoiceIssuedRule;
 use App\Tenant\Sales\Posting\Rules\FinalInvoiceIssuedRule;
 use App\Tenant\Sales\Posting\Rules\InvoiceIssuedRule;
 use App\Tenant\Sales\Posting\Rules\PrepaymentInvoiceIssuedRule;
+use App\Tenant\Sales\Posting\Rules\RevenueRecognisedRule;
 use App\Tenant\Sales\Posting\Rules\SelfBilledInvoiceIssuedRule;
 use Illuminate\Support\ServiceProvider;
 
@@ -34,5 +35,6 @@ final class SalesServiceProvider extends ServiceProvider
         $registry->register(new PrepaymentInvoiceIssuedRule());
         $registry->register(new FinalInvoiceIssuedRule());
         $registry->register(new SelfBilledInvoiceIssuedRule());
+        $registry->register(new RevenueRecognisedRule());
     }
 }

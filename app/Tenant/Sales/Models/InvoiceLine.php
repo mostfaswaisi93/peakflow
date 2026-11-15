@@ -54,6 +54,19 @@ final class InvoiceLine extends TenantModel
     ];
 
     /** @return BelongsTo<Invoice, $this> */
+    /**
+     * When this line's revenue is earned - PF-107.
+     *
+     * Absent means immediate, which is the shape that must not need
+     * configuring: goods delivered, work done, a thing sold.
+     */
+    public function recognitionBasis(): \App\Tenant\Sales\Enums\RecognitionBasis
+    {
+        return $this->recognition === null || (string) $this->recognition === ''
+            ? \App\Tenant\Sales\Enums\RecognitionBasis::Immediate
+            : \App\Tenant\Sales\Enums\RecognitionBasis::from((string) $this->recognition);
+    }
+
     /** The line of another document this one credits - PF-097. */
     public function creditsLine(): BelongsTo
     {

@@ -335,6 +335,43 @@ FREQ=MONTHLY;BYMONTHDAY=-1;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1;INTERVAL=3
 
 ## Revenue recognition (IFRS 15)
 
+Per **line**, because one invoice is routinely two performance obligations — the licence earned on delivery and the support earned over twelve months — and a document-level setting forces the business to split the invoice for an accounting reason.
+
+| Basis | When it is earned |
+|---|---|
+| `immediate` (the absent value) | at issue: goods delivered, work done, a thing sold |
+| `straight_line` | over `service_from` … `service_until` |
+| `milestone` | when somebody confirms a milestone |
+| `on_delivery` | when somebody confirms delivery |
+
+A deferred line credits `deferred_revenue` at issue instead of revenue, and the **plan is written then** — rows, not a formula. A formula re-evaluated monthly disagrees with itself the first time anything moves, and *"show me how you arrived at this month's revenue"* is a question about a list.
+
+The plan is weighted by the days each month carries: a contract from the 20th of May to the 19th of August has eleven days in its first month and nineteen in its last, and twelve equal twelfths would recognise a month of revenue in eleven days. Each row is dated at the **end** of its service month, because recognising on the 1st recognises work not yet done.
+
+```
+revenue:recognize 2026-07-31 --all
+```
+
+posts **one entry per period**, not one per run: revenue belongs to the month it was earned in, and a run at the end of June that found May unrecognised would otherwise overstate June by May's revenue and understate May's — in accounts that may already have been reported. The entry carries no tax code, because releasing a deferral is not a supply and the tax was declared at issue.
+
+### The case that breaks naive implementations
+
+A credit note against a partially recognised invoice. Three months of a twelve-month contract are revenue and nine are still a liability:
+
+| | Revenue | Deferred revenue |
+|---|---|---|
+| Invoice 1,200 | — | 1,200 |
+| Three months recognised | 300 | 900 |
+| **Credit note, naive (all from revenue)** | **−900** ✗ | 900 ✗ |
+| **Credit note, naive (all from the deferral)** | 300 ✗ | **−300** ✗ |
+| **Credit note, split** | 0 ✓ | 0 ✓ |
+
+Both naive versions look right on the face of the credit note and leave the control account unreconcilable in opposite directions. The split is computed from the plan, the posting rule writes both halves, and the remaining plan rows are **cancelled** — otherwise a later run releases revenue for a credited document, the figures stay plausible, and the deferral goes negative in eight months.
+
+The **roll-forward** — opening, additions, recognised, cancelled, closing — is classified by when the revenue is earned rather than when the job ran, and the closing figure is the roll while the control account is read from the journal lines independently. A check breaks the schedule and requires the difference to appear: deriving one side from the other is the shape of a reconciliation that is always clean.
+
+
+
 An invoice is a **billing event**; revenue is recognized when the performance obligation is satisfied, and the two are frequently different months.
 
 ```

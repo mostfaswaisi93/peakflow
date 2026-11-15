@@ -96,10 +96,34 @@ final class CreditNoteIssuedRule implements PostingRule
         ];
 
         foreach ($event['revenue'] as $revenue) {
+            /*
+             | The part that was still deferred comes out of the liability.
+             |
+             | PF-107's hard case: crediting a partially recognised contract
+             | takes back revenue for what was earned and the deferral for
+             | what was not. Taking it all from either one leaves the
+             | control account unreconcilable in one direction or the other,
+             | and both look right on the face of the credit note.
+             */
+            $deferred = Money::of((string) ($revenue['deferred_amount'] ?? '0'), $currency);
+
+            if ($deferred->isPositive()) {
+                $lines[] = PostingLine::toRole(
+                    ControlRole::DeferredRevenue,
+                    $deferred,
+                    $party,
+                    $narration,
+                );
+            }
+
             $account = (string) ($revenue['account_id'] ?? '');
 
             if ($account === '') {
                 throw IssueRefused::aLineWithNoRevenueAccount();
+            }
+
+            if (Money::of((string) $revenue['amount'], $currency)->isZero()) {
+                continue;
             }
 
             $lines[] = PostingLine::toAccount(

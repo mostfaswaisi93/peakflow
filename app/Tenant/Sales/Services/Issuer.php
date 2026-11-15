@@ -74,6 +74,7 @@ final class Issuer
         private readonly Poster $poster,
         private readonly AuditTrail $audit,
         private readonly SegregatesDuties $duties,
+        private readonly RevenueRecognition $recognition,
     ) {}
 
     /**
@@ -201,6 +202,16 @@ final class Issuer
                 'chain_index' => $chain['index'],
             ]));
 
+            /*
+             | The recognition plan, after the posting - PF-107.
+             |
+             | After, because a plan for a document that failed to post is a
+             | plan for a document that does not exist; inside the same
+             | transaction, because a document that deferred revenue with no
+             | plan is a liability nobody will ever release.
+             */
+            $this->recognition->plan($draft->refresh());
+
             $this->audit->record(
                 category: 'sales',
                 action: $draft->document_type->auditAction(),
@@ -245,6 +256,16 @@ final class Issuer
     {
         $id = $draft->references()
             ->where('kind', 'prepayment')
+            ->value('referenced_invoice_id');
+
+        return $id === null ? null : Invoice::query()->find((string) $id);
+    }
+
+    /** The invoice a credit note credits, if it credits one. */
+    private function creditedInvoice(Invoice $draft): ?Invoice
+    {
+        $id = $draft->references()
+            ->where('kind', 'credits')
             ->value('referenced_invoice_id');
 
         return $id === null ? null : Invoice::query()->find((string) $id);
@@ -436,7 +457,47 @@ final class Issuer
     {
         $revenue = [];
 
+        $credited = $draft->document_type === DocumentType::CreditNote
+            ? $this->creditedInvoice($draft)
+            : null;
+
         foreach ($draft->lines()->get() as $line) {
+            $basis = $line->recognitionBasis();
+
+            /*
+             | A credit note against a partially recognised invoice - PF-107.
+             |
+             | Three months of a twelve-month contract are revenue and nine
+             | are still a liability. Debiting revenue for the whole amount
+             | overstates the reversal by three months of income; debiting
+             | the deferral for the whole amount overstates revenue by the
+             | same. Both leave the control account unreconcilable, in
+             | opposite directions - so the split is computed from the plan
+             | and the rule posts both halves.
+             */
+            if ($credited !== null) {
+                $split = $this->recognition->unwind(
+                    $credited,
+                    Money::of((string) $line->net_amount, (string) $draft->currency),
+                    $line->credits_line_id === null
+                        ? null
+                        : InvoiceLine::query()->find((string) $line->credits_line_id),
+                );
+
+                if (Money::of($split['deferred'], (string) $draft->currency)->isPositive()) {
+                    $revenue[] = [
+                        'account_id' => (string) $line->revenue_account_id,
+                        'amount' => $split['recognised'],
+                        'deferred_amount' => $split['deferred'],
+                        'tax_code_id' => $line->tax_code_id === null ? null : (string) $line->tax_code_id,
+                        'tax_point' => $line->tax_point?->toDateString(),
+                        'dimensions' => [],
+                    ];
+
+                    continue;
+                }
+            }
+
             $revenue[] = [
                 'account_id' => (string) $line->revenue_account_id,
                 'amount' => $line->net_amount,
@@ -445,6 +506,17 @@ final class Issuer
                 'dimensions' => array_values(array_filter([
                     $line->dimension_1, $line->dimension_2, $line->dimension_3, $line->dimension_4,
                 ])),
+
+                /*
+                 | Whether this line's revenue is earned yet - PF-107.
+                 |
+                 | A deferred line credits `deferred_revenue` instead of its
+                 | revenue account: money invoiced for work not yet done is
+                 | a contract liability under IFRS 15, and crediting revenue
+                 | now overstates income in a period that may be closed,
+                 | reported and filed by the time anybody notices.
+                 */
+                'deferred' => $basis->defersRevenue(),
             ];
         }
 

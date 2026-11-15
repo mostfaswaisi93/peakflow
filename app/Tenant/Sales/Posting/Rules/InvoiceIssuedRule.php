@@ -91,6 +91,28 @@ final class InvoiceIssuedRule implements PostingRule
         ];
 
         foreach ($event['revenue'] as $revenue) {
+            /*
+             | A deferred line credits the liability, not revenue - PF-107.
+             |
+             | Through the control role rather than the line's own account,
+             | because the deferral is a control account that one report
+             | rolls forward and one reconciliation ties out: spreading it
+             | across every revenue account's mirror would make both
+             | impossible.
+             */
+            if (($revenue['deferred'] ?? false) === true) {
+                $lines[] = PostingLine::toRole(
+                    ControlRole::DeferredRevenue,
+                    Money::of((string) $revenue['amount'], $currency)->negated(),
+                    $party,
+                    $narration,
+                    $revenue['tax_code_id'] ?? null,
+                    $revenue['tax_point'] ?? null,
+                );
+
+                continue;
+            }
+
             $account = (string) ($revenue['account_id'] ?? '');
 
             if ($account === '') {
