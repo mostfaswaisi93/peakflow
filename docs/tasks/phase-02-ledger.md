@@ -87,10 +87,10 @@ The invariant that keeps a subledger equal to its control account, and the one t
 ### PF-046 · Dimensions
 `Ledger` · **5 pts** · depends: PF-041 · standards: — · `type:schema`
 
-- [ ] Up to eight dimension axes per entity, each a tenant-defined hierarchical list - cost centre, project, department, branch, fund and three free axes
+- [x] Up to eight dimension axes per entity, each a tenant-defined hierarchical list - cost centre, project, department, branch, fund and three free axes
 - [x] Stored as **columns** on `journal_lines`, not JSON and not an EAV side table, because every financial report filters and groups by them and an index on a JSON path is not a substitute
-- [ ] An account may **require** a dimension; the posting is refused without it
-- [ ] Validity rules can forbid a combination, including a value belonging to a different entity
+- [x] An account may **require** a dimension; the posting is refused without it
+- [x] Validity rules can forbid a combination, including a value belonging to a different entity
 - [ ] Benchmarked: a P&L grouped by two dimensions over a year stays inside its query budget
 
 ### PF-047 · Posting rules

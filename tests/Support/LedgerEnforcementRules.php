@@ -89,6 +89,8 @@ final class LedgerEnforcementRules
                 'a posting rule that does not balance is refused by name' => $this->badRulesFailByName(),
                 'ledger:verify finds an entry someone unbalanced' => $this->verifyCatchesDamage(),
                 'a reversed entry still counts in the trial balance' => $this->reversalsNetOut(),
+                "a dimension from another entity cannot reach a line" => $this->dimensionsAreScoped(),
+                'a required dimension is refused when absent' => $this->requiredDimensionsBite(),
             ];
         } catch (Throwable $e) {
             return ['ledger invariants could not be checked' => [
@@ -97,6 +99,203 @@ final class LedgerEnforcementRules
         } finally {
             $this->connection->rollBack();
         }
+    }
+
+    /**
+     * PF-046: the dimension check that cannot be made any other way.
+     *
+     * ## Why this one matters more than it looks
+     *
+     * Posting entity A's cost centre onto entity B's line produces a report
+     * where a department appears inside a company it is not part of. Both
+     * ids are valid ULIDs, the line balances, the account is right, the
+     * period is open - nothing else in the system has any reason to object.
+     *
+     * The only thing that can catch it is a check that compares the value's
+     * entity against the line's, and it has to see across entities to do
+     * that. The first version could not: `dimension_values` is entity-
+     * scoped, so the policy hid the other company's row and the posting was
+     * refused as "that value does not exist" - the control held and the
+     * message sent the reader looking for the wrong thing.
+     *
+     * @return list<string>
+     */
+    public function dimensionsAreScoped(): array
+    {
+        $violations = [];
+
+        $axisId = $this->axis(1, 'cost_centre_chk');
+        $mine = $this->dimensionValue($axisId, 'MINE');
+
+        /*
+         | A second entity with its own axis on the same column.
+         |
+         | The same column number, because that is the realistic shape: two
+         | companies in one group both put cost centres on dimension_1, and
+         | a value from one looks exactly like a value from the other.
+         */
+        $context = app(EntityContext::class);
+        $other = Entity::create([
+            'code' => 'CHX'.random_int(100, 999),
+            'legal_name' => 'Other entity',
+            'country' => 'SA',
+            'functional_currency' => 'SAR',
+            'active' => true,
+        ]);
+
+        $context->use($other);
+        $theirAxis = $this->axis(1, 'cost_centre_chk', (string) $other->getKey());
+        $theirs = $this->dimensionValue($theirAxis, 'THEIRS', (string) $other->getKey());
+        $context->use($this->entityId);
+
+        $refusal = $this->writeEntry(
+            [['5.2', '100.0000'], ['1.1.1.1', '-100.0000']],
+            dimensions: ['dimension_1' => $theirs],
+        );
+
+        if ($refusal === null) {
+            $violations[] = "another entity's cost centre was accepted on this entity's journal line. Both ".
+                'ids are valid, the entry balances and the account is right, so nothing else objects - and '.
+                'the report shows a department inside a company it is not part of';
+        /*
+         | The needle is early in the message on purpose.
+         |
+         | `writeEntry` truncates a refusal at 240 characters, and the first
+         | version of this check looked for a phrase past that point - so a
+         | correct refusal was reported as the wrong reason.
+         */
+        } elseif (! str_contains($refusal, 'belonging to entity')) {
+            $violations[] = 'a cross-entity dimension was refused for the wrong reason, which sends the '.
+                'reader looking for a missing value rather than a misfiled one: '.$refusal;
+        }
+
+        // A value in the wrong column is the same class of mistake.
+        $projectAxis = $this->axis(2, 'project_chk');
+        $project = $this->dimensionValue($projectAxis, 'ALPHA');
+
+        $wrongColumn = $this->writeEntry(
+            [['5.2', '100.0000'], ['1.1.1.1', '-100.0000']],
+            dimensions: ['dimension_1' => $project],
+        );
+
+        if ($wrongColumn === null) {
+            $violations[] = 'a project value was accepted in the cost-centre column. Column and axis are the '.
+                'same statement, so this files a project under cost centres and both reports are wrong';
+        }
+
+        // And the valid combination must still post.
+        $good = $this->writeEntry(
+            [['5.2', '100.0000'], ['1.1.1.1', '-100.0000']],
+            dimensions: ['dimension_1' => $mine, 'dimension_2' => $project],
+        );
+
+        if ($good !== null) {
+            $violations[] = 'a line with valid dimensions on both axes was refused: '.$good;
+        }
+
+        return $violations;
+    }
+
+    /**
+     * PF-046: an account that demands an axis gets one.
+     *
+     * What makes dimensional reporting trustworthy. A cost-centre report is
+     * only complete if every line that should carry one does, and a rule
+     * enforced in the posting service alone is a rule an import does not
+     * know about - the symptom being a report short by whatever came in
+     * through the import, found when a department queries their own numbers.
+     *
+     * @return list<string>
+     */
+    public function requiredDimensionsBite(): array
+    {
+        $violations = [];
+
+        $axisId = $this->axis(3, 'department_chk');
+        $value = $this->dimensionValue($axisId, 'FINANCE');
+
+        $this->connection->table('account_dimension_requirements')->insert([
+            'id' => (string) Str::ulid(),
+            'entity_id' => $this->entityId,
+            'account_id' => $this->accounts['5.2'],
+            'dimension_axis_id' => $axisId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $without = $this->writeEntry([['5.2', '100.0000'], ['1.1.1.1', '-100.0000']]);
+
+        if ($without === null) {
+            $violations[] = 'an account that requires a department accepted a line without one, so a report '.
+                'grouped by that axis is short by this line - and the shortfall is found when a department '.
+                'queries their own numbers';
+        }
+
+        $with = $this->writeEntry(
+            [['5.2', '100.0000'], ['1.1.1.1', '-100.0000']],
+            dimensions: ['dimension_3' => $value],
+        );
+
+        if ($with !== null) {
+            $violations[] = 'the same line WITH the required department was also refused: '.$with;
+        }
+
+        /*
+         | And an account with no requirement is unaffected.
+         |
+         | A validator that demanded a dimension everywhere would be
+         | switched off within a week, which is worse than not having one.
+         */
+        $unrelated = $this->writeEntry([['1.1.1.1', '100.0000'], ['4.1', '-100.0000']]);
+
+        if ($unrelated !== null) {
+            $violations[] = 'an account with no dimension requirement was refused for want of one: '.$unrelated;
+        }
+
+        return $violations;
+    }
+
+    /** An axis for the checks, on a given column. */
+    private function axis(int $number, string $key, ?string $entityId = null): string
+    {
+        $id = (string) Str::ulid();
+
+        $this->connection->table('dimension_axes')->insert([
+            'id' => $id,
+            'entity_id' => $entityId ?? $this->entityId,
+            'axis' => $number,
+            'key' => $key,
+            'name_ar' => $key,
+            'name_en' => ucfirst(str_replace('_', ' ', $key)),
+            'leaf_only' => true,
+            'active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $id;
+    }
+
+    private function dimensionValue(string $axisId, string $code, ?string $entityId = null): string
+    {
+        $id = (string) Str::ulid();
+
+        $this->connection->table('dimension_values')->insert([
+            'id' => $id,
+            'entity_id' => $entityId ?? $this->entityId,
+            'dimension_axis_id' => $axisId,
+            'code' => $code,
+            'name_ar' => $code,
+            'name_en' => $code,
+            'path' => $code,
+            'depth' => 0,
+            'postable' => true,
+            'active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $id;
     }
 
     /** @return list<string> */
@@ -574,8 +773,15 @@ final class LedgerEnforcementRules
      *
      * @param  list<array{0: string, 1: string}>  $lines  [account code, signed amount]
      */
-    private function writeEntry(array $lines, ?string $rule = null, ?string $entryId = null): ?string
-    {
+    /**
+     * @param  array<string, string|null>  $dimensions  applied to the FIRST line only
+     */
+    private function writeEntry(
+        array $lines,
+        ?string $rule = null,
+        ?string $entryId = null,
+        array $dimensions = [],
+    ): ?string {
         $entryId ??= (string) Str::ulid();
         $savepoint = 'entry_'.bin2hex(random_bytes(4));
 
@@ -600,8 +806,22 @@ final class LedgerEnforcementRules
                 'updated_at' => now(),
             ]);
 
-            foreach ($lines as [$code, $amount]) {
-                $this->connection->table('journal_lines')->insert([
+            /*
+             | Dimensions on the FIRST line only.
+             |
+             | Which is the realistic shape - the expense line carries the
+             | cost centre and the cash line does not - and it also means a
+             | required-dimension check is testing the account that requires
+             | one rather than both accounts at once.
+             |
+             | Inserted one row at a time, so the two lines need not carry
+             | identical keys. A multi-row insert would demand that, and
+             | giving one line a dimension and the other none produced
+             | "VALUES lists must all be the same length" - a message that
+             | names the symptom and only appears once a dimension is set.
+             */
+            foreach ($lines as $index => [$code, $amount]) {
+                $this->connection->table('journal_lines')->insert(array_merge([
                     'id' => (string) Str::ulid(),
                     'entity_id' => $this->entityId,
                     'journal_entry_id' => $entryId,
@@ -613,7 +833,7 @@ final class LedgerEnforcementRules
                     'functional_amount' => $amount,
                     'created_at' => now(),
                     'updated_at' => now(),
-                ]);
+                ], $index === 0 ? $dimensions : []));
             }
 
             // The whole point: make the deferred trigger fire now.
@@ -681,7 +901,7 @@ final class LedgerEnforcementRules
             ->where('code', 'GEN')
             ->value('id');
 
-        foreach (['1', '1.1.1.1', '1.1.1.2', '4.1'] as $code) {
+        foreach (['1', '1.1.1.1', '1.1.1.2', '4.1', '5.2'] as $code) {
             $this->accounts[$code] = (string) $this->connection->table('accounts')
                 ->where('entity_id', $this->entityId)
                 ->where('code', $code)
