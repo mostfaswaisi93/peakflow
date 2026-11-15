@@ -327,6 +327,16 @@ final class Crediting
                 'place_of_supply' => $original->place_of_supply,
                 'place_of_supply_rule' => $original->place_of_supply_rule,
                 'credits_line_id' => (string) $original->getKey(),
+
+                /*
+                 | And the ORDER line the credited line invoiced - PF-090.
+                 |
+                 | Measured: without it, crediting an invoice left the order
+                 | showing as fully invoiced, so a customer who asked for a
+                 | corrected invoice would be told the order was finished and
+                 | the re-issue would be refused as over-invoicing.
+                 */
+                'order_line_id' => $original->order_line_id,
                 'dimension_1' => $original->dimension_1,
                 'dimension_2' => $original->dimension_2,
                 'dimension_3' => $original->dimension_3,

@@ -7,6 +7,7 @@ use App\Http\Middleware\EnsurePlanAllows;
 use App\Http\Middleware\RequireStepUp;
 use App\Http\Middleware\ResolveEntity;
 use App\Http\Middleware\ResolveTenantFromHeader;
+use App\Http\Middleware\ResolveTenantFromPath;
 use App\Http\Middleware\ResolveTenantFromSession;
 use App\Http\Middleware\AssignCorrelationId;
 use App\Http\Middleware\SetLocale;
@@ -126,6 +127,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'tenant.session' => ResolveTenantFromSession::class,
             'tenant.header' => ResolveTenantFromHeader::class,
+            'tenant.path' => ResolveTenantFromPath::class,
             'entity.scope' => ResolveEntity::class,
             'plan' => EnsurePlanAllows::class,
             'step-up' => RequireStepUp::class,

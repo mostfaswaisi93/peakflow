@@ -395,7 +395,7 @@ final class SelfBillingRules
     private function seedTheSupplier(): void
     {
         $this->supplier = Party::create([
-            'code' => 'SB-S-'.random_int(1000, 9999),
+            'code' => 'SB-S-'.\Illuminate\Support\Str::upper(\Illuminate\Support\Str::random(6)),
             'legal_name' => 'Subcontractor Industrial LLC',
             'is_customer' => false,
             'is_supplier' => true,

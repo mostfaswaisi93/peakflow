@@ -6,6 +6,7 @@ namespace App\Tenant\Catalog\Services;
 
 use App\Support\Iso\CurrencyRegistry;
 use App\Support\Money\Money;
+use App\Support\Money\TranslatesMoney;
 use App\Support\Money\Rate;
 use App\Support\Money\RoundingPolicy;
 use App\Support\Money\Scale;
@@ -53,7 +54,7 @@ use LogicException;
  *
  * @see IAS 21
  */
-final class ExchangeRates
+final class ExchangeRates implements TranslatesMoney
 {
     /** Entered by a person rather than fetched. Precedence 0: it wins. */
     public const PROVIDER_MANUAL = 'manual';
@@ -124,6 +125,19 @@ final class ExchangeRates
             $this->rateFor($money->currency, $to, $date, $rateSet),
             $policy ?? RoundingPolicy::halfUp(Scale::Amount),
         );
+    }
+
+    /**
+     * The `TranslatesMoney` seam - PF-062, PF-090.
+     *
+     * The amount only, for callers outside this module that need a
+     * comparable figure and will not store the rate. Anything that posts
+     * uses {@see translate()} and records the rate, the set and the provider
+     * with it.
+     */
+    public function to(Money $money, string $to, Carbon $date): ?Money
+    {
+        return $this->translate($money, $to, $date)?->functional;
     }
 
     /**

@@ -114,7 +114,7 @@ final class InvoiceValidationRules
                     },
                     'party_was_merged' => function (Invoice $draft): void {
                         $survivor = Party::create([
-                            'code' => 'INV-S-'.random_int(100, 999),
+                            'code' => 'INV-S-'.\Illuminate\Support\Str::upper(\Illuminate\Support\Str::random(6)),
                             'legal_name' => 'Acme Industrial LLC (surviving)',
                             'is_customer' => true,
                             'country' => 'SA',

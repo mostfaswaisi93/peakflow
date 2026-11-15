@@ -232,6 +232,25 @@ final class SettingsRegistry
                 descriptionEn: 'Block new invoices when the credit limit is exceeded.',
             ),
 
+            /*
+             | Whether an accepted quote becomes an order or an invoice.
+             |
+             | Both are real ways to run a business: a contractor quotes,
+             | takes the order and invoices on delivery, while a studio
+             | quotes and invoices on acceptance. A system that assumes the
+             | first makes the studio click through an order step that means
+             | nothing, and one that assumes the second loses the commitment
+             | a contractor's credit exposure depends on.
+             */
+            new SettingDefinition(
+                key: 'sales.order_step',
+                type: 'bool',
+                scope: 'entity',
+                default: true,
+                descriptionAr: 'تحويل عرض السعر المقبول إلى أمر بيع قبل الفاتورة.',
+                descriptionEn: 'Turn an accepted quote into a sales order before invoicing.',
+            ),
+
             new SettingDefinition(
                 key: 'credit.include_uninvoiced_orders',
                 type: 'bool',

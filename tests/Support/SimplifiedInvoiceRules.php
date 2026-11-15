@@ -326,7 +326,7 @@ final class SimplifiedInvoiceRules
          | whole of B2C as far as the document is concerned.
          */
         $consumer = Party::create([
-            'code' => 'B2C-'.random_int(1000, 9999),
+            'code' => 'B2C-'.\Illuminate\Support\Str::upper(\Illuminate\Support\Str::random(6)),
             'legal_name' => 'Walk-in customer',
             'is_customer' => true,
             'country' => 'SA',

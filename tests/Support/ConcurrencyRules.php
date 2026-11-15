@@ -790,7 +790,7 @@ final class ConcurrencyRules
         $context->forget();
 
         $entity = Entity::create([
-            'code' => 'CC'.random_int(1000, 9999),
+            'code' => 'CC'.\Illuminate\Support\Str::upper(\Illuminate\Support\Str::random(6)),
             'legal_name' => 'Peakflow Contention Co.',
             'country' => 'SA',
             'functional_currency' => 'SAR',
@@ -817,7 +817,7 @@ final class ConcurrencyRules
         app(PeriodStateMachine::class)->transition($period, PeriodState::Open, 'opened for the gapless proof');
 
         $party = Party::create([
-            'code' => 'CC-C-'.random_int(1000, 9999),
+            'code' => 'CC-C-'.\Illuminate\Support\Str::upper(\Illuminate\Support\Str::random(6)),
             'legal_name' => 'Acme Industrial LLC',
             'is_customer' => true,
             'country' => 'SA',

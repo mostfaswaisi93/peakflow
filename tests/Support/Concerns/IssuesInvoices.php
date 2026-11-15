@@ -196,7 +196,7 @@ trait IssuesInvoices
         $context->forget();
 
         $entity = Entity::create([
-            'code' => 'INV'.random_int(100, 999),
+            'code' => 'INV'.\Illuminate\Support\Str::upper(\Illuminate\Support\Str::random(6)),
             'legal_name' => 'Peakflow Trading Co.',
             'country' => 'SA',
             'functional_currency' => 'SAR',
@@ -224,7 +224,7 @@ trait IssuesInvoices
         $this->period = $period->refresh();
 
         $party = Party::create([
-            'code' => 'INV-C-'.random_int(100, 999),
+            'code' => 'INV-C-'.\Illuminate\Support\Str::upper(\Illuminate\Support\Str::random(6)),
             'legal_name' => 'Acme Industrial LLC',
             'is_customer' => true,
             'country' => 'SA',

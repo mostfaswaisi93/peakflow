@@ -23,6 +23,7 @@ declare(strict_types=1);
  |   php bin/verify tenant     what the tenant database actually enforces
  |   php bin/verify rollback   provisioning rollback, by injecting a failure at each step (slow)
  |   php bin/verify concurrency  gapless numbering under 20 parallel issuers (slow, writes data)
+ |   php bin/verify public     the customer-facing quote link, over real HTTP (writes data)
  |   php bin/verify ledger     what the ledger refuses
  |   php bin/verify parties    the controls around party bank details
  |   php bin/verify currency   what the currency and FX layer refuses
@@ -125,6 +126,16 @@ if ($only === 'all' || $only === 'wiring') {
  | - its workers are separate processes and cannot see a transaction this one
  | holds open - and it spawns twenty of them.
  */
+/*
+ | Not in `all`: it drives real HTTP requests, and the first thing the tenant
+ | middleware does is purge the tenant connection - which abandons the
+ | transaction a suite would hold and takes its fixture with it. So this one
+ | commits its fixture and tears it down afterwards.
+ */
+if ($only === 'public') {
+    $suites['The public quote link'] = $suite(static fn (): array => (new Tests\Support\PublicQuoteRules())->all());
+}
+
 if ($only === 'concurrency') {
     $suites['The gapless proof'] = $suite(static fn (): array => (new Tests\Support\ConcurrencyRules())->all());
 }
@@ -202,6 +213,8 @@ if ($only === 'all' || $only === 'tax') {
 }
 
 if ($only === 'all' || $only === 'sales') {
+    $suites['Quotes'] = $suite(static fn (): array => (new Tests\Support\QuoteRules())->all());
+    $suites['Sales orders'] = $suite(static fn (): array => (new Tests\Support\SalesOrderRules())->all());
     $suites['Invoice schema'] = $suite(static fn (): array => (new Tests\Support\InvoiceSchemaRules())->all());
     $suites['Invoice validation'] = $suite(static fn (): array => (new Tests\Support\InvoiceValidationRules())->all());
     $suites['Issuing a document'] = $suite(static fn (): array => (new Tests\Support\InvoiceIssuingRules())->all());

@@ -2,6 +2,25 @@
 
 The [README](../../README.md#invoicing) covers the shape. This document covers the mechanics: the state machine, the allocation algorithm, and the cases that break naive implementations.
 
+## Before the invoice: quotes and orders
+
+A quote is an **offer**, and an order is an **agreement to supply**. Neither is an accounting document: no posting, no number from a legal series, no tax point, no place in a hash chain. Both have their own tables for that reason — the easy way to build them is a status on the invoice table, and then a document with none of an invoice's obligations sits in the table every report, every return and every chain walk reads.
+
+```
+quote ──accept──▶ order ──invoice──▶ invoice(s)
+      └──accept──────────────────────▶ invoice (draft), where sales.order_step is off
+```
+
+**A revision is a new version.** A sent quote is a thing somebody received, so revising it writes version 2 and marks version 1 superseded — kept and readable, because "the price I was sent" is a question about a document that existed, and no longer acceptable, because two live prices means the customer picks. The versions carry the same reference (it is the same conversation) and `Quotes::compare()` is what makes them comparable: lines matched by content rather than position, so moving a line is not a change to the offer.
+
+**Expiry is read from the date, not the status.** A quote whose last day was yesterday is not acceptable this morning, whatever the column says; `quotes:expire` exists to make the state visible, and it reports what it closed rather than a count.
+
+**The customer answers by signed link, with no login** — the tenant and entity are in the path because there is nowhere else for them to come from, and both are inside the signature. The link expires a week after the quote. Accepting records who, when and from where, and produces an order or a **draft** invoice: issuing is the business's act, and collapsing the two would consume a number from a gapless series and write a posting at the moment somebody clicked a link on a phone.
+
+**An order's balance is tracked per line**, in quantity and in value, because "have we invoiced the installation yet?" is the question people ask. Over-invoicing is refused by the service with the figure and by a CHECK on the row, so the cap holds against any writer. Crediting an invoice puts the balance back — without that, crediting and re-issuing would exhaust an order nobody had delivered. Cancelling an order with invoices against it is refused: the invoice exists, and an order that says it never happened leaves a document in a legal sequence pointing at an agreement nobody made.
+
+A confirmed order **commits** and posts nothing. A commitment is neither a receivable nor a liability, so it is a figure the credit check and a budget report read — and a check asserts no journal entry ever names an order.
+
 ## The state machine
 
 ```

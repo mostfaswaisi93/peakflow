@@ -433,7 +433,7 @@ final class PrepaymentRules
             },
             'another customer\'s prepayment' => function () use ($prepayments, $code): void {
                 $other = Party::create([
-                    'code' => 'PRE-C-'.random_int(1000, 9999),
+                    'code' => 'PRE-C-'.\Illuminate\Support\Str::upper(\Illuminate\Support\Str::random(6)),
                     'legal_name' => 'Another Customer LLC',
                     'is_customer' => true,
                     'country' => 'SA',

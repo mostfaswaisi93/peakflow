@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Providers;
 
 use App\Support\Audit\AuditTrail;
+use App\Support\Money\TranslatesMoney;
+use App\Tenant\Catalog\Services\ExchangeRates;
 use App\Support\Config\ProductionConfiguration;
 use App\Support\Telemetry\CorrelationId;
 use App\Tenant\Identity\Services\AuditLog;
@@ -34,6 +36,16 @@ final class AppServiceProvider extends ServiceProvider
          | attribute a record to the wrong company.
          */
         $this->app->bind(AuditTrail::class, AuditLog::class);
+
+        /*
+         | Translating an amount for a caller that will not store the rate.
+         |
+         | `Parties` needs a credit exposure in one currency and may not
+         | depend on `Catalog`; anything that POSTS a translation uses
+         | `ExchangeRates` directly and records the rate with it. Same
+         | decision and same reason as the audit trail above.
+         */
+        $this->app->bind(TranslatesMoney::class, ExchangeRates::class);
     }
 
     public function boot(): void

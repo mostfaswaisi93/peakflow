@@ -37,7 +37,7 @@ final class InvoiceLine extends TenantModel
 
     protected $fillable = [
         'entity_id', 'invoice_id', 'line_no', 'item_id', 'item_code', 'description',
-        'credits_line_id',
+        'credits_line_id', 'order_line_id',
         'unit_code', 'quantity', 'unit_price', 'net_amount', 'revenue_account_id',
         'tax_code_id', 'tax_category', 'tax_rate', 'tax_point',
         'place_of_supply', 'place_of_supply_rule',

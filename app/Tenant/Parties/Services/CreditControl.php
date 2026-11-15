@@ -6,11 +6,13 @@ namespace App\Tenant\Parties\Services;
 
 use App\Support\Audit\AuditTrail;
 use App\Support\Money\Money;
+use App\Support\Money\TranslatesMoney;
 use App\Tenant\Parties\Exceptions\CreditRefused;
 use App\Tenant\Parties\Models\Party;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Throwable;
 
 /**
  * Credit limits, exposure and holds - PF-062.
@@ -53,6 +55,16 @@ final class CreditControl
     public function __construct(
         private readonly AuditTrail $audit,
         private readonly PartyMerger $merges,
+
+        /*
+         | Through the Support seam, not `Catalog`'s service.
+         |
+         | `Parties` depends on `Support` and `Tenancy` and nothing else, and
+         | an exposure figure that includes orders in three currencies is
+         | still a figure in one - so the need is real and the dependency is
+         | not allowed. Same decision as the audit trail.
+         */
+        private readonly TranslatesMoney $rates,
     ) {}
 
     /**
@@ -434,28 +446,92 @@ final class CreditControl
     }
 
     /**
-     * Orders placed and not yet invoiced.
+     * Orders placed and not yet invoiced - PF-090.
      *
-     * Returns zero until PF-08x brings sales orders, and the method exists
-     * now on purpose: a credit check written without this term gets shipped,
-     * and adding it later means revisiting every call site and every number
-     * anybody has learnt to expect.
+     * ## Why it is summed from the LINES
+     *
+     * The balance left to invoice is tracked per order line, because "have
+     * we invoiced the installation yet?" is the question people ask. The
+     * order header has no open-amount column on purpose: a second total
+     * there would be a second answer to the same question, and the one that
+     * drifts is always the denormalised one.
+     *
+     * ## Why the merge chain is here too
+     *
+     * An order placed by a party that has since been merged into this one is
+     * still this customer's commitment, for the same reason the receivable
+     * query walks the chain: the obligation followed the customer, not the
+     * record.
+     *
+     * ## Foreign-currency orders are translated, and a missing rate is NOT
+     * silently dropped
+     *
+     * Exposure is a figure in the entity's functional currency. An order in
+     * another one is translated at its own order date, and where no rate is
+     * on file the order's nominal amount is counted instead - which
+     * overstates or understates by the drift since, and is the right way to
+     * be wrong: dropping it reports a customer with 400,000 of orders as
+     * having none, and the credit check then approves work the business
+     * cannot afford to deliver.
      */
     private function uninvoicedOrders(string $entityId, string $partyId): string
     {
-        if (! DB::connection('tenant')->getSchemaBuilder()->hasTable('sales_orders')) {
+        $schema = DB::connection('tenant')->getSchemaBuilder();
+
+        if (! $schema->hasTable('sales_orders') || ! $schema->hasTable('sales_order_lines')) {
             return '0.0000';
         }
 
-        $total = DB::connection('tenant')->selectOne(<<<'SQL'
-            SELECT coalesce(sum(o.open_amount_functional), 0) AS total
-            FROM sales_orders o
-            WHERE o.entity_id = cast(? AS char(26))
-              AND o.party_id = cast(? AS char(26))
-              AND o.status IN ('confirmed', 'part_invoiced')
-        SQL, [$entityId, $partyId]);
+        $identities = $this->merges->identities($partyId);
+        $placeholders = implode(', ', array_fill(0, count($identities), 'cast(? AS char(26))'));
 
-        return (string) ($total->total ?? '0');
+        /** @var list<object{currency: string, total: string, order_date: string}> $rows */
+        $rows = DB::connection('tenant')->select(<<<SQL
+            SELECT o.currency, max(o.order_date) AS order_date,
+                   coalesce(sum(l.net_amount - l.invoiced_net), 0) AS total
+            FROM sales_orders o
+            JOIN sales_order_lines l ON l.sales_order_id = o.id
+            WHERE o.entity_id = cast(? AS char(26))
+              AND o.party_id IN ({$placeholders})
+              AND o.status = 'confirmed'
+            GROUP BY o.currency
+        SQL, [$entityId, ...$identities]);
+
+        $functional = (string) DB::connection('tenant')->table('entities')
+            ->where('id', $entityId)
+            ->value('functional_currency');
+
+        $total = Money::zero($functional === '' ? 'XXX' : $functional);
+
+        foreach ($rows as $row) {
+            $amount = Money::of((string) $row->total, (string) $row->currency);
+
+            if ($amount->isZero()) {
+                continue;
+            }
+
+            if ((string) $row->currency === $functional) {
+                $total = $total->plus($amount);
+
+                continue;
+            }
+
+            try {
+                $translated = $this->rates->to(
+                    $amount,
+                    $functional,
+                    Carbon::parse((string) $row->order_date),
+                );
+
+                $total = $total->plus($translated ?? $amount);
+            } catch (Throwable) {
+                // No rate on file. Counted at its nominal amount rather than
+                // dropped - see the note above.
+                $total = $total->plus(Money::of((string) $row->total, $functional));
+            }
+        }
+
+        return (string) $total->amount;
     }
 
     private function disputedAmount(string $entityId, string $partyId): string

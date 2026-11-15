@@ -7,6 +7,7 @@ use App\Platform\Http\Controllers\OpsSettingsController;
 use App\Platform\Http\Controllers\OpsTenantController;
 use App\Tenant\Identity\Http\Controllers\EntitySwitchController;
 use App\Http\Controllers\LoginController;
+use App\Http\Controllers\PublicQuoteController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -68,6 +69,33 @@ Route::get('/workspace-unavailable', static function (Illuminate\Http\Request $r
         // of the application.
         ->header('Cache-Control', 'no-store');
 })->name('workspace.unavailable');
+
+/*
+| The customer-facing quote link - PF-089.
+|
+| Signed, rate-limited, and outside every authentication middleware on
+| purpose: the person who has to answer is the customer, who has no login
+| here, and the number of quotes that go unanswered because somebody could
+| not remember a password for a portal they use twice a year is not small.
+|
+| The tenant and the entity are in the path because there is nowhere else for
+| them to come from - no session, no cookie, and row-level security that reads
+| nothing at all without an entity established. Both are inside the
+| signature, so a visitor who edits either gets a 403 from Laravel's
+| signature check before anything is resolved.
+|
+| `tenant.path` runs AFTER `signed`: resolving a tenant named in an unsigned
+| URL would let anybody probe which slugs exist by watching which ones took
+| longer.
+*/
+Route::middleware(['signed', 'throttle:30,1', 'tenant.path'])
+    ->prefix('q/{tenant}/{entity}/{quote}')
+    ->name('public.quote.')
+    ->group(static function (): void {
+        Route::get('/', [PublicQuoteController::class, 'show'])->name('show');
+        Route::post('/accept', [PublicQuoteController::class, 'accept'])->name('accept');
+        Route::post('/decline', [PublicQuoteController::class, 'decline'])->name('decline');
+    });
 
 Route::get('/health', static fn () => response()->json([
     'application' => config('app.name'),
