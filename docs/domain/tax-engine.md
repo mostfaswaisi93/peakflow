@@ -432,6 +432,18 @@ Found while building it: the step-up prompt read *"Set up a second factor before
 
 An adjustment to a filed period lands in the **next open** return period, carrying a reference to the period it corrects. A filed return is never edited; a correction is a new document with its own audit trail, and an adjustments schedule accompanies the next return. Where a jurisdiction requires an amended return instead, the profile declares it and the flow differs accordingly.
 
+### As built (PF-087)
+
+`return_adjustments` carries **two periods on every row**: `corrects_period_id` is the filed period the error is in, `reported_in_period_id` is the open period the correction is reported in. Both, because the two questions have different answers and both get asked — the authority's schedule asks what you are correcting, the return's arithmetic asks what is in this period, and a system holding only the second produces a correction nobody can trace to a filing.
+
+**The correction is in the net due, not only on the schedule.** That is the failure that looks right: the boxes are the ledger's, the schedule is there, and the amount filed is wrong by exactly the correction — which is the one number the authority checks first. The schedule is also inside the canonical form and under the hash, because a correction reported in a return and absent from its snapshot is a figure in the net due that the reprint cannot explain.
+
+**Some regimes amend instead**, and `config/jurisdictions.php` declares which per profile. Reporting a next-period adjustment where the regime expects an amended return files a figure the authority cannot match against anything, so it refuses and names the regime's own procedure. The thresholds some regimes set — correct below an amount, amend above it — are deliberately not modelled: that is a figure per regime per year, and a wrong one picks the wrong procedure silently.
+
+**A reason is required, and it has to be a sentence.** A length test alone accepted `"adjustment"` — exactly ten characters, which is the word the rule exists to refuse — so the rule is now twenty characters **and** more than one word. A single word is never an explanation, whatever its length: "reclassification" is seventeen characters and says nothing. Enforced in the service and by a `CHECK`, because a correction script and a psql session write rows the same way.
+
+An adjustment stays editable while the period it is reported in is open — a typo has to be fixable — and becomes immutable the moment that period is filed, because it is then part of a statement already made.
+
 ## Tax account reconciliation
 
 The check that proves the return and the ledger agree, and the one that makes the whole engine trustworthy:

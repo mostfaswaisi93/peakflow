@@ -28,7 +28,11 @@ use JsonSerializable;
  */
 final readonly class TaxReturn implements JsonSerializable
 {
-    /** @param  list<TaxReturnBox>  $boxes */
+    /**
+     * @param  list<TaxReturnBox>  $boxes
+     * @param  list<array{corrects: string, box: string, net: string, tax: string, reason: string}>  $adjustments
+     *     corrections to EARLIER filed periods, reported in this one - PF-087
+     */
     public function __construct(
         public string $jurisdiction,
         public string $form,
@@ -37,6 +41,7 @@ final readonly class TaxReturn implements JsonSerializable
         public string $periodUntil,
         public string $currency,
         public array $boxes,
+        public array $adjustments = [],
     ) {}
 
     public function outputTax(): Money
@@ -49,10 +54,35 @@ final readonly class TaxReturn implements JsonSerializable
         return $this->sumOf('input');
     }
 
-    /** What is owed, or reclaimable when negative. */
+    /**
+     * Tax carried by corrections to earlier periods - PF-087.
+     *
+     * Signed: a correction can go either way, and a schedule holding only
+     * absolute values would need a direction column somebody would eventually
+     * disagree with.
+     */
+    public function adjustmentTax(): Money
+    {
+        $sum = Money::zero($this->currency);
+
+        foreach ($this->adjustments as $adjustment) {
+            $sum = $sum->plus(Money::of($adjustment['tax'], $this->currency));
+        }
+
+        return $sum;
+    }
+
+    /**
+     * What is owed, or reclaimable when negative.
+     *
+     * Output less input PLUS the corrections reported in this period. A net
+     * due computed without them is the wrong figure filed on purpose: the
+     * correction is part of what this period owes, which is the whole reason
+     * it was reported here rather than left in the period it corrects.
+     */
     public function netDue(): Money
     {
-        return $this->outputTax()->minus($this->inputTax());
+        return $this->outputTax()->minus($this->inputTax())->plus($this->adjustmentTax());
     }
 
     public function boxFor(string $box): ?TaxReturnBox
@@ -110,9 +140,17 @@ final readonly class TaxReturn implements JsonSerializable
                 static fn (TaxReturnBox $box): array => $box->jsonSerialize(),
                 $this->boxes,
             ),
+            /*
+             | The schedule is part of the FILED document, so it is inside the
+             | canonical form and under the hash. A correction reported in a
+             | return and absent from its snapshot would be a figure in the
+             | net due that the reprint could not explain.
+             */
+            'adjustments' => $this->adjustments,
             'totals' => [
                 'output_tax' => (string) $this->outputTax(),
                 'input_tax' => (string) $this->inputTax(),
+                'adjustments' => (string) $this->adjustmentTax(),
                 'net_due' => (string) $this->netDue(),
             ],
         ];

@@ -202,6 +202,37 @@ return [
     | and spelled wrong is a decision that was made and then discarded, and the
     | discarding shows up as a cent on a return that cannot be traced.
     */
+    /*
+    |---------------------------------------------------------------------------
+    | How a filed return is corrected - PF-087
+    |---------------------------------------------------------------------------
+    |
+    |   next_period      the correction is reported in the next open return,
+    |                    with a schedule saying what it corrects
+    |   amended_return   the original return is re-submitted, amended, with
+    |                    its own reference
+    |
+    | Both exist in the world and the difference is procedural rather than
+    | arithmetical: the figures are the same, and what differs is which
+    | submission carries them. A system that only implements the first files a
+    | correction the authority will not match against anything; one that only
+    | implements the second re-opens returns in regimes that do not allow it.
+    |
+    | So it is declared per profile, and the adjustment flow refuses rather
+    | than guessing where a regime wants an amendment. The thresholds some
+    | regimes set - correct in the next return below an amount, amend above it
+    | - are not modelled: that is a figure per regime per year, and a wrong
+    | one picks the wrong procedure silently.
+    */
+    'return_correction' => [
+        'generic' => 'next_period',
+        'peppol' => 'next_period',
+        'zatca' => 'next_period',
+        'facturx' => 'amended_return',
+        'eta' => 'amended_return',
+        'jofotara' => 'next_period',
+    ],
+
     'rounding' => [
         'generic' => [
             'mode' => 'half_up',

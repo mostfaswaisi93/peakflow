@@ -47,7 +47,10 @@ use Illuminate\Support\Facades\DB;
  */
 final class ReturnGenerator
 {
-    public function __construct(private readonly ReturnBoxes $boxes) {}
+    public function __construct(
+        private readonly ReturnBoxes $boxes,
+        private readonly ReturnAdjustments $adjustments,
+    ) {}
 
     public function generate(Entity $entity, ReturnPeriod $period): TaxReturn
     {
@@ -203,6 +206,15 @@ final class ReturnGenerator
             $until,
             $currency,
             $boxes,
+            /*
+             | Corrections to EARLIER filed periods, reported in this one.
+             |
+             | Read here rather than left to a caller, because a return
+             | assembled without them has a net due that is wrong by exactly
+             | the correction - and it would be filed before anybody noticed
+             | the schedule was missing.
+             */
+            $this->adjustments->scheduleFor($entityId, $period),
         );
     }
 

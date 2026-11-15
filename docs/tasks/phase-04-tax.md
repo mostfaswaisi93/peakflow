@@ -173,10 +173,13 @@ The engine's organising principle is that **tax is data, not code**. A rate that
 ### PF-087 · Post-filing adjustments
 `Tax` · **3 pts** · depends: PF-086 · standards: IAS 8 · `type:compliance`
 
-- [ ] An adjustment to a filed period lands in the **next open** return period, carrying a reference to the period it corrects
-- [ ] A filed return is never edited; a correction is a new document with its own audit trail
-- [ ] An adjustments schedule accompanies the next return, which is what the authority expects to see
-- [ ] Where a jurisdiction requires an amended return instead, the profile declares it and the flow differs accordingly
+- [x] An adjustment to a filed period lands in the **next open** return period, carrying a reference to the period it corrects. Two periods on every row, because the authority's schedule asks what you are correcting while the return's arithmetic asks what is in this period - and a system holding only the second produces a correction nobody can trace to a filing
+- [x] A filed return is never edited; a correction is a new document with its own audit trail. The trigger on `return_filings` makes editing impossible and this table is what to do instead; a check asserts the corrected period is untouched and still filed
+- [x] An adjustments schedule accompanies the next return, which is what the authority expects to see - and the correction is **in the net due**, not only on the schedule. That is the failure that looks right: the boxes are the ledger's, the schedule is there, and the amount filed is wrong by exactly the correction, which is the one number the authority checks first. The schedule is inside the canonical form and under the hash
+- [x] Where a jurisdiction requires an amended return instead, the profile declares it and the flow differs accordingly. `facturx` and `eta` amend; the rest adjust. Reporting a next-period correction under an amending regime files a figure the authority cannot match, so it refuses and names the regime's procedure. The thresholds some regimes set are deliberately not modelled: a figure per regime per year, and a wrong one picks the wrong procedure silently
+- [x] A reason is required and has to be a **sentence**. A length test alone accepted "adjustment" - exactly ten characters, which is the word the rule exists to refuse - so it is now twenty characters and more than one word. "reclassification" is seventeen characters and says nothing
+- [x] An adjustment stays editable while its reporting period is open, because a typo has to be fixable, and becomes immutable the moment that period is filed - at which point it is part of a statement already made
+- [x] Found on the way: one bite did not fire. Weakening the service's reason rule left the **CHECK** refusing it, so the check still passed - defence in depth working. Proven by removing both enforcers, which is what shows the check is sensitive to the behaviour rather than to one of its two layers
 
 ### PF-088 · Tax account reconciliation
 `Tax` · **5 pts** · depends: PF-086, PF-054 · standards: — · `risk:high`
