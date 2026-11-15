@@ -12,6 +12,7 @@ Start with the [root README](../README.md) for the whole system in one pass. Com
 | [`architecture/multi-tenancy.md`](architecture/multi-tenancy.md) | Provisioning, connection resolution, entity scoping, migrating thousands of databases |
 | [`architecture/money-and-precision.md`](architecture/money-and-precision.md) | The three decimal scales, where rounding happens, and the currency cases that break naive implementations |
 | [`architecture/events-and-queues.md`](architecture/events-and-queues.md) | The split between a posting and a side effect, both enforced, and why a queued job that loses its tenant is the worst bug this architecture can have |
+| [`architecture/canonicalization.md`](architecture/canonicalization.md) | Canonical JSON and XML, the places a plausible implementation diverges from the specification, and why a DOCTYPE is refused outright |
 | [`architecture/standards-registries.md`](architecture/standards-registries.md) | The vendored ISO data, what its provenance record honestly claims, and the 21 places CLDR deliberately disagrees with ISO 4217 |
 | [`architecture/decisions/`](architecture/decisions/) | Architecture decision records - the choices, their alternatives, and why the alternatives lost |
 

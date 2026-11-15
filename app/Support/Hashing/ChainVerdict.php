@@ -57,6 +57,43 @@ final readonly class ChainVerdict implements JsonSerializable
         );
     }
 
+    public function isIntact(): bool
+    {
+        return $this->intact;
+    }
+
+    /**
+     * One sentence, naming the document to go and look at.
+     *
+     * The class docblock claims this verdict is "in a form an operator can act
+     * on at 3am" and the only reader was `jsonSerialize()`, which is a form a
+     * log aggregator can act on. A person needs the reference, the position
+     * and how much of the series is still trustworthy - and they need it
+     * without opening a JSON blob.
+     *
+     * Everything before the first divergence is intact and everything after it
+     * is UNVERIFIABLE rather than wrong, which is the distinction that decides
+     * how much work the next hour is.
+     */
+    public function describe(): string
+    {
+        if ($this->intact) {
+            return sprintf(
+                'The chain is intact across %d document(s).',
+                $this->documentsChecked,
+            );
+        }
+
+        return sprintf(
+            'The chain diverges at %s (position %d). %s %d document(s) before it verified; everything '.
+            'after it is unverifiable until this one is explained.',
+            (string) $this->firstDivergenceReference,
+            (int) $this->firstDivergenceIndex,
+            (string) $this->reason,
+            $this->documentsChecked,
+        );
+    }
+
     public function jsonSerialize(): array
     {
         return array_filter([
