@@ -45,7 +45,113 @@ final class ArchitectureRules
             'the built assets are not stale' => $this->builtAssetsAreNotStale(),
             'translation catalogs agree' => $this->translationCatalogsAgree(),
             'strict types everywhere' => $this->strictTypesDeclared(),
+            'no exchange rate is ever inverted' => $this->ratesAreNeverInverted(),
         ];
+    }
+
+    /**
+     * Nothing anywhere computes the other direction of a rate - PF-068.
+     *
+     * ## Why this is worth a rule of its own
+     *
+     * `1 / 0.92` is not the EUR to USD rate. It is a number four
+     * ten-thousandths of a cent away from it, in the same direction, every
+     * time it is used. A thousand units converted out and back comes home as
+     * 1,000.0000000004.
+     *
+     * That lands as a consolidation difference small enough to dismiss and
+     * large enough to notice - the worst size a difference can be, because
+     * nobody can justify a week finding it and nobody can sign the accounts
+     * while it is there.
+     *
+     * The design answer is that both directions are separate rows and
+     * {@see \App\Support\Money\Rate} has no `inverse()`. This rule is the
+     * tripwire for the day somebody reaches for one anyway, under deadline,
+     * because a rate was missing and the inverse was right there.
+     *
+     * It is a text search and it knows it: it catches the obvious forms, not
+     * every possible one. The real enforcement is that `convert()` refuses
+     * the wrong direction and the lookup refuses a missing one. This is what
+     * fails the build while the intent is still visible in the diff.
+     *
+     * @return list<string>
+     */
+    public function ratesAreNeverInverted(): array
+    {
+        $violations = [];
+
+        $patterns = [
+            // 1 / something whose name mentions a rate, in either order of
+            // writing: `1 / $rate`, `1.0 / $fxRate`, `1 / ($rate->value)`.
+            '/\b1(?:\.0+)?\s*\/\s*[^;\n]{0,40}(?:rate|fx)/i' => 'divides 1 by something rate-shaped',
+            // An inverse, by any of its usual names.
+            '/(?:->|::|function\s+)(?:inverse|inverted|invert|reciprocal)\s*\(/i' => 'computes an inverse rate',
+            // The SQL form, which a migration or a raw query could carry.
+            '/\b1\s*\/\s*(?:fx_)?rate\b/i' => 'inverts a rate in SQL',
+            /*
+             | The decimal-safe form, which is the one a careful developer
+             | would reach for. It avoids the float and does the same wrong
+             | arithmetic: BigDecimal::one()->dividedBy($rate, 12) is still
+             | the reciprocal of a rounded number.
+             */
+            '/(?:one\(\)|of\(\s*[\'"]?1(?:\.0+)?[\'"]?\s*\))\s*->\s*dividedBy/i'
+                => 'divides one by something, which is an inverse rate however it is spelled',
+            '/\bbcdiv\s*\(\s*[\'"]1/i' => 'divides 1 by something with bcdiv',
+            /*
+             | And the form with no 1 in it at all.
+             |
+             | Dividing an amount BY a rate is the inverse by another name:
+             | `$sar->dividedBy($eurToSarRate)` is how you get euro out of a
+             | EUR-to-SAR rate without ever writing a reciprocal, and it
+             | carries exactly the same drift.
+             */
+            '/->\s*dividedBy\s*\(\s*\$\w*(?:rate|Rate|fx|Fx)/' => 'divides an amount by a rate',
+        ];
+
+        $roots = ['app', 'database/migrations', 'resources/views'];
+
+        foreach ($roots as $root) {
+            if (! is_dir($this->basePath.'/'.$root)) {
+                continue;
+            }
+
+            foreach ($this->phpFiles($root) as $file) {
+                $original = (string) file_get_contents($file);
+
+                /*
+                 | Comments blanked, for the reason the float rule records:
+                 | every sentence explaining why a rate must not be inverted
+                 | contains the thing being searched for, so the prose would
+                 | flag itself and the only ways out would be to delete the
+                 | explanation or annotate it.
+                 */
+                $source = $this->withoutComments($original);
+                $relative = $this->relative($file);
+
+                foreach ($patterns as $pattern => $what) {
+                    if (preg_match_all($pattern, $source, $matches, PREG_OFFSET_CAPTURE) === 0) {
+                        continue;
+                    }
+
+                    foreach ($matches[0] as [$match, $offset]) {
+                        if ($this->lineIsAnnotated($original, $offset)) {
+                            continue;
+                        }
+
+                        $violations[] = sprintf(
+                            '%s:%d %s (%s). Fetch the rate for the direction you need; the reciprocal of a '.
+                            'rounded rate does not round-trip, and the drift is one-directional and permanent.',
+                            $relative,
+                            $this->lineAt($source, $offset),
+                            $what,
+                            trim($match),
+                        );
+                    }
+                }
+            }
+        }
+
+        return $violations;
     }
 
     /**

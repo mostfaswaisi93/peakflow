@@ -140,7 +140,19 @@ final class Poster
                     ? $context->account($line->role)
                     : (string) $line->accountId;
 
-                $amount = (string) $line->amount->amount;
+                /*
+                 | What the line is DENOMINATED in, which is the original
+                 | currency when there was a translation and the functional
+                 | currency when there was not.
+                 |
+                 | `functional_amount` is always `$line->amount`, because a
+                 | PostingLine's amount is always functional - see its class
+                 | note. So the pair written here cannot disagree: both come
+                 | from the same Translation, which produced one from the
+                 | other by converting.
+                 */
+                $translation = $line->translation;
+                $denominated = $translation?->original ?? $line->amount;
 
                 $rows[] = [
                     'id' => (string) Str::ulid(),
@@ -149,24 +161,20 @@ final class Poster
                     'accounting_date' => $accountingDate->toDateString(),
                     'period_id' => $period->getKey(),
                     'account_id' => $accountId,
-                    'amount' => $amount,
-                    'currency' => $line->amount->currency,
+                    'amount' => (string) $denominated->amount,
+                    'currency' => $denominated->currency,
                     /*
-                     | Always null today, because `assertBalanced` refuses a
-                     | line that is not already in the functional currency -
-                     | translation is the rule's job, since which rate applies
-                     | is a property of the transaction.
+                     | Null when nothing was translated, and NEVER 1.
                      |
-                     | Null rather than 1: a rate of 1 asserts that a
-                     | translation happened and came out even, which is a
-                     | different claim from no translation at all, and the two
-                     | are indistinguishable afterwards.
-                     |
-                     | Multi-currency rules in PF-06x will pass a rate through
-                     | and this becomes the place it lands.
+                     | A rate of 1 asserts that a translation happened and
+                     | came out even, which is a different claim from no
+                     | translation at all, and afterwards the two cannot be
+                     | told apart. The database refuses both halves of the
+                     | mistake: a rate on a functional-currency line, and a
+                     | foreign-currency line without one.
                      */
-                    'fx_rate' => null,
-                    'functional_amount' => $amount,
+                    'fx_rate' => $translation === null ? null : (string) $translation->rate->value,
+                    'functional_amount' => (string) $line->amount->amount,
                     'party_id' => $line->partyId,
                     'tax_code_id' => $line->taxCodeId,
                     'narration' => $line->narration,
@@ -211,9 +219,17 @@ final class Poster
 
         foreach ($lines as $line) {
             if ($line->amount->currency !== $context->functionalCurrency) {
-                // A rule returning a foreign-currency line without a
-                // translation has not decided what the entry is worth, and
-                // the ledger cannot decide for it.
+                /*
+                 | A rule returning a raw foreign-currency amount has not
+                 | decided what the entry is worth, and the ledger cannot
+                 | decide for it - choosing a rate here would be choosing one
+                 | nobody reviewed.
+                 |
+                 | The way to post in a foreign currency is
+                 | `PostingLine::translated()`, which takes the rate and
+                 | produces a functional amount from it. This branch is what
+                 | is left: a rule that skipped that step.
+                 */
                 throw EntryDoesNotBalance::wrongCurrency(
                     $ruleKey,
                     $line->amount->currency,

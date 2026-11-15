@@ -188,6 +188,26 @@ A single entry recording a `USD 1,000` receipt against a `EUR 920` invoice, in a
 
 Summed in `USD` it is not zero. Summed in `EUR` it is not zero. Both of those are **correct**. Asserting the invariant on the transaction currency is a bug that only appears once a customer pays in a foreign currency - which is to say, in production.
 
+### What enforces it, and what happens without it
+
+Three claims are checked on every journal line by `assert_line_translation()`, a trigger rather than a service method - because an import, a correction script and a console session all reach `journal_lines` directly and none of them passes through the application:
+
+| Claim | Refused form |
+|-------|--------------|
+| A foreign-currency line carries a rate | `EUR 4,000`, `fx_rate = NULL`, `functional_amount = 4,000.0000` |
+| Its functional amount follows from that rate | `EUR 4,000` at `4.0125` recorded as `SAR 4,000` |
+| A functional-currency line carries **no** rate | `SAR 1,000` with `fx_rate = 1.000000000000` |
+
+The third looks pedantic and is not. A rate of `1` asserts that a translation happened and came out even, which is a different claim from no translation at all, and afterwards the two cannot be told apart - while "was this converted?" is asked every time a balance is read in two currencies.
+
+The first was measured with the trigger dropped. A **balanced** pair of untranslated `EUR 4,000` lines was accepted, and the trial balance then reported the account holding `SAR 4,000` where `SAR 16,050` belonged. `SAR 12,050` gone, the entry balancing perfectly, and every total in the system agreeing with every other one.
+
+The mistake is never single-sided, which is why the check writes a balanced pair: a rule that forgets to translate forgets on every line, so the balance constraint sees nothing wrong.
+
+The tolerance on the second claim is **one unit at the amount scale** - enough to absorb a half-up versus half-even disagreement and nothing else. Deliberately not a percentage: a tolerance that scales with the amount is a tolerance that hides a wrong rate on a large invoice.
+
+A missing rate is `RateNotAvailable`, and a rate that exists only in the opposite direction is a *different* refusal, because that is the moment someone writes `1 / $rate` by hand. An architecture rule fails the build on the obvious spellings of that - including `BigDecimal::one()->dividedBy($rate, …)`, which avoids the float and does the same wrong arithmetic, and `$amount->dividedBy($rate, …)`, which is the inverse with no `1` in it at all.
+
 ## How this is tested
 
 | Layer | Asserts |

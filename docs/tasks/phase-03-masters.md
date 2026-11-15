@@ -79,18 +79,18 @@ The highest-value fraud surface in the product.
 ### PF-067 · Currencies per entity
 `Catalog` · **2 pts** · depends: PF-007, PF-025 · standards: ISO 4217
 
-- [ ] An entity enables the currencies it transacts in; one is its functional currency
-- [ ] A document in a currency the entity has not enabled is refused rather than silently converted
-- [ ] Display policy per currency: symbol or code, position, digit shape, and the exponent used for presentation
+- [x] An entity enables the currencies it transacts in; one is its functional currency
+- [x] A document in a currency the entity has not enabled is refused rather than silently converted
+- [x] Display policy per currency: symbol or code, position, digit shape, and the exponent used for presentation
 
 ### PF-068 · The FX rate model
 `Catalog` · **5 pts** · depends: PF-067 · standards: IAS 21 · `risk:high` `type:schema`
 
-- [ ] Rates are `(from, to, date, rate, provider, rate_set)` and **effective-dated**
-- [ ] **Direction is stored, never inferred.** `USD/EUR` and `EUR/USD` are separate rows if both are used, because `1/x` on a rounded rate does not round-trip and a one-cent consolidation difference is a question someone will ask
-- [ ] Multiple coexisting rate sets: a daily market rate, a monthly average, and a statutory central-bank rate - because tax authorities frequently mandate their own and it is not the one the treasury uses
-- [ ] Rates stored at the 12-decimal rate scale
-- [ ] A missing rate is an explicit, surfaced condition, never a silent fallback to 1
+- [x] Rates are `(from, to, date, rate, provider, rate_set)` and **effective-dated**
+- [x] **Direction is stored, never inferred.** `USD/EUR` and `EUR/USD` are separate rows if both are used, because `1/x` on a rounded rate does not round-trip and a one-cent consolidation difference is a question someone will ask
+- [x] Multiple coexisting rate sets: a daily market rate, a monthly average, and a statutory central-bank rate - because tax authorities frequently mandate their own and it is not the one the treasury uses
+- [x] Rates stored at the 12-decimal rate scale
+- [x] A missing rate is an explicit, surfaced condition, never a silent fallback to 1
 
 ### PF-069 · Rate fetching
 `Catalog` · **3 pts** · depends: PF-068 · standards: —

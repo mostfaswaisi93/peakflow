@@ -24,6 +24,7 @@ declare(strict_types=1);
  |   php bin/verify rollback   provisioning rollback, by injecting a failure at each step (slow)
  |   php bin/verify ledger     what the ledger refuses
  |   php bin/verify parties    the controls around party bank details
+ |   php bin/verify currency   what the currency and FX layer refuses
  |   php bin/verify examples   worked examples only
  |
  | Exits non-zero on any violation.
@@ -84,12 +85,16 @@ if ($only === 'all' || $only === 'parties') {
     $suites['Party controls'] = (new Tests\Support\PartyEnforcementRules())->all();
 }
 
+if ($only === 'all' || $only === 'currency') {
+    $suites['Currency and FX'] = (new Tests\Support\CurrencyEnforcementRules())->all();
+}
+
 if ($only === 'all' || $only === 'examples') {
     $suites['Worked examples'] = (new Tests\Support\WorkedExamples())->all();
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | examples | rollback\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | examples | rollback\n");
     exit(2);
 }
 
