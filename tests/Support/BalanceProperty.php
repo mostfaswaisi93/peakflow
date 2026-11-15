@@ -109,6 +109,7 @@ final class BalanceProperty
                 'any set of lines summing to zero commits' => $this->balancedEntriesCommit(),
                 'any set not summing to zero is refused' => $this->unbalancedEntriesAreRefused(),
                 'the smallest representable imbalance is refused' => $this->theSmallestImbalanceIsRefused(),
+                'a zero line is refused even inside a balanced entry' => $this->aZeroLineIsRefused(),
                 'an entry with one line is refused unless it is zero' => $this->singleLineEntries(),
             ], $this->entityId);
         } catch (Throwable $e) {
@@ -181,6 +182,18 @@ final class BalanceProperty
                 continue;
             }
 
+            /*
+             | A nudge can land a line on exactly zero.
+             |
+             | The zero-line rule would then refuse the entry for a reason
+             | that has nothing to do with the imbalance. Skipped rather than
+             | counted as a pass, because a case refused for the wrong reason
+             | is not evidence about the balance trigger.
+             */
+            if (BigDecimal::of($lines[$index])->isZero()) {
+                continue;
+            }
+
             $refusal = $this->write($lines);
 
             if ($refusal === null) {
@@ -192,6 +205,21 @@ final class BalanceProperty
                     $case,
                     count($lines),
                     $this->sumOf($lines),
+                );
+
+                if (count($violations) >= 5) {
+                    break;
+                }
+            } elseif (! $this->isABalanceRefusal($refusal)) {
+                $violations[] = sprintf(
+                    'seed %d case %d: an entry of %d lines summing to %s was refused, but not by the '.
+                    'balance rule: %s. The imbalance itself went unnoticed - something else objected, '.
+                    'and this case would still be green with the balance trigger dropped',
+                    $this->seed,
+                    $case,
+                    count($lines),
+                    $this->sumOf($lines),
+                    $refusal,
                 );
 
                 if (count($violations) >= 5) {
@@ -214,6 +242,15 @@ final class BalanceProperty
      * It is. An entry that is out by 0.0001 is out, and the ledger has no way
      * to represent "nearly balanced".
      *
+     * ## The bases are all non-zero, and the refusal is checked
+     *
+     * One of the bases used to be `0.0000`, which made the pair
+     * `0.0000, 0.0001` - refused by `journal_lines_amount_not_zero` rather
+     * than by the balance trigger. That case was green and said nothing: it
+     * would have stayed green with the balance trigger dropped. So the base
+     * is `0.0002`, the smallest that keeps both lines off zero, and every
+     * refusal here has to name the balance.
+     *
      * @return list<string>
      */
     public function theSmallestImbalanceIsRefused(): array
@@ -221,10 +258,11 @@ final class BalanceProperty
         $violations = [];
 
         foreach (['0.0001', '-0.0001'] as $delta) {
-            foreach (['1000.0000', '0.0000', '999999999.9999'] as $base) {
+            foreach (['0.0002', '1000.0000', '999999999.9999'] as $base) {
                 $lines = [$base, (string) BigDecimal::of($base)->negated()->plus($delta)->toScale(4)];
+                $refusal = $this->write($lines);
 
-                if ($this->write($lines) === null) {
+                if ($refusal === null) {
                     $violations[] = sprintf(
                         'seed %d: lines of %s and %s committed, a sum of %s. There is no such thing as '.
                         'nearly balanced',
@@ -233,7 +271,63 @@ final class BalanceProperty
                         $lines[1],
                         $this->sumOf($lines),
                     );
+                } elseif (! $this->isABalanceRefusal($refusal)) {
+                    $violations[] = sprintf(
+                        'seed %d: lines of %s and %s, a sum of %s, were refused - but not by the balance '.
+                        'rule: %s. This case proves nothing about the trigger it is here to check',
+                        $this->seed,
+                        $lines[0],
+                        $lines[1],
+                        $this->sumOf($lines),
+                        $refusal,
+                    );
                 }
+            }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * A zero line, inside an entry that balances perfectly.
+     *
+     * Asserted because this suite now DEPENDS on it. The generator above is
+     * written to keep every line off zero, and a rule that quietly vanished
+     * would turn that care into false confidence instead of a failure - the
+     * generator would go back to drawing zeroes with nothing left to object.
+     *
+     * The schema's reason, repeated here so the two do not drift: a zero line
+     * is either a rounding artefact that should have been allocated to a real
+     * line, or a placeholder somebody meant to fill in. Both balance.
+     *
+     * ## Two constraints guard it, not one
+     *
+     * `journal_lines_amount_not_zero` and `journal_lines_functional_not_zero`.
+     * Dropping only the first leaves this check green, which is how the pair
+     * was found: the first attempt to prove this check bites did exactly that
+     * and the suite stayed green. It fails only once both are gone - so it is
+     * a check on the rule, not on either constraint, and it will not go quiet
+     * if the enforcement moves from one column to the other.
+     *
+     * @return list<string>
+     */
+    public function aZeroLineIsRefused(): array
+    {
+        $violations = [];
+
+        foreach ([
+            ['0.0000', '100.0000', '-100.0000'],
+            ['100.0000', '0.0000', '-100.0000'],
+            ['100.0000', '-100.0000', '0.0000'],
+            ['0.0000', '0.0000'],
+        ] as $lines) {
+            if ($this->write($lines) === null) {
+                $violations[] = sprintf(
+                    'seed %d: an entry of %s committed. A zero line is a rounding artefact that should '.
+                    'have been allocated, or a placeholder nobody filled in, and it balances either way',
+                    $this->seed,
+                    implode(', ', $lines),
+                );
             }
         }
 
@@ -267,37 +361,75 @@ final class BalanceProperty
     }
 
     /**
-     * Lines that sum to exactly zero, by construction.
+     * Lines that sum to exactly zero, by construction, none of them zero.
      *
      * The last line is the negation of the others' sum, computed in decimal.
      * Built from integers scaled by ten thousand rather than from floats,
      * because a generator that produced a sum of 0.00000000001 would be
      * testing the trigger against its own rounding error.
      *
+     * ## No line is ever zero
+     *
+     * `journal_lines_amount_not_zero` refuses one, and it is right to: a zero
+     * line is either a rounding artefact that should have been allocated or a
+     * placeholder nobody filled in.
+     *
+     * An earlier version of this generator drew magnitudes from zero and
+     * carried a comment asserting that a zero line among non-zero ones was
+     * legal. It is not, and the database said so in 4.5% of runs - 93 of
+     * 240,000 generated cases carry a zero line. A failure that rare gets
+     * dismissed as flakiness, which is worse than one that happens every
+     * time: the suite keeps its reputation while the evidence goes in the
+     * bin.
+     *
+     * The balancing line is the negation of the others and can come out zero
+     * however they are drawn, so the whole entry is redrawn rather than
+     * nudged - a nudge moves the distribution in a way no failure message
+     * would reveal.
+     *
      * @return list<string>
      */
     private function balancedLines(): array
     {
-        $count = mt_rand(2, 8);
-        $units = [];
+        for ($attempt = 0; $attempt < 100; $attempt++) {
+            $count = mt_rand(2, 8);
+            $units = [];
 
-        for ($line = 0; $line < $count - 1; $line++) {
-            // Up to a billion in minor units of a ten-thousandth, which is
-            // 100,000 currency units - and occasionally a zero line, because
-            // a zero line among non-zero ones is legal and is a case nobody
-            // writes by hand.
-            $magnitude = 10 ** mt_rand(0, 9);
-            $value = mt_rand(0, 9999) * $magnitude;
+            for ($line = 0; $line < $count - 1; $line++) {
+                // Up to a billion in minor units of a ten-thousandth, which
+                // is 100,000 currency units.
+                $magnitude = 10 ** mt_rand(0, 9);
+                $value = mt_rand(1, 9999) * $magnitude;
 
-            $units[] = mt_rand(0, 1) === 1 ? $value : -$value;
+                $units[] = mt_rand(0, 1) === 1 ? $value : -$value;
+            }
+
+            $units[] = -array_sum($units);
+
+            if (! in_array(0, $units, true)) {
+                return array_map(
+                    static fn (int $u): string => (string) BigDecimal::ofUnscaledValue($u, 4)->toScale(4),
+                    $units,
+                );
+            }
         }
 
-        $units[] = -array_sum($units);
-
-        return array_map(
-            static fn (int $u): string => (string) BigDecimal::ofUnscaledValue($u, 4)->toScale(4),
-            $units,
+        throw new \RuntimeException(
+            'could not draw a balanced entry of non-zero lines in 100 attempts',
         );
+    }
+
+    /**
+     * Did the refusal come from the balance rule, or from something else?
+     *
+     * Several constraints guard a journal line, and a case refused by the
+     * wrong one is a case that would still pass with the balance trigger
+     * dropped altogether. That is how this suite came to hold a check that
+     * was green for the wrong reason.
+     */
+    private function isABalanceRefusal(string $refusal): bool
+    {
+        return str_contains($refusal, 'does not balance');
     }
 
     /** @param list<string> $amounts */
