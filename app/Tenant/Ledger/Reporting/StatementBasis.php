@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tenant\Ledger\Reporting;
 
+use App\Support\Lang\ArabicCount;
 use Illuminate\Support\Carbon;
 
 /**
@@ -167,19 +168,14 @@ final readonly class StatementBasis
         }
 
         /*
-         | The counted noun, not a plural suffix.
+         | The counted noun, through the shared helper.
          |
          | Arabic counts 1 as a singular, 2 as a dual, 3 to 10 as a broken
-         | plural and 11 upwards as a singular again. Writing "4 قيد" and
-         | "15 قيود" is the usual shortcut and both are wrong - and this is a
-         | sentence an auditor reads.
+         | plural and 11 upwards as a singular again. The rules were written
+         | inline here first, and the second place that needed them got them
+         | wrong - so there is one implementation now.
          */
-        $entries = match (true) {
-            $this->adjustingEntries === 1 => 'قيد تسوية واحد',
-            $this->adjustingEntries === 2 => 'قيدَي تسوية',
-            $this->adjustingEntries <= 10 => sprintf('%d قيود تسوية', $this->adjustingEntries),
-            default => sprintf('%d قيد تسوية', $this->adjustingEntries),
-        };
+        $entries = ArabicCount::adjustingEntries($this->adjustingEntries);
 
         return sprintf(
             'بعملة %s %s، %s %s في فترة التسوية.',

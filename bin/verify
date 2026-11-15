@@ -33,6 +33,7 @@ declare(strict_types=1);
  |   php bin/verify charts     the chart templates, and the charts they produce
  |   php bin/verify property   the balanced-entry invariant over generated entries
  |   php bin/verify group      inter-entity postings across a four-entity group
+ |   php bin/verify manual     manual journal entry: validation, templates, import
  |   php bin/verify examples   worked examples only
  |
  | Exits non-zero on any violation.
@@ -109,6 +110,10 @@ if ($only === 'all' || $only === 'catalog') {
     $suites['Items and prices'] = (new Tests\Support\CatalogRules())->all();
 }
 
+if ($only === 'all' || $only === 'manual') {
+    $suites['Manual journal entry'] = (new Tests\Support\ManualJournalRules())->all();
+}
+
 if ($only === 'all' || $only === 'group') {
     $suites['Inter-entity postings'] = (new Tests\Support\InterEntityRules())->all();
 }
@@ -134,7 +139,7 @@ if ($only === 'all' || $only === 'examples') {
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | charts | queue | group | property | examples | rollback\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | charts | queue | group | manual | property | examples | rollback\n");
     exit(2);
 }
 

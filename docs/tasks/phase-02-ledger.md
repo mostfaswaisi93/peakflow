@@ -204,11 +204,21 @@ The global proof. An individual assertion can be written to pass; this cannot.
 ### PF-055 · Manual journal entry
 `Ledger` · **5 pts** · depends: PF-047, PF-046 · standards: — · `type:a11y`
 
-- [ ] Draft, validate, post. Multi-line, multi-currency, with dimension validation and a running balance that shows the imbalance as you type
-- [ ] Templates and recurring journals for accruals and standing entries
-- [ ] Import from a spreadsheet with a dry-run that reports every rejected line and why, before anything posts
+- [x] Draft, validate, post. Multi-line, multi-currency, with dimension validation and a running balance that shows the imbalance as you type. `ManualJournal::validate()` runs on every keystroke, not on submit: the **imbalance is a figure with a side** ("short 90.00 on the credit side"), because the amount an entry is out by is what tells somebody which mistake they made - 90 is a transposition, twice the amount is a sign, a round figure is a missing line
+- [x] A line being typed is represented as it is typed. A `DraftLine` holds strings, so an account code somebody is half way through and an amount that is currently "1,2" are representable - which is what stops a screen keeping its own shadow copy of the entry, and the shadow copy is where two versions of the truth come from
+- [x] Every problem names its **line and its field**, so the message lands next to the input that caused it, and carries both languages. A blank row at the bottom of the grid is counted as blank, not reported as an error
+- [x] Amounts are read strictly: thousands separators and Arabic-Indic digits are normalised, and "about 12k" is refused rather than guessed. More than four decimal places is refused too - rounding has to be a decision, not a side effect
+- [x] Templates and recurring journals for accruals and standing entries. A template is the **shape without the amounts**: lines carry a signed *share* and one figure drives the entry, so a template cannot balance when written and silently stop balancing after somebody edits a line. A deferred database constraint refuses a template whose shares do not cancel
+- [x] Each side of a template is apportioned to the total separately. The first version put the residual on the largest share - which is the -1 credit, already exact - so a 100.00 accrual came out as three debits of 33.3333 against a credit of 99.9999: balanced, and not the figure anybody asked for
+- [x] A recurring template **prepares a draft**; it does not post. An entry appearing in the ledger because a date passed is an entry nobody decided to make, and the first time it is wrong is the month a rate changed and nobody looked
+- [x] Import from a spreadsheet with a dry-run that reports every rejected line and why, before anything posts. Rows are grouped into entries by reference and **each entry must balance on its own** - a file whose grand total is zero while two entries are out by equal and opposite amounts would post two wrong entries and look right
+- [x] Row numbers are **spreadsheet** row numbers, offset by the header. An index into an array is a number somebody has to translate, and they will translate it wrong on the fortieth one
+- [x] Dates are parsed against explicit formats. `Carbon::parse('2026-02-30')` returns **2 March** - silently, two days into a period that may be closed - and before the formats were made explicit that row was accepted with the only complaint being that the entry "carried two dates"
+- [x] The refusal carries the **report**, which is what the guard is for. Atomicity is not: the import runs in one transaction, so removing the guard still posts nothing - what it provides is the answer the screen needs, instead of one constraint violation about one entry and a four-hundred-row spreadsheet to import again
+- [x] A control account cannot be selected, and the refusal **explains** rather than hides. The message says what the account is (the total of a subledger), what would break (the two disagree with nothing able to say which is right) and what to do instead (post to the counter account, or correct the document) - in both languages, asserted phrase by phrase, because "not allowed" is the version that gets built by default
+- [x] A control account is refused in a **template** too, not only at posting. A template is written once and used every month: the refusal at posting would arrive on the first run, after somebody built the whole thing, and again every month until they worked out it was the template
 - [ ] Keyboard-operable grid: type-to-edit, `Enter` commits and moves down, `Tab` commits and moves right
-- [ ] A control account cannot be selected, and the UI explains why rather than hiding it
+  - The grid is Phase 11's, and building it before the design system exists means building it twice. What it needs from the ledger is here and checked: a running imbalance per keystroke, a problem per line with its field named, and a refusal that explains. Left open rather than ticked, because a keyboard contract is a claim about a screen and there is no screen
 
 ### PF-056 · Reversals
 `Ledger` · **3 pts** · depends: PF-055 · standards: IAS 8 · `type:posting`

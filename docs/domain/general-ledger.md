@@ -419,6 +419,92 @@ Up to **eight** axes per entity — cost centre, project, department, branch, fu
 
 Stored as **columns** on `journal_lines`, not JSON and not an EAV side table, because every financial report filters and groups by them and an index on a JSON path is not a substitute. An account may require a dimension; validity rules can forbid a combination, including a value belonging to another entity.
 
+## Manual journal entry
+
+### The imbalance is a figure, not a boolean
+
+"This entry does not balance" is useless while somebody is typing. The amount it is out **by** is what tells them which mistake they made, and the shape of the number says which:
+
+| out by | almost always |
+|--------|---------------|
+| 90 (a multiple of 9) | a transposition — 1,500 typed as 1,410 |
+| exactly twice a line | a sign the wrong way round |
+| a round figure | a missing line |
+
+So validation runs on every keystroke rather than on submit, and reports a signed imbalance with the **side** it falls on — "short 90.00 on the credit side" — because nobody should have to remember that debits are positive in storage to read a form.
+
+### A line being typed is representable
+
+A `PostingLine` is valid by construction: it holds a `Money`, an account or a role, and nothing that does not parse. A line being typed is none of those things — it has an account code somebody is half way through, an amount that is currently "1,2", and a dimension that may not exist.
+
+Refusing to represent that is what forces a screen to keep its own shadow copy of the entry, and the shadow copy is where two versions of the truth come from. So a `DraftLine` holds strings, a `LineProblem` says what is wrong with them and **which field**, and the conversion to a `PostingLine` happens only once the line is valid.
+
+A blank row at the bottom of the grid is counted as blank, not reported as an error. It is normal until somebody tries to post.
+
+### Amounts are normalised, never guessed
+
+`1,500.00` and `١٢٬٥٠٠٫٥٠` are both numbers somebody typed, and the form takes them: Arabic-Indic and Eastern Arabic-Indic digits, the Arabic decimal and thousands separators, and the Latin separators people actually type.
+
+`about 12k` is not a number. A figure the software invented is a figure nobody can trace, so it is refused by name. More than four decimal places is refused too — rounding has to be a decision rather than a side effect.
+
+### A control account is refused, and the refusal explains
+
+Hiding the account from the picker is what gets built by default. It makes the screen simpler and it leaves somebody hunting for an account they can see in the chart, with nothing saying why.
+
+So the message says three things, and a check asserts each phrase:
+
+> Account 1.1.2.1 is a control account (accounts_receivable): its balance is the total of a subledger, and the documents post to it. A manual entry makes the two disagree and nothing afterwards can say which is right. Post to the counter account, or correct the document that created the balance.
+
+What the account **is**, what would **break**, and what to do **instead** — in both languages, because it is the message most likely to be read by somebody who does not read English.
+
+### Templates hold the shape, not the amounts
+
+The accrual posted every month is the same entry with a different figure, and the way people do it without a template is to find last month's and copy it. That works until somebody copies the one that was reversed, or the one from before the chart changed.
+
+A template line carries a signed **share** rather than an amount, so one figure drives the whole entry:
+
+| | share | 100.00 becomes |
+|--|------|----------------|
+| Cost of sales | 0.333333333333 | 33.3333 |
+| Administrative expenses | 0.333333333333 | 33.3333 |
+| Property, plant and equipment | 0.333333333334 | 33.3334 |
+| Other income | −1.000000000000 | −100.0000 |
+
+Each **side** is apportioned to the total separately. The first version multiplied every share by the total and put the residual on the largest-magnitude line — which is the −1 credit, already exact — so a 100.00 accrual came out as three debits of 33.3333 against a credit of 99.9999. The entry balanced and the total was not what anybody asked for, which is the kind of wrong that reconciles.
+
+A deferred constraint refuses a template whose shares do not cancel, and a control account is refused in a template as well as at posting: a template is written once and used every month, so the refusal at posting would arrive on the first run and again every month until somebody worked out it was the template.
+
+**A recurring template prepares a draft; it does not post.** An entry appearing in the ledger because a date passed is an entry nobody decided to make, and the first time it is wrong is the month a rate changed and nobody looked.
+
+### A spreadsheet posts whole or not at all
+
+A file of four hundred journal lines has mistakes in it. Not might: does. The person who prepared it has a column of codes from last year's chart, two rows where the sign is wrong, and one entry that is out by the VAT.
+
+An import that posts what it can leaves a partial month in the ledger and a spreadsheet to diff against it. So the dry run is the primary operation:
+
+```
+Rejected: 7 of 9 rows have a problem. Nothing was written - the file posts whole or not at all.
+  row 2   JV-001   entry_does_not_balance   Entry JV-001 is out by 50.0000, short on the credit side.
+  row 4   JV-002   account_is_a_control     Account 1.1.2.1 is a control account (accounts_receivable)…
+  row 6   JV-003   date_unreadable          "2026-02-30" is not a date. Accepted: 2026-08-05, 05/08/2026…
+  row 8   -        reference_missing        This row has no reference, so there is nothing to say which…
+  row 9   JV-004   entry_has_two_dates      Entry JV-004 carries two dates: 2026-08-05 and 2026-08-06…
+```
+
+Four decisions in there:
+
+**Rows are grouped into entries by reference, and each entry must balance on its own.** A file whose grand total is zero while two entries are out by equal and opposite amounts would post two wrong entries and look right.
+
+**Row numbers are spreadsheet row numbers**, offset by the header. An index into an array is a number somebody has to translate, and they will translate it wrong on the fortieth one.
+
+**Dates are parsed against explicit formats.** `Carbon::parse('2026-02-30')` returns **2 March** — silently, two days into a period that may be closed by then. Before the formats were made explicit, that row was accepted and the only complaint was that the entry "carried two dates", which is true and is not the problem.
+
+**The refusal carries the report**, and that is what the guard is for. Atomicity is not: the import runs in one transaction, so removing the guard still posts nothing — the Poster refuses the unbalanced entry and everything rolls back. What the guard provides is the answer the screen needs, instead of one constraint violation about one entry and a four-hundred-row spreadsheet to import again.
+
+### What is not here
+
+The keyboard-operable grid. It belongs to the design system in Phase 11, and building it first means building it twice. What it needs from the ledger exists and is checked: a running imbalance per keystroke, a problem per line with its field named, and a refusal that explains rather than hides.
+
 ## Inter-entity postings
 
 A transaction between two entities of the same tenant — A pays a supplier invoice on behalf of B, C recharges D for shared services — posts **two entries in two sets of books**, each balancing in its own entity's functional currency.
