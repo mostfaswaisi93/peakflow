@@ -92,9 +92,25 @@ return [
     |
     */
 
-    'locale' => env('APP_LOCALE', 'en'),
+    /*
+     | The fallback is the registry's, not a literal `'en'`.
+     |
+     | The Laravel skeleton ships `env('APP_LOCALE', 'en')`. PeakFlow is
+     | Arabic-first, and with that literal in place the decision survived only
+     | while `APP_LOCALE` was present in the environment - so a deployment
+     | that forgot it would serve English to every Arabic user, correctly as
+     | far as the framework is concerned, and contradicting every comment in
+     | the codebase. A product decision that depends on an environment
+     | variable being remembered is a configuration accident.
+     |
+     | `?:` rather than a default argument, because `APP_LOCALE=` with nothing
+     | after it is a line somebody will write - and `env()` hands back the
+     | empty string for it, which is not a locale and does not trigger a
+     | default argument. Measured: it set the application locale to `''`.
+     */
+    'locale' => env('APP_LOCALE') ?: \App\Support\Iso\LanguageRegistry::DEFAULT_TAG,
 
-    'fallback_locale' => env('APP_FALLBACK_LOCALE', 'en'),
+    'fallback_locale' => env('APP_FALLBACK_LOCALE') ?: 'en',
 
     'faker_locale' => env('APP_FAKER_LOCALE', 'en_US'),
 

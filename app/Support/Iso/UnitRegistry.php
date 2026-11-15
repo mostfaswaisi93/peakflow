@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Support\Iso;
 
+use App\Support\Iso\Data\VendoredRegistry;
+use App\Support\Iso\Exceptions\RegistryDataUnusable;
 use App\Support\Iso\Exceptions\UnknownUnit;
 
 /**
@@ -32,80 +34,28 @@ use App\Support\Iso\Exceptions\UnknownUnit;
  * its own message, so adding one is a visible decision in a diff rather than
  * a silent widening.
  *
+ * Provenance: `database/iso/units.tsv`, recorded in `database/iso/provenance.json`
+ * - and recorded with a caveat the other registries do not need. ICU knows every
+ * ISO 4217 and ISO 3166 code, so those two files have a second source inside the
+ * process; Rec 20 has none, so these codes were transcribed and are cross-checked
+ * by nothing. The manifest says so rather than implying a verification that did
+ * not happen.
+ *
  * @see https://unece.org/trade/uncefact/cl-recommendations
  */
 final class UnitRegistry
 {
-    /**
-     * Packed as `CODE:en:ar`, grouped by what they measure.
-     *
-     * The names are here rather than in a translation file because a unit
-     * code's meaning is fixed by the standard - "HUR is an hour" is not a
-     * localisation decision - while the SYMBOL a locale shows for it is, and
-     * that stays in the view layer.
-     */
-    private const PACKED =
-        // Count and dimensionless
-        'C62:unit:وحدة|'.
-        'EA:each:لكل|'.  // Deliberately listed: see the note on EA below.
-        'NPR:pair:زوج|'.
-        'SET:set:طقم|'.
-        'DZN:dozen:دسته|'.
-        'BX:box:صندوق|'.
-        'CT:carton:كرتون|'.
-        'PK:pack:عبوة|'.
-        'PF:pallet:منصة|'.
-        'RO:roll:لفة|'.
-        'BG:bag:كيس|'.
-        'BO:bottle:زجاجة|'.
-        'CS:case:حافظة|'.
-        'DR:drum:برميل|'.
-        'TU:tube:أنبوب|'.
-        // Time
-        'SEC:second:ثانية|'.
-        'MIN:minute:دقيقة|'.
-        'HUR:hour:ساعة|'.
-        'DAY:day:يوم|'.
-        'WEE:week:أسبوع|'.
-        'MON:month:شهر|'.
-        'ANN:year:سنة|'.
-        // Mass
-        'GRM:gram:غرام|'.
-        'KGM:kilogram:كيلوغرام|'.
-        'TNE:tonne:طن|'.
-        'LBR:pound:رطل|'.
-        'ONZ:ounce:أونصة|'.
-        // Length
-        'MMT:millimetre:مليمتر|'.
-        'CMT:centimetre:سنتيمتر|'.
-        'MTR:metre:متر|'.
-        'KMT:kilometre:كيلومتر|'.
-        'INH:inch:بوصة|'.
-        'FOT:foot:قدم|'.
-        // Area and volume
-        'CMK:square centimetre:سنتيمتر مربع|'.
-        'MTK:square metre:متر مربع|'.
-        'MLT:millilitre:مليلتر|'.
-        'LTR:litre:لتر|'.
-        'MTQ:cubic metre:متر مكعب|'.
-        'GLL:gallon:غالون|'.
-        // Energy and data, which is where software and utilities invoice
-        'WHR:watt hour:واط ساعة|'.
-        'KWH:kilowatt hour:كيلوواط ساعة|'.
-        'MWH:megawatt hour:ميغاواط ساعة|'.
-        'E34:gigabyte:غيغابايت|'.
-        'E35:terabyte:تيرابايت|'.
-        '4L:megabyte:ميغابايت|'.
-        // Distance-weight, for freight
-        'TKM:tonne kilometre:طن كيلومتر|'.
-        'KTM:kilometre per hour:كيلومتر في الساعة|'.
-        // Percentage and currency-like
-        'P1:percent:نسبة مئوية';
+    /** The vendored file this registry reads. */
+    public const SOURCE = 'units';
 
-    /** @var array<string, array{en: string, ar: string}>|null */
+    /** @var array<string, array{dimension: UnitDimension, en: string, ar: string}>|null */
     private static ?array $table = null;
 
-    /** @return array<string, array{en: string, ar: string}> */
+    /**
+     * @return array<string, array{dimension: UnitDimension, en: string, ar: string}>
+     *
+     * @throws RegistryDataUnusable
+     */
     public static function all(): array
     {
         if (self::$table !== null) {
@@ -114,9 +64,36 @@ final class UnitRegistry
 
         $table = [];
 
-        foreach (explode('|', self::PACKED) as $row) {
-            [$code, $en, $ar] = explode(':', $row);
-            $table[$code] = ['en' => $en, 'ar' => $ar];
+        foreach (VendoredRegistry::rows(self::SOURCE) as $row) {
+            foreach (['code', 'dimension', 'en', 'ar'] as $column) {
+                if (! isset($row[$column])) {
+                    throw RegistryDataUnusable::column(self::SOURCE, $column);
+                }
+            }
+
+            $dimension = UnitDimension::tryFrom($row['dimension']);
+
+            /*
+             | An unknown dimension is refused rather than defaulted.
+             |
+             | The dimension exists so an addition between incompatible units
+             | can be refused; a unit that fell back to a default dimension
+             | would be comparable with things it has no business being
+             | compared with, which is the one failure this column prevents.
+             */
+            if ($dimension === null) {
+                throw RegistryDataUnusable::value(self::SOURCE, $row['code'], 'dimension', $row['dimension']);
+            }
+
+            if ($row['en'] === '' || $row['ar'] === '') {
+                throw RegistryDataUnusable::value(self::SOURCE, $row['code'], 'name', $row['en'].'/'.$row['ar']);
+            }
+
+            $table[$row['code']] = [
+                'dimension' => $dimension,
+                'en' => $row['en'],
+                'ar' => $row['ar'],
+            ];
         }
 
         return self::$table = $table;
@@ -156,6 +133,46 @@ final class UnitRegistry
     public static function codes(): array
     {
         return array_keys(self::all());
+    }
+
+    /**
+     * What the unit measures.
+     *
+     * The enum existed before anything mapped a code to it, which made it a
+     * declaration of intent rather than a control. Now a unit has one, is
+     * refused at load if it does not, and {@see comparable()} can answer the
+     * question the enum was written for.
+     */
+    public static function dimension(string $code): UnitDimension
+    {
+        return self::all()[self::assertExists($code)]['dimension'];
+    }
+
+    /**
+     * May these two units be added, compared or converted?
+     *
+     * Three hours plus two kilograms is not a rounding problem, and the place
+     * it shows up is a credit note whose unit does not match the invoice line
+     * it credits - where the quantities subtract to a number that means
+     * nothing and still prints.
+     */
+    public static function comparable(string $first, string $second): bool
+    {
+        return self::dimension($first) === self::dimension($second);
+    }
+
+    /** @return list<string> */
+    public static function ofDimension(UnitDimension $dimension): array
+    {
+        $codes = [];
+
+        foreach (self::all() as $code => $unit) {
+            if ($unit['dimension'] === $dimension) {
+                $codes[] = $code;
+            }
+        }
+
+        return $codes;
     }
 
     /**

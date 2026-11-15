@@ -1,0 +1,54 @@
+# UN/CEFACT Recommendation 20 units of measure - the curated subset PeakFlow invoices in.
+# See database/iso/provenance.json. Rec 20 has over 1,500 codes; this is the subset that
+# appears on invoices for services, software, utilities, logistics and ordinary goods.
+#
+# dimension exists so a comparison or conversion between incompatible units can be refused
+# rather than producing a number. It is PeakFlow's classification, not part of Rec 20.
+code	dimension	en	ar
+C62	count	unit	وحدة
+EA	count	each	لكل
+NPR	count	pair	زوج
+SET	count	set	طقم
+DZN	count	dozen	دسته
+BX	count	box	صندوق
+CT	count	carton	كرتون
+PK	count	pack	عبوة
+PF	count	pallet	منصة
+RO	count	roll	لفة
+BG	count	bag	كيس
+BO	count	bottle	زجاجة
+CS	count	case	حافظة
+DR	count	drum	برميل
+TU	count	tube	أنبوب
+SEC	time	second	ثانية
+MIN	time	minute	دقيقة
+HUR	time	hour	ساعة
+DAY	time	day	يوم
+WEE	time	week	أسبوع
+MON	time	month	شهر
+ANN	time	year	سنة
+GRM	mass	gram	غرام
+KGM	mass	kilogram	كيلوغرام
+TNE	mass	tonne	طن
+LBR	mass	pound	رطل
+ONZ	mass	ounce	أونصة
+MMT	length	millimetre	مليمتر
+CMT	length	centimetre	سنتيمتر
+MTR	length	metre	متر
+KMT	length	kilometre	كيلومتر
+INH	length	inch	بوصة
+FOT	length	foot	قدم
+CMK	area	square centimetre	سنتيمتر مربع
+MTK	area	square metre	متر مربع
+MLT	volume	millilitre	مليلتر
+LTR	volume	litre	لتر
+MTQ	volume	cubic metre	متر مكعب
+GLL	volume	gallon	غالون
+WHR	energy	watt hour	واط ساعة
+KWH	energy	kilowatt hour	كيلوواط ساعة
+MWH	energy	megawatt hour	ميغاواط ساعة
+E34	data	gigabyte	غيغابايت
+E35	data	terabyte	تيرابايت
+4L	data	megabyte	ميغابايت
+TKM	freight	tonne kilometre	طن كيلومتر
+P1	proportion	percent	نسبة مئوية

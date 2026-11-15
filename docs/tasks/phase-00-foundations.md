@@ -80,8 +80,17 @@ Each of these is a rule that a code review will eventually miss.
 - [x] Currency registry with code, numeric code, minor unit and display symbol
 - [x] Country registry with alpha-2, alpha-3, numeric, and whether an IBAN applies
 - [x] Unit-of-measure registry on UN/CEFACT Rec 20 with the Rec 21 extensions, carrying the code, the symbol and a bilingual label
-- [ ] Language registry limited to the locales the application actually serves
-- [ ] Registries are vendored data files with a documented provenance and version, not hard-coded arrays with no source
+- [x] Language registry limited to the locales the application actually serves. Not ISO 639-1: a locale is a promise the product has been translated, and 184 codes would be 182 promises it cannot keep, each offerable in a picker that then renders English. A check asserts every served tag has its `lang/*.json`
+- [x] The registry carries direction, numbering system, endonym and plural categories, because each had been a guess somewhere. Direction was a private constant inside `SetLocale`, which made the middleware the authority on a fact the whole view layer depends on
+- [x] The plural categories are **verified against ICU**, not asserted: a six-category message is formatted across 0-220 plus fractional and large values and the reachable categories collected. Arabic reaches all six, English two. A file claiming otherwise lets a translator write four forms that never render
+- [x] Registries are vendored data files with a documented provenance and version, not hard-coded arrays with no source. `database/iso/{currencies,countries,units,languages}.tsv` with `provenance.json`; the classes do nothing but read them, and a check fails if a `PACKED` constant comes back
+- [x] The provenance record states what was **not** verified, and the field is required. Nothing here was downloaded - this environment cannot reach ISO, SWIFT or UNECE - and a record implying a fetch it never made converts an unknown into a false assurance that nobody re-examines
+- [x] Where a second source exists in-process it was used: ICU/CLDR knows every ISO 4217 and ISO 3166-1 code, and all 174 currencies and 249 countries were confirmed against it with zero unknowns. Rec 20 has no second source, and its manifest entry says so rather than implying one
+- [x] A digest per file, compared by `bin/verify iso`, so an edit nobody recorded is caught at the one place it would be noticed
+- [x] The loader refuses rather than repairs: a short row, an extra field, a padded field, a duplicate key and a header with no rows each make the file unusable. A padded code is refused rather than trimmed, because trimming makes the file disagree with itself and the diff that added the space is invisible
+- [x] Found and fixed on the way: CLDR deliberately differs from ISO 4217 on 21 currencies (`IQD` 3 vs 0 and ten more where inflation retired the subunit), so ICU's defaults would render an Iraqi invoice as `1,235`. The divergences are enumerated and frozen; a new one fails the build
+- [x] Found and fixed on the way: appending `-u-nu-latn` was being skipped as a no-op, and CLDR's default for `ar` is `arab` - so a configuration that said Western digits produced `١٬٢٣٤٫٥٦`. The subtag is now always written out, and one class builds it
+- [x] Found and fixed on the way: `config/app.php` shipped the skeleton's `env('APP_LOCALE', 'en')` while every comment in the codebase says Arabic-first, so a deployment that forgot the variable would serve English to every Arabic user
 
 ### PF-008 · IBAN and BIC value objects
 `Support/Iso` · **3 pts** · depends: PF-007 · standards: ISO 13616, ISO/IEC 7064, ISO 9362

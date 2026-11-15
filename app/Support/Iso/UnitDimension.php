@@ -21,5 +21,6 @@ enum UnitDimension: string
     case Time = 'time';
     case Energy = 'energy';
     case Data = 'data';
+    case Freight = 'freight';
     case Proportion = 'proportion';
 }

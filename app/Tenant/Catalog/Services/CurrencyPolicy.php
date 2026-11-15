@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tenant\Catalog\Services;
 
 use App\Support\Iso\CurrencyRegistry;
+use App\Support\Lang\NumberingSystem;
 use App\Support\Money\Money;
 use App\Tenant\Catalog\Exceptions\CurrencyNotEnabled;
 use App\Tenant\Catalog\Models\EntityCurrency;
@@ -172,23 +173,18 @@ final class CurrencyPolicy
          | `setSymbol(DIGIT_SYMBOL, ...)` looks like it would do this and does
          | not: in a decimal format the digits come from the locale's
          | numbering system, and the symbol is only consulted for pattern
-         | characters. The three shapes are three real numbering systems:
+         | characters.
          |
-         |   latn     0123456789   Latin, what most of the world reads
-         |   arab     ٠١٢٣٤٥٦٧٨٩   Arabic-Indic, used across the Gulf
-         |   arabext  ۰۱۲۳۴۵۶۷۸۹   Extended Arabic-Indic (Persian, Urdu)
-         |
-         | `arab` and `arabext` are frequently treated as the same thing and
-         | are not; a Saudi statement rendered in `arabext` is wrong in a way
-         | that reads as a font problem and is not one.
+         | The mapping from this tenant's setting to ICU's name for the system
+         | lives in NumberingSystem, with the three systems and the reason
+         | `arab` and `arabext` are not interchangeable. It used to live here
+         | as well, which meant two places knew how to build `-u-nu-` and one
+         | of them was wrong about `latn`.
          */
-        $numbering = match ($policy->digit_shape) {
-            'arabic_indic' => 'arab',
-            'eastern_arabic_indic' => 'arabext',
-            default => 'latn',
-        };
-
-        $locale = ($locale ?? (string) app()->getLocale()).'-u-nu-'.$numbering;
+        $locale = NumberingSystem::apply(
+            $locale ?? (string) app()->getLocale(),
+            $policy->digit_shape,
+        );
 
         $formatter = new NumberFormatter($locale, NumberFormatter::DECIMAL);
         $formatter->setAttribute(NumberFormatter::MIN_FRACTION_DIGITS, $decimals);

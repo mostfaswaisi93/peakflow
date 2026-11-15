@@ -9,6 +9,7 @@ use App\Support\Money\Exceptions\CurrencyMismatch;
 use App\Support\Money\Exceptions\InvalidAllocation;
 use App\Support\Money\Exceptions\PrecisionLoss;
 use Brick\Math\BigDecimal;
+use App\Support\Lang\NumberingSystem;
 use Brick\Math\Exception\MathException;
 use Brick\Math\BigNumber;
 use Brick\Math\Exception\RoundingNecessaryException;
@@ -256,7 +257,7 @@ final readonly class Money implements JsonSerializable, Stringable
      */
     public function format(?string $locale = null, bool $withSymbol = true): string
     {
-        $locale = $this->withNumberingSystem($locale ?? $this->currentLocale());
+        $locale = self::localeWithDigits($locale ?? self::localeNow());
         // @arch-allow: ICU's NumberFormatter takes a float and there is no
         // decimal-aware alternative. Safe here and only here: the value has
         // already been rounded to the currency's own exponent, so the float
@@ -656,19 +657,27 @@ final readonly class Money implements JsonSerializable, Stringable
         return array_values(array_unique($symbols));
     }
 
+    /**
+     * Delegated, so that `-u-nu-` is appended in exactly one place.
+     *
+     * It used to be appended here, which made `Money` the authority on a
+     * decision every other formatter also has to make. An architecture rule
+     * now asserts there is only one such place, so the next formatter extends
+     * it rather than guessing.
+     */
     private static function localeWithDigits(string $locale): string
     {
-        $digits = \function_exists('config')
-            ? (string) (config('money.display.digits') ?? 'latn')
-            : 'latn';
-
-        if ($digits === '' || str_contains($locale, '-u-') || str_contains($locale, '@')) {
-            return $locale;
-        }
-
-        return $locale.'-u-nu-'.$digits;
+        return NumberingSystem::apply($locale);
     }
 
+    /**
+     * The locale in force, or `en` where no application is booted.
+     *
+     * One method, where there were two identical ones - a static
+     * `localeNow()` used by `parse()` and an instance `currentLocale()` used
+     * by `format()`. Two copies of "which locale are we in" is how a parser
+     * and a formatter end up answering differently in the same request.
+     */
     private static function localeNow(): string
     {
         return \function_exists('app') && app()->bound('translator')
@@ -676,23 +685,4 @@ final readonly class Money implements JsonSerializable, Stringable
             : 'en';
     }
 
-    private function withNumberingSystem(string $locale): string
-    {
-        $digits = \function_exists('config')
-            ? (string) (config('money.display.digits') ?? 'latn')
-            : 'latn';
-
-        if ($digits === '' || str_contains($locale, '-u-') || str_contains($locale, '@')) {
-            return $locale;
-        }
-
-        return $locale.'-u-nu-'.$digits;
-    }
-
-    private function currentLocale(): string
-    {
-        return \function_exists('app') && app()->bound('translator')
-            ? app()->getLocale()
-            : 'en';
-    }
 }

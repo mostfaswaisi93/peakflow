@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Middleware;
 
+use App\Support\Iso\LanguageRegistry;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -33,9 +34,6 @@ use Symfony\Component\HttpFoundation\Response;
  */
 final class SetLocale
 {
-    /** @var array<string, string> */
-    private const DIRECTIONS = ['ar' => 'rtl', 'en' => 'ltr'];
-
     public function handle(Request $request, Closure $next): Response
     {
         $locale = $this->resolve($request);
@@ -44,14 +42,23 @@ final class SetLocale
 
         // Shared with every view so that `dir` and `lang` are one decision.
         view()->share('locale', $locale);
-        view()->share('direction', self::DIRECTIONS[$locale] ?? 'ltr');
+        view()->share('direction', LanguageRegistry::direction($locale));
 
         return $next($request);
     }
 
     private function resolve(Request $request): string
     {
-        $supported = array_keys(self::DIRECTIONS);
+        /*
+         | Asked, not held.
+         |
+         | This middleware held the list of served locales and their
+         | directions in a private constant, which made it the authority on a
+         | fact the whole view layer depends on - and a second place to update
+         | when a language is added. The registry is vendored data with a
+         | provenance record (PF-007); this is one of its readers.
+         */
+        $supported = LanguageRegistry::served();
 
         // 1. The user's own preference. The tenant guard is used rather than
         //    the default one because the user record lives in the tenant
@@ -80,6 +87,16 @@ final class SetLocale
             return $preferred;
         }
 
-        return (string) config('app.locale', 'ar');
+        /*
+         | The registry's default, not a literal.
+         |
+         | `config('app.locale')` reads `LanguageRegistry::DEFAULT_TAG` for
+         | its own fallback, so these cannot drift apart - which they had,
+         | because the Laravel skeleton ships `env('APP_LOCALE', 'en')` while
+         | every comment in this file says Arabic-first.
+         */
+        $configured = (string) config('app.locale', LanguageRegistry::DEFAULT_TAG);
+
+        return LanguageRegistry::exists($configured) ? $configured : LanguageRegistry::DEFAULT_TAG;
     }
 }

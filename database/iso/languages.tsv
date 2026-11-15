@@ -1,0 +1,17 @@
+# The locales PeakFlow actually serves - not ISO 639-1 in full.
+#
+# A registry of 184 language codes would be a list of languages the product has no
+# translations for, and every one of them would be offerable in a dropdown that then
+# renders English. So this file holds what is served, and a language arrives here in
+# the same commit as its translation files or not at all.
+#
+# tag          BCP 47, which is what `<html lang>`, Accept-Language and ICU all take
+# direction    ltr or rtl. Needed by every template, so it is data and not a guess
+# numbering    the ICU numbering system digits are rendered in: arab = ٠١٢٣, latn = 0123
+# endonym      the language's name in itself, because a language picker that says
+#              "Arabic" to someone who does not read English has failed at step one
+# plurals      the CLDR plural categories the locale uses, so a translator knows how
+#              many forms a message needs before writing it
+tag	direction	numbering	endonym	plurals
+ar	rtl	arab	العربية	zero,one,two,few,many,other
+en	ltr	latn	English	one,other
