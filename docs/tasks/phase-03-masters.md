@@ -54,19 +54,19 @@ The highest-value fraud surface in the product.
 ### PF-064 · Billable items
 `Catalog` · **5 pts** · depends: PF-007, PF-026 · standards: UN/CEFACT Rec 20, UNSPSC, GS1 GPC, UNCL 7143 · `type:schema`
 
-- [ ] Code unique per tenant, bilingual name and description, unit of measure, default tax code, default revenue account, default dimensions
-- [ ] Classification codes with their scheme identifier, which EN 16931 requires as a coded pair rather than a bare string
-- [ ] Item types: `good`, `service`, `digital_service` - the distinction drives place-of-supply, so it is a first-class field and not a category
-- [ ] An item's **revenue recognition default** (immediate, over a period, on milestone), feeding `PF-107`
-- [ ] Items are shared across the tenant; their default accounts resolve per entity, because the chart differs
+- [x] Code unique per tenant, bilingual name and description, unit of measure, default tax code, default revenue account, default dimensions
+- [x] Classification codes with their scheme identifier, which EN 16931 requires as a coded pair rather than a bare string
+- [x] Item types: `good`, `service`, `digital_service` - the distinction drives place-of-supply, so it is a first-class field and not a category
+- [x] An item's **revenue recognition default** (immediate, over a period, on milestone), feeding `PF-107`
+- [x] Items are shared across the tenant; their default accounts resolve per entity, because the chart differs
 
 ### PF-065 · Price lists
 `Catalog` · **5 pts** · depends: PF-064 · standards: —
 
-- [ ] Per party, per party group, per currency, **effective-dated**, with quantity tiers
-- [ ] Resolution order is explicit and inspectable: a screen shows which list and which rule produced a given price
-- [ ] A price in a currency with three decimals keeps three; a unit price keeps the full eight-decimal scale
-- [ ] Historical prices resolve by the document's own date, not by today
+- [x] Per party, per party group, per currency, **effective-dated**, with quantity tiers
+- [x] Resolution order is explicit and inspectable: a screen shows which list and which rule produced a given price
+- [x] A price in a currency with three decimals keeps three; a unit price keeps the full eight-decimal scale
+- [x] Historical prices resolve by the document's own date, not by today
 
 ### PF-066 · Payment terms and due dates
 `Catalog` · **3 pts** · depends: PF-059 · standards: UNCL 2475, EN 16931
