@@ -30,6 +30,29 @@ use Illuminate\Support\Facades\Route;
 
 Route::get('/', static fn () => redirect()->route('health'))->name('home');
 
+/*
+| The page a user lands on when their workspace stopped being usable while they
+| had the application open - PF-021.
+|
+| Outside every tenant middleware ON PURPOSE. It is reached precisely when the
+| tenant could not be resolved, so a route that tried to resolve one would
+| refuse to render the explanation of why the resolution failed, and the user
+| would get a redirect loop instead of a sentence.
+*/
+Route::get('/workspace-unavailable', static function (Illuminate\Http\Request $request) {
+    return response()
+        ->view('workspace.unavailable', [
+            // Flashed by the tenant resolver as it tears the session down.
+            // Absent on a direct visit, and the view has a generic fallback -
+            // a blank space where the reason should be is worse than a vague
+            // reason.
+            'reason' => $request->session()->get('tenant_unavailable'),
+        ])
+        // The condition is per-session and not cacheable by anything in front
+        // of the application.
+        ->header('Cache-Control', 'no-store');
+})->name('workspace.unavailable');
+
 Route::get('/health', static fn () => response()->json([
     'application' => config('app.name'),
     'status' => 'ok',

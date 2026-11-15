@@ -41,7 +41,7 @@ For managed hosting where `CREATE DATABASE` is not available.
 - [x] `tenant.session` resolves from the session; `tenant.header` resolves from `X-Tenant`
 - [x] Both are pinned **ahead of** the auth middleware via `prependToPriorityList`, and a test asserts the resolved order - because the user table lives in the tenant database and a guard that ran first would query the wrong one
 - [x] The resolved tenant is bound into the container as `currentTenant`
-- [ ] A subscription that became invalid between page loads tears down the session and redirects to a dedicated page rather than failing the next query
+- [x] A subscription that became invalid between page loads tears down the session and redirects to a dedicated page rather than failing the next query
 - [x] A tenant mid-migration returns `503` with `Retry-After`
 
 ### PF-022 · Subscription lifecycle and plan gating
@@ -56,9 +56,9 @@ For managed hosting where `CREATE DATABASE` is not available.
 ### PF-023 · Tenant migrations at scale
 `Platform` · **5 pts** · depends: PF-019 · standards: —
 
-- [ ] `tenants:migrate {tenant}` and `--all`, with batching, concurrency limits and per-tenant failure isolation
+- [x] `tenants:migrate {tenant}` and `--all`, with batching, concurrency limits and per-tenant failure isolation
 - [x] A dry-run mode reporting what would change per tenant
-- [ ] A pre-flight check refusing a migration that is not safe to run while the application serves traffic - adding a non-nullable column without a default, rewriting a large table, taking an `ACCESS EXCLUSIVE` lock on a partitioned table
+- [x] A pre-flight check refusing a migration that is not safe to run while the application serves traffic - adding a non-nullable column without a default, rewriting a large table, taking an `ACCESS EXCLUSIVE` lock on a partitioned table
 - [x] A schema-version row per tenant, so a request can detect a tenant that is behind and respond rather than fail
 - [x] A documented note that the plain `migrate` command applies only the platform schema
 

@@ -16,6 +16,20 @@ return [
     'name' => env('APP_NAME', 'Laravel'),
 
     /*
+    |---------------------------------------------------------------------------
+    | Support address
+    |---------------------------------------------------------------------------
+    |
+    | Shown on the pages that explain why someone cannot proceed. Null by
+    | default and the pages omit the line entirely, because an address that
+    | nobody reads is worse than no address: a customer who writes to it and
+    | hears nothing concludes the product is abandoned.
+    |
+    */
+
+    'support_email' => env('APP_SUPPORT_EMAIL'),
+
+    /*
     |--------------------------------------------------------------------------
     | Application Environment
     |--------------------------------------------------------------------------

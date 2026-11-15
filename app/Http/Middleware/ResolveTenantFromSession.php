@@ -52,8 +52,13 @@ final class ResolveTenantFromSession
                 throw $e;
             }
 
+            // A DEDICATED page, not the login form. A user whose
+            // subscription lapsed between page loads has done nothing wrong,
+            // and sending them to a login form teaches them their password is
+            // broken - so they retry it, reset it, and call support about the
+            // wrong problem entirely.
             return redirect()
-                ->route('login')
+                ->route('workspace.unavailable')
                 ->with('tenant_unavailable', $e->getMessage());
         }
 

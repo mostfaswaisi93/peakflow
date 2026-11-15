@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Support;
 
+use App\Platform\Services\MigrationSafetyInspector;
+use App\Platform\ValueObjects\MigrationHazard;
+
 /**
  * The rules that encode the non-negotiables (PF-005).
  *
@@ -36,6 +39,8 @@ final class ArchitectureRules
             'no module reaches into another module\'s models' => $this->noCrossModuleModelAccess(),
             'no physical CSS property' => $this->noPhysicalCssProperties(),
             'financial tables carry entity_id' => $this->financialTablesCarryEntityId(),
+            'no migration is unsafe to run against live traffic' => $this->migrationsAreSafeToRunLive(),
+            'the built assets are not stale' => $this->builtAssetsAreNotStale(),
             'translation catalogs agree' => $this->translationCatalogsAgree(),
             'strict types everywhere' => $this->strictTypesDeclared(),
         ];
@@ -318,6 +323,98 @@ final class ArchitectureRules
         }
 
         return $violations;
+    }
+
+    /**
+     * The compiled CSS must be newer than every template it was compiled
+     * from.
+     *
+     * Tailwind emits only the utilities it finds in source, so a build that
+     * ran before a template was written produces a page that renders and is
+     * missing exactly the classes that template introduced. The failure is
+     * nasty because it is partial: the text is all there, the layout roughly
+     * holds, and the card has no background. It looks like a styling opinion
+     * rather than a broken deploy.
+     *
+     * This happened while building the first page in this repository, which
+     * is why the check exists. It compares modification times rather than
+     * parsing class names - cheap, and it cannot be fooled by a utility that
+     * happens to appear in two templates.
+     *
+     * @return list<string>
+     */
+    public function builtAssetsAreNotStale(): array
+    {
+        $manifest = $this->basePath.'/public/build/manifest.json';
+
+        if (! is_file($manifest)) {
+            // Not built at all is a deployment concern, not an architecture
+            // violation - a fresh clone has no build and that is correct.
+            return [];
+        }
+
+        $builtAt = (int) filemtime($manifest);
+        $newest = null;
+        $newestAt = 0;
+
+        foreach (['resources/views', 'resources/css', 'resources/js'] as $directory) {
+            foreach ($this->filesMatching($directory, '/\.(blade\.php|css|js)$/') as $file) {
+                $at = (int) filemtime($file);
+
+                if ($at > $newestAt) {
+                    $newestAt = $at;
+                    $newest = $file;
+                }
+            }
+        }
+
+        if ($newest === null || $newestAt <= $builtAt) {
+            return [];
+        }
+
+        return [sprintf(
+            '%s changed %d second(s) after the last asset build, so the compiled CSS is missing any utility '.
+            'it introduced. Run `npm run build`. The symptom is a page that renders with some styles silently '.
+            'absent, which reads as a design choice rather than a broken deploy.',
+            $this->relative($newest),
+            $newestAt - $builtAt,
+        )];
+    }
+
+    /**
+     * No migration may carry an unreviewed hazard - PF-023.
+     *
+     * The command refuses at run time, which protects production. This
+     * protects the pull request, which is where it is cheap: a reviewer
+     * reading `->change()` has to know that it rewrites the table and holds
+     * ACCESS EXCLUSIVE, and on a fifty-line migration they will not notice.
+     *
+     * A hazard that is genuinely fine here is annotated with
+     * `@unsafe-migration-reviewed: why`, which puts the reason next to the
+     * statement instead of in a shell history nobody can read.
+     *
+     * @return list<string>
+     */
+    public function migrationsAreSafeToRunLive(): array
+    {
+        $inspector = new MigrationSafetyInspector();
+
+        $files = array_merge(
+            glob($this->basePath.'/database/migrations/*.php') ?: [],
+            glob($this->basePath.'/database/migrations/tenant/*.php') ?: [],
+        );
+
+        return array_map(
+            static fn (MigrationHazard $hazard): string => sprintf(
+                '%s %s: %s - it %s. Instead: %s',
+                $hazard->location(),
+                $hazard->name,
+                $hazard->statement,
+                $hazard->does,
+                $hazard->instead,
+            ),
+            $inspector->blocking($inspector->inspect($files)),
+        );
     }
 
     /**

@@ -85,7 +85,20 @@ return new class extends Migration
             $table->index(['active', 'code']);
         });
 
-        // Deferred from the identity migration so each file reads on its own.
+        /*
+         | Deferred from the identity migration so each file reads on its own.
+         |
+         | This is a `Schema::table` on an EXISTING table, which the migration
+         | pre-flight flags: adding a foreign key takes SHARE ROW EXCLUSIVE on
+         | both tables and validates every existing row, so on a live table it
+         | belongs in two steps (ADD CONSTRAINT ... NOT VALID, then VALIDATE).
+         |
+         | @unsafe-migration-reviewed: this migration only ever runs during
+         | provisioning, against a database created seconds earlier, so
+         | `user_entity_roles` is guaranteed empty and there is nothing to
+         | validate or lock out. If it is ever back-filled into an existing
+         | tenant, split it as above - the pre-flight will say so again.
+         */
         Schema::table('user_entity_roles', function (Blueprint $table): void {
             $table->foreign('entity_id')->references('id')->on('entities')->cascadeOnDelete();
         });

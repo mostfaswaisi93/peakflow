@@ -35,6 +35,11 @@ final class Tenant extends PlatformModel
     protected $fillable = [
         'slug', 'name', 'default_locale', 'timezone', 'data_region',
         'status', 'provision_mode', 'schema_version', 'provisioned_at',
+        // `migrating_since` is written by tenants:migrate when it marks a
+        // tenant unavailable, and was missing here - so the command threw on
+        // its first real run. It had never been exercised, because
+        // provisioning calls TenantProvisioner::migrate() directly.
+        'migrating_since',
     ];
 
     public function connection(): HasOne
