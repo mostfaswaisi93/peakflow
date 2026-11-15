@@ -34,6 +34,27 @@ final class TaxPostingRefused extends RuntimeException
         ));
     }
 
+    public static function aTaxCodeNeedsATaxPoint(string $rule): self
+    {
+        return new self(sprintf(
+            'The %s posting carries a tax code and no tax point. The tax point is what decides which '.
+            'RETURN the line falls into - a supply delivered on 30 May and invoiced on 1 June is in '.
+            'June\'s books and May\'s return - so a tax-bearing line without one is a line no return '.
+            'can see. The database pairs the two columns; this says which event field is missing.',
+            $rule,
+        ));
+    }
+
+    public static function aTaxPointNeedsATaxCode(string $rule): self
+    {
+        return new self(sprintf(
+            'The %s posting carries a tax point and no tax code. A tax point on a line that bears no '.
+            'tax means nothing, and it would put the line in a return\'s drill-down with no box to '.
+            'belong to.',
+            $rule,
+        ));
+    }
+
     public static function reverseChargeNeedsBothSides(): self
     {
         return new self(

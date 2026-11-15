@@ -10,6 +10,7 @@ use App\Tenant\Ledger\Posting\PostingContext;
 use App\Tenant\Ledger\Posting\PostingLine;
 use App\Tenant\Ledger\Posting\PostingRule;
 use App\Tenant\Ledger\Posting\RuleDescription;
+use App\Tenant\Tax\Posting\PairsTheTaxPointWithTheCode;
 use App\Tenant\Tax\Exceptions\TaxPostingRefused;
 
 /**
@@ -45,6 +46,8 @@ use App\Tenant\Tax\Exceptions\TaxPostingRefused;
  */
 final class PurchaseTaxRule implements PostingRule
 {
+    use PairsTheTaxPointWithTheCode;
+
     public const KEY = 'tax.purchase_tax';
 
     public function key(): string
@@ -85,7 +88,7 @@ final class PurchaseTaxRule implements PostingRule
         $recoverable = Money::of((string) $event['recoverable_amount'], $currency);
         $jurisdiction = (string) $event['jurisdiction'];
         $party = $event['party_id'] ?? null;
-        $taxCode = $event['tax_code_id'] ?? null;
+        [$taxCode, $taxPoint] = $this->taxCodeAndPoint($event, self::KEY);
         $narration = $event['narration'] ?? null;
 
         if ($recoverable->abs()->isGreaterThan($tax->abs())) {
@@ -96,9 +99,9 @@ final class PurchaseTaxRule implements PostingRule
 
         $lines = [
             PostingLine::toRoleIn(
-                ControlRole::VatInput, $jurisdiction, $recoverable, $party, $narration, $taxCode,
+                ControlRole::VatInput, $jurisdiction, $recoverable, $party, $narration, $taxCode, $taxPoint,
             ),
-            PostingLine::toRole(ControlRole::AccountsPayable, $tax->negated(), $party, $narration, $taxCode),
+            PostingLine::toRole(ControlRole::AccountsPayable, $tax->negated(), $party, $narration, $taxCode, $taxPoint),
         ];
 
         if ($irrecoverable->isZero()) {
@@ -121,6 +124,7 @@ final class PurchaseTaxRule implements PostingRule
             partyId: $party,
             narration: $narration,
             taxCodeId: $taxCode,
+            taxPoint: $taxPoint,
         )]);
 
         return $lines;

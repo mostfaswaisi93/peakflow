@@ -32,8 +32,18 @@ final class StepUpRequired extends DomainException
     {
         return new self(
             sprintf(
-                'Confirm it is you before you %s. This step is required for this action specifically, and the '.
-                'confirmation applies only to it - approving one payment does not silently approve the next.',
+                /*
+                 | "before continuing with %s", not "before you %s".
+                 |
+                 | The label is a NOUN - RequiresStepUp documents it as what a
+                 | person would call the subject, "2026-03" rather than a ULID
+                 | - and the old wording read "Confirm it is you before you
+                 | 2026-03". A prompt that reads as a mistake is a prompt
+                 | people click past.
+                 */
+                'Confirm it is you before continuing with %s. This step is required for this action '.
+                'specifically, and the confirmation applies only to it - approving one payment does not '.
+                'silently approve the next.',
                 $label,
             ),
             $permission,
@@ -46,9 +56,10 @@ final class StepUpRequired extends DomainException
     {
         return new self(
             sprintf(
-                'Set up a second factor before you %s. This action can move money, so a password alone is not '.
-                'enough to authorise it - not because of your role, which already permits it, but because a '.
-                'password is the one thing an attacker can obtain without touching your device.',
+                'Set up a second factor before continuing with %s. This action can move money, so a '.
+                'password alone is not enough to authorise it - not because of your role, which already '.
+                'permits it, but because a password is the one thing an attacker can obtain without '.
+                'touching your device.',
                 $label,
             ),
             $permission,

@@ -10,6 +10,7 @@ use App\Tenant\Ledger\Posting\PostingContext;
 use App\Tenant\Ledger\Posting\PostingLine;
 use App\Tenant\Ledger\Posting\PostingRule;
 use App\Tenant\Ledger\Posting\RuleDescription;
+use App\Tenant\Tax\Posting\PairsTheTaxPointWithTheCode;
 
 /**
  * The tax on a sales document - PF-084.
@@ -36,6 +37,8 @@ use App\Tenant\Ledger\Posting\RuleDescription;
  */
 final class SalesTaxRule implements PostingRule
 {
+    use PairsTheTaxPointWithTheCode;
+
     public const KEY = 'tax.sales_tax';
 
     public function key(): string
@@ -71,13 +74,13 @@ final class SalesTaxRule implements PostingRule
         $tax = Money::of((string) $event['tax_amount'], $context->functionalCurrency);
         $jurisdiction = (string) $event['jurisdiction'];
         $party = $event['party_id'] ?? null;
-        $taxCode = $event['tax_code_id'] ?? null;
+        [$taxCode, $taxPoint] = $this->taxCodeAndPoint($event, self::KEY);
         $narration = $event['narration'] ?? null;
 
         return [
-            PostingLine::toRole(ControlRole::AccountsReceivable, $tax, $party, $narration, $taxCode),
+            PostingLine::toRole(ControlRole::AccountsReceivable, $tax, $party, $narration, $taxCode, $taxPoint),
             PostingLine::toRoleIn(
-                ControlRole::VatOutput, $jurisdiction, $tax->negated(), $party, $narration, $taxCode,
+                ControlRole::VatOutput, $jurisdiction, $tax->negated(), $party, $narration, $taxCode, $taxPoint,
             ),
         ];
     }

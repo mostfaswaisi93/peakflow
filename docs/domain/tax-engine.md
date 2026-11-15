@@ -387,9 +387,46 @@ A pre-filing checklist, reporting every blocking item at once rather than failin
 - Documents missing the evidence their category requires
 - A non-zero unexplained difference between the tax control accounts and the return
 
+**As built (PF-086):** every item is reported, and the ones that cannot run yet are reported as **pending** with the task that brings them. A checklist that silently omits a check tells the person filing that everything was looked at, which is the one thing it must never do.
+
+| Check | Status |
+|---|---|
+| the suspense balance | runs — blocks |
+| draft entries carrying tax in this period | runs — blocks |
+| every tax code maps to a box | runs — blocks |
+| every box with tax has a taxable amount | runs — blocks |
+| every tax-bearing line reached a box | runs — blocks |
+| unposted documents in the period | pending, Phase 05 |
+| unmatched bank lines | pending, Phase 08 |
+| documents missing their category's evidence | pending, Phase 05 (the gate itself is PF-080) |
+
+"Draft entries carrying tax" is the nearest thing to the unposted-document check that exists before documents do, and it earns its place on its own: a draft is excluded from the return and walks into the next period when somebody posts it, after this return was filed.
+
+The last two checks in that list are the pair that fail differently. "Every code maps to a box" asks whether the configuration is complete; "every tax-bearing line reached a box" asks whether the lines actually arrived. A code mapped to a box on the wrong side passes the first and fails the second — it looks configured and its lines land nowhere.
+
 ### Filing
 
 Filing **freezes a snapshot** — the figures, the supporting line ids and a hash — which cannot change afterwards even if the underlying data is later adjusted. It is permissioned, requires MFA, and is audited. A filed return is **re-printable byte-identically**, which is what gets attached to a query from the authority.
+
+### As built (PF-086)
+
+**The return is assembled from the LEDGER**, by tax point, from posted entries only. That is the decision that makes PF-088's reconciliation possible at all: a return assembled from documents and a ledger posted from the same documents are two derivations of one truth, and when they disagree nothing says which is wrong. A return assembled from the ledger agrees with the trial balance by construction.
+
+A journal line gained a `tax_point`, paired with its tax code by a `CHECK`: a line with a tax code must have one, and a tax point without a code means nothing. That pairing is what makes the return **complete by construction** — every tax-bearing line falls in exactly one return period — rather than complete as far as anybody has checked. The reverser carries the original tax point over, so a reversal of a May supply belongs to May's return rather than to the return of whenever somebody noticed.
+
+**Each box carries its taxable amount, its tax and the line ids behind it.** Every real form asks for both figures, because the authority's own arithmetic is amount times rate — a figure with no base is one nobody can verify, including us. Which side a line is on comes from the **account** it posted to, not from its code: a standard-rate code appears on a sale and on a purchase, and deriving the side from the code puts a supplier's VAT in the sales box.
+
+The **net due is computed** — output less input — rather than read from a box a code could post into, which would be a return whose bottom line disagreed with its own boxes.
+
+**Filing freezes the bytes.** `Canonicalizer` is RFC 8785, so the canonical form is reproducible and the hash is meaningful rather than a hash of one process's key ordering. The bytes are *stored* rather than recomputed at reprint time: recomputing relies on the canonicaliser never changing, which is a promise about future code made about a document an authority may query in six years. A trigger refuses every UPDATE and DELETE on a filing — not "no update to the figures" but no update at all, because once one column can move the argument for the next one is already made.
+
+The drill-down is frozen as **rows**, not as a JSON array. A quarter's return can stand behind tens of thousands of lines, and somebody uses the drill-down by clicking a box rather than by loading the return.
+
+**The override exists, and it demands a sentence.** Refusing outright would be the wrong call — a controller sometimes has to file with a known problem because the deadline is today and a penalty is worse than a disclosed error. What must not happen is filing over a checklist silently, so the override takes a reason, the reason goes in the audit record, and "override" is refused as one.
+
+**Through the `Support` interfaces.** `RequiresStepUp` and `AuditTrail` live in `Support` precisely so a module can demand a second factor and record who acted without depending on `Identity`, which the layer rules do not permit Tax to do. The filer takes the actor as an id rather than as a `User` for the same reason.
+
+Found while building it: the step-up prompt read *"Set up a second factor before you 2026-05"* — the label is documented as a noun and the message template expected a verb phrase. A prompt that reads as a mistake is a prompt people click past. It now reads *"before continuing with 2026-05"*.
 
 ### After filing
 

@@ -10,6 +10,7 @@ use App\Tenant\Ledger\Posting\PostingContext;
 use App\Tenant\Ledger\Posting\PostingLine;
 use App\Tenant\Ledger\Posting\PostingRule;
 use App\Tenant\Ledger\Posting\RuleDescription;
+use App\Tenant\Tax\Posting\PairsTheTaxPointWithTheCode;
 use App\Tenant\Tax\Exceptions\TaxPostingRefused;
 
 /**
@@ -47,6 +48,8 @@ use App\Tenant\Tax\Exceptions\TaxPostingRefused;
  */
 final class ReverseChargeSelfAssessmentRule implements PostingRule
 {
+    use PairsTheTaxPointWithTheCode;
+
     public const KEY = 'tax.reverse_charge_self_assessment';
 
     public function key(): string
@@ -91,7 +94,7 @@ final class ReverseChargeSelfAssessmentRule implements PostingRule
 
         $jurisdiction = (string) $event['jurisdiction'];
         $party = $event['party_id'] ?? null;
-        $taxCode = $event['tax_code_id'] ?? null;
+        [$taxCode, $taxPoint] = $this->taxCodeAndPoint($event, self::KEY);
         $narration = $event['narration'] ?? null;
 
         $declared = $event['recoverable_amount'] ?? null;
@@ -104,7 +107,7 @@ final class ReverseChargeSelfAssessmentRule implements PostingRule
         $irrecoverable = $tax->minus($recoverable);
 
         $lines = [PostingLine::toRoleIn(
-            ControlRole::VatInput, $jurisdiction, $recoverable, $party, $narration, $taxCode,
+            ControlRole::VatInput, $jurisdiction, $recoverable, $party, $narration, $taxCode, $taxPoint,
         )];
 
         if (! $irrecoverable->isZero()) {
@@ -120,11 +123,12 @@ final class ReverseChargeSelfAssessmentRule implements PostingRule
                 partyId: $party,
                 narration: $narration,
                 taxCodeId: $taxCode,
+                taxPoint: $taxPoint,
             );
         }
 
         $lines[] = PostingLine::toRoleIn(
-            ControlRole::VatOutput, $jurisdiction, $tax->negated(), $party, $narration, $taxCode,
+            ControlRole::VatOutput, $jurisdiction, $tax->negated(), $party, $narration, $taxCode, $taxPoint,
         );
 
         return $lines;

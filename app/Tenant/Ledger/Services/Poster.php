@@ -209,6 +209,7 @@ final class Poster
                     'functional_amount' => (string) $line->amount->amount,
                     'party_id' => $line->partyId,
                     'tax_code_id' => $line->taxCodeId,
+                    'tax_point' => $line->taxPoint,
                     'narration' => $line->narration,
                     // PF-057. A database trigger requires this on any line
                     // reaching an inter-entity account and forbids it on any

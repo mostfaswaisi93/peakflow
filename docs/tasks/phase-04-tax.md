@@ -155,11 +155,20 @@ The engine's organising principle is that **tax is data, not code**. A rate that
 ### PF-086 · Return generation
 `Tax` · **8 pts** · depends: PF-085 · standards: — · `risk:high` `type:compliance`
 
-- [ ] A box-by-box return for a period, with **drill-down from every box to the journal lines behind it**
+- [x] A box-by-box return for a period, with **drill-down from every box to the journal lines behind it**. Assembled from the **ledger**, by tax point, from posted entries only - which is what makes PF-088's reconciliation possible: a return built from documents and a ledger posted from the same documents are two derivations of one truth, and when they disagree nothing says which is wrong
 - [ ] A pre-filing checklist: unposted documents in the period, unmatched bank lines, a non-zero suspense balance, documents missing evidence for their category
-- [ ] Filing freezes a **snapshot** - the figures, the supporting line ids and a hash - which cannot change afterwards even if the underlying data is later adjusted
-- [ ] Filing is permissioned, requires MFA, and is audited
-- [ ] A filed return is re-printable byte-identically, which is what gets attached to a query from the authority
+- [x] Filing freezes a **snapshot** - the figures, the supporting line ids and a hash - which cannot change afterwards even if the underlying data is later adjusted. A trigger refuses every UPDATE and DELETE, not just one to the figures: once one column can move, the argument for the next is already made. A check posts more tax into the period after filing and asserts the filed figures did not move
+- [x] Filing is permissioned, requires MFA, and is audited. Through `Support`'s `RequiresStepUp` and `AuditTrail` interfaces, because the layer rules do not let Tax depend on Identity - and the audit record carries the checklist as it stood, which is the evidence it was looked at
+- [x] A filed return is re-printable byte-identically, which is what gets attached to a query from the authority. The canonical bytes are **stored**, not recomputed: recomputing relies on the canonicaliser never changing, which is a promise about future code made about a document an authority may query in six years
+- [x] A journal line gained a `tax_point`, **paired with its tax code by a CHECK**. That pairing makes the return complete by construction - every tax-bearing line falls in exactly one return period - rather than complete as far as anybody has checked. The reverser carries the original over, so a reversal of a May supply belongs to May's return rather than to whenever somebody noticed
+- [x] Each box carries its **taxable amount as well as its tax**, because the authority's arithmetic is amount times rate and a figure with no base is one nobody can verify. Which side a line is on comes from the **account** it posted to, not from its code: a standard-rate code appears on a sale and a purchase, and the bite that derived the side from the code reported 110.00 of output tax instead of 150.00
+- [x] The **net due is computed**, output less input, rather than read from a box a code could post into - which would be a return whose bottom line disagreed with its own boxes
+- [x] The checklist reports the three checks it **cannot run yet as pending, with the phase that brings them**. A checklist that silently omits a check tells the person filing that everything was looked at, which is the one thing it must never do
+- [x] The override exists and demands a sentence. Refusing outright would be wrong - a controller sometimes files with a known problem because the deadline is today and a penalty is worse than a disclosed error - but filing over a checklist silently must not happen, so the reason goes in the audit record and "override" is refused as one
+- [x] Found on the way: the step-up prompt read "Set up a second factor before you 2026-05". The label is documented as a **noun** and the message template expected a verb phrase, so the prompt read as a mistake - which is a prompt people click past. It now reads "before continuing with 2026-05"
+- [x] Found on the way: every filing rule failed under `bin/verify all` and passed under `bin/verify tax`. An earlier suite leaves a signed-in user on the guard, and `tax_return.file` demands a factor that user has not enrolled - the guard working correctly, on somebody else's session. The suite now sets the auth state rather than inheriting whatever ran first
+
+> The open criterion is the checklist's own contents: three of its four named items - unposted documents, unmatched bank lines and missing evidence - inspect things that arrive in Phases 05 and 08. They are **listed as pending with their phase** rather than omitted, and five checks that can run do run and do block.
 
 ### PF-087 · Post-filing adjustments
 `Tax` · **3 pts** · depends: PF-086 · standards: IAS 8 · `type:compliance`

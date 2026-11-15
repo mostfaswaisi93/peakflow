@@ -2556,8 +2556,12 @@ final class LedgerEnforcementRules
              | It was set before the enrolment, so its `authenticators`
              | relation is the empty one it was loaded with - and
              | `hasConfirmedFactor()` on it is false however many factors the
-             | database now holds. Which produced "Set up a second factor
-             | before you 2026-03" on a user who had just enrolled one.
+             | database now holds. Which produced "set up a second factor" on
+             | a user who had just enrolled one.
+             |
+             | (That message read "before you 2026-03" until PF-086 - the
+             | label is a noun and the template expected a verb phrase. It now
+             | reads "before continuing with 2026-03".)
              */
             auth()->guard('web')->setUser($user->refresh());
 

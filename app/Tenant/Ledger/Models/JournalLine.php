@@ -36,7 +36,7 @@ final class JournalLine extends TenantModel
     protected $fillable = [
         'entity_id', 'journal_entry_id', 'accounting_date', 'period_id',
         'account_id', 'amount', 'currency', 'fx_rate', 'functional_amount',
-        'party_id', 'tax_code_id', 'narration',
+        'party_id', 'tax_code_id', 'tax_point', 'narration',
         'dimension_1', 'dimension_2', 'dimension_3', 'dimension_4',
         'dimension_5', 'dimension_6', 'dimension_7', 'dimension_8',
     ];

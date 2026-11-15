@@ -68,6 +68,17 @@ final readonly class PostingLine
          * and the figure would look plausible in both returns.
          */
         public ?string $jurisdiction = null,
+
+        /**
+         * The date that decides which RETURN this line falls into - PF-086.
+         *
+         * Not the accounting date, which decides the period it was booked in.
+         * A document raised on 1 June for a supply delivered on 30 May is in
+         * June's books and May's return, and the database pairs this column
+         * with the tax code: a tax-bearing line must have one, and a tax
+         * point without a code means nothing.
+         */
+        public ?string $taxPoint = null,
     ) {}
 
     /**
@@ -79,8 +90,11 @@ final readonly class PostingLine
         ?string $partyId = null,
         ?string $narration = null,
         ?string $taxCodeId = null,
+        ?string $taxPoint = null,
     ): self {
-        return new self($amount, $role, null, $partyId, $narration, $taxCodeId);
+        return new self(
+            $amount, $role, null, $partyId, $narration, $taxCodeId, [], null, null, null, $taxPoint,
+        );
     }
 
     /**
@@ -96,9 +110,11 @@ final readonly class PostingLine
         ?string $partyId = null,
         ?string $narration = null,
         ?string $taxCodeId = null,
+        ?string $taxPoint = null,
     ): self {
         return new self(
-            $amount, $role, null, $partyId, $narration, $taxCodeId, [], null, null, $jurisdiction,
+            $amount, $role, null, $partyId, $narration, $taxCodeId, [], null, null,
+            $jurisdiction, $taxPoint,
         );
     }
 
@@ -114,8 +130,12 @@ final readonly class PostingLine
         ?string $narration = null,
         ?string $taxCodeId = null,
         array $dimensions = [],
+        ?string $taxPoint = null,
     ): self {
-        return new self($amount, null, $accountId, $partyId, $narration, $taxCodeId, $dimensions);
+        return new self(
+            $amount, null, $accountId, $partyId, $narration, $taxCodeId, $dimensions,
+            null, null, null, $taxPoint,
+        );
     }
 
     /**

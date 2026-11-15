@@ -135,6 +135,17 @@ final class Reverser
                     'functional_amount' => $this->negate((string) $line->functional_amount),
                     'party_id' => $line->party_id,
                     'tax_code_id' => $line->tax_code_id,
+
+                    /*
+                     | The ORIGINAL tax point, carried over - PF-086.
+                     |
+                     | A reversal of a May supply belongs in May's return, not
+                     | in the return of whenever somebody noticed. Where May
+                     | is already filed the correction is PF-087's
+                     | adjustment, and the tax point is what says which period
+                     | is being corrected.
+                     */
+                    'tax_point' => $line->tax_point,
                     'narration' => $line->narration,
                     'dimension_1' => $line->dimension_1,
                     'dimension_2' => $line->dimension_2,
