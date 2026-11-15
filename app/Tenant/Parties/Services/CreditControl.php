@@ -211,6 +211,7 @@ final class CreditControl
         string $reason,
         string $functionalCurrency,
         bool $lift = false,
+        string $source = 'manual',
     ): void {
         $state = $this->exposure($entityId, (string) $party->getKey(), $functionalCurrency);
 
@@ -220,6 +221,7 @@ final class CreditControl
             $reason,
             $functionalCurrency,
             $lift,
+            $source,
             $state,
         ): void {
             DB::connection('tenant')->table('credit_hold_events')->insert([
@@ -227,6 +229,14 @@ final class CreditControl
                 'entity_id' => $entityId,
                 'party_id' => $party->getKey(),
                 'direction' => $lift ? 'lifted' : 'placed',
+                /*
+                 | Who decided - PF-109.
+                 |
+                 | The automatic release lifts only what the policy placed,
+                 | and `manual` is the default because a hold a person put
+                 | on by hand must not be liftable by a nightly job.
+                 */
+                'source' => $source,
                 'reason' => $reason,
                 'by_user_id' => auth()->guard('web')->id(),
                 'at' => now(),
@@ -261,6 +271,39 @@ final class CreditControl
                 partyId: (string) $party->getKey(),
             );
         });
+    }
+
+    /**
+     * The hold a party is under now, if any - PF-109.
+     *
+     * The latest event, and only if it placed one: the flag on
+     * `party_entity_settings` says whether there is a hold, and this says
+     * whose it is. The automatic release needs the second question, and a
+     * nightly job that answered it by matching words in a free-text reason
+     * would lift a hold the credit manager placed by hand the first time
+     * somebody reworded a template.
+     *
+     * @return array{id: string, source: string, reason: string, at: string}|null
+     */
+    public function currentHold(string $entityId, string $partyId): ?array
+    {
+        $event = DB::connection('tenant')->table('credit_hold_events')
+            ->where('entity_id', $entityId)
+            ->where('party_id', $partyId)
+            ->orderByDesc('at')
+            ->orderByDesc('id')
+            ->first();
+
+        if ($event === null || (string) $event->direction !== 'placed') {
+            return null;
+        }
+
+        return [
+            'id' => (string) $event->id,
+            'source' => (string) $event->source,
+            'reason' => (string) $event->reason,
+            'at' => (string) $event->at,
+        ];
     }
 
     /**

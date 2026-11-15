@@ -38,7 +38,7 @@ final class Party extends TenantModel
 
     protected $fillable = [
         'code', 'legal_name', 'trading_name',
-        'is_customer', 'is_supplier', 'is_employee',
+        'is_customer', 'is_supplier', 'is_employee', 'party_group',
         'country', 'default_currency', 'default_locale', 'registration_number',
         'tax_treatment', 'payment_term_id', 'risk_grade', 'active',
         'merged_into_id', 'merged_at',

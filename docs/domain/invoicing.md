@@ -385,14 +385,54 @@ Schedules are per line: immediate, straight-line over a service period, on miles
 
 ## Dunning
 
-A policy is an ordered set of steps: offset in days past due, channel, template, and optional actions (late fee, credit hold, escalate to a collections owner).
+A policy is an ordered set of steps: offset in days past due, channel, template, and optional actions (late fee, credit hold, escalate to collections). Policies resolve **party → party group → entity default**, and a customer with none under an entity with no default is not chased at all — a system that invented a policy would start emailing customers nobody set up.
 
-Two design decisions that separate a usable dunning engine from an annoying one:
+### Two decisions that separate a usable engine from an annoying one
 
-- **Evaluated per invoice, sent per customer.** A customer with six overdue invoices receives one statement, not six emails.
-- **A dispute flag stops escalation.** An invoice the customer has formally queried moves to a dispute report rather than continuing to escalate, because dunning a disputed invoice damages the relationship and does not collect the money.
+- **Evaluated per invoice, sent per customer.** The step that applies is a property of an invoice: how far past due it is, under that customer's policy. What gets sent is a property of the customer: one statement listing every invoice that reached a step today. The person who receives six emails from a supplier in one morning telephones about the emails rather than about the money.
+- **A dispute stops the escalation and nothing else.** The invoice is still owed, still counts towards exposure and still ages; it moves to a dispute report instead of escalating. Writing it off or netting it out of the exposure is the easy implementation and lets a customer keep buying by disputing everything — which is the standard response to a credit block.
 
-`dunning:run` is idempotent per `(invoice, step, day)` and respects the tenant's timezone and business calendar. A late fee is posted as **its own document**, so it is creditable and disputable like anything else.
+### The highest step reached, once
+
+The step that fires is the highest one whose offset has been reached and which has not already run for that invoice — not the next one in sequence. A run that has been down for a week sends the step the invoice has actually reached rather than walking the customer through four reminders in four minutes.
+
+### Idempotence
+
+| Layer | What it is |
+|-------|------------|
+| `dunning_events` unique on `(invoice_id, dunning_policy_step_id, occurred_on)` | The guarantee |
+| `dunning_notices` unique on `(entity_id, party_id, notice_date)` | One statement per customer per day, whatever the caller does |
+| The step's own "has this already run" query | The optimisation that keeps the common case off a caught exception |
+
+Cron fires daily, somebody runs it by hand while looking into a complaint, and a retry lands after a timeout. All three arrive at the same index.
+
+A run that sends nothing says **why** for each invoice it passed over — not due yet, already sent, disputed, no policy, not a business day. A quiet morning and a broken job look identical otherwise, and the person who has to answer "did the chasing go out?" should not have to read the code.
+
+### The business calendar
+
+Nothing is sent on a day the business is shut, per the entity's weekend and holidays. A reminder sent on a Friday in the Gulf lands at the bottom of an inbox nobody reads until Sunday, and the step has been spent. The step fires on the next business day, and the event records the day it *actually* happened rather than the offset it was nominally due on — because "when did you send it" is asked with a letter in hand.
+
+### Late fees
+
+A fee is a **debit note** against the overdue invoice, which makes it creditable and disputable like any other charge. A fee bolted onto the original would change a document that has been issued; a fee held in a column is a charge the customer cannot query. The document carries its own arithmetic — the percentage, the outstanding amount it was taken on, the invoice it relates to, and the minimum where that is what applied — because a fee with no basis on it is a number the customer telephones about, and whoever answers has to reconstruct it from a policy they have not read.
+
+Never twice for the same step against the same invoice, whatever else changed.
+
+### Credit hold: placed by policy, lifted by policy
+
+| | |
+|---|---|
+| **Placed** | By a step with the `credit_hold` action, recording the exposure and limit *as they were* — "why was this customer put on hold in March" is answered with the March figures |
+| **Released** | Automatically, as soon as nothing is overdue. A hold that has to be lifted by hand is a customer who paid on Thursday and cannot order on Monday while the person who could lift it is on holiday |
+| **And only its own** | The hold event records its `source`, and `manual` is the default. A hold a person placed — a credit decision, a legal matter, a customer in administration — is never lifted by a nightly job because an invoice got paid |
+
+Telling them apart by matching the opening words of a free-text reason was the alternative, and it lifts the credit manager's hold the first time somebody rewords a template.
+
+### The worklist
+
+Ordered by **value at risk**, descending — not by age. The oldest debt is often the smallest, and a worklist ordered by age spends the morning on fifty riyals. A broken promise sorts first within the value order, because somebody said they would pay and did not, which is the one signal worth interrupting the order for.
+
+A promise to pay does **not** stop the chasing. That is the easy implementation and the one that lets a debt go quiet: the promise is broken, nothing happens on the 30th, and the next reminder goes out whenever somebody notices. A promise dated in the past, or for nothing, is refused rather than stored as a plan.
 
 ## PDF and print
 

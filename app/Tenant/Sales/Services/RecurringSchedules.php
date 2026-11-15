@@ -422,7 +422,18 @@ final class RecurringSchedules
                 (string) $schedule->currency,
                 Carbon::parse($date->toDateString()),
                 (string) $schedule->party_id,
-                null,
+
+                /*
+                 | The party's group, which PF-065 could express and nothing
+                 | could evaluate: `price_lists.party_group` existed and
+                 | every caller passed null here, so a list scoped to
+                 | "distributors" was unreachable. The column on `parties`
+                 | arrived with the dunning policies, which needed the same
+                 | answer.
+                 */
+                (string) (\App\Tenant\Parties\Models\Party::query()
+                    ->whereKey((string) $schedule->party_id)
+                    ->value('party_group') ?? ''),
                 (string) $line->quantity,
             );
 

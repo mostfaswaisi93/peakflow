@@ -10,6 +10,7 @@ use App\Support\Money\Scale;
 use App\Tenant\Catalog\Models\PaymentTerm;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
+use Carbon\CarbonInterface;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -243,6 +244,58 @@ final class DueDateCalculator
                 sprintf('%s plus %d days', $documentDate->toDateString(), $days),
             ],
         };
+    }
+
+    /**
+     * Is this a day the business is open? - PF-066, read by PF-108.
+     *
+     * Public because the dunning run needs the same answer: a reminder sent
+     * on a day the office is shut lands at the bottom of an inbox nobody
+     * reads until Sunday, and the step has been spent. Two implementations
+     * of "is Friday a working day here" would disagree the first time
+     * somebody added a holiday.
+     */
+    public function isBusinessDay(string $entityId, CarbonInterface $date): bool
+    {
+        return ! $this->isClosed($this->asMutableDay($date), $this->policyFor($entityId));
+    }
+
+    /**
+     * The next day the business is open, from a date inclusive.
+     *
+     * Bounded at fourteen days for the same reason as the adjustment loop:
+     * a fortnight of consecutive closed days is a configuration problem, and
+     * an unbounded search is a request that never returns.
+     */
+    public function nextBusinessDay(string $entityId, CarbonInterface $date): Carbon
+    {
+        $policy = $this->policyFor($entityId);
+        $cursor = $this->asMutableDay($date);
+
+        for ($i = 0; $i < 14; $i++) {
+            if (! $this->isClosed($cursor, $policy)) {
+                return $cursor;
+            }
+
+            $cursor = $cursor->addDay();
+        }
+
+        return $this->asMutableDay($date);
+    }
+
+    /**
+     * The calendar day, as the mutable Carbon the rest of this class uses.
+     *
+     * The two public business-day questions take any Carbon, because their
+     * callers hold what they hold: the dunning run works in
+     * `CarbonImmutable` and the terms engine in `Carbon`, and making either
+     * convert at the call site is how a seam acquires a cast at every use.
+     * The time of day is dropped deliberately - whether the business is
+     * open is a question about a date.
+     */
+    private function asMutableDay(CarbonInterface $date): Carbon
+    {
+        return Carbon::parse($date->toDateString());
     }
 
     /**
