@@ -59,6 +59,7 @@ Start with the [root README](../README.md) for the whole system in one pass. Com
 | [`operations/security-hardening.md`](operations/security-hardening.md) | Threat model, abuse cases, controls, ASVS mapping |
 | [`operations/observability.md`](operations/observability.md) | Traces, business metrics, and the invariant alerts |
 | [`operations/backup-and-dr.md`](operations/backup-and-dr.md) | Per-tenant point-in-time recovery, RPO/RTO, restore drills |
+| [`operations/partition-archival.md`](operations/partition-archival.md) | Detaching and archiving an old month without taking a lock that blocks posting |
 | [`operations/ci-cd.md`](operations/ci-cd.md) | The pipeline, why it is currently disabled, and how to enable it |
 
 ## Delivery

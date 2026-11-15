@@ -26,6 +26,7 @@ declare(strict_types=1);
  |   php bin/bench            everything
  |   php bin/bench tree       the chart as a tree, at 5,000 accounts  (PF-037)
  |   php bin/bench dimensions a P&L grouped by two dimensions over a year (PF-046)
+ |   php bin/bench trialbalance  the trial balance at scale, with pruning proven (PF-058, PF-042)
  |
  | Exits non-zero if a plan regressed or a budget was exceeded.
  */
@@ -66,8 +67,12 @@ if ($only === 'all' || $only === 'dimensions') {
     $benchmarks['Reporting by dimension (PF-046)'] = new Tests\Support\DimensionBenchmark();
 }
 
+if ($only === 'all' || $only === 'trialbalance') {
+    $benchmarks['The trial balance at scale (PF-058, PF-042)'] = new Tests\Support\TrialBalanceBenchmark();
+}
+
 if ($benchmarks === []) {
-    fwrite(STDERR, "Unknown benchmark \"{$only}\". Use: all | tree | dimensions\n");
+    fwrite(STDERR, "Unknown benchmark \"{$only}\". Use: all | tree | dimensions | trialbalance\n");
     exit(2);
 }
 

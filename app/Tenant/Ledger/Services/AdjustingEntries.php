@@ -116,6 +116,36 @@ final class AdjustingEntries
             throw AdjustingEntryRefused::periodNotOpen((string) $period->label, $period->state->value);
         }
 
+        /*
+         | The date has to BE the year end, not merely fall inside the year.
+         |
+         | The adjusting period starts and ends on the fiscal year's last day
+         | - it carries no calendar days of its own - so an adjustment dated
+         | 15 March sitting in that period is a line whose date and period
+         | disagree. Two reports then disagree about it: the trial balance
+         | reading the journal bounds by DATE and includes it as at 31 March,
+         | while the one reading the balance model bounds by PERIOD and does
+         | not, because the adjusting period ends in December.
+         |
+         | Found by reasoning the two paths against each other rather than by
+         | a failure, which is why it is worth saying: both were correct and
+         | they answered different questions.
+         |
+         | Refusing it costs nothing real. An adjustment belongs to the year
+         | it adjusts, and the year-end is the date that says so.
+         */
+        $yearEnd = (string) DB::connection('tenant')->table('fiscal_years')
+            ->where('id', $period->fiscal_year_id)
+            ->value('ends_on');
+
+        if ($accountingDate->toDateString() !== $yearEnd) {
+            throw AdjustingEntryRefused::mustBeDatedAtTheYearEnd(
+                $accountingDate->toDateString(),
+                $yearEnd,
+                (string) $period->label,
+            );
+        }
+
         return DB::connection('tenant')->transaction(function () use (
             $entity,
             $entityId,

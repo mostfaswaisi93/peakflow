@@ -37,6 +37,20 @@ final class AdjustingEntryRefused extends RuntimeException
         ));
     }
 
+    public static function mustBeDatedAtTheYearEnd(string $given, string $yearEnd, string $period): self
+    {
+        return new self(sprintf(
+            'An adjusting entry must be dated %s, the last day of the year it adjusts, and this one is '.
+            'dated %s. The adjusting period %s carries no calendar days of its own, so a line whose date '.
+            'falls inside the year while its period ends in December is a line two reports disagree '.
+            'about: one bounds by date and includes it, the other bounds by period and does not. The '.
+            'adjustment belongs to the year it adjusts, and the year-end is the date that says so.',
+            $yearEnd,
+            $given,
+            $period,
+        ));
+    }
+
     public static function periodNotOpen(string $period, string $state): self
     {
         return new self(sprintf(

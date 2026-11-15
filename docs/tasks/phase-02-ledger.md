@@ -69,8 +69,13 @@ The invariant that keeps a subledger equal to its control account, and the one t
 
 - [x] Declarative range partitioning on the accounting date, monthly
 - [x] Partitions created ahead of time by a scheduled task, never on demand during a request
-- [ ] Every query carries a period or date bound so the planner prunes; a test asserts pruning via `EXPLAIN` for the trial balance, the GL detail and the aging reports
-- [ ] Documented procedure for detaching and archiving an old partition without taking a lock that blocks posting
+- [x] Every query carries a period or date bound so the planner prunes; `bin/bench trialbalance` asserts the partition count read off `EXPLAIN` for the trial balance and the GL detail: **one month touches 1 partition, one quarter 3, the whole year 12** - exactly, on a seeded year
+  - The aging reports arrive with Phase 09. The assertion is a method on the benchmark, so the first aging query joins an existing claim rather than needing one invented for it
+- [x] Documented procedure for detaching and archiving an old partition without taking a lock that blocks posting: [`docs/operations/partition-archival.md`](../operations/partition-archival.md). `DETACH PARTITION ... CONCURRENTLY` takes `SHARE UPDATE EXCLUSIVE` on the parent instead of `ACCESS EXCLUSIVE`, so postings into every other month continue - and it cannot run inside a transaction, which makes wrapping it "for safety" the one instinct that breaks it
+- [x] A month may be archived only when **every period it covers is `locked`**, not merely closed. A closed period can be reopened; a locked one cannot, and that is the only state in which detaching cannot need undoing
+- [x] The procedure drops nothing until the archive has been restored once. A dump nobody has read back is a file, not a record - and the restore is part of the DR drill, compared against the row count and date range recorded at detach
+- [x] Reattaching adds a matching `CHECK` first, so `ATTACH` trusts the constraint instead of scanning forty million rows while holding the lock
+- [x] A non-empty default partition is documented as an **alert**, not a state to tidy away: it means the scheduled task that extends the range has stopped, and the rows are moved into real partitions in one transaction
 
 ### PF-043 · The balanced-entry constraint
 `Ledger` · **8 pts** · depends: PF-041 · standards: Double-entry bookkeeping · `risk:high` `type:schema`
@@ -227,5 +232,19 @@ The global proof. An individual assertion can be written to pass; this cannot.
 
 - [x] Trial balance for any date and any period, with and without adjusting entries, in functional or presentation currency
 - [x] Drill-down from any figure to its journal lines
-- [ ] A performance test asserts it stays inside its query budget and its time budget on a seeded dataset of **10 million** journal lines, with partition pruning proven by `EXPLAIN`
+- [x] A performance test asserts it stays inside its query budget and its time budget on a seeded dataset of **10 million** journal lines, with partition pruning proven by `EXPLAIN`. Measured by `bin/bench trialbalance`, at exactly that size:
+
+| | 10,000,000 lines |
+|--|------------------|
+| a full-year trial balance, from the balance model | **14 ms** |
+| the same statement, aggregated from the journal | **8,487 ms** |
+| one month | 7 ms |
+| drilling into one account for one month | 282 ms, 2,083 lines |
+| partitions scanned (month / quarter / year) | 1 / 3 / 12 |
+| queries, for 5 accounts and for 400 | 3 either way |
+
+- [x] The 10 million figure is what sent the trial balance to the read model. The first run of this benchmark **failed**: the journal aggregation took 7.5 seconds against a two-second budget. `account_balances` holds one row per entity, period, account and dimension set, so the same statement reads 4,800 rows instead of ten million - and the measured time is 14 ms at both 120,000 lines and 10,000,000, because it does not read the journal at all
+- [x] The read-model path is used only for a range that lines up with whole periods, because the read model's grain **is** the period. A mid-month date has no row to read, and apportioning one would be a figure nothing in the ledger agrees with - so that range takes the journal, and the statement says which side it came from
+- [x] The two read paths are asserted to produce the **same statement**, row by row, in `bin/verify ledger`. A cache with no independent recomputation is a second source of truth, and the first time it disagrees nobody can say which is right
+- [x] An adjusting entry must now be dated at the fiscal year end. Found by reasoning the two paths against each other rather than by a failure: one bounds by date and the other by period, so an adjustment dated mid-year would be in one statement and not the other - both correct, answering different questions
 - [x] The query count does not change with the number of accounts returned - an N+1 here is invisible to every functional test

@@ -1203,6 +1203,15 @@ final class ArchitectureRules
      * So forgetting it is a build failure. That is the only form of "wired in"
      * that survives the person who wrote the convention leaving.
      *
+     * ## One exemption, and it is conditional
+     *
+     * A benchmark that disables the write-side triggers to seed millions of
+     * rows is building a ledger that deliberately lacks fingerprints and
+     * recorded period states - running the proof over it would report all of
+     * that, correctly, as noise. It is exempt only while it does that;
+     * a benchmark posting through the real path has the same obligation as a
+     * check, because it is writing a ledger and claiming something about it.
+     *
      * ## Why the proof cannot live in the runner instead
      *
      * Every suite rolls back its transaction in a `finally`, so by the time
@@ -1232,6 +1241,27 @@ final class ArchitectureRules
             // The trait itself, and the rules file, name the table in prose.
             if (str_contains($source, 'trait ProvesTheLedger')
                 || str_contains($source, 'postingSuitesProveTheLedger')) {
+                continue;
+            }
+
+            /*
+             | A benchmark that disables the write-side triggers is exempt,
+             | and only then.
+             |
+             | It seeds millions of rows with the triggers off because at that
+             | scale a per-line increment measures the trigger rather than the
+             | read path - so the ledger it builds deliberately lacks
+             | fingerprints and recorded period states. Running the global
+             | proof over it would report all of that, correctly, and the
+             | report would be noise.
+             |
+             | The exemption is conditional rather than "benchmarks are
+             | exempt", because otherwise extending Benchmark is a way to dodge
+             | the rule. A benchmark that posts through the real path has the
+             | same obligation as a check: it is writing a ledger and claiming
+             | something about it.
+             */
+            if (str_contains($source, 'extends Benchmark') && str_contains($source, 'DISABLE TRIGGER')) {
                 continue;
             }
 

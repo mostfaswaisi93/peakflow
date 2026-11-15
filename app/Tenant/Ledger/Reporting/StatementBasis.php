@@ -45,14 +45,20 @@ final readonly class StatementBasis
         public string $asAt,
         public ?string $from,
         public string $currency,
+        public string $source,
     ) {}
 
+    /**
+     * @param  string  $source  'journal' or 'read_model' - which side the
+     *                          figures were read from
+     */
     public static function of(
         bool $includesAdjusting,
         int $adjustingEntries,
         Carbon $asAt,
         ?Carbon $from,
         string $currency,
+        string $source = 'journal',
     ): self {
         return new self(
             includesAdjusting: $includesAdjusting,
@@ -60,6 +66,7 @@ final readonly class StatementBasis
             asAt: $asAt->toDateString(),
             from: $from?->toDateString(),
             currency: $currency,
+            source: $source,
         );
     }
 
@@ -91,6 +98,7 @@ final readonly class StatementBasis
      *     as_at: string,
      *     from: ?string,
      *     currency: string,
+     *     source: string,
      *     declaration_ar: string,
      *     declaration_en: string,
      * }
@@ -104,6 +112,16 @@ final readonly class StatementBasis
             'as_at' => $this->asAt,
             'from' => $this->from,
             'currency' => $this->currency,
+            /*
+             | Which side the figures came from - PF-058.
+             |
+             | `read_model` is a maintained cache that BalanceRebuilder proves
+             | against the journal; `journal` is the journal itself. They
+             | agree, and they are different claims: anybody reconciling a
+             | figure that looks wrong needs to know which one they are
+             | looking at before they start.
+             */
+            'source' => $this->source,
             'declaration_ar' => $this->arabic(),
             'declaration_en' => $this->english(),
         ];

@@ -1187,6 +1187,7 @@ See [`docs/tasks/README.md`](docs/tasks/README.md) for the task format, the esti
 | [`docs/operations/security-hardening.md`](docs/operations/security-hardening.md) | Threat model, controls, ASVS mapping |
 | [`docs/operations/observability.md`](docs/operations/observability.md) | Traces, metrics, the invariant alerts |
 | [`docs/operations/backup-and-dr.md`](docs/operations/backup-and-dr.md) | Per-tenant PITR, RPO/RTO, restore drills |
+| [`docs/operations/partition-archival.md`](docs/operations/partition-archival.md) | Detaching, archiving and reattaching a month of journal lines |
 | [`docs/operations/ci-cd.md`](docs/operations/ci-cd.md) | The pipeline, and why it is currently disabled |
 | [`docs/tasks/`](docs/tasks/) | The 229-task delivery backlog |
 | [`docs/roadmap.md`](docs/roadmap.md) | Phases, milestones, sequencing rationale |

@@ -419,6 +419,48 @@ Up to **eight** axes per entity — cost centre, project, department, branch, fu
 
 Stored as **columns** on `journal_lines`, not JSON and not an EAV side table, because every financial report filters and groups by them and an index on a JSON path is not a substitute. An account may require a dimension; validity rules can forbid a combination, including a value belonging to another entity.
 
+## The trial balance, and why it reads a cache
+
+A trial balance aggregating ten million journal lines takes **8.5 seconds**. That is measured, not estimated, and it is the reason `account_balances` exists.
+
+| 10,000,000 journal lines | |
+|--------------------------|--|
+| a full-year trial balance, from the balance model | **14 ms** |
+| the same statement, aggregated from the journal | **8,487 ms** |
+| one month | 7 ms |
+| drilling into one account for one month | 282 ms, 2,083 lines |
+| partitions scanned, for a month / quarter / year | 1 / 3 / 12 |
+| queries, for 5 accounts and for 400 | 3 either way |
+
+The read model holds one row per entity, period, account and dimension set, so a full-year statement reads 4,800 rows instead of ten million — and the measured time is 14 ms at both 120,000 lines and 10,000,000, because it does not read the journal at all.
+
+### The range has to line up with whole periods
+
+The read model's grain **is** the period. A range from 1 January to 15 June has nothing to read for half of June, and apportioning that half from the period's total would produce a figure nothing in the ledger agrees with — a trial balance that is close.
+
+So a range that starts on a period's first day and ends on a period's last day reads the cache; anything else reads the journal. Both are correct and the statement says which one it was:
+
+```
+basis.source = 'read_model'   a period-aligned range
+basis.source = 'journal'      a mid-month date, or fromJournal: true
+```
+
+Nobody reconciling a figure that looks wrong should have to guess which side they are looking at.
+
+### And the two paths are asserted to agree
+
+`BalanceRebuilder` proves the read model against the journal row by row. That is a different claim from this one: the two **read paths** bound differently — one by date, one by period — and the day they diverge is the day two reports of the same figure disagree.
+
+So `bin/verify ledger` reads both and compares them row by row, not just on totals: totals alone would pass with two accounts transposed, which is precisely the shape of a grouping bug.
+
+That comparison found one real divergence, by reasoning rather than by failing. An adjusting entry dated mid-year sits in a period that ends in December, so the date bound would include it in a statement as at 31 March and the period bound would not. Both correct; different questions. `AdjustingEntries` now refuses any date but the fiscal year end — which costs nothing real, because an adjustment belongs to the year it adjusts.
+
+### Partition pruning is asserted on the plan
+
+`journal_lines` is range-partitioned by month. A query without a date bound scans every month ever posted and gets slower every month — correct, fast in the first year, and nobody notices until year three.
+
+So the partition count is read off `EXPLAIN` and asserted: a month touches one partition, a quarter three, a year twelve. Detaching and archiving an old month is [`docs/operations/partition-archival.md`](../operations/partition-archival.md).
+
 ## The adjusting period, and what a statement declares
 
 ### Period 13 carries no calendar days, and that is load-bearing

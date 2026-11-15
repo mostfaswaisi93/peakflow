@@ -116,6 +116,7 @@ final class LedgerEnforcementRules
                 'the global proof includes the audit chain' => $this->theProofIncludesTheChain(),
                 'opening balances are permissioned, reasoned and time-bounded' => $this->openingBalancesAreBounded(),
                 'an adjustment lands in period 13, and the statement says so' => $this->adjustmentsAreDeclared(),
+                'the balance model and the journal give the same statement' => $this->bothSidesAgree(),
             ], $this->entityId);
         } catch (Throwable $e) {
             return ['ledger invariants could not be checked' => [
@@ -2190,6 +2191,193 @@ final class LedgerEnforcementRules
                     'the Arabic declaration does not count three entries correctly: %s',
                     Str::limit((string) $basis['declaration_ar'], 90),
                 );
+            }
+        }
+
+        app(EntityContext::class)->use($this->entityId);
+
+        return $violations;
+    }
+
+    /**
+     * The read model and the journal must produce the same statement - PF-058.
+     *
+     * ## Why there are two paths at all
+     *
+     * At ten million journal lines, aggregating the journal for a full-year
+     * trial balance took **7.5 seconds** - measured by `bin/bench
+     * trialbalance`, against a two-second budget. `account_balances` holds
+     * one row per entity, period, account and dimension set, so the same
+     * statement reads 4,800 rows instead of ten million.
+     *
+     * ## Which makes this the check that matters
+     *
+     * A cache with no independent recomputation is a second source of truth,
+     * and the first time it disagrees with the journal nobody can say which
+     * is right. `BalanceRebuilder` proves the read model against the journal
+     * row by row; this proves that the two READ PATHS answer identically -
+     * which is a different claim, because the paths bound differently. One
+     * filters by date, the other by period, and the day they diverge is the
+     * day two reports of the same figure disagree.
+     *
+     * That divergence was found by reasoning rather than by a failure: an
+     * adjusting entry dated mid-year would be included by the date bound and
+     * excluded by the period bound. `AdjustingEntries` now refuses any date
+     * but the year-end, which is asserted below.
+     *
+     * @return list<string>
+     */
+    public function bothSidesAgree(): array
+    {
+        $violations = [];
+        $entity = $this->freshEntity('BTH');
+        $entityId = (string) $entity->getKey();
+        $trialBalance = app(TrialBalance::class);
+
+        $date = Carbon::parse($this->postingDate);
+        $monthStart = $date->copy()->startOfMonth();
+        $monthEnd = $date->copy()->endOfMonth();
+
+        $accounts = Account::query()
+            ->where('entity_id', $entityId)
+            ->whereIn('code', ['1.1.1.1', '5.1', '5.2'])
+            ->pluck('id', 'code');
+
+        foreach (['1234.5600', '77.0000', '9999.9900'] as $index => $amount) {
+            app(Poster::class)->post(
+                entity: $entity,
+                ruleKey: 'probe.reversal_pair',
+                event: [
+                    'debit' => (string) $accounts[['1.1.1.1', '5.1', '5.2'][$index]],
+                    'amount' => $amount,
+                ],
+                accountingDate: $date,
+                journalCode: 'GEN',
+            );
+        }
+
+        /*
+         | A period-aligned range takes the read model; a mid-month one
+         | cannot and takes the journal. Both are asserted, because "the fast
+         | path is used" and "the slow path still works" are two claims and
+         | losing either is a regression.
+         */
+        $aligned = $trialBalance->for($entityId, 'SAR', $monthEnd, $monthStart);
+        $midMonth = $trialBalance->for($entityId, 'SAR', $date, $monthStart);
+
+        if (($aligned['basis']['source'] ?? '') !== 'read_model') {
+            $violations[] = sprintf(
+                'a period-aligned range read from %s rather than the balance model, so the statement is '.
+                'aggregating the journal - 7.5 seconds at ten million lines',
+                var_export($aligned['basis']['source'] ?? null, true),
+            );
+        }
+
+        if (($midMonth['basis']['source'] ?? '') !== 'journal') {
+            $violations[] = sprintf(
+                'a range ending mid-month read from %s. The balance model\'s grain is the period, so '.
+                'there is no row to read for half a month - apportioning one would be a figure nothing in '.
+                'the ledger agrees with',
+                var_export($midMonth['basis']['source'] ?? null, true),
+            );
+        }
+
+        /*
+         | And the figures, row by row.
+         |
+         | Totals alone would pass with two accounts transposed, which is
+         | precisely the shape of a grouping bug.
+         */
+        $fromJournal = $trialBalance->for($entityId, 'SAR', $monthEnd, $monthStart, fromJournal: true);
+
+        if (($fromJournal['basis']['source'] ?? '') !== 'journal') {
+            $violations[] = 'fromJournal did not force the journal path, so the verification compares the '.
+                'read model against itself';
+        }
+
+        $cached = $aligned['rows']->keyBy('code');
+        $journal = $fromJournal['rows']->keyBy('code');
+
+        if ($cached->count() !== $journal->count() || $cached->count() === 0) {
+            $violations[] = sprintf(
+                'the balance model returned %d rows and the journal %d',
+                $cached->count(),
+                $journal->count(),
+            );
+        }
+
+        foreach ($journal as $code => $row) {
+            $other = $cached->get($code);
+
+            if ($other === null) {
+                $violations[] = sprintf('account %s is in the journal statement and not in the cached one', $code);
+
+                continue;
+            }
+
+            foreach (['debit', 'credit', 'balance'] as $figure) {
+                if (! BigDecimal::of((string) $row[$figure])->isEqualTo(BigDecimal::of((string) $other[$figure]))) {
+                    $violations[] = sprintf(
+                        'account %s: the journal says %s %s and the balance model says %s. A cache that '.
+                        'disagrees with the journal is a second source of truth, and nobody can say which '.
+                        'is right',
+                        $code,
+                        $figure,
+                        (string) $row[$figure],
+                        (string) $other[$figure],
+                    );
+                }
+            }
+        }
+
+        foreach (['total_debit', 'total_credit', 'total_net_debit', 'total_net_credit'] as $total) {
+            if (! BigDecimal::of((string) $aligned[$total])->isEqualTo(BigDecimal::of((string) $fromJournal[$total]))) {
+                $violations[] = sprintf(
+                    '%s is %s from the balance model and %s from the journal',
+                    $total,
+                    (string) $aligned[$total],
+                    (string) $fromJournal[$total],
+                );
+            }
+        }
+
+        /*
+         | The date rule on an adjustment, which is what keeps the two bounds
+         | from diverging.
+         */
+        $adjustingPeriod = app(AdjustingEntries::class)->periodFor($entityId, $date);
+
+        if ($adjustingPeriod !== null) {
+            if ($adjustingPeriod->state !== PeriodState::Open) {
+                app(PeriodStateMachine::class)->transition(
+                    $adjustingPeriod,
+                    PeriodState::Open,
+                    'opened the adjusting period to assert the year-end date rule',
+                );
+            }
+
+            $before = auth()->guard('web')->user();
+
+            try {
+                auth()->guard('web')->setUser($this->userWithRole('controller', $entityId));
+
+                $midYear = $this->refusal(fn () => app(AdjustingEntries::class)->post(
+                    $entity,
+                    'probe.reversal_pair',
+                    ['debit' => (string) $accounts['5.1'], 'amount' => '10.0000'],
+                    $date,
+                    'from the external auditor schedule C-1, dated mid-year on purpose',
+                ));
+
+                if ($midYear === null || ! str_contains($midYear, 'last day of the year it adjusts')) {
+                    $violations[] = 'an adjusting entry was accepted with a mid-year date. Its period ends '.
+                        'in December, so the date bound and the period bound would include it in '.
+                        'different statements - two reports of the same figure disagreeing';
+                }
+            } finally {
+                $before === null
+                    ? auth()->guard('web')->forgetUser()
+                    : auth()->guard('web')->setUser($before);
             }
         }
 
