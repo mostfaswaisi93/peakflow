@@ -28,12 +28,17 @@ Two tasks in this phase carry disproportionate risk. `PF-093` is gapless numberi
 ### PF-091 · Invoice schema with a frozen snapshot
 `Sales` · **8 pts** · depends: PF-082, PF-071 · standards: EN 16931 · `risk:high` `type:schema`
 
-- [ ] `invoices`, `invoice_lines`, `invoice_tax_breakdown`, `invoice_allowances_charges`, `invoice_references`
-- [ ] The document type is a UNCL 1001 code, stored as the code
-- [ ] **Frozen at issue**: both parties' legal names, addresses and tax registrations; the entity's own legal identity; every applied tax rate; the FX rate; the payment terms; the derived due dates. An issued invoice is a historical statement and carries its own copies rather than foreign keys to things that can change
-- [ ] A line carries the item reference *and* its own description, so changing an item's name later does not rewrite history
-- [ ] Totals stored at the amount scale, with the presentation exponent recorded separately
-- [ ] A test changes a party's name and a tax rate after issue, and asserts the issued invoice is unchanged in every respect
+- [x] `invoices`, `invoice_lines`, `invoice_tax_breakdown`, `invoice_allowances_charges`, `invoice_references`
+- [x] The document type is a UNCL 1001 code, stored as the code - `380` rather than `commercial_invoice`, because the code is what goes on the wire and a name in the column means a mapping at the boundary, which is a place for a document to acquire the wrong type on the way out
+- [x] **Frozen at issue**: both parties' legal names, addresses and tax registrations; the entity's own legal identity; every applied tax rate; the FX rate; the payment terms; the derived due dates. The **dates**, not just the terms: "net 30 from the end of the month, adjusted for weekends" resolves through a policy an operator can change, so a document storing only the terms would have its due date move - and a dunning run would chase an invoice that was not yet due
+- [x] A line carries the item reference *and* its own description, so changing an item's name later does not rewrite history. The reference is what a report groups by; the description is what the customer read
+- [x] Totals stored at the amount scale, with the presentation exponent recorded separately. Recorded rather than derived at render time, because ISO 4217 has changed one - and a reprint has to show what was shown
+- [x] A test changes a party's name and a tax rate after issue, and asserts the issued invoice is unchanged in every respect. It also asserts the world really moved, because a check where nothing changed proves nothing
+- [x] There is **no `cancelled` status**. An issued invoice is immutable by trigger in every column, and a document that should not have been issued is credited (PF-097) or corrected (PF-098) by another document that references it. A status somebody can set to `cancelled` is a document that disappears from a return it was already in
+- [x] The parts are immutable too - lines, breakdown rows, allowances and references - by a second trigger that refuses INSERT as well as UPDATE and DELETE once the header is issued. A line edited after issue changes the document as surely as editing its header does, and it is the easier mistake to make because a line looks like data
+- [x] The number exists **exactly when** the document is issued, both halves in one CHECK: a draft with a number has consumed one from a gapless series and may never be issued; an issued document without one is a legal document with no identity
+- [x] The totals tie in the database - gross is net plus tax, payable is gross less prepaid - because a document whose own totals disagree is one nobody can check against anything else
+- [x] Found on the way: the bite that froze **today's** registration instead of the tax point's passed silently, because the fixture gave the party only one registration. It now holds two - the party was renumbered on 1 June and the document is dated 18 May - and the bite fires on the identifier
 
 ### PF-092 · Draft editing and validation
 `Sales` · **5 pts** · depends: PF-091 · standards: EN 16931
