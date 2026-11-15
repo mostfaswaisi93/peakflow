@@ -152,6 +152,7 @@ enum DocumentType: string
     {
         return match ($this) {
             self::CreditNote => 'sales.credit_note_issued',
+            self::CorrectedInvoice => 'sales.corrected_invoice_issued',
             default => 'sales.invoice_issued',
         };
     }

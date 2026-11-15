@@ -105,6 +105,15 @@ final class SodRuleSeeder extends Seeder
                 true,
             ],
             [
+                'invoice_then_correct',
+                'invoice.issue',
+                'corrected_invoice.issue',
+                'object',
+                'من يُصدر الفاتورة لا يجوز أن يُصدر الفاتورة المصححة البديلة لها، فهي تستبدل الأصل بالكامل.',
+                'Whoever issues an invoice must not issue the replacement that supersedes it. A corrected invoice restates the original in full, so it is the stronger instrument of the two: a credit note leaves the invoice in the record to be read, and a replacement says the original should have read differently. The debit note is deliberately NOT paired with issuing, because it increases what the customer owes - the fraud it enables is overcharging, which is a different control.',
+                true,
+            ],
+            [
                 'match_then_writeoff',
                 'bank.reconcile',
                 'reconciliation.write_off',

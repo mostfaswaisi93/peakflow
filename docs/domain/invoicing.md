@@ -167,6 +167,31 @@ The tax leg goes back to **output** tax. Posting it as input leaves both figures
 
 **Segregation of duties**: whoever issued an invoice may not credit it (`PF-033`), asserted inside the issuing transaction before anything is consumed. Building this found that the engine could not see any real act at all — it matched permission keys (`invoice.issue`) against an audit trail that records past-tense actions (`invoice.issued`). `config/sod.php` maps the two, and `bin/verify sod` fails the build if a duty maps to an action nothing writes.
 
+## Debit notes and corrected invoices
+
+| | UNCL 1001 | Reference | Posting |
+|---|---|---|---|
+| **Debit note** | `383` | `charges` | the invoice's own shape: receivable up, revenue up, output tax up |
+| **Corrected invoice** | `384` | `corrects` | the replaced document's figures reversed **and** the corrected ones, in one entry |
+
+A debit note is not a credit note with the sign flipped. It charges more for a supply already invoiced — a price that was understated, freight that was left off — and there is deliberately **no cap** on it: a customer can be charged more than once against one invoice for different things, and the only ceiling is what was agreed, which is not a number this system holds.
+
+A corrected invoice replaces. Its lines are the corrected figures in full, because a replacement is not a difference, and it posts **both halves in one entry** — the reversal and the restatement — because it is one event. Two entries reach the same balances and read as two decisions taken at two moments. One entry is also self-checking: it balances only if each half does, so a correction that reverses 1,150 and restates 1,000 cannot be written at all.
+
+The original's journal entry is left alone. It was posted correctly from the document that existed at the time; what changed is the document, not the books.
+
+**One replacement per invoice**, enforced by a primary key on the corrected document — two transactions inserting one key cannot both succeed, and nothing about snapshots has to be true for that to hold. A replaced invoice is then closed to further adjustment: crediting it as well would count the correction twice.
+
+**Which mechanism is legal is the jurisdiction's decision**, from `config/jurisdictions.php`:
+
+| Profile | Corrects with |
+|---|---|
+| `facturx` | a replacement corrected invoice |
+| `eta`, `jofotara` | a credit or debit note |
+| `generic`, `peppol`, `zatca` | either |
+
+`Corrections::permitted()` is what the sales screens read, so a type the profile forbids is never offered; `assertPermitted()` refuses it again at the moment of the write, because anything decided while rendering a page is already stale. A profile with no declared mechanism is refused rather than guessed.
+
 ## Recurring billing
 
 A schedule is a template plus an RFC 5545 `RRULE`, which is why "the last working day of every quarter" is expressible rather than approximated:

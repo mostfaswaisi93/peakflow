@@ -65,4 +65,13 @@ final class IssueRefused extends RuntimeException
             $found,
         ));
     }
+
+    public static function aCorrectionOfNothing(): self
+    {
+        return new self(
+            'A corrected invoice was posted with nothing to replace. A replacement reverses what the '.
+            'document it replaces said and restates it, and a posting with only half of that in it '.
+            'leaves the receivable counted twice.',
+        );
+    }
 }

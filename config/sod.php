@@ -42,6 +42,7 @@ return [
         // The document flows, which are built.
         'invoice.issue' => ['invoice.issued'],
         'credit_note.issue' => ['credit_note.issued'],
+        'corrected_invoice.issue' => ['corrected_invoice.issued'],
         'tax_return.file' => ['return.filed'],
 
         /*

@@ -233,6 +233,51 @@ return [
         'jofotara' => 'next_period',
     ],
 
+    /*
+    |---------------------------------------------------------------------------
+    | How an issued document is corrected - PF-098
+    |---------------------------------------------------------------------------
+    |
+    |   credit_note        the invoice stands and a credit note (UNCL 1001
+    |                      381) reduces it, followed by a new invoice if one
+    |                      is needed
+    |   corrected_invoice  a replacement document (384) carries the corrected
+    |                      figures and references what it replaces
+    |
+    | Which one is legal is a jurisdiction's decision and not a user's. Both
+    | mechanisms produce the same balances; what differs is which document the
+    | authority expects to receive and match. Issuing the wrong one is not a
+    | preference somebody can be talked out of afterwards - it is a document
+    | already filed under a procedure the regime does not recognise.
+    |
+    | `both` exists because some regimes genuinely accept either, and a system
+    | that forced a choice there would be inventing a rule. Where only one is
+    | listed, `Corrections` refuses the other and names the regime.
+    |
+    | The sales screens read this: a document type the profile does not permit
+    | is not offered at all, which is the only way a rule like this survives
+    | contact with somebody in a hurry.
+    */
+    'document_correction' => [
+        'generic' => 'both',
+        'peppol' => 'both',
+
+        // ZATCA's e-invoicing rules recognise both the credit note and the
+        // debit note, and a corrected invoice as a separate document type.
+        'zatca' => 'both',
+
+        // A `facture rectificative` replaces: the French and Italian
+        // procedures expect the replacement document, referenced to what it
+        // replaces.
+        'facturx' => 'corrected_invoice',
+
+        // Egypt's ETA accepts a credit or debit note against a submitted
+        // document, matched by its UUID.
+        'eta' => 'credit_note',
+
+        'jofotara' => 'credit_note',
+    ],
+
     'rounding' => [
         'generic' => [
             'mode' => 'half_up',

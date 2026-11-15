@@ -11,6 +11,7 @@ use App\Support\Money\Money;
 use App\Tenant\Ledger\Models\JournalEntry;
 use App\Tenant\Ledger\Services\NumberAllocator;
 use App\Tenant\Ledger\Services\Poster;
+use App\Tenant\Sales\Enums\DocumentType;
 use App\Tenant\Sales\Exceptions\IssueRefused;
 use App\Tenant\Sales\InvoiceFinding;
 use App\Tenant\Sales\Models\Invoice;
@@ -220,6 +221,67 @@ final class Issuer
     }
 
     /**
+     * The figures of the document a correction replaces.
+     *
+     * @return array{gross: string, revenue: list<array<string, mixed>>, tax: list<array<string, mixed>>}
+     */
+    private function replacedFigures(Invoice $draft, Entity $entity): array
+    {
+        $replacedId = $draft->references()
+            ->where('kind', 'corrects')
+            ->value('referenced_invoice_id');
+
+        $replaced = $replacedId === null ? null : Invoice::query()->find((string) $replacedId);
+
+        if ($replaced === null) {
+            throw IssueRefused::theDraftIsNotValid([
+                'references: a corrected invoice must reference the invoice it replaces (EN 16931 BT-25)',
+            ]);
+        }
+
+        $revenue = [];
+
+        foreach ($replaced->lines()->get() as $line) {
+            $revenue[] = [
+                'account_id' => (string) $line->revenue_account_id,
+                'amount' => $line->net_amount,
+                'tax_code_id' => $line->tax_code_id === null ? null : (string) $line->tax_code_id,
+                'tax_point' => $line->tax_point?->toDateString(),
+            ];
+        }
+
+        $tax = [];
+
+        foreach ($replaced->taxBreakdown()->get() as $row) {
+            $tax[] = [
+                'jurisdiction' => (string) ($replaced->tax_decision_snapshot['country']
+                    ?? $replaced->lines()->value('place_of_supply')
+                    ?? $entity->country),
+                'amount' => $row->tax_amount,
+                'tax_code_id' => (string) $replaced->lines()
+                    ->where('tax_category', $row->category->value)
+                    ->value('tax_code_id'),
+
+                /*
+                 | The REPLACEMENT's tax point, not the original's.
+                 |
+                 | The reversal belongs in the period the correction is
+                 | reported in: putting it back in the original's period
+                 | changes a return that has been filed, which is PF-087's
+                 | procedure and not a posting's decision.
+                 */
+                'tax_point' => ($draft->tax_point ?? $draft->issue_date)->toDateString(),
+            ];
+        }
+
+        return [
+            'gross' => (string) $replaced->gross_amount,
+            'revenue' => $revenue,
+            'tax' => $tax,
+        ];
+    }
+
+    /**
      * The document a duty is asserted against.
      *
      * A credit note's duty is about the invoice it credits. An invoice's is
@@ -366,17 +428,32 @@ final class Issuer
             ];
         }
 
+        $event = [
+            'invoice_id' => (string) $draft->getKey(),
+            'party_id' => (string) $draft->party_id,
+            'gross' => $draft->gross_amount,
+            'narration' => sprintf('%s %s', $draft->document_type->label('en'), $draft->series_key),
+            'revenue' => $revenue,
+            'tax' => $tax,
+        ];
+
+        /*
+         | A replacement carries what it replaces - PF-098.
+         |
+         | Read here rather than in the rule, because a posting rule that
+         | loaded a document would make the ledger depend on Sales, and the
+         | layering ruleset does not permit that. It also means the posting
+         | cannot disagree with the document: both halves come from the same
+         | read, in the same transaction.
+         */
+        if ($draft->document_type === DocumentType::CorrectedInvoice) {
+            $event['replaced'] = $this->replacedFigures($draft, $entity);
+        }
+
         return $this->poster->post(
             $entity,
             $draft->document_type->postingRuleKey(),
-            [
-                'invoice_id' => (string) $draft->getKey(),
-                'party_id' => (string) $draft->party_id,
-                'gross' => $draft->gross_amount,
-                'narration' => sprintf('%s %s', $draft->document_type->label('en'), $draft->series_key),
-                'revenue' => $revenue,
-                'tax' => $tax,
-            ],
+            $event,
             Carbon::parse($draft->issue_date->toDateString()),
             'SAL',
             'invoice',
