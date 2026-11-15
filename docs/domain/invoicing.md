@@ -192,6 +192,45 @@ The original's journal entry is left alone. It was posted correctly from the doc
 
 `Corrections::permitted()` is what the sales screens read, so a type the profile forbids is never offered; `assertPermitted()` refuses it again at the moment of the write, because anything decided while rendering a page is already stale. A profile with no declared mechanism is refused rather than guessed.
 
+## Prepayments
+
+Money taken before performance is a **contract liability**, not revenue — IFRS 15 — and in most VAT regimes it is also a tax point, because the tax falls due on the earlier of payment and invoice. So a prepayment invoice (`386`) is a tax document that posts nothing to revenue:
+
+```
+Dr  accounts_receivable            the gross the customer owes now
+Cr  deferred_revenue               the net taken before performance
+Cr  vat_output @ the jurisdiction  the tax, where the regime taxes it
+```
+
+Crediting revenue instead cannot be fixed by the final invoice posting less: the overstatement is in a period that may be closed, reported and filed, and the correction is in a later one. Two wrong periods netting to right is the shape nobody notices until an auditor asks what the revenue in Q1 was for.
+
+The final invoice then posts a **different entry** — chosen from the document's references, not its type, because a final invoice is an ordinary `380`:
+
+```
+Dr  accounts_receivable            the gross LESS what was prepaid
+Dr  deferred_revenue               the prepayment's net, released
+Cr  the line's revenue account     the whole supply's net
+Cr  vat_output @ the jurisdiction  the tax not already charged
+```
+
+Worked through, on a 1,000 + 150 supply with a 400 + 60 prepayment:
+
+| | Receivable | Deferred revenue | Output tax | Revenue |
+|---|---|---|---|---|
+| Prepayment invoice | +460 | −400 | −60 | — |
+| Final invoice | +690 | +400 | −90 | −1,000 |
+| **Balance** | **1,150** | **0** | **−150** | **−1,000** |
+
+Which is the only claim worth making, and the one the check asserts: every individual posting can look defensible while the pair is wrong — revenue recognised twice, tax declared twice, the customer chased for one supply twice.
+
+Three details that are easy to get wrong and are each checked:
+
+- the tax deducted comes out of **the group it was charged in**, and a prepayment taxed in a jurisdiction the invoice does not touch is refused rather than netted against a tax the authority never saw;
+- the liability is released with **the prepayment's** tax point, because the return it was reported in used that date;
+- `prepaid_amount` (EN 16931 `BT-113`) must equal the prepayment it cites — a document deducting 300 while citing 460 leaves 160 in a liability nobody will ever clear, and both documents look correct on their own.
+
+A prepayment is applied to **exactly one** invoice, by primary key. Splitting one across several is deliberately not modelled: it needs a balance per prepayment, ordering rules for when two invoices compete for the remainder, and a report of what is left — an allocation ledger rather than a column. Returning part of one is a credit note.
+
 ## Recurring billing
 
 A schedule is a template plus an RFC 5545 `RRULE`, which is why "the last working day of every quarter" is expressible rather than approximated:

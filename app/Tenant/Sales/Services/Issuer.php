@@ -16,6 +16,7 @@ use App\Tenant\Sales\Exceptions\IssueRefused;
 use App\Tenant\Sales\InvoiceFinding;
 use App\Tenant\Sales\Models\Invoice;
 use App\Tenant\Sales\Models\InvoiceLine;
+use App\Tenant\Sales\Posting\Rules\FinalInvoiceIssuedRule;
 use App\Tenant\Tenancy\Models\Entity;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -218,6 +219,35 @@ final class Issuer
 
             return $draft->refresh();
         });
+    }
+
+    /**
+     * Which rule posts this document.
+     *
+     * The type decides, except for an invoice carrying a prepayment: the
+     * receivable is then only the balance, the revenue is the whole supply
+     * and the tax is the increment, which is a different entry and so a
+     * different rule. Deciding it here rather than in the enum because the
+     * enum cannot see a document's references, and a rule chosen from the
+     * type alone would post the full gross again - showing the customer
+     * owing for one supply twice.
+     */
+    private function postingRuleFor(Invoice $draft): string
+    {
+        if ($draft->document_type === DocumentType::Invoice && $this->prepaymentOn($draft) !== null) {
+            return FinalInvoiceIssuedRule::KEY;
+        }
+
+        return $draft->document_type->postingRuleKey();
+    }
+
+    private function prepaymentOn(Invoice $draft): ?Invoice
+    {
+        $id = $draft->references()
+            ->where('kind', 'prepayment')
+            ->value('referenced_invoice_id');
+
+        return $id === null ? null : Invoice::query()->find((string) $id);
     }
 
     /**
@@ -450,9 +480,33 @@ final class Issuer
             $event['replaced'] = $this->replacedFigures($draft, $entity);
         }
 
+        /*
+         | A prepayment applied changes the shape of the posting - PF-099.
+         |
+         | Not the document type: a final invoice is an ordinary `380`, and
+         | whether it carries a prepayment is a fact about its references.
+         | The figures are read here for the same reason the replaced ones
+         | are: a posting rule that loaded a document would make the ledger
+         | depend on Sales.
+         */
+        $prepayment = $this->prepaymentOn($draft);
+
+        if ($prepayment !== null) {
+            $event['prepayment'] = [
+                'gross' => (string) $prepayment->gross_amount,
+                'net' => (string) $prepayment->net_amount,
+                'tax' => (string) $prepayment->tax_amount,
+                'jurisdiction' => (string) ($prepayment->tax_decision_snapshot['country']
+                    ?? $prepayment->lines()->value('place_of_supply')
+                    ?? $entity->country),
+                'tax_code_id' => (string) $prepayment->lines()->value('tax_code_id'),
+                'tax_point' => $prepayment->tax_point?->toDateString(),
+            ];
+        }
+
         return $this->poster->post(
             $entity,
-            $draft->document_type->postingRuleKey(),
+            $this->postingRuleFor($draft),
             $event,
             Carbon::parse($draft->issue_date->toDateString()),
             'SAL',

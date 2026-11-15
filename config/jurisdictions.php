@@ -278,6 +278,38 @@ return [
         'jofotara' => 'credit_note',
     ],
 
+    /*
+    |---------------------------------------------------------------------------
+    | When a prepayment is taxed - PF-099
+    |---------------------------------------------------------------------------
+    |
+    |   at_prepayment     the prepayment invoice carries the tax, because the
+    |                     tax point is the earlier of payment and invoice
+    |   at_final_invoice  the prepayment is a cash movement for tax purposes
+    |                     and the whole supply is taxed on the final document
+    |
+    | Most VAT regimes are the first: receiving money for a supply that has
+    | not happened yet creates a liability to the authority on the earlier of
+    | the two events, which is why a prepayment invoice is a tax document and
+    | not a receipt.
+    |
+    | The difference is a quarter's cash, not a rounding: taxing at the final
+    | invoice under a regime that taxes on receipt files a return that is
+    | short by the tax on every prepayment taken in the period, and the
+    | authority's own records - the customer's input claim - say otherwise.
+    |
+    | Declared per profile and read by `Prepayments`, which refuses rather
+    | than guessing for a profile that does not declare one.
+    */
+    'prepayment_tax' => [
+        'generic' => 'at_prepayment',
+        'peppol' => 'at_prepayment',
+        'zatca' => 'at_prepayment',
+        'facturx' => 'at_prepayment',
+        'eta' => 'at_prepayment',
+        'jofotara' => 'at_prepayment',
+    ],
+
     'rounding' => [
         'generic' => [
             'mode' => 'half_up',

@@ -7,7 +7,9 @@ namespace App\Providers;
 use App\Tenant\Ledger\Posting\PostingRuleRegistry;
 use App\Tenant\Sales\Posting\Rules\CreditNoteIssuedRule;
 use App\Tenant\Sales\Posting\Rules\CorrectedInvoiceIssuedRule;
+use App\Tenant\Sales\Posting\Rules\FinalInvoiceIssuedRule;
 use App\Tenant\Sales\Posting\Rules\InvoiceIssuedRule;
+use App\Tenant\Sales\Posting\Rules\PrepaymentInvoiceIssuedRule;
 use Illuminate\Support\ServiceProvider;
 
 /**
@@ -28,5 +30,7 @@ final class SalesServiceProvider extends ServiceProvider
         $registry->register(new InvoiceIssuedRule());
         $registry->register(new CreditNoteIssuedRule());
         $registry->register(new CorrectedInvoiceIssuedRule());
+        $registry->register(new PrepaymentInvoiceIssuedRule());
+        $registry->register(new FinalInvoiceIssuedRule());
     }
 }

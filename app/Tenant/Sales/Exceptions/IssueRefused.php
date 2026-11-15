@@ -66,6 +66,37 @@ final class IssueRefused extends RuntimeException
         ));
     }
 
+    public static function aFinalInvoiceWithNoPrepayment(): self
+    {
+        return new self(
+            'A final invoice was posted through the prepayment rule with no prepayment to release. '.
+            'The rule debits a liability that the prepayment created, and without it the entry '.
+            'recognises revenue against nothing.',
+        );
+    }
+
+    public static function aPrepaymentLargerThanTheInvoice(string $prepaid, string $gross): self
+    {
+        return new self(sprintf(
+            'The prepayment applied is %s and the invoice is for %s. A prepayment larger than the '.
+            'supply it is applied to leaves the customer in credit, which is a refund rather than an '.
+            'invoice: credit the balance back instead.',
+            $prepaid,
+            $gross,
+        ));
+    }
+
+    public static function aPrepaymentTaxedElsewhere(string $remaining, string $jurisdiction): self
+    {
+        return new self(sprintf(
+            '%s of tax charged on the prepayment in %s has nothing to deduct it from on this invoice, '.
+            'whose lines are taxed elsewhere. Netting it against a tax the authority never saw would '.
+            'understate one jurisdiction\'s return and leave the other\'s overstated.',
+            $remaining,
+            $jurisdiction,
+        ));
+    }
+
     public static function aCorrectionOfNothing(): self
     {
         return new self(
