@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Support;
 
 use App\Platform\Models\Tenant;
+use App\Support\Authorization\SegregatesDuties;
 use App\Support\Money\Money;
 use App\Platform\Services\TenantConnectionResolver;
 use App\Tenant\Identity\Models\Role;
@@ -84,6 +85,7 @@ final class PartyEnforcementRules
                 'a new or changed account is unusable until verified' => $this->changesRequireVerification(),
                 'the person who changed an account cannot verify it' => $this->verifierIsNotTheAuthor(),
                 'a bank number never reaches the audit log' => $this->numberNeverReachesTheLog(),
+                'the beneficiary/release pair can never be overridden' => $this->theSodPairCannotBeOverridden(),
                 'exposure counts uninvoiced orders, not just receivables' => $this->exposureIsComplete(),
                 'a credit hold cannot exist without an author' => $this->holdsHaveAnAuthor(),
                 'an override is bounded, justified and raises TO not BY' => $this->overridesAreBounded(),
@@ -150,6 +152,17 @@ final class PartyEnforcementRules
                 'client skips the second person entirely';
         }
 
+        /*
+         | As the APPROVER, not the clerk.
+         |
+         | The clerk changed this account, and the SoD pair refuses them
+         | `payment.release` on this party outright - which is the control
+         | working and not what this particular check is about. Asserting
+         | usability as the clerk tested the SoD pair by accident and said
+         | nothing about verification.
+         */
+        auth()->guard('web')->setUser($this->approver);
+
         try {
             $registry->assertUsable($account->fresh());
 
@@ -179,6 +192,105 @@ final class PartyEnforcementRules
             $violations[] = 'changing the account with a direct UPDATE left it verified, so anything reaching '.
                 'the column outside the service bypasses the second person';
         }
+
+        auth()->guard('web')->setUser($this->clerk);
+
+        return $violations;
+    }
+
+    /**
+     * The one pair that can never be overridden - PF-061.
+     *
+     * `supplier.bank_details.update` against `payment.release`, scoped to
+     * the party. Whoever changed where a supplier's money goes must not be
+     * the one who releases a payment to it, because the two acts together
+     * ARE the fraud - either one alone is ordinary work.
+     *
+     * Asserted at BOTH ends, because the order is not fixed: somebody who
+     * has already released a payment to this supplier and now changes their
+     * bank account is the same conflict arrived at backwards.
+     *
+     * @return list<string>
+     */
+    public function theSodPairCannotBeOverridden(): array
+    {
+        $registry = app(BankDetailRegistry::class);
+        $duties = app(SegregatesDuties::class);
+        $violations = [];
+
+        // The clerk changes an account.
+        auth()->guard('web')->setUser($this->clerk);
+        $account = $this->newAccount('SA0380000000608010167519');
+        $partyId = (string) $account->party_id;
+
+        /*
+         | Asked with a subject AND a party.
+         |
+         | `payment.release` carries more than one rule, and
+         | prepare-then-release is scoped to the payment RUN - the engine
+         | refuses to evaluate an object-scoped rule with no subject id,
+         | which is right and which made the first version of this check
+         | throw rather than answer.
+         */
+        $blocking = $duties->blockingRule(
+            duty: 'payment.release',
+            subjectType: 'payment_run',
+            subjectId: (string) Str::ulid(),
+            partyId: $partyId,
+        );
+
+        if ($blocking !== 'beneficiary_then_release') {
+            $violations[] = sprintf(
+                'after changing a supplier\'s bank account, the same user is not blocked from releasing a '.
+                'payment to that supplier (blocking rule: %s). The two acts together ARE the fraud; either '.
+                'one alone is ordinary work',
+                var_export($blocking, true),
+            );
+        }
+
+        $refusal = $this->refusal(fn () => $registry->assertUsable($account->fresh()));
+
+        if ($refusal === null) {
+            $violations[] = 'the payment path allowed the person who changed the account to release to it';
+        } elseif (! str_contains($refusal, 'you cannot release a payment to it')) {
+            $violations[] = 'the payment was refused for a reason other than the conflicting duty: '.$refusal;
+        }
+
+        /*
+         | And the rule may not be marked overridable.
+         |
+         | Every other pair has a legitimate exception - a tenant with three
+         | staff genuinely cannot separate every duty. This one does not, at
+         | any size of business, because an override on it is exactly what
+         | an insider would request.
+         */
+        $overridable = $this->connection->table('sod_rules')
+            ->where('key', 'beneficiary_then_release')
+            ->value('overridable');
+
+        if ($overridable !== false) {
+            $violations[] = 'the beneficiary-change-against-payment-release rule is marked overridable. '.
+                'An override on this pair is exactly what an insider would request, and granting one is '.
+                'indistinguishable from not having the rule';
+        }
+
+        // A DIFFERENT person is not blocked by the pair.
+        auth()->guard('web')->setUser($this->approver);
+
+        $forSomebodyElse = $duties->blockingRule(
+            duty: 'payment.release',
+            subjectType: 'payment_run',
+            subjectId: (string) Str::ulid(),
+            partyId: $partyId,
+        );
+
+        if ($forSomebodyElse !== null) {
+            $violations[] = 'a second person is blocked from releasing a payment to a supplier whose account '.
+                'somebody else changed. The control is a second pair of eyes, not a freeze - blocking '.
+                'everybody means the payment never goes out and the rule gets switched off';
+        }
+
+        auth()->guard('web')->setUser($this->clerk);
 
         return $violations;
     }

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Tenant\Identity\Services;
 
+use App\Support\Authorization\SegregatesDuties;
+
 use App\Support\Limits\Ceilings;
 use App\Tenant\Identity\Enums\DutyScope;
 use App\Tenant\Identity\Exceptions\SegregationOfDutiesConflict;
@@ -39,7 +41,7 @@ use Illuminate\Support\Str;
  * is indistinguishable from an attempt nobody made, and the exceptions report
  * in PF-034 is built from these.
  */
-final class SodEngine
+final class SodEngine implements SegregatesDuties
 {
     /** @var ?Collection<int, SodRule> */
     private ?Collection $rules = null;
@@ -178,6 +180,23 @@ final class SodEngine
         }
 
         return null;
+    }
+
+    /**
+     * The Support contract's form of {@see wouldRefuse()}.
+     *
+     * Returns the rule's key rather than the model, so a module outside
+     * `Identity` can ask the question without importing an `Identity`
+     * model - which is the whole purpose of the contract.
+     */
+    public function blockingRule(
+        string $duty,
+        ?string $subjectType = null,
+        ?string $subjectId = null,
+        ?string $partyId = null,
+        ?string $periodId = null,
+    ): ?string {
+        return $this->wouldRefuse($duty, $subjectType, $subjectId, $partyId, $periodId)?->key;
     }
 
     /**

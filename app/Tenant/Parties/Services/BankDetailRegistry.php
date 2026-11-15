@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tenant\Parties\Services;
 
 use App\Support\Audit\AuditTrail;
+use App\Support\Authorization\SegregatesDuties;
 use App\Tenant\Parties\Exceptions\BankAccountNotVerified;
 use App\Tenant\Parties\Models\Party;
 use App\Tenant\Parties\Models\PartyBankAccount;
@@ -38,7 +39,10 @@ use Illuminate\Support\Facades\DB;
  */
 final class BankDetailRegistry
 {
-    public function __construct(private readonly AuditTrail $audit) {}
+    public function __construct(
+        private readonly AuditTrail $audit,
+        private readonly SegregatesDuties $duties,
+    ) {}
 
     /**
      * Record a new or changed account.
@@ -65,6 +69,29 @@ final class BankDetailRegistry
             $label,
             $existing,
         ): PartyBankAccount {
+            /*
+             | The SoD assertion, here and not only at the payment - PF-061.
+             |
+             | The pair is `supplier.bank_details.update` against
+             | `payment.release`, scoped to the PARTY, and it is the one
+             | pair in the system that can never be overridden. Asserting at
+             | this end as well as at the release end matters because the
+             | order of the two acts is not fixed: somebody who has already
+             | released a payment to this supplier and now changes their
+             | bank account is the same conflict, arrived at backwards.
+             |
+             | Not caught here. The exception reaches the HTTP layer, which
+             | is also what keeps this module from importing an Identity
+             | type it would only pass through.
+             */
+            $this->duties->assert(
+                duty: 'supplier.bank_details.update',
+                subjectType: PartyBankAccount::class,
+                subjectId: $existing === null ? null : (string) $existing->getKey(),
+                partyId: (string) $party->getKey(),
+                subjectLabel: (string) $party->legal_name,
+            );
+
             $account = $existing ?? new PartyBankAccount(['party_id' => $party->getKey()]);
 
             // The BEFORE state, masked. The audit log records that an account
@@ -179,6 +206,40 @@ final class BankDetailRegistry
      */
     public function assertUsable(PartyBankAccount $account): void
     {
+        /*
+         | The other end of the same pair, checked DIRECTLY.
+         |
+         | Asserting the whole `payment.release` duty from here was the
+         | first attempt and it was wrong: other rules on that duty are
+         | scoped to the payment RUN - prepare-then-release compares the
+         | same object - and a bank account is not a run, so the engine
+         | refused to evaluate them for want of a subject id. Passing the
+         | account as the object would have made those rules silently never
+         | match, which is correct by accident rather than by design.
+         |
+         | So this end checks the one thing it can know: whether the person
+         | about to pay is the person who changed where the money goes. The
+         | full `payment.release` assertion belongs to the payment run,
+         | which has its own id and its own prior duties, and happens there.
+         */
+        $changedBy = $this->whoLastChanged($account);
+        $current = auth()->guard('web')->id();
+
+        if ($changedBy !== null && $current !== null && $changedBy === (string) $current) {
+            $this->audit->refusal(
+                category: 'party',
+                action: 'payment.release.refused',
+                subjectType: PartyBankAccount::class,
+                subjectId: (string) $account->getKey(),
+                subjectLabel: (string) $account->party?->legal_name,
+                reason: 'the person releasing the payment is the person who changed the bank account - the '.
+                    'supplier.bank_details.update / payment.release pair, which can never be overridden',
+                partyId: (string) $account->party_id,
+            );
+
+            throw BankAccountNotVerified::byTheSamePersonWhoChangedIt($account->masked());
+        }
+
         if ($account->isUsableForPayment()) {
             return;
         }

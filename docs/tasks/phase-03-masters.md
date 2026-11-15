@@ -32,7 +32,7 @@ The highest-value fraud surface in the product.
 - [x] **Column-level encryption** at rest, separate from any disk or database encryption, with the key referenced from the KMS
 - [x] Every change is audited with before and after, actor, time and source
 - [x] A changed beneficiary account marks the party as **requiring re-verification**, and the next payment to it is blocked until a second user confirms the change through a channel the system did not supply
-- [ ] Paired by SoD with `payment.release` (`PF-033`), and that pair cannot be overridden
+- [x] Paired by SoD with `payment.release` (`PF-033`), and that pair cannot be overridden
 - [x] Bank details never appear in a log, an export, a webhook payload or an error message - asserted by test
 
 ### PF-062 · Credit control

@@ -54,4 +54,24 @@ final class BankAccountNotVerified extends DomainException
             ->withDetail($this->getMessage())
             ->toResponse($request);
     }
+
+    /**
+     * The person paying is the person who changed the account - PF-061.
+     *
+     * The highest-value fraud in the product is these two acts performed by
+     * one person: change where a supplier's money goes, then release a
+     * payment to it. Either one alone is ordinary work, which is why the
+     * control is on the PAIR and why it can never be overridden - an
+     * override on it is exactly what an insider would request.
+     */
+    public static function byTheSamePersonWhoChangedIt(string $masked): self
+    {
+        return new self(sprintf(
+            'You changed the bank account %s, so you cannot release a payment to it. Those two acts together '.
+            'are the highest-value fraud this system is built against; either one alone is ordinary work, '.
+            'which is why the rule is about the pair. It cannot be overridden - ask a colleague to release '.
+            'the payment.',
+            $masked,
+        ));
+    }
 }

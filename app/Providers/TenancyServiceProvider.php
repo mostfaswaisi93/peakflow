@@ -6,6 +6,8 @@ namespace App\Providers;
 
 use App\Platform\Models\Tenant;
 use App\Platform\Services\PlatformCeilings;
+use App\Support\Authorization\SegregatesDuties;
+use App\Tenant\Identity\Services\SodEngine;
 use App\Tenant\Tenancy\Services\Settings;
 use App\Support\Limits\Ceilings;
 use App\Tenant\Identity\Models\User;
@@ -50,6 +52,16 @@ final class TenancyServiceProvider extends ServiceProvider
          | somebody can change a setting mid-request.
          */
         $this->app->scoped(Settings::class);
+
+        /*
+         | Segregation of duties, by its Support contract.
+         |
+         | The duties belong to other modules - changing a supplier's bank
+         | account is Parties, releasing a payment is Settlement - and every
+         | one of them has to assert. Binding the interface here is what
+         | keeps them from each depending on Identity for it.
+         */
+        $this->app->bind(SegregatesDuties::class, SodEngine::class);
     }
 
     public function boot(): void
