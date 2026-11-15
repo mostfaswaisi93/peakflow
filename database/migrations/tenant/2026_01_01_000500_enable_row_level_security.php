@@ -93,7 +93,32 @@ return new class extends Migration
             RETURNS void
             LANGUAGE plpgsql
             AS $fn$
+            DECLARE
+                partition regclass;
             BEGIN
+                /*
+                 | PARTITIONS FIRST, and this is not a detail.
+                 |
+                 | A policy on a partitioned parent governs queries addressed
+                 | to the PARENT. A query naming a partition directly is
+                 | governed by that partition's own policies - and the
+                 | application role holds SELECT on every partition through
+                 | default privileges.
+                 |
+                 | So a parent-only policy scopes `FROM journal_lines` and
+                 | does nothing for `FROM journal_lines_2026_03`, which
+                 | returns every entity's rows. That was measured, not
+                 | assumed: two entities, four lines, two returned through the
+                 | parent and four through the partition.
+                 |
+                 | Recursive because a partition may itself be partitioned.
+                 */
+                FOR partition IN
+                    SELECT inhrelid::regclass FROM pg_inherits WHERE inhparent = target
+                LOOP
+                    PERFORM peakflow_apply_entity_rls(partition);
+                END LOOP;
+
                 EXECUTE format('ALTER TABLE %%s ENABLE ROW LEVEL SECURITY', target);
                 EXECUTE format('ALTER TABLE %%s FORCE ROW LEVEL SECURITY', target);
 

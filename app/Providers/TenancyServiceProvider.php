@@ -9,6 +9,8 @@ use App\Platform\Services\PlatformCeilings;
 use App\Support\Limits\Ceilings;
 use App\Tenant\Identity\Models\User;
 use App\Tenant\Identity\Services\PermissionCatalogue;
+use App\Tenant\Ledger\Listeners\OpenLedgerForEntity;
+use App\Tenant\Tenancy\Events\EntityCreated;
 use App\Tenant\Tenancy\Services\EntityContext;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Events\ConnectionEstablished;
@@ -43,6 +45,14 @@ final class TenancyServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        /*
+         | Synchronous and inside the creating transaction, per PF-048: an
+         | entity that exists without a chart is one nobody can post to, and
+         | a queue catching up later is a window in which the product is
+         | broken in a way the customer cannot diagnose.
+         */
+        Event::listen(EntityCreated::class, OpenLedgerForEntity::class);
+
         $this->reapplySessionStateOnReconnect();
         $this->resolvePermissionsThroughTheGate();
     }

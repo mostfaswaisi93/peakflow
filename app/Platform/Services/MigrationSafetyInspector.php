@@ -106,7 +106,12 @@ final class MigrationSafetyInspector
             'instead' => 'stop writing it, deploy, confirm nothing reads it, then drop it in a later release',
         ],
         'ALTER on a partitioned table' => [
-            'pattern' => '/ALTER\s+TABLE\s+(?:ONLY\s+)?(?:audit_log|journal_entries|journal_lines)\b/i',
+            // The tables that ARE partitioned. `journal_entries` was listed
+            // here and is not partitioned - only its lines are - so every
+            // ALTER on it was reported as locking 26 relations when it locks
+            // one. A check that cries wolf about a safe statement teaches
+            // people to pass --skip-preflight.
+            'pattern' => '/ALTER\s+TABLE\s+(?:ONLY\s+)?(?:audit_log|journal_lines)\b/i',
             'does' => 'takes ACCESS EXCLUSIVE on the parent AND every partition, so a table with 25 monthly '.
                 'partitions locks 26 relations at once',
             'instead' => 'alter each partition individually where the operation allows it, or schedule the parent '.

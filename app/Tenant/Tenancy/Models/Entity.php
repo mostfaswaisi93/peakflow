@@ -63,6 +63,19 @@ final class Entity extends TenantModel
         'active' => 'boolean',
     ];
 
+    /**
+     * The event that lets other modules open what they need for a new entity.
+     *
+     * Announced rather than called: Tenancy sits below Ledger in the module
+     * graph, so calling the chart template from here would invert the
+     * dependency and make the tenancy layer unusable without the ledger.
+     *
+     * @var array<string, class-string>
+     */
+    protected $dispatchesEvents = [
+        'created' => \App\Tenant\Tenancy\Events\EntityCreated::class,
+    ];
+
     protected static function booted(): void
     {
         static::updating(function (self $entity): void {

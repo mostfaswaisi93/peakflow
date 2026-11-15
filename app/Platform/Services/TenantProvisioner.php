@@ -183,7 +183,38 @@ final class TenantProvisioner
     }
 
     /**
-     * Revoke UPDATE and DELETE on every table that declares itself append-only.
+     * Tables carrying a marker comment, plus their partitions.
+     *
+     * Partitions are listed individually because a privilege granted on a
+     * partitioned table does not describe its existing partitions - revoking
+     * only the parent would leave every month of the ledger writable.
+     *
+     * @return list<string>
+     */
+    private function tablesMarked(\Illuminate\Database\Connection $connection, string $marker): array
+    {
+        $rows = $connection->select(<<<'SQL'
+            WITH marked AS (
+                SELECT c.oid, c.relname
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'public'
+                  AND c.relkind IN ('r', 'p')
+                  AND obj_description(c.oid, 'pg_class') LIKE ?
+            )
+            SELECT relname FROM marked
+            UNION
+            SELECT child.relname
+            FROM pg_inherits i
+            JOIN marked m ON m.oid = i.inhparent
+            JOIN pg_class child ON child.oid = i.inhrelid
+        SQL, [$marker.'%']);
+
+        return array_map(static fn (object $row): string => (string) $row->relname, $rows);
+    }
+
+    /**
+     * Revoke the privileges each marker declares.
      *
      * A table opts in with a `peakflow:append-only` comment. This reads the
      * marker rather than carrying a list, so a migration that adds an
@@ -223,29 +254,29 @@ final class TenantProvisioner
             return;
         }
 
-        $tables = $connection->select(<<<'SQL'
-            WITH marked AS (
-                SELECT c.oid, c.relname
-                FROM pg_class c
-                JOIN pg_namespace n ON n.oid = c.relnamespace
-                WHERE n.nspname = 'public'
-                  AND c.relkind IN ('r', 'p')
-                  AND obj_description(c.oid, 'pg_class') LIKE 'peakflow:append-only%'
-            )
-            SELECT relname FROM marked
-            UNION
-            SELECT child.relname
-            FROM pg_inherits i
-            JOIN marked m ON m.oid = i.inhparent
-            JOIN pg_class child ON child.oid = i.inhrelid
-        SQL);
-
-        foreach ($tables as $table) {
-            $connection->statement(sprintf(
-                'REVOKE UPDATE, DELETE ON %s FROM %s',
-                $grammar->wrapTable($table->relname),
-                $grammar->wrap($role),
-            ));
+        /*
+         | Two markers, two different revocations.
+         |
+         | `append-only` means a record is evidence: the audit log, where an
+         | entry that can be edited is not evidence at all.
+         |
+         | `no-delete` means a record may change while it is a draft and must
+         | never disappear once it is not: a journal entry is edited before it
+         | is posted and corrected by reversal afterwards. Revoking UPDATE
+         | there would make drafts unusable, so only DELETE goes.
+         */
+        foreach ([
+            'peakflow:append-only' => 'UPDATE, DELETE',
+            'peakflow:no-delete' => 'DELETE',
+        ] as $marker => $privileges) {
+            foreach ($this->tablesMarked($connection, $marker) as $table) {
+                $connection->statement(sprintf(
+                    'REVOKE %s ON %s FROM %s',
+                    $privileges,
+                    $grammar->wrapTable($table),
+                    $grammar->wrap($role),
+                ));
+            }
         }
     }
 

@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Support;
 
 use App\Platform\Enums\SubscriptionStatus;
+use App\Tenant\Ledger\Enums\FiscalCalendar;
+use Illuminate\Support\Carbon;
 use App\Support\Mfa\Base32;
 use App\Support\Mfa\Totp;
 use App\Platform\Models\Subscription;
@@ -52,6 +54,7 @@ final class WorkedExamples
             'hash chain tamper detection' => $this->hashChainTamperDetection(),
             'a subscription is valid THROUGH its end date' => $this->subscriptionBoundary(),
             'TOTP against the RFC 6238 test vectors' => $this->totpTestVectors(),
+            'a fiscal year starting late in the month does not overflow' => $this->fiscalYearBoundaries(),
         ];
     }
 
@@ -434,6 +437,81 @@ final class WorkedExamples
         // to know WHICH step was used.
         if (Totp::verify($secret, $code, $now) !== Totp::stepAt($now)) {
             $violations[] = 'verify() does not return the step the code belongs to, so a replay cannot be refused';
+        }
+
+        return $violations;
+    }
+
+    /**
+     * A fiscal year starting on the 29th, 30th or 31st.
+     *
+     * `addMonth()` on 31 January gives 3 March, because January has 31 days
+     * and February does not. A fiscal calendar built that way silently moves
+     * the first days of March into February - every year, for every entity
+     * whose year starts late in the month, and the only symptom is that two
+     * periods disagree with the bank statement by a few days of takings.
+     *
+     * Pure arithmetic, so it is checked here rather than against a database:
+     * the bug is in the date handling and does not need a tenant to prove.
+     *
+     * @return list<string>
+     */
+    public function fiscalYearBoundaries(): array
+    {
+        $violations = [];
+
+        $cases = [
+            // Start date => [first period ends, second period starts]
+            '2026-01-31' => ['2026-02-27', '2026-02-28'],
+            '2026-01-30' => ['2026-02-27', '2026-02-28'],
+            '2026-01-29' => ['2026-02-27', '2026-02-28'],
+            '2024-01-31' => ['2024-02-28', '2024-02-29'],
+            '2026-01-01' => ['2026-01-31', '2026-02-01'],
+        ];
+
+        foreach ($cases as $start => [$firstEnds, $secondStarts]) {
+            $periods = FiscalCalendar::Monthly->periodsFrom(Carbon::parse($start));
+
+            if ($periods[0]['ends_on'] !== $firstEnds) {
+                $violations[] = sprintf(
+                    'a year starting %s has its first period ending %s, expected %s',
+                    $start,
+                    $periods[0]['ends_on'],
+                    $firstEnds,
+                );
+            }
+
+            if ($periods[1]['starts_on'] !== $secondStarts) {
+                $violations[] = sprintf(
+                    'a year starting %s has its second period starting %s, expected %s',
+                    $start,
+                    $periods[1]['starts_on'],
+                    $secondStarts,
+                );
+            }
+        }
+
+        // Twelve periods, contiguous, with no gap and no overlap anywhere.
+        $periods = FiscalCalendar::Monthly->periodsFrom(Carbon::parse('2026-01-31'));
+
+        if (count($periods) !== 12) {
+            $violations[] = sprintf('a monthly year produced %d periods, not 12', count($periods));
+        }
+
+        for ($i = 1; $i < count($periods); $i++) {
+            $previousEnd = Carbon::parse($periods[$i - 1]['ends_on']);
+            $thisStart = Carbon::parse($periods[$i]['starts_on']);
+
+            if (! $previousEnd->copy()->addDay()->isSameDay($thisStart)) {
+                $violations[] = sprintf(
+                    'period %d ends %s and period %d starts %s, leaving a gap or an overlap - a posting on a '.
+                    'day in between would belong to no period at all',
+                    $i,
+                    $periods[$i - 1]['ends_on'],
+                    $i + 1,
+                    $periods[$i]['starts_on'],
+                );
+            }
         }
 
         return $violations;

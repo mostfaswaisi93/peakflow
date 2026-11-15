@@ -186,9 +186,19 @@ final class ArchitectureRules
     }
 
     /**
-     * Modules communicate through domain events and application services. A
-     * module that reaches into another's models, traits, scopes or enums has
-     * dissolved the boundary that Deptrac compiles.
+     * A module may reach into another's models, traits, scopes or enums only
+     * where the Deptrac ruleset permits it.
+     *
+     * The first version forbade EVERY cross-module reference, which is not
+     * the rule: `Tax` is allowed to depend on `Ledger`, `Ledger` on
+     * `Tenancy`, and so on. It passed for a year only because no module had
+     * yet used a legitimate dependency, and the moment the ledger used
+     * Tenancy's entity-scope trait - exactly as the ruleset intends - it
+     * reported four violations that were not violations.
+     *
+     * So the allowed directions are read from `deptrac.yaml`, which is the
+     * same file Deptrac compiles. Deptrac is not installed here, and a
+     * boundary that exists only in a config nobody can run is not a boundary.
      *
      * @return list<string>
      */
@@ -196,6 +206,7 @@ final class ArchitectureRules
     {
         $violations = [];
         $modules = $this->moduleNames();
+        $allowed = $this->deptracRuleset();
 
         foreach ($modules as $module) {
             foreach ($this->phpFiles('app/Tenant/'.$module) as $file) {
@@ -203,6 +214,13 @@ final class ArchitectureRules
 
                 foreach ($modules as $other) {
                     if ($other === $module) {
+                        continue;
+                    }
+
+                    // Permitted by the ruleset: Ledger may use Tenancy, Tax
+                    // may use Ledger. Only the directions the ruleset omits
+                    // are violations.
+                    if (in_array($other, $allowed[$module] ?? [], true)) {
                         continue;
                     }
 
@@ -224,9 +242,11 @@ final class ArchitectureRules
 
                         if (str_contains($source, $needle)) {
                             $violations[] = sprintf(
-                                '%s references %s directly; go through a domain event or an application service',
+                                '%s references %s, which the Deptrac ruleset does not permit %s to depend on; '.
+                                'go through a domain event or an application service',
                                 $this->relative($file),
                                 $needle,
+                                $module,
                             );
                         }
                     }
@@ -302,9 +322,16 @@ final class ArchitectureRules
         foreach ($this->filesMatching('database/migrations/tenant', '/\.php$/') as $file) {
             $source = (string) file_get_contents($file);
 
-            // Only migrations that declare themselves financial are held to
-            // this. A lookup table does not need an entity.
-            if (! str_contains($source, '@financial')) {
+            /*
+             | Only migrations that DECLARE themselves financial are held to
+             | this. A lookup table does not need an entity.
+             |
+             | Matched as a docblock tag on its own line, not as a substring.
+             | A plain `str_contains` also matched the prose explaining why a
+             | migration is deliberately NOT marked, so writing down the
+             | reason made the file fail the rule it was explaining.
+             */
+            if (preg_match('/^\s*\*\s*@financial\s*$/m', $source) !== 1) {
                 continue;
             }
 
@@ -417,6 +444,66 @@ final class ArchitectureRules
             ),
             $inspector->blocking($inspector->inspect($files)),
         );
+    }
+
+    /**
+     * The allowed dependencies, read from `deptrac.yaml`.
+     *
+     * Parsed with a small reader rather than a YAML library, because none is
+     * installed and the shape here is fixed: a `ruleset:` block of
+     * `Module:` keys each followed by a list of `- Dependency` lines. A
+     * module with `~` depends on nothing.
+     *
+     * If the file cannot be read the rule returns an empty map, which makes
+     * every cross-module reference a violation - the safe direction to fail,
+     * since a silently permissive architecture check is worse than a noisy
+     * one.
+     *
+     * @return array<string, list<string>>
+     */
+    private function deptracRuleset(): array
+    {
+        $file = $this->basePath.'/deptrac.yaml';
+
+        if (! is_file($file)) {
+            return [];
+        }
+
+        $lines = file($file, FILE_IGNORE_NEW_LINES) ?: [];
+        $ruleset = [];
+        $current = null;
+        $inRuleset = false;
+
+        foreach ($lines as $line) {
+            if (preg_match('/^\s*ruleset:\s*$/', $line) === 1) {
+                $inRuleset = true;
+
+                continue;
+            }
+
+            if (! $inRuleset) {
+                continue;
+            }
+
+            // A comment or a blank line never ends the block, and never
+            // starts a module either.
+            if (trim($line) === '' || str_starts_with(trim($line), '#')) {
+                continue;
+            }
+
+            if (preg_match('/^\s{4}([A-Z][A-Za-z]*):\s*(~)?\s*$/', $line, $m) === 1) {
+                $current = $m[1];
+                $ruleset[$current] = [];
+
+                continue;
+            }
+
+            if ($current !== null && preg_match('/^\s{6}-\s*([A-Z][A-Za-z]*)\s*$/', $line, $m) === 1) {
+                $ruleset[$current][] = $m[1];
+            }
+        }
+
+        return $ruleset;
     }
 
     /**
