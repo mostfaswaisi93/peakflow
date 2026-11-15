@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tenant\Identity\Services;
 
+use App\Support\Limits\Ceilings;
 use App\Tenant\Identity\Enums\DutyScope;
 use App\Tenant\Identity\Exceptions\SegregationOfDutiesConflict;
 use App\Tenant\Identity\Models\SodOverride;
@@ -46,6 +47,7 @@ final class SodEngine
     public function __construct(
         private readonly EntityContext $entities,
         private readonly AuditLog $audit,
+        private readonly Ceilings $ceilings,
     ) {}
 
     /**
@@ -208,6 +210,32 @@ final class SodEngine
             );
 
             throw SegregationOfDutiesConflict::notOverridable($rule);
+        }
+
+        /*
+         | The platform's ceiling on how long an exception may run.
+         |
+         | A customer who sets their override expiry to ten years has not
+         | configured a control, they have removed one - and they will do it at
+         | 5pm on the day it blocks something urgent. The ceiling is refused
+         | rather than silently clamped, because an approver who asked for a
+         | year and got thirty days without being told believes the exception
+         | lasts a year.
+         */
+        $maximumDays = $this->ceilings->int('ceiling.sod_override_days');
+
+        if ($expiresAt->greaterThan(now()->addDays($maximumDays))) {
+            $this->audit->refusal(
+                category: 'sod',
+                action: 'sod.override.refused',
+                subjectType: SodRule::class,
+                subjectId: (string) $rule->getKey(),
+                subjectLabel: $rule->key,
+                after: ['requested_until' => $expiresAt->toIso8601String(), 'ceiling_days' => $maximumDays],
+                reason: 'the requested expiry exceeds the platform ceiling',
+            );
+
+            throw SegregationOfDutiesConflict::overrideTooLong($rule, $maximumDays);
         }
 
         if ((string) $approver->getKey() === (string) $beneficiary->getKey()) {

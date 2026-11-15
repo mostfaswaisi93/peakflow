@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tenant\Identity\Services;
 
+use App\Support\Limits\Ceilings;
 use App\Tenant\Identity\Exceptions\StepUpRequired;
 use App\Tenant\Identity\Models\Authenticator;
 use App\Tenant\Identity\Models\StepUpAssertion;
@@ -39,13 +40,20 @@ use Illuminate\Support\Carbon;
  */
 final class StepUpGuard
 {
-    /** How long an assertion remains usable. Short, because it authorises one act. */
+    /**
+     * How long an assertion remains usable, by default.
+     *
+     * Short, because it authorises one act. The platform ceiling bounds it
+     * from above: a longer window means a stolen session stays useful for
+     * longer, and that is not a decision a workspace gets to make for itself.
+     */
     private const LIFETIME_SECONDS = 300;
 
     public function __construct(
         private readonly PermissionCatalogue $catalogue,
         private readonly MfaService $mfa,
         private readonly AuditLog $audit,
+        private readonly Ceilings $ceilings,
     ) {}
 
     /**
@@ -160,7 +168,9 @@ final class StepUpGuard
             'subject_id' => $subjectId,
             'factor_type' => $authenticator->type,
             'asserted_at' => now(),
-            'expires_at' => Carbon::now()->addSeconds(self::LIFETIME_SECONDS),
+            'expires_at' => Carbon::now()->addSeconds(
+                $this->ceilings->clamp('ceiling.step_up_lifetime_seconds', self::LIFETIME_SECONDS)['value'],
+            ),
         ]);
 
         $this->audit->record(

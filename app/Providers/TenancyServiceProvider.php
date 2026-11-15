@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Providers;
 
 use App\Platform\Models\Tenant;
+use App\Platform\Services\PlatformCeilings;
+use App\Support\Limits\Ceilings;
 use App\Tenant\Identity\Models\User;
 use App\Tenant\Identity\Services\PermissionCatalogue;
 use App\Tenant\Tenancy\Services\EntityContext;
@@ -28,6 +30,15 @@ final class TenancyServiceProvider extends ServiceProvider
         );
 
         $this->app->scoped(PermissionCatalogue::class);
+
+        /*
+         | The enforcers of a ceiling live in the tenant plane; the store
+         | lives in the platform plane, which sits ABOVE them in the module
+         | graph. Binding the interface here is what lets the dependency point
+         | the right way - the SoD engine asks `Ceilings`, and never learns
+         | that a platform database exists.
+         */
+        $this->app->scoped(Ceilings::class, PlatformCeilings::class);
     }
 
     public function boot(): void

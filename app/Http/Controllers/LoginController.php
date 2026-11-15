@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\Tenant\Identity\Http\Controllers;
+namespace App\Http\Controllers;
 
 use App\Platform\Exceptions\TenantNotResolvable;
 use App\Platform\Models\ActivityLog;
@@ -32,6 +32,18 @@ use Illuminate\View\View;
  * The cost is real - a user who mistypes their email gets the same message as
  * one who mistypes their password - and it is the right trade. The audit log
  * records which it actually was, so support can tell them.
+ *
+ * ## Why this lives in the HTTP layer and not in Identity
+ *
+ * Signing in crosses both planes by nature: the workspace is resolved from the
+ * PLATFORM database, the user is authenticated against the TENANT's. A domain
+ * module may not do that - Platform depends on Identity, so Identity reaching
+ * back inverts the graph and makes the tenant plane unrunnable without a
+ * platform connection.
+ *
+ * An operation that genuinely spans both planes belongs to the application
+ * layer that coordinates them, which is here. The architecture rule that
+ * forbids `app/Tenant` from referencing `App\Platform` is what moved it.
  *
  * ## The workspace comes first
  *

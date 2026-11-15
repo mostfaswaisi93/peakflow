@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Middleware;
 
 use App\Tenant\Identity\Models\User;
+use App\Support\Limits\Ceilings;
 use App\Tenant\Identity\Services\AuditLog;
 use App\Tenant\Identity\Services\DeviceFingerprint;
 use Closure;
@@ -38,10 +39,18 @@ use Symfony\Component\HttpFoundation\Response;
  */
 final class EnforceSessionPolicy
 {
-    /** Not refreshed by activity. See the class note. */
+    /**
+     * Not refreshed by activity. See the class note.
+     *
+     * Bounded from above by the platform ceiling, so a workspace cannot
+     * stretch its own sessions past what the platform considers safe.
+     */
     private const ABSOLUTE_LIFETIME_MINUTES = 480;
 
-    public function __construct(private readonly AuditLog $audit) {}
+    public function __construct(
+        private readonly AuditLog $audit,
+        private readonly Ceilings $ceilings,
+    ) {}
 
     public function handle(Request $request, Closure $next): Response
     {
@@ -62,7 +71,12 @@ final class EnforceSessionPolicy
     {
         $startedAt = $request->session()->get('authenticated_at');
 
-        if (is_string($startedAt) && Carbon::parse($startedAt)->addMinutes(self::ABSOLUTE_LIFETIME_MINUTES)->isPast()) {
+        $absolute = $this->ceilings->clamp(
+            'ceiling.session_absolute_minutes',
+            self::ABSOLUTE_LIFETIME_MINUTES,
+        )['value'];
+
+        if (is_string($startedAt) && Carbon::parse($startedAt)->addMinutes($absolute)->isPast()) {
             return 'the session reached its absolute lifetime';
         }
 

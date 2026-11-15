@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tenant\Identity\Services;
 
+use App\Support\Limits\Ceilings;
 use App\Support\Mfa\Totp;
 use App\Tenant\Identity\Exceptions\CannotRemoveLastFactor;
 use App\Tenant\Identity\Models\Authenticator;
@@ -38,7 +39,10 @@ use Illuminate\Support\Str;
  */
 final class MfaService
 {
-    public function __construct(private readonly AuditLog $audit) {}
+    public function __construct(
+        private readonly AuditLog $audit,
+        private readonly Ceilings $ceilings,
+    ) {}
 
     /**
      * @return array{authenticator: Authenticator, secret: string, uri: string}
@@ -187,6 +191,11 @@ final class MfaService
      */
     public function regenerateRecoveryCodes(User $user, int $count = 10): Collection
     {
+        // Bounded by the platform ceiling: more codes means more chances for
+        // one to end up written on a sticky note, and the number is not a
+        // decision a workspace gets to make for itself.
+        $count = $this->ceilings->clamp('ceiling.recovery_codes', $count)['value'];
+
         $codes = collect(range(1, $count))->map(
             // Grouped for transcription. Someone reads these off a screen and
             // types them into a phone a month later.

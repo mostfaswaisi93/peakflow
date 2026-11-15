@@ -37,6 +37,8 @@ final class ArchitectureRules
             'tenant models declare their connection' => $this->tenantModelsDeclareConnection(),
             'Reporting never writes' => $this->reportingNeverWrites(),
             'no module reaches into another module\'s models' => $this->noCrossModuleModelAccess(),
+            'the tenant plane does not depend on the platform plane' => $this->tenantDoesNotDependOnPlatform(),
+            'every ceiling is enforced somewhere' => $this->ceilingsAreEnforced(),
             'no physical CSS property' => $this->noPhysicalCssProperties(),
             'financial tables carry entity_id' => $this->financialTablesCarryEntityId(),
             'no migration is unsafe to run against live traffic' => $this->migrationsAreSafeToRunLive(),
@@ -415,6 +417,104 @@ final class ArchitectureRules
             ),
             $inspector->blocking($inspector->inspect($files)),
         );
+    }
+
+    /**
+     * Nothing under `app/Tenant` may reference `App\Platform`.
+     *
+     * The dependency runs one way: Platform knows about Identity because it
+     * provisions and administers tenants; Identity must not know a platform
+     * database exists. Reverse it and a tenant-plane service reads platform
+     * state directly, which makes the tenant plane unrunnable without it -
+     * and the Exchange plane, which runs on queues with no platform
+     * connection pointed, is where that surfaces.
+     *
+     * Deptrac compiles this rule too, and is not installed here. A plane
+     * boundary that only exists in a config file nobody can run is not a
+     * boundary.
+     *
+     * Where tenant-plane code genuinely needs a platform-held value - the
+     * risk ceilings - it depends on an interface in `App\Support` that the
+     * container binds to the platform implementation.
+     *
+     * @return list<string>
+     */
+    public function tenantDoesNotDependOnPlatform(): array
+    {
+        $violations = [];
+
+        foreach ($this->filesMatching('app/Tenant', '/\.php$/') as $file) {
+            $source = (string) file_get_contents($file);
+            $offset = 0;
+
+            while (($position = strpos($source, 'App\\Platform\\', $offset)) !== false) {
+                if (! $this->lineIsAnnotated($source, $position)) {
+                    $violations[] = sprintf(
+                        '%s:%d references App\\Platform directly; depend on an interface in App\\Support and '.
+                        'bind the platform implementation in the container',
+                        $this->relative($file),
+                        $this->lineAt($source, $position),
+                    );
+                }
+
+                $offset = $position + 1;
+            }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * Every ceiling must be read by something that refuses.
+     *
+     * A ceiling nobody enforces is a comment with a number in it, and the
+     * console displays it as though it bounds something - which tells an
+     * operator the system is limited when it is not, and they will repeat
+     * that to a customer.
+     *
+     * The seeder is the register; this checks each key appears somewhere in
+     * `app/` other than the seeder and the defaults table.
+     *
+     * @return list<string>
+     */
+    public function ceilingsAreEnforced(): array
+    {
+        $seeder = $this->basePath.'/database/seeders/PlatformSettingSeeder.php';
+
+        if (! is_file($seeder)) {
+            return [];
+        }
+
+        if (preg_match_all("/'(ceiling\.[a-z0-9_.]+)'/", (string) file_get_contents($seeder), $matches) === 0) {
+            return [];
+        }
+
+        $sources = [];
+
+        foreach ($this->filesMatching('app', '/\.php$/') as $file) {
+            // The defaults table in the ceilings service names every key by
+            // definition, so it cannot count as an enforcer.
+            if (str_contains($this->relative($file), 'PlatformCeilings.php')) {
+                continue;
+            }
+
+            $sources[] = (string) file_get_contents($file);
+        }
+
+        $haystack = implode("\n", $sources);
+        $violations = [];
+
+        foreach (array_unique($matches[1]) as $key) {
+            if (! str_contains($haystack, $key)) {
+                $violations[] = sprintf(
+                    '"%s" is seeded as a ceiling but nothing reads it, so the console would display a limit '.
+                    'that limits nothing',
+                    $key,
+                );
+            }
+        }
+
+        return $violations;
     }
 
     /**

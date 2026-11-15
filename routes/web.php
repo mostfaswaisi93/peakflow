@@ -3,9 +3,10 @@
 declare(strict_types=1);
 
 use App\Platform\Http\Controllers\OpsLoginController;
+use App\Platform\Http\Controllers\OpsSettingsController;
 use App\Platform\Http\Controllers\OpsTenantController;
 use App\Tenant\Identity\Http\Controllers\EntitySwitchController;
-use App\Tenant\Identity\Http\Controllers\LoginController;
+use App\Http\Controllers\LoginController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -143,5 +144,8 @@ Route::prefix('ops')->name('ops.')->group(static function (): void {
 
         Route::get('/tenants', [OpsTenantController::class, 'index'])->name('tenants');
         Route::post('/tenants/{tenant}/status', [OpsTenantController::class, 'setStatus'])->name('tenants.status');
+
+        Route::get('/settings', [OpsSettingsController::class, 'show'])->name('settings');
+        Route::post('/settings/{setting}', [OpsSettingsController::class, 'update'])->name('settings.update');
     });
 });

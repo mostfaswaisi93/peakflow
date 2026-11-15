@@ -20,6 +20,7 @@ final class DatabaseSeeder extends Seeder
     {
         $this->call([
             PlanSeeder::class,
+            PlatformSettingSeeder::class,
         ]);
     }
 }

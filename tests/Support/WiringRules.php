@@ -8,8 +8,9 @@ use App\Platform\Enums\PlanFeature;
 use App\Platform\Exceptions\PlanDoesNotInclude;
 use App\Platform\Models\Plan;
 use App\Platform\Models\Tenant;
+use App\Support\Limits\Ceilings;
 use App\Platform\Services\TenantConnectionResolver;
-use App\Tenant\Identity\Http\Controllers\LoginController;
+use App\Http\Controllers\LoginController;
 use Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
@@ -56,6 +57,7 @@ final class WiringRules
             'exchange and pdf default to their stubs' => $this->driversDefaultToStubs(),
             'the plan gate refuses with an upgrade path, not a 403' => $this->planGateOffersAnUpgrade(),
             'every reporting command actually runs' => $this->reportingCommandsRun(),
+            'a ceiling bounds what it names' => $this->ceilingsBound(),
             'the login form is not an account oracle' => $this->loginIsNotAnOracle(),
             'every route that writes checks a permission' => $this->writingRoutesAuthorize(),
             'every operator route is guarded' => $this->operatorRoutesAreGuarded(),
@@ -587,6 +589,50 @@ final class WiringRules
                     $found,
                 );
             }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * A ceiling must clamp, must fall back safely, and must refuse a key
+     * nobody defined - PF-036.
+     *
+     * The fallback direction is the one that matters. If a setting is missing
+     * - a fresh database, a failed seed - reading it as "unlimited" removes
+     * the limit by deployment accident, and the symptom is that nothing stops
+     * working. So a missing ceiling reads as its compiled default, and a key
+     * nobody defined throws rather than returning something permissive.
+     *
+     * @return list<string>
+     */
+    public function ceilingsBound(): array
+    {
+        $ceilings = app(Ceilings::class);
+        $violations = [];
+
+        $clamped = $ceilings->clamp('ceiling.recovery_codes', 9_999);
+
+        if ($clamped['value'] >= 9_999) {
+            $violations[] = 'a request far above the ceiling was not clamped';
+        }
+
+        if (! $clamped['clamped']) {
+            $violations[] = 'a clamped request does not report that it was clamped, so the caller cannot tell '.
+                'the user their request was reduced';
+        }
+
+        if ($ceilings->clamp('ceiling.recovery_codes', 1)['clamped']) {
+            $violations[] = 'a request below the ceiling was reported as clamped';
+        }
+
+        try {
+            $ceilings->int('ceiling.this.key.does.not.exist');
+
+            $violations[] = 'an undefined ceiling returned a value instead of throwing - an undefined ceiling '.
+                'that reads as a number is a limit nobody chose';
+        } catch (\LogicException) {
+            // Correct.
         }
 
         return $violations;

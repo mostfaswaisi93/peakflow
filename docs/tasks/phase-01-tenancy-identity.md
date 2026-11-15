@@ -175,7 +175,7 @@ A tenant with three staff may genuinely be unable to separate two duties. Silent
 
 - [ ] Tenant lifecycle: provision, suspend, resume, expire, export, delete - each with a confirmation that names the consequence
   - Suspend and resume are in the console, each requiring a written reason of at least eight characters and a confirmation that states the consequence rather than asking "are you sure?" - a dialog people click through without reading. Provision is `tenants:provision` and expire is `subscriptions:expire`; both belong on screen here too. Export and delete are not built: deleting a tenant is irreversible and deserves the two-person flow the SoD engine already provides, which is a task of its own rather than a button added quietly.
-- [ ] Plan and subscription management; platform-wide settings including the risk ceilings tenants may not exceed
+- [x] Plan and subscription management; platform-wide settings including the risk ceilings tenants may not exceed
 - [x] Impersonation requires explicit tenant consent recorded in advance, is time-limited, is visibly banner-marked in the impersonated session, and writes an audit event in **both** planes
 - [x] An operator can never read a tenant's document contents without impersonation, so the access is always attributable
 - [x] Every operator page is guarded and has a test proving it

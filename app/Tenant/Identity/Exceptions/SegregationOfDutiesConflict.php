@@ -87,6 +87,24 @@ final class SegregationOfDutiesConflict extends DomainException
         );
     }
 
+    public static function overrideTooLong(SodRule $rule, int $maximumDays): self
+    {
+        return new self(
+            sprintf(
+                'An exception to "%s" cannot run for longer than %d days. That limit is set for the whole '.
+                'platform and cannot be raised from inside a workspace - an exception long enough to forget '.
+                'about is not an exception, it is the control environment. Grant a shorter one and renew it if '.
+                'it is still needed; the renewals are what make a standing problem visible.',
+                $rule->key,
+                $maximumDays,
+            ),
+            $rule->key,
+            'sod.override.request',
+            $rule->duty_a,
+            $rule->overridable,
+        );
+    }
+
     public static function notOverridable(SodRule $rule): self
     {
         return new self(
