@@ -48,6 +48,7 @@ final class ArchitectureRules
             'no exchange rate is ever inverted' => $this->ratesAreNeverInverted(),
             'a posting is never queued, and a side effect always is' => $this->postingIsNeverDeferred(),
             'an event carries no other module\'s models' => $this->eventsCarryNoModels(),
+            'a subtree is read as a range, never as a LIKE' => $this->subtreesAreReadAsRanges(),
         ];
     }
 
@@ -1101,6 +1102,83 @@ final class ArchitectureRules
      * The annotation has to be on the same line, so an exception is visible at
      * the point of use rather than granted wholesale at the top of a file.
      */
+    /**
+     * A tree is read as a half-open range, not with a pattern match - PF-037.
+     *
+     * ## Why this is a rule and not a preference
+     *
+     * The two forms return the same rows and are not the same query.
+     * Measured on a chart of 5,055 accounts, asking for the 100 under `1.1`:
+     *
+     *   path LIKE '1.1.%'                  no index, 4,955 rows discarded
+     *   path >= '1.1.' AND path < '1.1/'   index scan, 0 discarded
+     *
+     * The LIKE reads every account in the entity and throws away 98% of
+     * them, so its cost grows with the size of the CHART rather than the
+     * size of the subtree. On this data it takes 1.75 ms and looks fine; on
+     * a chart of 50,000 it reads 50,000 rows to return ten, on every
+     * roll-up, in every report.
+     *
+     * The prefix optimization does not rescue it: `path` is `varchar` and the
+     * pattern operator takes `text`, so the comparison is against a cast and
+     * the planner derives no bounds - true even with a literal pattern.
+     *
+     * The benchmark catches this too, by measuring the service's own SQL.
+     * This rule catches it without a database, which is the difference
+     * between finding out on the next commit and finding out on the next
+     * benchmark run.
+     *
+     * @return list<string>
+     */
+    public function subtreesAreReadAsRanges(): array
+    {
+        $violations = [];
+
+        foreach ($this->phpFiles('app') as $file) {
+            $original = (string) file_get_contents($file);
+            $source = $this->withoutComments($original);
+
+            if (! str_contains($source, 'path')) {
+                continue;
+            }
+
+            /*
+             | Three spellings, because there are three ways to write it: the
+             | query builder's operator, a raw SQL LIKE, and the `ilike`
+             | nobody should be using on an identifier at all.
+             */
+            $patterns = [
+                '/[\'"]path[\'"]\s*,\s*[\'"](?:like|ilike|not like)[\'"]/i',
+                '/\bpath\s+(?:I?LIKE|SIMILAR TO)\b/i',
+            ];
+
+            foreach ($patterns as $pattern) {
+                if (preg_match_all($pattern, $source, $matches, PREG_OFFSET_CAPTURE) === 0) {
+                    continue;
+                }
+
+                foreach ($matches[0] as [$match, $offset]) {
+                    if ($this->lineIsAnnotated($original, $offset)) {
+                        continue;
+                    }
+
+                    $violations[] = sprintf(
+                        '%s:%d matches a path with "%s". A subtree is the half-open range from '.
+                        '`path || \'.\'` to `path || \'/\'`, which the index serves; the LIKE reads '.
+                        'every account in the entity and discards the ones outside the subtree - 4,955 '.
+                        'of 5,055 when measured. Use AccountTree, or annotate the line if this is not a '.
+                        'subtree read',
+                        $this->relative($file),
+                        $this->lineOf($original, $offset),
+                        trim($match),
+                    );
+                }
+            }
+        }
+
+        return $violations;
+    }
+
     private function lineIsAnnotated(string $source, int $offset): bool
     {
         $lineStart = (int) strrpos(substr($source, 0, $offset), "\n");
@@ -1108,6 +1186,12 @@ final class ArchitectureRules
         $line = substr($source, $lineStart, ($lineEnd === false ? strlen($source) : $lineEnd) - $lineStart);
 
         return str_contains($line, '@arch-allow');
+    }
+
+    /** The 1-based line a byte offset falls on. */
+    private function lineOf(string $source, int $offset): int
+    {
+        return substr_count(substr($source, 0, $offset), "\n") + 1;
     }
 
     private function relative(string $path): string

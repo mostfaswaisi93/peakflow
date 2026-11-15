@@ -15,7 +15,11 @@ The organising idea is that **the ledger's invariants belong to the database**. 
 - [x] Flags: `postable`, `requires_dimension`, `reconcilable`, `blocked`
 - [x] The type determines the natural sign, whether the account closes at year end, and which statement it rolls up to
 - [x] A header account cannot be posted to, enforced in the database
-- [ ] The tree is queried as a tree efficiently - a materialized path or closure table, benchmarked at 5,000 accounts, not a recursive query per row
+- [x] The tree is queried as a tree efficiently - a materialized path, benchmarked at 5,055 accounts in `bin/bench tree`, not a recursive query per row. `AccountTree` reads a subtree as the half-open range from `path || '.'` to `path || '/'`; measured, that is an index scan discarding nothing where the `LIKE` form it replaced read all 5,055 rows to return 100
+- [x] The path column is collated `C`, which is load-bearing rather than tidiness: the range only means "has this prefix" under byte-wise comparison, and under a linguistic collation it would return the wrong accounts quietly and differently per server locale
+- [x] `(entity_id, path)` is unique. A path identifies a node, and two accounts sharing one makes every subtree query return both branches - reachable, because a code does not change when an account moves, so moving `1.1` under `1.2` wants the path `1.2.1` that the sub-group already has
+- [x] Moving a subtree rewrites its descendants in one UPDATE, proportional to the subtree. Measured at 2.9 ms for 101 accounts, with the leaf's new path and depth asserted - an off-by-one in the depth shift puts every descendant at the wrong level in every report that groups
+- [x] An architecture rule refuses `path LIKE` in `app/`, so the regression is caught on the next commit rather than on the next benchmark run. It found one in `Account::descendants()` the moment it was written
 
 ### PF-038 · Control-account roles
 `Ledger` · **5 pts** · depends: PF-037 · standards: — · `risk:high` `type:posting`
@@ -94,7 +98,9 @@ The invariant that keeps a subledger equal to its control account, and the one t
 - [x] Stored as **columns** on `journal_lines`, not JSON and not an EAV side table, because every financial report filters and groups by them and an index on a JSON path is not a substitute
 - [x] An account may **require** a dimension; the posting is refused without it
 - [x] Validity rules can forbid a combination, including a value belonging to a different entity
-- [ ] Benchmarked: a P&L grouped by two dimensions over a year stays inside its query budget
+- [x] Benchmarked: a P&L grouped by two dimensions over a year stays inside its query budget. `bin/bench dimensions` builds 41,600 balance rows - 20 cost centres, 40 projects, 300 of the 800 possible pairs because a real ledger is sparse - across every period the entity has, and reports on one year of it: **55.8 ms** for 19,200 groups against a 250 ms budget, and 5.0 ms for one cost centre month by month
+- [x] The year is bounded by the periods asked for, asserted against an independently counted expectation rather than against the query's own output - which is what the first version did, so dropping the period bound moved both numbers together and passed
+- [x] An index serves a period-bounded read, asserted with `enable_seqscan` off. On a year of data the planner reasonably chooses a sequential scan, so asserting an index scan on the natural plan would be asserting the planner make a worse choice; what matters is that the index exists for year three
 
 ### PF-047 · Posting rules
 `Ledger` · **8 pts** · depends: PF-038, PF-046 · standards: — · `risk:high` `type:posting`

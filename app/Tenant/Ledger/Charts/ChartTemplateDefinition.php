@@ -217,7 +217,49 @@ final readonly class ChartTemplateDefinition
                 );
             }
 
+            /*
+             | The segment may not contain the separator or the sentinel.
+             |
+             | A subtree is read as the half-open range from `path || '.'` to
+             | `path || '/'`, so a segment containing `.` would make an
+             | account look like a grandchild of its own parent and bring
+             | siblings into the wrong subtree, and a `/` anywhere would make
+             | the upper bound ambiguous. Both silently, in a range query
+             | that returns a plausible number of rows.
+             */
+            $segment = str_starts_with($account->code, $account->parent.'.')
+                ? substr($account->code, strlen($account->parent) + 1)
+                : $account->code;
+
+            if (str_contains($segment, '.')) {
+                throw InvalidChartTemplate::because(
+                    $this->key,
+                    sprintf(
+                        'account %s contributes the path segment "%s", which contains the separator. '.
+                        'Either code it under its parent (%s.something) or give it a code with no dot - '.
+                        'a segment with a dot in it reads as another level and pulls the wrong accounts '.
+                        'into a subtree',
+                        $account->code,
+                        $segment,
+                        $account->parent,
+                    ),
+                );
+            }
+
             $seen[$account->code] = true;
+        }
+
+        foreach ($this->accounts as $account) {
+            if (str_contains($account->code, '/')) {
+                throw InvalidChartTemplate::because(
+                    $this->key,
+                    sprintf(
+                        'account %s has a code containing "/", which is the sentinel bounding a subtree '.
+                        'range. Every subtree query would be wrong by an unpredictable amount',
+                        $account->code,
+                    ),
+                );
+            }
         }
 
         $roles = [];

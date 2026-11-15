@@ -15,6 +15,7 @@ Twelve layers. Each one exists because of a class of defect the others cannot se
 | Layer | Tool | Catches what nothing else does |
 |-------|------|-------------------------------|
 | **`bin/verify`** | none | The architecture rules and worked examples with no test runner, so the checks run anywhere |
+| **`bin/bench`** | none | The query budgets, against a real database: the plan shape first, the stopwatch second. Separate from `bin/verify` because it is slow, and because a plan regression matters more than a timing - a full scan of a small table IS fast, which is how a scan reaches production |
 | **Unit** | Pest | Money arithmetic, rounding policies, IBAN/BIC validation, parsers, posting-rule output |
 | **Property-based** | Pest + generators | Invariants across inputs nobody thought to write a case for |
 | **Architecture** | Pest arch + Deptrac | Rules a code review misses consistently |

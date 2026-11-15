@@ -50,6 +50,44 @@ Three rules are structural rather than configurable:
 
 > This is the invariant that keeps a subledger equal to its control account — the reconciliation every month-end close starts with, and the one that is impossible to restore once a human has posted a manual adjustment into it. The single exception is opening balances, available only while the entity has no other postings, permissioned and audited.
 
+### Reading the chart as a tree
+
+The tree is a **materialized path**: `path` holds the chain of ancestor segments joined by `.`, and `depth` is how many separators are in it. There is no closure table and no recursive query.
+
+A subtree is then a question about string order. Everything under `1.1` is exactly:
+
+```sql
+path >= '1.1.'  AND  path < '1.1/'
+```
+
+because `/` is the byte immediately after `.`. Both bounds land in the index condition, and the scan reads the subtree and nothing else.
+
+**`LIKE 'path.%'` reads better and is a different plan.** Measured on 5,055 accounts, asking for the 100 under `1.1`:
+
+| form | plan | time | rows examined |
+|------|------|------|---------------|
+| `path LIKE '1.1.%'` | no index on the path; `entity_id` only, then a filter | 1.75 ms | 5,055, of which **4,955 discarded** |
+| `path >= '1.1.' AND path < '1.1/'` | index scan, both bounds in the condition | 0.30 ms | 100 |
+
+The LIKE is not a slower route to the same plan — it reads every account in the entity on every roll-up. At 5,000 accounts that is 1.75 ms and looks fine; at 50,000 it reads 50,000 rows to return ten, in every report, forever. The prefix optimization does not rescue it either: `path` is `varchar` and the pattern operator takes `text`, so the comparison is against a cast and the planner derives no bounds — true even with a literal pattern.
+
+So an architecture rule refuses `path LIKE` anywhere in `app/`, and it found one in `Account::descendants()` the moment it was written.
+
+**Two schema facts the range depends on.** The column is collated `C`, because the range only means "has this prefix" under byte-wise comparison — under a linguistic collation, punctuation can be ignored at the primary level and the query would return the wrong accounts, quietly, and differently on a server installed with a different locale. And `(entity_id, path)` is unique, because a path identifies a node: two accounts sharing one makes every subtree query return both branches and every roll-up double-count one of them. That is reachable rather than theoretical — a code does not change when an account moves, so moving `1.1` under `1.2` wants the path `1.2.1` that the sub-group `1.2.1` already holds, and the move is refused with that explanation.
+
+**The cost of a materialized path** is that moving a subtree rewrites its descendants' paths. It is one UPDATE over the range, so the work is proportional to the subtree: 101 accounts in 2.9 ms. Moving an account is rare and a chart is small, which is the trade this design makes — a cheap read every time in exchange for an expensive write almost never.
+
+Measured by `bin/bench tree`, which takes the SQL from the service's own query builder rather than restating it, so the benchmark fails when the service regresses:
+
+| | measured |
+|--|----------|
+| subtree of a group (100 of 5,055) | 0.30 ms, index scan, nothing discarded |
+| subtree of a statement (1,011 of 5,055) | 1.0 ms, sequential — a fifth of the table, so that is the right plan |
+| the direct children of a group | 0.23 ms |
+| the ancestors of a leaf | 1.0 ms, one `whereIn` |
+| rolling up a statement from the read model | 9.7 ms over 10,800 balance rows |
+| moving a 101-account subtree | 2.9 ms |
+
 ### Where a chart comes from
 
 A new entity does not get an empty tree. An empty chart is not a neutral starting point: the tenant has to invent one before they can record anything, what they invent is shaped by the first three transactions they happen to think of, and they cannot post at all until the control-account roles are assigned — which nothing tells them, because the way it is said is a posting failure naming one role at a time.

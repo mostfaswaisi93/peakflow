@@ -6,6 +6,7 @@ namespace App\Tenant\Ledger\Models;
 
 use App\Support\Database\TenantModel;
 use App\Tenant\Ledger\Enums\AccountType;
+use App\Tenant\Ledger\Services\AccountTree;
 use App\Tenant\Tenancy\Concerns\BelongsToEntity;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -77,21 +78,36 @@ final class Account extends TenantModel
     }
 
     /**
-     * Everything at or below this account.
+     * Everything below this account.
      *
-     * The dot is part of the prefix so that `1.1` does not match `1.10` - an
-     * off-by-one that would roll an unrelated subtree into a subtotal and
-     * still balance.
+     * ## A range, not a LIKE, and the difference is a different plan
+     *
+     * Both of these read as a prefix match and only one of them is served by
+     * the index. Measured on a chart of 5,055 accounts, asking for the 100
+     * under `1.1`:
+     *
+     *   path LIKE '1.1.%'                  no index, 4,955 rows discarded
+     *   path >= '1.1.' AND path < '1.1/'   index scan, 0 discarded
+     *
+     * The LIKE reads every account in the entity. Its cost grows with the
+     * size of the chart rather than the size of the subtree, which is fine
+     * at five thousand and is paid on every roll-up in every report.
+     *
+     * The dot is still part of the lower bound, so that `1.1` does not match
+     * `1.10` - an off-by-one that would roll an unrelated subtree into a
+     * subtotal and still balance.
+     *
+     * The bounds are built by {@see AccountTree}, which owns the sentinel
+     * that makes the upper one exact.
      */
     public function descendants(): \Illuminate\Database\Eloquent\Builder
     {
-        return self::query()->where('path', 'like', $this->path.'.%');
+        return AccountTree::rangeOf(self::query(), (string) $this->path, false);
     }
 
+    /** This account and everything below it, in one range. */
     public function subtree(): \Illuminate\Database\Eloquent\Builder
     {
-        return self::query()->where(fn ($q) => $q
-            ->where('path', $this->path)
-            ->orWhere('path', 'like', $this->path.'.%'));
+        return AccountTree::rangeOf(self::query(), (string) $this->path, true);
     }
 }

@@ -1,0 +1,112 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ |-----------------------------------------------------------------------------
+ | bin/bench - the query budgets, measured against a real database
+ |-----------------------------------------------------------------------------
+ |
+ | Separate from bin/verify because it is slow and because a timing is a
+ | property of the machine as much as of the code. What it asserts is of two
+ | kinds, and only one of them is a stopwatch:
+ |
+ |   PLAN     the shape of the plan: which index, and how many rows the scan
+ |            examined against how many it returned. Deterministic, and the
+ |            half that catches a regression - a query that stops using an
+ |            index is a query that will be slow on data nobody has yet.
+ |
+ |   BUDGET   wall time against a ceiling, generous enough not to fail on a
+ |            busy runner and tight enough to catch an order of magnitude.
+ |
+ | Every figure printed is measured on the run that printed it. Nothing here
+ | is a remembered number.
+ |
+ |   php bin/bench            everything
+ |   php bin/bench tree       the chart as a tree, at 5,000 accounts  (PF-037)
+ |   php bin/bench dimensions a P&L grouped by two dimensions over a year (PF-046)
+ |
+ | Exits non-zero if a plan regressed or a budget was exceeded.
+ */
+
+$base = dirname(__DIR__);
+
+require $base.'/vendor/autoload.php';
+
+$app = require $base.'/bootstrap/app.php';
+$app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+
+spl_autoload_register(static function (string $class) use ($base): void {
+    if (! str_starts_with($class, 'Tests\\')) {
+        return;
+    }
+
+    $path = $base.'/tests/'.str_replace('\\', '/', substr($class, 6)).'.php';
+
+    if (is_file($path)) {
+        require $path;
+    }
+});
+
+$only = $argv[1] ?? 'all';
+
+$bold = static fn (string $s): string => "\033[1m{$s}\033[0m";
+$green = static fn (string $s): string => "\033[32m{$s}\033[0m";
+$red = static fn (string $s): string => "\033[31m{$s}\033[0m";
+$dim = static fn (string $s): string => "\033[2m{$s}\033[0m";
+
+$benchmarks = [];
+
+if ($only === 'all' || $only === 'tree') {
+    $benchmarks['The chart as a tree (PF-037)'] = new Tests\Support\TreeBenchmark();
+}
+
+if ($only === 'all' || $only === 'dimensions') {
+    $benchmarks['Reporting by dimension (PF-046)'] = new Tests\Support\DimensionBenchmark();
+}
+
+if ($benchmarks === []) {
+    fwrite(STDERR, "Unknown benchmark \"{$only}\". Use: all | tree | dimensions\n");
+    exit(2);
+}
+
+$passed = 0;
+$failed = 0;
+
+foreach ($benchmarks as $name => $benchmark) {
+    echo "\n".$bold($name)."\n";
+
+    $results = $benchmark->run();
+
+    if (isset($results['__skipped'])) {
+        printf("  %s %s\n", $dim('SKIP'), $results['__skipped']);
+
+        continue;
+    }
+
+    foreach ($results as $measurement) {
+        $ok = $measurement['violations'] === [];
+        $ok ? $passed++ : $failed++;
+
+        printf(
+            "  %s %-44s %s\n",
+            $ok ? $green('PASS') : $red('FAIL'),
+            $measurement['label'],
+            $dim($measurement['measured']),
+        );
+
+        foreach ($measurement['violations'] as $violation) {
+            printf("       %s\n", $violation);
+        }
+    }
+}
+
+printf(
+    "\n%s  %s passed, %s failed\n\n",
+    $bold('Result:'),
+    $failed === 0 ? $green((string) $passed) : (string) $passed,
+    $failed === 0 ? '0' : $red((string) $failed),
+);
+
+exit($failed === 0 ? 0 : 1);

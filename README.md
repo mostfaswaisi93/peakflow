@@ -791,6 +791,7 @@ Chosen for a long-lived financial system: boring where correctness matters, mode
 | Tool | Gate |
 |------|------|
 | **`bin/verify`** | The architecture rules and the specification's worked examples, with **no test runner at all**. One implementation, two runners - so the checks run even where the dev dependencies cannot be installed |
+| **`bin/bench`** | The query budgets, measured against a real database. Asserts the **plan shape** before the stopwatch, because a full scan of a small table is fast and that is exactly how a scan reaches production |
 | **Pest 4** (on PHPUnit 11) | Unit, feature, architecture and browser tests |
 | **PHPStan 2 / Larastan**, level `max` | Static analysis, no baseline suppressions for new code |
 | **Deptrac 3** | Module boundary enforcement - the table in [Bounded contexts](#bounded-contexts-and-a-compiler-that-enforces-them) is its config |
