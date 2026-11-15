@@ -52,7 +52,7 @@ final class PlaceOfSupplyRules
 
         // Export of goods: outside every bloc the supplier is in.
         [['goods', 'SA', 'US', 'business', 'US'], ['SA', 'Z', 'goods-exported']],
-        [['goods', 'FR', 'CH', 'consumer', 'CH'], ['FR', 'Z', 'goods-exported']],
+        [['goods', 'FR', 'CH', 'consumer', 'CH'], ['FR', 'G', 'goods-exported-from-the-eu']],
 
         /*
          | The United Kingdom left the EU, so a French supplier delivering
@@ -61,7 +61,7 @@ final class PlaceOfSupplyRules
          | direction: an intra-Community supply reported for a country that is
          | not in the Community.
          */
-        [['goods', 'FR', 'GB', 'business', 'GB'], ['FR', 'Z', 'goods-exported']],
+        [['goods', 'FR', 'GB', 'business', 'GB'], ['FR', 'G', 'goods-exported-from-the-eu']],
 
         // Intra-GCC.
         [['goods', 'SA', 'AE', 'business', 'AE'], ['AE', 'AE', 'intra-gcc-goods-to-a-business']],
@@ -159,7 +159,7 @@ final class PlaceOfSupplyRules
             'rules' => [[
                 'precedence' => 10, 'id' => 'only-bahrain', 'supply_type' => 'goods',
                 'supplier' => 'BH', 'customer' => '*', 'status' => '*', 'delivery' => '*',
-                'place' => 'supplier', 'category' => 'S', 'source' => 'test',
+                'place' => 'supplier', 'category' => 'S', 'evidence' => [], 'source' => 'test',
             ]],
         ]));
 
@@ -230,12 +230,12 @@ final class PlaceOfSupplyRules
                 [
                     'precedence' => $first, 'id' => 'the-specific-one', 'supply_type' => 'goods',
                     'supplier' => '*', 'customer' => 'same', 'status' => 'business', 'delivery' => '*',
-                    'place' => 'customer', 'category' => 'AE', 'source' => 'test',
+                    'place' => 'customer', 'category' => 'AE', 'evidence' => [], 'source' => 'test',
                 ],
                 [
                     'precedence' => $second, 'id' => 'the-general-one', 'supply_type' => '*',
                     'supplier' => '*', 'customer' => '*', 'status' => '*', 'delivery' => '*',
-                    'place' => 'supplier', 'category' => 'S', 'source' => 'test',
+                    'place' => 'supplier', 'category' => 'S', 'evidence' => [], 'source' => 'test',
                 ],
             ],
         ];
@@ -338,7 +338,7 @@ final class PlaceOfSupplyRules
         $valid = [
             'precedence' => 10, 'id' => 'a-rule', 'supply_type' => 'goods', 'supplier' => '*',
             'customer' => 'same', 'status' => '*', 'delivery' => '*', 'place' => 'supplier',
-            'category' => 'S', 'source' => 'Art. 31',
+            'category' => 'S', 'evidence' => [], 'source' => 'Art. 31',
         ];
 
         $cases = [
@@ -355,6 +355,8 @@ final class PlaceOfSupplyRules
             'a rule answering with an unconstrained delivery location' => [
                 'rules' => [[...$valid, 'place' => 'delivery']],
             ],
+            'an evidence kind nothing implements' => ['rules' => [[...$valid, 'evidence' => ['a_hunch']]]],
+            'an evidence list that is not a list' => ['rules' => [[...$valid, 'evidence' => 'export_proof']]],
             'an empty rule book' => ['rules' => []],
             'a bloc member that is not ISO 3166-1' => [
                 'rules' => [$valid],

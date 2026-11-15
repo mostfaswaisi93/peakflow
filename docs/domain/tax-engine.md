@@ -223,6 +223,32 @@ The purchasing half — posting both the input and the output tax on the bill �
 
 Checked by `php bin/verify tax`: nine rules in `tests/Support/ReverseChargeRules.php`, each proven to fail when the behaviour is removed, including a bite on the reader that drops the end date so no registration ever lapses.
 
+## Zero-rated, exempt and out of scope
+
+### As built (PF-080)
+
+All three show nothing in the tax column, which is why they get conflated, and the conflation is invisible on the invoice and wrong in every return:
+
+| | Taxable supply | Input recovery | On the return |
+|---|---|---|---|
+| **zero-rated** `Z` | yes, at 0% | intact | yes, in the zero-rated box |
+| **exempt** `E` | no | restricted — a cost the business bears | yes, as an exempt supply |
+| **out of scope** `O` | no | restricted | not at all |
+
+Collapsing them moves figures between boxes, changes a registration-threshold calculation (which is computed from **taxable** turnover, so treating zero-rated as exempt can make a business appear not to need a registration it does need), and claims input tax that is not recoverable.
+
+**Evidence is declared on the place-of-supply rule, not derived from the category.** Three kinds: proof of export, proof of dispatch, and the customer's registration. `EvidenceGate::assertSatisfied()` refuses a treatment whose evidence is not recorded, and each item carries a **reference** — a customs declaration number — rather than a boolean, because a ticked box with nothing behind it is worse than nothing: the system says the evidence exists, so nobody looks for it, and the assessment is unanswerable.
+
+Proof of dispatch is a separate kind from proof of export, and the difference is the one that catches people. An intra-Community supply is exempt in the state of dispatch **only** if the goods arrived somewhere else in the Community, and there is no customs declaration to prove it, because there is no customs frontier.
+
+**Exemption reason codes are data, validated.** `config/tax_evidence.php` holds a VATEX subset keyed by code, each mapped to the category it belongs to with bilingual text and its article. A code used with the wrong category is refused: `vatex-eu-ic` on an exempt line reports an intra-Community supply that did not happen, and the other member state will look for a figure in a box and not find it.
+
+The list is an explicit **subset**, and a code absent from it is refused rather than passed through. That blocks a legitimate exemption whose code nobody has added — an availability problem fixed by a row, and the right direction, because a code is the first thing a receiving system validates and an invented one fails a document that was otherwise correct, after filing. `L` and `M` are named in the config as categories with no code shipped, so the refusal points at the gap instead of looking like a bug in the gate.
+
+The gate exists before documents do: PF-080's last criterion is that a document cannot be **issued** without its evidence, and that is Phase 05 calling this.
+
+Checked by `php bin/verify tax`: ten rules in `tests/Support/TaxEvidenceRules.php`.
+
 ## Withholding tax
 
 Withholding is deducted **by the payer from the payment**, not from the invoice. It therefore lives in the settlement path, with three consequences:

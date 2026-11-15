@@ -6,6 +6,7 @@ namespace App\Tenant\Tax\Services;
 
 use App\Support\Iso\CountryRegistry;
 use App\Tenant\Tax\Blocs;
+use App\Tenant\Tax\Enums\EvidenceKind;
 use App\Tenant\Tax\Enums\TaxCategory;
 use App\Tenant\Tax\Exceptions\RuleBookUnusable;
 use App\Tenant\Tax\PlaceOfSupplyRule;
@@ -37,7 +38,7 @@ final class PlaceOfSupplyRuleBook
 {
     private const CONDITIONS = ['supply_type', 'supplier', 'customer', 'status', 'delivery'];
 
-    private const KEYS = ['precedence', 'id', 'place', 'category', 'source', ...self::CONDITIONS];
+    private const KEYS = ['precedence', 'id', 'place', 'category', 'evidence', 'source', ...self::CONDITIONS];
 
     private const SUPPLY_TYPES = ['goods', 'services', 'digital_services', '*'];
 
@@ -176,7 +177,7 @@ final class PlaceOfSupplyRuleBook
                 }
             }
 
-            foreach (['precedence', 'id', 'place', 'category', ...self::CONDITIONS] as $key) {
+            foreach (['precedence', 'id', 'place', 'category', 'evidence', ...self::CONDITIONS] as $key) {
                 if (! isset($row[$key])) {
                     throw RuleBookUnusable::missingCondition($id, $key);
                 }
@@ -222,6 +223,30 @@ final class PlaceOfSupplyRuleBook
                 throw RuleBookUnusable::placeCannotBeReached($id);
             }
 
+            /*
+             | The evidence list, which may be empty and may not be absent.
+             |
+             | Written out as `[]` for a rule that needs none, for the same
+             | reason the conditions are: the field somebody forgot is the
+             | field they did not think about, and a rule missing its evidence
+             | requirement issues documents that cannot be defended.
+             */
+            $evidence = [];
+
+            if (! \is_array($row['evidence'])) {
+                throw RuleBookUnusable::unknownEvidence($id, get_debug_type($row['evidence']));
+            }
+
+            foreach ($row['evidence'] as $kind) {
+                $parsed = \is_string($kind) ? EvidenceKind::tryFrom($kind) : null;
+
+                if ($parsed === null) {
+                    throw RuleBookUnusable::unknownEvidence($id, \is_string($kind) ? $kind : get_debug_type($kind));
+                }
+
+                $evidence[] = $parsed;
+            }
+
             $precedences[$precedence] = $id;
             $ids[$id] = true;
 
@@ -235,6 +260,7 @@ final class PlaceOfSupplyRuleBook
                 $row['delivery'],
                 $row['place'],
                 $category,
+                $evidence,
                 $row['source'],
             );
         }

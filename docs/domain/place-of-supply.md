@@ -51,20 +51,29 @@ A French supplier delivering to Germany is `abroad` and `bloc:eu`. The same supp
 
 ## The shipped rules
 
-| # | Rule | Place | Category |
-|---|---|---|---|
-| 10 | `goods-delivered-in-the-supplier-state` | supplier | `S` |
-| 20 | `intra-gcc-goods-to-a-business` | delivery | `AE` |
-| 30 | `intra-gcc-goods-to-a-consumer` | supplier | `S` |
-| 40 | `intra-eu-goods-to-a-business` | delivery | `K` |
-| 50 | `intra-eu-goods-to-a-consumer` | delivery | `S` |
-| 60 | `goods-exported` | supplier | `Z` |
-| 70 | `digital-services-to-a-consumer-abroad` | customer | `S` |
-| 80 | `services-to-a-business-abroad` | customer | `AE` |
-| 90 | `services-to-a-consumer-abroad` | supplier | `S` |
-| 100 | `domestic` | supplier | `S` |
+| # | Rule | Place | Category | Evidence |
+|---|---|---|---|---|
+| 10 | `goods-delivered-in-the-supplier-state` | supplier | `S` | — |
+| 20 | `intra-gcc-goods-to-a-business` | delivery | `AE` | customer registration |
+| 30 | `intra-gcc-goods-to-a-consumer` | supplier | `S` | — |
+| 40 | `intra-eu-goods-to-a-business` | delivery | `K` | dispatch proof, customer registration |
+| 50 | `intra-eu-goods-to-a-consumer` | delivery | `S` | — |
+| 55 | `goods-exported-from-the-eu` | supplier | `G` | export proof |
+| 60 | `goods-exported` | supplier | `Z` | export proof |
+| 70 | `digital-services-to-a-consumer-abroad` | customer | `S` | — |
+| 80 | `services-to-a-business-abroad` | customer | `AE` | customer registration |
+| 90 | `services-to-a-consumer-abroad` | supplier | `S` | — |
+| 100 | `domestic` | supplier | `S` | — |
 
 Each row's legal source is in the config file beside it.
+
+### Why an export is two rows
+
+EN 16931 has a category for an export — `G`, "free export item, VAT not charged" — and a separate one for a domestic zero-rated supply, `Z`. The Saudi regime zero-rates exports instead: Art. 32 of the Implementing Regulations, and a ZATCA invoice carries `Z` with the article as its reason.
+
+One row carrying `Z` for everybody was wrong for an EU supplier; one carrying `G` would be wrong for a Saudi one. Which code an export takes is a fact about a regime, so it is two rows — and this is the case that shows why the rule book has to hold the category rather than derive it from "is it cross-border".
+
+It is also why the **evidence requirement is on the rule and not on the category**. `Z` is what a Saudi export carries and also what a domestic zero-rated foodstuff carries. Derive the requirement from the category and either every loaf of bread needs a customs declaration, or no Saudi export needs one. `TaxCategory::requiresEvidence()` remains as a floor, so a rule that forgot its list cannot claim less than the code list demands.
 
 ### Three orderings that are not obvious
 

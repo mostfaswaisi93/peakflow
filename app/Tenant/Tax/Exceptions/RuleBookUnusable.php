@@ -32,6 +32,15 @@ final class RuleBookUnusable extends RuntimeException
 
     public static function missingCondition(string $rule, string $key): self
     {
+        if ($key === 'evidence') {
+            return new self(sprintf(
+                'Rule "%s" does not state "evidence". Write an empty list if the treatment needs none: a '.
+                'rule missing its evidence requirement issues documents that cannot be defended, and an '.
+                'export rate claimed with no proof of exit is the most common assessment there is.',
+                $rule,
+            ));
+        }
+
         return new self(sprintf(
             'Rule "%s" does not state "%s". Every rule states all five conditions and there is no '.
             'default: a condition nobody wrote is a condition nobody thought about, and the one that '.
@@ -167,6 +176,17 @@ final class RuleBookUnusable extends RuntimeException
             'which one decides whether a supply there is intra-bloc or an export.',
             $bloc,
             $country,
+        ));
+    }
+
+    public static function unknownEvidence(string $rule, string $kind): self
+    {
+        return new self(sprintf(
+            'Rule "%s" requires the evidence "%s", which this engine does not know. The three kinds are '.
+            'export_proof, dispatch_proof and customer_registration; a kind nobody implements is a '.
+            'requirement nothing enforces, and the document is issued anyway.',
+            $rule,
+            $kind,
         ));
     }
 

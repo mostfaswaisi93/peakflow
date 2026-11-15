@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tenant\Tax;
 
+use App\Tenant\Tax\Enums\EvidenceKind;
 use App\Tenant\Tax\Enums\RuleOutcome;
 use App\Tenant\Tax\Enums\TaxCategory;
 
@@ -30,6 +31,7 @@ final readonly class PlaceOfSupplyRule
      * @param  string|list<string>  $customer
      * @param  string|list<string>  $status
      * @param  string|list<string>  $delivery
+     * @param  list<EvidenceKind>  $evidence  what must be on record to claim this treatment
      */
     public function __construct(
         public int $precedence,
@@ -41,6 +43,7 @@ final readonly class PlaceOfSupplyRule
         public string|array $delivery,
         public string $place,
         public TaxCategory $category,
+        public array $evidence,
         public string $source,
     ) {}
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tenant\Tax;
 
+use App\Tenant\Tax\Enums\EvidenceKind;
 use App\Tenant\Tax\Enums\TaxCategory;
 use JsonSerializable;
 
@@ -24,6 +25,7 @@ use JsonSerializable;
  */
 final readonly class PlaceOfSupplyDecision implements JsonSerializable
 {
+    /** @param  list<EvidenceKind>  $evidence */
     public function __construct(
         public string $country,
         public TaxCategory $category,
@@ -31,6 +33,7 @@ final readonly class PlaceOfSupplyDecision implements JsonSerializable
         public int $precedence,
         public string $source,
         public SupplyContext $supply,
+        public array $evidence = [],
     ) {}
 
     public static function from(PlaceOfSupplyRule $rule, string $country, SupplyContext $supply): self
@@ -42,6 +45,7 @@ final readonly class PlaceOfSupplyDecision implements JsonSerializable
             $rule->precedence,
             $rule->source,
             $supply,
+            $rule->evidence,
         );
     }
 
@@ -51,10 +55,32 @@ final readonly class PlaceOfSupplyDecision implements JsonSerializable
         return $this->category->isReverseCharge();
     }
 
-    /** Must evidence be held before this treatment can be claimed? */
+    /**
+     * Must evidence be held before this treatment can be claimed?
+     *
+     * Read from the WINNING RULE, not from the category - with the category's
+     * own answer as a floor, so a rule that forgot its list cannot claim less
+     * than the code list demands.
+     *
+     * The rule has to be the authority because the category is not enough.
+     * EN 16931 codes an export `G` and the Saudi regime zero-rates it as `Z`,
+     * and `Z` is also what a domestic zero-rated foodstuff carries. Derive the
+     * requirement from the category and either every loaf of bread needs a
+     * customs declaration, or no Saudi export needs one.
+     */
     public function requiresEvidence(): bool
     {
-        return $this->category->requiresEvidence();
+        return $this->evidence !== [] || $this->category->requiresEvidence();
+    }
+
+    /**
+     * What must be on record, as kinds.
+     *
+     * @return list<EvidenceKind>
+     */
+    public function evidenceRequired(): array
+    {
+        return $this->evidence;
     }
 
     /** Is the tax charged somewhere other than where the supplier is? */
@@ -91,6 +117,10 @@ final readonly class PlaceOfSupplyDecision implements JsonSerializable
             'source' => $this->source,
             'reverse_charge' => $this->isReverseCharge(),
             'requires_evidence' => $this->requiresEvidence(),
+            'evidence_required' => array_map(
+                static fn (EvidenceKind $kind): string => $kind->value,
+                $this->evidence,
+            ),
             'supply' => $this->supply->jsonSerialize(),
         ];
     }

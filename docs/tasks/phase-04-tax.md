@@ -79,9 +79,17 @@ The engine's organising principle is that **tax is data, not code**. A rate that
 ### PF-080 · Zero-rated, exempt and out of scope
 `Tax` · **3 pts** · depends: PF-075 · standards: — · `type:compliance`
 
-- [ ] The three are distinct categories with distinct return treatment: zero-rated is a taxable supply at 0% and is reclaimable; exempt is not a taxable supply and restricts input recovery; out of scope is outside the regime entirely
-- [ ] Each requires its own evidence: an export needs proof of export, an exemption needs a reason code
+- [x] The three are distinct categories with distinct return treatment: zero-rated is a taxable supply at 0% and is reclaimable; exempt is not a taxable supply and restricts input recovery; out of scope is outside the regime entirely
+- [x] Each requires its own evidence: an export needs proof of export, an exemption needs a reason code. Three kinds - export proof, **dispatch** proof and the customer's registration - and the second is the one that catches people: an intra-Community supply is exempt in the state of dispatch only if the goods arrived somewhere else in the Community, and there is no customs declaration to prove it because there is no customs frontier
 - [ ] A document whose category requires evidence cannot be issued without it recorded
+- [x] The evidence requirement is declared on the **place-of-supply rule**, not derived from the category, because the category is not enough: `Z` is what a Saudi export carries and also what a domestic zero-rated foodstuff carries. Derive it from the category and either every loaf of bread needs a customs declaration or no Saudi export needs one. `TaxCategory::requiresEvidence()` stays as a floor, so a rule that forgot its list cannot claim less than the code list demands
+- [x] Found on the way: PF-078's export rule carried `Z` for every jurisdiction, and EN 16931 codes an export `G` ("free export item, VAT not charged") while the Saudi regime zero-rates it under Art. 32. One row was wrong for an EU supplier and the other spelling would be wrong for a Saudi one, so it is **two rows** - which is the case that shows why the rule book holds the category rather than deriving it from "is it cross-border"
+- [x] Each evidence item carries a **reference**, not a boolean. A ticked box with nothing behind it is worse than nothing: the system says the evidence exists, so nobody looks for it, and the assessment is unanswerable. A whitespace reference is refused, and the refusal is told apart from a missing one
+- [x] Exemption reason codes are **data, validated**: a VATEX subset keyed by code, each mapped to its category with bilingual text and its article. A code used with the wrong category is refused - `vatex-eu-ic` on an exempt line reports an intra-Community supply that did not happen, and the other member state will look for a figure in a box and not find it
+- [x] The code list is an explicit subset and an unknown code is **refused**, which blocks a legitimate exemption whose code nobody has added yet. That is an availability problem, fixed by a row, and the right direction: a code is the first thing a receiving system validates, and an invented one fails a document that was otherwise correct after it was filed
+- [x] `L` and `M` are named in the configuration as categories with no code shipped, so the refusal points at the gap rather than looking like a bug in the gate. A check asserts that every category requiring a reason has either codes or a declared gap - a category in neither place refuses every document silently
+
+> The open criterion is the issue path, which is Phase 05. `EvidenceGate::assertSatisfied()` is the rule it will call, built and checked now so the issue path has something to call rather than a comment saying it should.
 
 ### PF-081 · The rounding policy
 `Tax` · **5 pts** · depends: PF-006, PF-075 · standards: EN 16931, ISO 4217 · `risk:high` `type:compliance`

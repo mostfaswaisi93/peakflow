@@ -35,6 +35,14 @@ declare(strict_types=1);
 |   status       business | consumer | *
 |   delivery     * | same | abroad | outside | bloc:<name> | <alpha-2>
 |
+| Each rule also states `evidence`: what must be on record before a document
+| carrying this treatment may be issued - PF-080. An empty list is written out
+| rather than omitted, for the same reason the conditions are.
+|
+|   export_proof           the goods left the jurisdiction
+|   dispatch_proof         the goods reached another member state
+|   customer_registration  a registration valid on the tax point
+|
 | Any condition may also be a LIST, which matches if any element matches.
 |
 |   same     the same country as the supplier
@@ -168,6 +176,7 @@ return [
             'delivery' => 'same',
             'place' => 'supplier',
             'category' => 'S',
+            'evidence' => [],
             'source' => 'Council Directive 2006/112/EC Art. 31 (goods not dispatched); GCC Unified Agreement Art. 10(1)',
         ],
 
@@ -181,6 +190,7 @@ return [
             'delivery' => 'bloc:gcc',
             'place' => 'delivery',
             'category' => 'AE',
+            'evidence' => ['customer_registration'],
             'source' => 'GCC Unified Agreement Art. 10(2) (place of supply where goods are dispatched to another Member State) with Art. 9 (customer accounts for the tax)',
         ],
 
@@ -203,6 +213,7 @@ return [
             'delivery' => 'bloc:gcc',
             'place' => 'supplier',
             'category' => 'S',
+            'evidence' => [],
             'source' => 'GCC Unified Agreement Art. 10(1) with the Art. 11 mandatory registration threshold in the state of destination',
         ],
 
@@ -216,6 +227,7 @@ return [
             'delivery' => 'bloc:eu',
             'place' => 'delivery',
             'category' => 'K',
+            'evidence' => ['dispatch_proof', 'customer_registration'],
             'source' => 'Council Directive 2006/112/EC Art. 138(1) (exempt intra-Community supply) with Art. 20 (acquisition taxed in the state of arrival)',
         ],
 
@@ -240,17 +252,44 @@ return [
             'delivery' => 'bloc:eu',
             'place' => 'delivery',
             'category' => 'S',
+            'evidence' => [],
             'source' => 'Council Directive 2006/112/EC Art. 33(a) as amended by Directive (EU) 2017/2455, with the Art. 59c threshold',
         ],
 
         /*
-         | Export. Zero-rated, and the zero rate has to be earned.
+         | Export, in two rows, because the two regimes CODE it differently.
          |
-         | `Z` carries an evidence requirement through
-         | TaxCategory::requiresEvidence(), and PF-080 is where a document
-         | without the evidence cannot be issued. An export zero rate with no
-         | proof of exit is the single most common VAT assessment there is.
+         | EN 16931 has a category for an export - `G`, "free export item, VAT
+         | not charged" - and a separate one for a domestic zero-rated supply,
+         | `Z`. The Saudi regime zero-rates exports instead: Art. 32 of the
+         | Implementing Regulations, and a ZATCA invoice carries `Z` with the
+         | article as its reason.
+         |
+         | One row carrying `Z` for everybody was wrong for an EU supplier and
+         | one carrying `G` would be wrong for a Saudi one. Which code an
+         | export takes is a fact about a regime, so it is two rows - and this
+         | is the case that shows why the rule book has to hold the category
+         | rather than deriving it from "is it cross-border".
+         |
+         | Both demand proof that the goods left. An export rate claimed with
+         | no evidence of exit is the single most common VAT assessment there
+         | is, which is why the requirement is on the rule and not left to a
+         | reviewer.
          */
+        [
+            'precedence' => 55,
+            'id' => 'goods-exported-from-the-eu',
+            'supply_type' => 'goods',
+            'supplier' => 'bloc:eu',
+            'customer' => '*',
+            'status' => '*',
+            'delivery' => 'outside',
+            'place' => 'supplier',
+            'category' => 'G',
+            'evidence' => ['export_proof'],
+            'source' => 'Council Directive 2006/112/EC Art. 146(1)(a)-(b), with EN 16931 category G',
+        ],
+
         [
             'precedence' => 60,
             'id' => 'goods-exported',
@@ -261,7 +300,8 @@ return [
             'delivery' => 'outside',
             'place' => 'supplier',
             'category' => 'Z',
-            'source' => 'Council Directive 2006/112/EC Art. 146(1)(a)-(b); KSA VAT Implementing Regulations Art. 32(1); GCC Unified Agreement Art. 35',
+            'evidence' => ['export_proof'],
+            'source' => 'KSA VAT Implementing Regulations Art. 32(1); GCC Unified Agreement Art. 35',
         ],
 
         /*
@@ -282,6 +322,7 @@ return [
             'delivery' => '*',
             'place' => 'customer',
             'category' => 'S',
+            'evidence' => [],
             'source' => 'Council Directive 2006/112/EC Art. 58 (telecommunications, broadcasting and electronically supplied services to non-taxable persons); KSA Implementing Regulations Art. 23',
         ],
 
@@ -302,6 +343,7 @@ return [
             'delivery' => '*',
             'place' => 'customer',
             'category' => 'AE',
+            'evidence' => ['customer_registration'],
             'source' => 'Council Directive 2006/112/EC Art. 44 (general rule, taxable persons) with Art. 196 (customer liable); GCC Unified Agreement Art. 15; KSA Implementing Regulations Art. 24',
         ],
 
@@ -325,6 +367,7 @@ return [
             'delivery' => '*',
             'place' => 'supplier',
             'category' => 'S',
+            'evidence' => [],
             'source' => 'Council Directive 2006/112/EC Art. 45 (general rule, non-taxable persons); GCC Unified Agreement Art. 16',
         ],
 
@@ -347,6 +390,7 @@ return [
             'delivery' => '*',
             'place' => 'supplier',
             'category' => 'S',
+            'evidence' => [],
             'source' => 'Council Directive 2006/112/EC Art. 31, 44, 45; GCC Unified Agreement Art. 10, 15, 16',
         ],
 
