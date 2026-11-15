@@ -17,7 +17,9 @@ use App\Tenant\Catalog\Services\CurrencyPolicy;
 use App\Tenant\Catalog\Services\ExchangeRates;
 use App\Tenant\Catalog\Services\RateFetcher;
 use App\Tenant\Ledger\Models\Period;
+use App\Tenant\Ledger\Enums\PeriodState;
 use App\Tenant\Ledger\Services\FiscalCalendarGenerator;
+use App\Tenant\Ledger\Services\PeriodStateMachine;
 use App\Tenant\Ledger\Posting\PostingContext;
 use App\Tenant\Ledger\Posting\PostingLine;
 use App\Tenant\Ledger\Posting\PostingRule;
@@ -1378,7 +1380,11 @@ final class CurrencyEnforcementRules
             );
         }
 
-        $period->update(['state' => 'open']);
+        app(PeriodStateMachine::class)->transition(
+            $period,
+            PeriodState::Open,
+            'opened for the enforcement checks',
+        );
 
         $this->periodId = (string) $period->getKey();
         $this->postingDate = $postingDate->toDateString();

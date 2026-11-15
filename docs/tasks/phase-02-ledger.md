@@ -124,9 +124,9 @@ The mechanism that lets `Ledger` know nothing about invoices.
 `Ledger` · **5 pts** · depends: PF-049, PF-032 · standards: IAS 10 · `risk:high`
 
 - [x] States and their rules: `future` (no postings), `open`, `soft_closed` (only `period.post_adjusting`), `closed` (none; reopening needs `period.reopen`, step-up auth and a reason), `locked` (never, by anyone, irreversibly - set after statutory filing)
-- [ ] Every transition is audited with actor, reason and timestamp
+- [x] Every transition is audited with actor, reason and timestamp
 - [x] `locked` is enforced in the database and has no application path back
-- [ ] Reopening and re-closing a period is tested end to end, including that the reopen appears on the compliance report
+- [x] Reopening and re-closing a period is tested end to end, including that the reopen appears on the compliance report
 
 ### PF-051 · The adjusting period
 `Ledger` · **2 pts** · depends: PF-049 · standards: IAS 10

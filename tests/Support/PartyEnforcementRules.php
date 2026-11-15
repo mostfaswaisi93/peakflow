@@ -28,7 +28,9 @@ use App\Tenant\Ledger\Posting\PostingLine;
 use App\Tenant\Ledger\Posting\PostingRule;
 use App\Tenant\Ledger\Posting\PostingRuleRegistry;
 use App\Tenant\Ledger\Posting\RuleDescription;
+use App\Tenant\Ledger\Enums\PeriodState;
 use App\Tenant\Ledger\Services\FiscalCalendarGenerator;
+use App\Tenant\Ledger\Services\PeriodStateMachine;
 use App\Tenant\Ledger\Services\Poster;
 use Illuminate\Database\Connection;
 use Illuminate\Support\Carbon;
@@ -996,9 +998,17 @@ final class PartyEnforcementRules
          */
         $postingDate = Carbon::now()->startOfYear()->addMonths(2)->addDays(9);
 
-        app(FiscalCalendarGenerator::class)
-            ->periodFor($this->entityId, $postingDate)
-            ?->update(['state' => 'open']);
+        $period = app(FiscalCalendarGenerator::class)->periodFor($this->entityId, $postingDate);
+
+        if ($period !== null) {
+            // Through the state machine: a period's state cannot move
+            // without a recorded transition, and a bare update is refused.
+            app(PeriodStateMachine::class)->transition(
+                $period,
+                PeriodState::Open,
+                'opened for the party enforcement checks',
+            );
+        }
 
         $this->postingDate = $postingDate->toDateString();
 

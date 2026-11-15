@@ -7,7 +7,9 @@ namespace Tests\Support;
 use Brick\Math\BigDecimal;
 use App\Platform\Models\Tenant;
 use App\Platform\Services\TenantConnectionResolver;
+use App\Tenant\Ledger\Enums\PeriodState;
 use App\Tenant\Ledger\Exceptions\EntryDoesNotBalance;
+use App\Tenant\Ledger\Exceptions\PeriodTransitionRefused;
 use App\Tenant\Ledger\Posting\PostingContext;
 use App\Tenant\Ledger\Posting\PostingLine;
 use App\Tenant\Ledger\Posting\PostingRule;
@@ -15,6 +17,7 @@ use App\Tenant\Ledger\Posting\PostingRuleRegistry;
 use App\Tenant\Ledger\Posting\RuleDescription;
 use App\Tenant\Ledger\Services\ChartTemplate;
 use App\Tenant\Ledger\Services\LedgerVerifier;
+use App\Tenant\Ledger\Services\PeriodStateMachine;
 use App\Tenant\Ledger\Services\Poster;
 use App\Tenant\Ledger\Services\Reverser;
 use App\Tenant\Ledger\Services\TrialBalance;
@@ -91,6 +94,8 @@ final class LedgerEnforcementRules
                 'a reversed entry still counts in the trial balance' => $this->reversalsNetOut(),
                 "a dimension from another entity cannot reach a line" => $this->dimensionsAreScoped(),
                 'a required dimension is refused when absent' => $this->requiredDimensionsBite(),
+                'every period transition is recorded, with a reason' => $this->transitionsAreRecorded(),
+                'a reopening is flagged and reaches the compliance report' => $this->reopeningsAreVisible(),
             ];
         } catch (Throwable $e) {
             return ['ledger invariants could not be checked' => [
@@ -255,6 +260,239 @@ final class LedgerEnforcementRules
         return $violations;
     }
 
+    /**
+     * PF-050: a state column cannot answer the question that gets asked.
+     *
+     * `periods.state` says what a period is now. The question is "who
+     * reopened February, when, and what did they say" - the first question
+     * in any review of a restated figure - and `closed_at` answers it for
+     * the most recent close and loses it on the next one.
+     *
+     * So the state cannot move without a recorded transition, enforced by a
+     * trigger. Which caught three check suites and nine probes opening
+     * periods with a bare update, all of which had stopped exercising the
+     * state machine's own rules.
+     *
+     * @return list<string>
+     */
+    public function transitionsAreRecorded(): array
+    {
+        $machine = app(PeriodStateMachine::class);
+        $violations = [];
+
+        $bare = $this->refusePeriodWrite(['state' => PeriodState::SoftClosed->value]);
+
+        if ($bare === null) {
+            $violations[] = 'a period state was changed by a bare UPDATE, so a close or a reopening through '.
+                'a console session or a support script leaves nothing to say who did it - and that is '.
+                'exactly the change somebody will want explained later';
+        }
+
+        // Through the machine, it moves and it is recorded.
+        $machine->transition($this->period(), PeriodState::SoftClosed, 'month-end review under way');
+
+        $history = $machine->history($this->periodId);
+        $last = $history === [] ? null : $history[count($history) - 1];
+
+        if ($last === null || $last['to'] !== 'soft_closed') {
+            $violations[] = 'a transition through the state machine left no history row';
+        } elseif ($last['reason'] !== 'month-end review under way') {
+            $violations[] = 'the transition history does not record the reason that was given';
+        }
+
+        /*
+         | A transition the state machine forbids.
+         |
+         | `soft_closed -> locked` skips `closed`, and locking is terminal:
+         | a period locked straight from a soft close has never been through
+         | the state in which the figures were finalised.
+         */
+        try {
+            $machine->transition($this->period(), PeriodState::Locked, 'filed');
+
+            $violations[] = 'a period went from soft_closed straight to locked, skipping closed - so it was '.
+                'locked irreversibly without ever having been in the state where its figures were finalised';
+        } catch (PeriodTransitionRefused) {
+            // Correct.
+        }
+
+        $machine->transition($this->period(), PeriodState::Closed, 'month-end figures signed off');
+
+        /*
+         | And locked is terminal, in the database.
+         |
+         | Checked on a DIFFERENT period, because locking this one would
+         | leave every check after it unable to post - and the state is
+         | irreversible by design, so there is no way back.
+         */
+        $other = $this->secondPeriod();
+
+        if ($other !== null) {
+            $machine->transition($other, PeriodState::Closed, 'closed to exercise the lock');
+            $machine->transition($other, PeriodState::Locked, 'statutory return filed');
+
+            try {
+                $machine->transition($other->refresh(), PeriodState::Open, 'we changed our minds about the filing');
+
+                $violations[] = 'a locked period was reopened. It was locked after a statutory filing, and a '.
+                    'figure in a filed return is corrected by an amendment in a later period - not by '.
+                    'editing the period it was filed from';
+            } catch (PeriodTransitionRefused) {
+                // Correct.
+            }
+
+            // And not by a bare update either, which is where the guarantee lives.
+            $direct = $this->refusePeriodWrite(['state' => 'open'], (string) $other->getKey());
+
+            if ($direct === null) {
+                $violations[] = 'a locked period was reopened by a direct UPDATE, so the terminal state is '.
+                    'an application convention rather than a guarantee';
+            }
+        }
+
+        // Leave this period usable for the checks that follow.
+        app(PeriodStateMachine::class)->transition(
+            $this->period(),
+            PeriodState::Open,
+            'reopened by the enforcement checks; the checks that follow need a period that accepts postings',
+        );
+
+        return $violations;
+    }
+
+    /**
+     * PF-050: a reopening is flagged, not derived.
+     *
+     * `closed -> open` is a reopening and `future -> open` is a period
+     * starting. Deriving the distinction means every reader of the table
+     * reimplements it, and one of them gets it wrong in the direction that
+     * hides a reopening from the compliance report.
+     *
+     * @return list<string>
+     */
+    public function reopeningsAreVisible(): array
+    {
+        $machine = app(PeriodStateMachine::class);
+        $violations = [];
+
+        $reason = 'the auditor found a misposted accrual of 14,200 and the correction belongs in February';
+
+        $machine->transition($this->period(), PeriodState::Closed, 'month closed');
+        $machine->transition($this->period(), PeriodState::Open, $reason);
+
+        $reopenings = $machine->reopenings($this->entityId);
+
+        if ($reopenings === []) {
+            $violations[] = 'a reopened period does not appear in the reopenings report. A reopening means a '.
+                'reported figure may have changed after it was reported, which is a disclosure question '.
+                'under IAS 10 rather than an operational one';
+        } else {
+            $found = false;
+
+            foreach ($reopenings as $row) {
+                if ($row['reason'] === $reason) {
+                    $found = true;
+                }
+            }
+
+            if (! $found) {
+                $violations[] = 'the reopenings report does not carry the reason that was given, which is '.
+                    'the only part of it an auditor can act on';
+            }
+        }
+
+        /*
+         | A period STARTING is not a reopening.
+         |
+         | `future -> open` happens to every period and would swamp the
+         | report - which is how a report with a real signal in it stops
+         | being read.
+         */
+        $starting = $this->secondPeriod('future');
+
+        if ($starting !== null) {
+            $before = count($machine->reopenings($this->entityId));
+            $machine->transition($starting, PeriodState::Open, 'the month began');
+
+            if (count($machine->reopenings($this->entityId)) !== $before) {
+                $violations[] = 'a period simply starting was counted as a reopening, which swamps the '.
+                    'report with every month that has ever begun';
+            }
+        }
+
+        // A reopening with a one-word reason is refused.
+        $machine->transition($this->period(), PeriodState::Closed, 'closed again');
+
+        try {
+            $machine->transition($this->period(), PeriodState::Open, 'fix');
+
+            $violations[] = 'a period was reopened with a one-word reason. The review of a restated figure '.
+                'happens because something went wrong, with nothing to go on but what somebody typed';
+        } catch (PeriodTransitionRefused) {
+            // Correct.
+        }
+
+        $machine->transition(
+            $this->period(),
+            PeriodState::Open,
+            'reopened by the enforcement checks; the checks that follow need a period that accepts postings',
+        );
+
+        return $violations;
+    }
+
+    /**
+     * A write to `periods` expected to be refused, in its own savepoint.
+     *
+     * @param  array<string, mixed>  $attributes
+     */
+    private function refusePeriodWrite(array $attributes, ?string $periodId = null): ?string
+    {
+        $savepoint = 'period_'.bin2hex(random_bytes(4));
+
+        $this->connection->statement('SAVEPOINT '.$savepoint);
+
+        try {
+            $this->connection->table('periods')
+                ->where('id', $periodId ?? $this->periodId)
+                ->update($attributes);
+
+            $this->connection->statement('ROLLBACK TO SAVEPOINT '.$savepoint);
+
+            return null;
+        } catch (Throwable $e) {
+            $this->connection->statement('ROLLBACK TO SAVEPOINT '.$savepoint);
+
+            return Str::limit(preg_replace('/\s+/', ' ', $e->getMessage()) ?? '', 200);
+        }
+    }
+
+    /**
+     * Another period of the same entity, for the transitions that are
+     * irreversible or that would stop the checks that follow from posting.
+     */
+    private function secondPeriod(string $state = 'open'): ?\App\Tenant\Ledger\Models\Period
+    {
+        /** @var ?\App\Tenant\Ledger\Models\Period $period */
+        $period = \App\Tenant\Ledger\Models\Period::query()
+            ->where('entity_id', $this->entityId)
+            ->where('id', '<>', $this->periodId)
+            ->where('state', $state)
+            ->where('is_adjusting', false)
+            ->first();
+
+        return $period;
+    }
+
+    /** The check's period, freshly read - the machine takes the model. */
+    private function period(): \App\Tenant\Ledger\Models\Period
+    {
+        /** @var \App\Tenant\Ledger\Models\Period $period */
+        $period = \App\Tenant\Ledger\Models\Period::query()->findOrFail($this->periodId);
+
+        return $period;
+    }
+
     /** An axis for the checks, on a given column. */
     private function axis(int $number, string $key, ?string $entityId = null): string
     {
@@ -376,18 +614,41 @@ final class LedgerEnforcementRules
     {
         $violations = [];
 
-        foreach (['closed', 'soft_closed'] as $state) {
-            $this->connection->table('periods')->where('id', $this->periodId)->update(['state' => $state]);
+        /*
+         | Through the state machine, and in the order the machine allows.
+         |
+         | `open -> soft_closed -> closed` rather than straight to each,
+         | because the transitions are the states' own rules and a check
+         | that sets a column directly is a check that stopped exercising
+         | them - which is also what the recorded-transition guard caught
+         | the first time this ran.
+         */
+        foreach ([PeriodState::SoftClosed, PeriodState::Closed] as $state) {
+            app(PeriodStateMachine::class)->transition(
+                $this->period(),
+                $state,
+                'closed for the ledger enforcement checks',
+            );
 
             $refusal = $this->writeEntry([['1.1.1.1', '10.0000'], ['4.1', '-10.0000']]);
 
             if ($refusal === null || ! str_contains($refusal, 'does not accept this posting')) {
-                $violations[] = sprintf('a %s period accepted an ordinary posting', $state);
+                $violations[] = sprintf('a %s period accepted an ordinary posting', $state->value);
             }
         }
 
         // Soft-closed still takes adjustments - that is what the state is for.
-        $this->connection->table('periods')->where('id', $this->periodId)->update(['state' => 'soft_closed']);
+        app(PeriodStateMachine::class)->transition(
+            $this->period(),
+            PeriodState::Open,
+            'reopened by the enforcement checks to exercise the soft-closed adjustment path',
+        );
+
+        app(PeriodStateMachine::class)->transition(
+            $this->period(),
+            PeriodState::SoftClosed,
+            'soft closed for the adjustment check',
+        );
 
         $adjusting = $this->writeEntry([['1.1.1.1', '10.0000'], ['4.1', '-10.0000']], rule: 'adjusting');
 
@@ -396,7 +657,19 @@ final class LedgerEnforcementRules
                 'adjustments have nowhere to land: '.$adjusting;
         }
 
-        $this->connection->table('periods')->where('id', $this->periodId)->update(['state' => 'open']);
+        /*
+         | Left open for the checks that follow.
+         |
+         | Through the machine, because every other way is refused - and
+         | the recorded reason is what tells a reader of the transition
+         | history why this period went closed and open three times in one
+         | second, which is otherwise the shape of something alarming.
+         */
+        app(PeriodStateMachine::class)->transition(
+            $this->period(),
+            PeriodState::Open,
+            'reopened by the enforcement checks; the checks that follow need a period that accepts postings',
+        );
 
         return $violations;
     }
@@ -891,7 +1164,20 @@ final class LedgerEnforcementRules
             );
         }
 
-        $period->update(['state' => 'open']);
+        /*
+         | Through the state machine, not an update.
+         |
+         | A period's state cannot move without a recorded transition - a
+         | database trigger refuses it - because "who reopened this period
+         | and why" is the first question in any review of a restated
+         | figure. This check used a bare update and was caught by the
+         | guard, which is the guard working.
+         */
+        app(PeriodStateMachine::class)->transition(
+            $period,
+            PeriodState::Open,
+            'opened for the ledger enforcement checks',
+        );
 
         $this->periodId = (string) $period->getKey();
         $this->postingDate = $postingDate->toDateString();
