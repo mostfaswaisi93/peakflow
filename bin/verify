@@ -39,6 +39,7 @@ declare(strict_types=1);
  |   php bin/verify errors     what a failure looks like from outside
  |   php bin/verify repo       the commit hook, composer setup, and the laptop setup
  |   php bin/verify ops        the tenant lifecycle on screen, and what it refuses
+ |   php bin/verify tax        tax categories, and rates that are effective-dated
  |   php bin/verify charts     the chart templates, and the charts they produce
  |   php bin/verify property   the balanced-entry invariant over generated entries
  |   php bin/verify group      inter-entity postings across a four-entity group
@@ -144,6 +145,10 @@ if ($only === 'all' || $only === 'iban') {
     $suites['Bank identifiers'] = (new Tests\Support\BankIdentifierRules())->all();
 }
 
+if ($only === 'all' || $only === 'tax') {
+    $suites['Tax codes'] = (new Tests\Support\TaxCodeRules())->all();
+}
+
 if ($only === 'all' || $only === 'ops') {
     $suites['Operator console'] = (new Tests\Support\OperatorConsoleRules())->all();
 }
@@ -189,7 +194,7 @@ if ($only === 'all' || $only === 'examples') {
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | errors | repo | ops | charts | queue | group | manual | logging | property | examples | rollback\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | errors | repo | ops | tax | charts | queue | group | manual | logging | property | examples | rollback\n");
     exit(2);
 }
 

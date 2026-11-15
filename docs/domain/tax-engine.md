@@ -18,15 +18,25 @@ A document's accounting period and its return period can therefore differ. Both 
 
 ## Categories
 
-| Code | Name | Taxable supply? | Input recovery | Notes |
-|------|------|-----------------|----------------|-------|
-| `S` | Standard rate | Yes | Yes | The default |
-| `Z` | Zero-rated | **Yes**, at 0% | **Yes** | A taxable supply; recovery is preserved |
-| `E` | Exempt | **No** | **Restricted** | Not a taxable supply; restricts input recovery |
-| `AE` | Reverse charge | Yes, by the recipient | Yes, by the recipient | No tax on the document; a mandatory legal note |
-| `O` | Out of scope | No | n/a | Outside the regime entirely |
-| `K` | Intra-community supply | Yes, at 0% | Yes | Requires both registrations |
-| `G` | Export | Yes, at 0% | Yes | Requires proof of export |
+| Code | Name | Taxable supply? | Input recovery | Must be 0% | Notes |
+|------|------|-----------------|----------------|:---:|-------|
+| `S` | Standard rate | Yes | Yes | | The default, and the only category needing no reason |
+| `Z` | Zero-rated | **Yes**, at 0% | **Yes** | ✓ | A taxable supply; recovery is preserved |
+| `E` | Exempt | **No** | **Restricted** | ✓ | Not a taxable supply; restricts input recovery |
+| `AE` | Reverse charge | Yes, by the recipient | Yes, by the recipient | ✓ | No tax on the document; a mandatory legal note |
+| `O` | Out of scope | No | Restricted | ✓ | Outside the regime entirely |
+| `K` | Intra-community supply | Yes, at 0% | Yes | ✓ | Requires both registrations; needs evidence |
+| `G` | Export | Yes, at 0% | Yes | ✓ | Requires proof of export |
+| `L` | Canary Islands (IGIC) | Yes | Yes | | A separate regime with its own non-zero rates |
+| `M` | Ceuta and Melilla (IPSI) | Yes | Yes | | As above |
+
+`L` and `M` are in the list because EN 16931 requires them: a Spanish seller with Canary Islands customers cannot issue a conformant invoice without them. They are separate regimes rather than rates of Spanish VAT, which is why they are categories — and why they may carry a rate where the other six zero categories may not.
+
+**The categories are code, not configuration** — `App\Tenant\Tax\Enums\TaxCategory`. Everything else in this engine is data, and these are the exception: a category's meaning is fixed by a published code list, so putting it in configuration makes it a thing an operator can change. The change that gets made is *"exempt supplies are input-recoverable"*, because somebody is reconciling an input tax box that will not balance and that flag is the fastest way to make the number move.
+
+`restrictsInputRecovery()` is deliberately not a boolean called `inputRecoverable()`. The **degree** of restriction is a jurisdiction rule — partial exemption methods differ, and some regimes allow recovery below a de minimis — so a flag saying "recoverable: false" would be a lie in every regime that has a method. What is universal is which categories trigger the question, and the apportionment belongs to PF-084.
+
+One more consequence of collapsing `Z` into `E`: registration thresholds are computed from **taxable turnover**, so it can make a business appear not to need a registration it does need.
 
 > **`Z`, `E` and `O` are three different things and must never be modelled as "0% with a note".** Zero-rated preserves input recovery; exempt restricts it; out of scope is not in the regime. Collapsing them produces a return that is wrong in the input-tax boxes, which is the half nobody checks until an audit.
 
@@ -53,9 +63,98 @@ ALTER TABLE tax_rates ADD CONSTRAINT tax_rates_no_overlap
     EXCLUDE USING gist (tax_code_id WITH =, validity WITH &&);
 ```
 
-A rate change creates a **new version** and never edits the old one. A document resolves its rate by its tax point, so a historical document keeps the rate that was in force. Overlapping validity for one code is refused by the database, not by application validation alone — a rate seeded by a migration would bypass the latter.
+**Two tables, because a category is not an attribute of a rate.** `tax_codes`
+carries what a code *is* — its category, jurisdiction, labels, exemption reason,
+return boxes — and `tax_rates` carries what it *was*, version by version.
 
-A test covers a rate change mid-month and proves documents either side of it resolve differently.
+That split is structural rather than tidy. The first implementation versioned
+everything in one table, which made the category an attribute of each rate
+version, so a rate change could silently also change the treatment and the
+service had to refuse it in application code. Structure that cannot express the
+mistake beats a refusal that has to remember to fire.
+
+A rate change creates a **new version** and never edits the old one. A document
+resolves its rate by its tax point, so a historical document keeps the rate that
+was in force. Overlapping validity for one code is refused by the database, not
+by application validation alone — a rate seeded by a migration would bypass the
+latter.
+
+### Validity is a half-open range
+
+`validity` is a `daterange` with `[)` bounds: inclusive start, exclusive end. So
+"in force on a date" is `validity @> date`, one containment test that the query
+and the exclusion constraint share — two nullable date columns need a `COALESCE`
+in both places, and the day they are written with `<` in one and `<=` in the
+other is the day a document resolves two rates.
+
+It also means a successor's start **is** its predecessor's end. They abut
+exactly, with no gap and no overlap, and no call site does arithmetic on "the
+day before":
+
+```
+[2018-01-01,2020-07-01)   5%
+[2020-07-01,)            15%
+```
+
+Making that end bound inclusive was tried as a deliberate break, and the
+exclusion constraint itself rejected the rate change — the database catches the
+off-by-one.
+
+### Measured
+
+Saudi Arabia went from 5% to 15% on 1 July 2020. A system holding one rate per
+code reprints every pre-July invoice at 15%, and reprinting an invoice is what
+you do when a customer disputes it or an authority asks for it.
+
+```
+tax point 2018-06-30  ->   5.000000000000 %   (fraction 0.050000000000)
+tax point 2020-06-30  ->   5.000000000000 %
+tax point 2020-07-01  ->  15.000000000000 %   (fraction 0.150000000000)
+tax point 2026-11-15  ->  15.000000000000 %
+tax point 2017-12-31  ->  refused
+```
+
+The last line matters as much as the others: a tax point before the code's first
+version is **refused rather than guessed**, because resolving the nearest version
+would silently apply a rate that was not law on the day of the supply.
+
+There is deliberately no method called `current()` on the resolver. A resolver
+that reads the active row gets today's rate onto a historical invoice, and the
+invoice is wrong in a way that only shows when somebody compares it to the return
+it was filed on.
+
+Superseding refuses three things, each because it would rewrite history: a
+version starting on or before the one it replaces, a code with nothing
+open-ended to close, and a code that does not exist.
+
+### What the database refuses rather than the application
+
+| Constraint | Refuses |
+|------------|---------|
+| `tax_rates_no_overlap` | Two versions covering one day. Which rate a document gets would depend on row order, so the same invoice computed twice could produce two different tax amounts |
+| `tax_rates_respect_the_category` | A `Z` row at 5%, which is not a zero rate, or an `E` row at 5%, which is a taxable supply wearing an exempt label. A trigger rather than a CHECK, because the category lives on the parent row and a CHECK cannot read another table — and it fires on a category change too, since either side can break it |
+| `tax_codes_non_standard_carries_a_reason` | Any non-standard category without an EN 16931 `BT-121` code and `BT-120` text |
+| `tax_rates_source_is_present` | A rate with no citation. The question asked six months later is *"where did 15% come from"* |
+| `tax_rates_validity_has_a_start` | A range with no lower bound, which is in force before the tax existed |
+
+Each is attempted **through the model, bypassing the service**, because a check
+that went through the service would pass while the constraint was missing.
+
+### Percentages, not fractions
+
+The `rate` column holds `15.000000` — fifteen percent, written the way an
+authority publishes it and an invoice prints it. A column holding `0.15` means
+every reader has to remember which it is, and the one written the way everybody
+says it is the one that gets checked. So the division happens in exactly one
+place, `TaxRate::fraction()`, because multiplying a net amount by 15 is a mistake
+waiting for somebody to make it.
+
+It uses `BigDecimal` and not `bcdiv`: `bcmath` is under `suggest` in
+`composer.json`, so the extension is absent on this deployment and a `bc*` call
+is a fatal error at the moment somebody computes tax. An architecture rule now
+refuses the whole family — and that rule was itself wrong on its first attempt,
+matching nothing because an optional namespace separator written as `\\?` became
+a required literal `?` inside a single-quoted PHP string.
 
 ## Computation
 

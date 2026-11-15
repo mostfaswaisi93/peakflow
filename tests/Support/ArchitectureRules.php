@@ -33,6 +33,7 @@ final class ArchitectureRules
     {
         return [
             'no float in the money path' => $this->noFloatInMoneyPath(),
+            'no bcmath call, because the extension is not required' => $this->noBcMathCalls(),
             'only three decimal scales exist' => $this->onlyThreeScales(),
             'tenant models declare their connection' => $this->tenantModelsDeclareConnection(),
             'Reporting never writes' => $this->reportingNeverWrites(),
@@ -396,6 +397,81 @@ final class ArchitectureRules
             if (preg_match_all('/=>\s*[\'"](?:float|real|double)[\'"]/', $source, $m, PREG_OFFSET_CAPTURE)) {
                 foreach ($m[0] as [, $offset]) {
                     $violations[] = sprintf('%s:%d casts an attribute to float', $relative, $this->lineAt($source, $offset));
+                }
+            }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * No `bc*` call anywhere - PF-001.
+     *
+     * ## Why this is a rule and not a preference
+     *
+     * `composer.json` lists `bcmath` under `suggest`, not `require`, and the
+     * reasoning is recorded there: `brick/math` falls back to a pure-PHP
+     * calculator, exactly as correct and slower. So the extension is ABSENT on
+     * this deployment - measured, `extension_loaded('bcmath')` is false - and
+     * a `bcdiv()` is a fatal error at the moment somebody computes tax.
+     *
+     * It is the worst shape of missing dependency: the code looks right, it
+     * passes review, and it fails only on the machines without the extension -
+     * which are the ones nobody develops on.
+     *
+     * The first version of `TaxCode::fraction()` used `bcdiv`, which is what
+     * prompted this.
+     *
+     * @return list<string>
+     */
+    public function noBcMathCalls(): array
+    {
+        $violations = [];
+
+        /*
+         | The whole family, by name.
+         |
+         | A pattern like `/\bbc\w+\(/` would also match a method called
+         | `bcSomething()` on an object, and more usefully it would match
+         | nothing the day somebody writes `\bcdiv(...)` with a leading
+         | namespace separator - which PHP resolves to the global function.
+         | So the list is explicit and the separator is optional.
+         */
+        $functions = [
+            'bcadd', 'bcsub', 'bcmul', 'bcdiv', 'bcmod', 'bcpow', 'bcpowmod',
+            'bcsqrt', 'bccomp', 'bcscale', 'bcdivmod',
+        ];
+
+        foreach ($this->phpFiles('app') as $file) {
+            $original = (string) file_get_contents($file);
+            $source = $this->withoutComments($original);
+
+            foreach ($functions as $function) {
+                /*
+                 | The lookbehind excludes word characters, `$` and `>` and
+                 | NOT the backslash - so `\bcdiv(` matches too, which is how
+                 | PHP spells a call to the global function from inside a
+                 | namespace. The first version wrote the backslash as an
+                 | optional escape and ended up requiring a literal `?`, so
+                 | the rule matched nothing and passed.
+                 */
+                if (preg_match_all('/(?<![\w$>])'.$function.'\s*\(/i', $source, $m, PREG_OFFSET_CAPTURE) === 0) {
+                    continue;
+                }
+
+                foreach ($m[0] as [$match, $offset]) {
+                    if ($this->lineIsAnnotated($original, $offset)) {
+                        continue;
+                    }
+
+                    $violations[] = sprintf(
+                        '%s:%d calls %s. bcmath is under `suggest` and is ABSENT on this deployment, so '.
+                        'this is a fatal error the first time it runs - use Brick\Math\BigDecimal, '.
+                        'which is what the money layer uses.',
+                        $this->relative($file),
+                        $this->lineAt($source, $offset),
+                        trim($match),
+                    );
                 }
             }
         }
