@@ -59,13 +59,33 @@ final class LedgerVerify extends Command
                     $this->components->twoColumnDetail($label, '<fg=green>verified</>');
                 } else {
                     $this->newLine();
-                    $this->components->error(sprintf('%s: %d finding(s)', $label, $findings->count()));
+
+                    /*
+                     | Rendered by severity, not all in red.
+                     |
+                     | Everything used to print as an error and the run then
+                     | ended with "Every entity verified", because a warning
+                     | does not fail the command. Two statements contradicting
+                     | each other in one screen of output is how a reader
+                     | learns to skip the output.
+                     */
+                    $worst = $findings->contains(
+                        static fn (LedgerFinding $finding): bool => $finding->isCritical(),
+                    );
+
+                    $headline = sprintf('%s: %d finding(s)', $label, $findings->count());
+
+                    $worst
+                        ? $this->components->error($headline)
+                        : $this->components->warn($headline);
 
                     foreach ($findings as $finding) {
                         /** @var LedgerFinding $finding */
                         $critical += $finding->isCritical() ? 1 : 0;
 
-                        $this->line(sprintf('  <fg=red;options=bold>%s</>', $finding->kind));
+                        $colour = $finding->isCritical() ? 'red' : 'yellow';
+
+                        $this->line(sprintf('  <fg=%s;options=bold>%s</>', $colour, $finding->kind));
                         $this->line(sprintf('    %s', $finding->detail));
                         $this->line(sprintf('    <comment>%s</comment>', $finding->consequence));
                     }

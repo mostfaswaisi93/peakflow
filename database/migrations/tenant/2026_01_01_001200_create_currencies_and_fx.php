@@ -330,6 +330,7 @@ return new class extends Migration
         SQL);
 
         $this->seedRateSets();
+        $this->installFetchRunFinality();
         $this->installRateImmutability();
         $this->installFunctionalCurrencyMirror();
         $this->installTranslationInvariant();
@@ -350,8 +351,9 @@ return new class extends Migration
                 'peakflow:tenant-scoped - a feed is configured once for the tenant, not once per company.';
 
             COMMENT ON TABLE fx_rate_fetch_runs IS
-                'peakflow:append-only peakflow:tenant-scoped - a fetch run is a record of what the feeds said '
-                'at a moment, which is the evidence for why a document carries the rate it carries.';
+                'peakflow:no-delete peakflow:tenant-scoped - a fetch run is the evidence for why a document '
+                'carries the rate it carries, so it must not vanish. Not append-only: a run legitimately '
+                'changes once, from running to its outcome, and a trigger allows that exactly once.';
         SQL);
     }
 
@@ -434,6 +436,53 @@ return new class extends Migration
             ALTER TABLE entity_currencies
                 ADD CONSTRAINT entity_currencies_rate_set_exists
                     FOREIGN KEY (default_rate_set) REFERENCES fx_rate_sets (code);
+        SQL);
+    }
+
+    /**
+     * A fetch run is completed once and never rewritten - PF-069.
+     *
+     * ## Why not simply append-only
+     *
+     * That was the first answer and it was wrong. The run row is written when
+     * the fetch starts and completed when it ends, and append-only revoked
+     * the UPDATE that completes it - so every fetch failed at the last step,
+     * after having already stored the rates.
+     *
+     * Writing one row at the end instead would satisfy append-only and lose
+     * the thing the row is most useful for: a run that STARTED and never
+     * finished is a job that hung, and that is exactly what somebody wants
+     * to see at nine the next morning.
+     *
+     * So the row has one legitimate transition, running to finished, and
+     * this trigger allows precisely that. Afterwards it is as immutable as
+     * an append-only row would have been, which is the property that
+     * actually mattered - the evidence for why a document carries the rate
+     * it carries cannot be edited after the fact.
+     */
+    private function installFetchRunFinality(): void
+    {
+        DB::unprepared(<<<'SQL'
+            CREATE OR REPLACE FUNCTION refuse_rewriting_a_finished_run()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                IF OLD.finished_at IS NOT NULL THEN
+                    RAISE EXCEPTION
+                        'Fetch run % finished at % with outcome "%" and cannot be rewritten. It is the record of what the feeds said at that moment, which is why a document carries the rate it carries.',
+                        OLD.id, OLD.finished_at, OLD.outcome
+                        USING ERRCODE = 'restrict_violation';
+                END IF;
+
+                RETURN NEW;
+            END;
+            $$;
+
+            CREATE TRIGGER fx_rate_fetch_runs_finish_once
+                BEFORE UPDATE ON fx_rate_fetch_runs
+                FOR EACH ROW
+                EXECUTE FUNCTION refuse_rewriting_a_finished_run();
         SQL);
     }
 
@@ -717,6 +766,9 @@ return new class extends Migration
 
             DROP TRIGGER IF EXISTS entities_mirror_functional_currency ON entities;
             DROP FUNCTION IF EXISTS mirror_functional_currency();
+
+            DROP TRIGGER IF EXISTS fx_rate_fetch_runs_finish_once ON fx_rate_fetch_runs;
+            DROP FUNCTION IF EXISTS refuse_rewriting_a_finished_run();
 
             DROP TRIGGER IF EXISTS fx_rates_immutable ON fx_rates;
             DROP FUNCTION IF EXISTS refuse_rate_mutation();

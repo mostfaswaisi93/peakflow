@@ -174,6 +174,18 @@ final class Poster
                      | foreign-currency line without one.
                      */
                     'fx_rate' => $translation === null ? null : (string) $translation->rate->value,
+                    /*
+                     | Which rate, not merely what number - PF-069.
+                     |
+                     | The value alone cannot answer "was it current", "was
+                     | it the statutory rate" or "which feed said so", and
+                     | looking it up again later cannot either: it may have
+                     | been superseded, and two feeds can have sent the same
+                     | figure for different days.
+                     */
+                    'fx_rate_set' => $translation?->rate->rateSet,
+                    'fx_rate_as_of' => $translation?->rate->date->format('Y-m-d'),
+                    'fx_rate_provider' => $translation?->rate->provider,
                     'functional_amount' => (string) $line->amount->amount,
                     'party_id' => $line->partyId,
                     'tax_code_id' => $line->taxCodeId,

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tenant\Parties\Services;
 
-use App\Tenant\Identity\Services\AuditLog;
+use App\Support\Audit\AuditTrail;
 use App\Tenant\Parties\Exceptions\BankAccountNotVerified;
 use App\Tenant\Parties\Models\Party;
 use App\Tenant\Parties\Models\PartyBankAccount;
@@ -38,7 +38,7 @@ use Illuminate\Support\Facades\DB;
  */
 final class BankDetailRegistry
 {
-    public function __construct(private readonly AuditLog $audit) {}
+    public function __construct(private readonly AuditTrail $audit) {}
 
     /**
      * Record a new or changed account.

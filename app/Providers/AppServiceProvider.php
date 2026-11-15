@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\Providers;
 
+use App\Support\Audit\AuditTrail;
+use App\Tenant\Identity\Services\AuditLog;
+
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
@@ -14,7 +17,20 @@ final class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        //
+        /*
+         | The audit trail, resolved by its Support contract.
+         |
+         | Every module writes to the audit log, and the implementation lives
+         | in `Identity` because that is where users and the hash chain are.
+         | Binding the interface here is what keeps `Ledger`, `Parties` and
+         | `Catalog` from each acquiring a dependency on `Identity` for a
+         | reason that has nothing to do with identity.
+         |
+         | Not a singleton: it reads the current entity from the request-
+         | scoped EntityContext, and a singleton holding a stale one would
+         | attribute a record to the wrong company.
+         */
+        $this->app->bind(AuditTrail::class, AuditLog::class);
     }
 
     public function boot(): void

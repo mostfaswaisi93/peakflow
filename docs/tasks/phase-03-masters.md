@@ -95,10 +95,10 @@ The highest-value fraud surface in the product.
 ### PF-069 · Rate fetching
 `Catalog` · **3 pts** · depends: PF-068 · standards: —
 
-- [ ] `fx:fetch-rates` with multiple configured providers and a defined precedence
-- [ ] A provider failure falls back to the next, then to the last known rate, and **raises an alert** - it does not block invoice issuance, because a rate feed outage must not stop a business trading
-- [ ] A rate older than a configured staleness threshold is flagged on every document that uses it
-- [ ] Idempotent per `(pair, date, rate_set, provider)`
+- [x] `fx:fetch-rates` with multiple configured providers and a defined precedence
+- [x] A provider failure falls back to the next, then to the last known rate, and **raises an alert** - it does not block invoice issuance, because a rate feed outage must not stop a business trading
+- [x] A rate older than a configured staleness threshold is flagged on every document that uses it
+- [x] Idempotent per `(pair, date, rate_set, provider)`
 
 ### PF-070 · Period-end revaluation
 `Catalog` · **5 pts** · depends: PF-068, PF-050 · standards: IAS 21 · `type:posting`

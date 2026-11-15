@@ -208,6 +208,28 @@ The tolerance on the second claim is **one unit at the amount scale** - enough t
 
 A missing rate is `RateNotAvailable`, and a rate that exists only in the opposite direction is a *different* refusal, because that is the moment someone writes `1 / $rate` by hand. An architecture rule fails the build on the obvious spellings of that - including `BigDecimal::one()->dividedBy($rate, …)`, which avoids the float and does the same wrong arithmetic, and `$amount->dividedBy($rate, …)`, which is the inverse with no `1` in it at all.
 
+### When the feeds are down
+
+A rate feed outage **must not stop a business trading**. An invoice that cannot be issued because a third party's API is down is a worse outcome than an invoice issued at yesterday's rate, because the second one is correctable and the first one is a customer not being billed.
+
+So `fx:fetch-rates` walks providers in precedence order, and when they are exhausted:
+
+| Situation | What happens |
+|-----------|--------------|
+| A feed fails | The next provider is tried. The failure is counted against that feed and recorded on the run. |
+| No feed has the pair | The last known rate stays in force; the run is **degraded** and raises an alert. |
+| Nothing on file, or nothing inside the fallback window | The pair is **unresolved**; documents in it are refused, and the run is **failed**. |
+
+Two things it deliberately does **not** do.
+
+It does not copy the old rate forward under today's date. That would assert the feed published it today, and would make the rate look current on every document that used it - which defeats the staleness flag entirely.
+
+It does not fall back indefinitely. Past `fx.fallback_window_days` the pair is unresolved, because "the last known rate" from eleven months ago is not resilience, it is a wrong number with a long paper trail.
+
+The exit code is non-zero on a degraded run. That is an alert on the **job**, not a block on trading: nothing in the fetcher has any authority over whether a document can be issued.
+
+The alert is the part that is easy to drop, and the reason it is not: a month of invoices at a three-week-old rate produces a difference that is found at the close, is material, and is explained by nobody - while every individual invoice looked fine at the time. So a degraded run writes the provider attempts onto `fx_rate_fetch_runs`, writes an append-only audit entry beside the documents it explains, logs a warning, and exits non-zero.
+
 ## How this is tested
 
 | Layer | Asserts |

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Tenant\Identity\Services;
 
+use App\Support\Audit\AuditTrail;
+
 use App\Support\Hashing\ChainLink;
 use App\Tenant\Identity\Models\User;
 use App\Tenant\Tenancy\Services\EntityContext;
@@ -35,7 +37,7 @@ use Illuminate\Support\Str;
  * the question an investigation asks is frequently "who knew", not "who
  * changed".
  */
-final class AuditLog
+final class AuditLog implements AuditTrail
 {
     /** What happened. Written inside the caller's transaction. */
     public const CHAIN_EVENTS = 'events';

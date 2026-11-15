@@ -15,12 +15,14 @@ use App\Tenant\Catalog\Exceptions\RateNotAvailable;
 use App\Tenant\Catalog\Models\FxRate;
 use App\Tenant\Catalog\Services\CurrencyPolicy;
 use App\Tenant\Catalog\Services\ExchangeRates;
+use App\Tenant\Catalog\Services\RateFetcher;
 use App\Tenant\Ledger\Services\FiscalCalendarGenerator;
 use App\Tenant\Tenancy\Models\Entity;
 use App\Tenant\Tenancy\Services\EntityContext;
 use Illuminate\Database\Connection;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Throwable;
 
@@ -72,6 +74,21 @@ final class CurrencyEnforcementRules
 
     private string $journalId = '';
 
+    /**
+     * The response the probe feed currently gives.
+     *
+     * Held here and served through ONE registered fake, because
+     * `Http::fake()` appends stubs rather than replacing them and the FIRST
+     * match wins - so a later "the feed returns 503" stub never fires and
+     * the check silently asserts against the earlier response. It cost two
+     * checks before it was spotted.
+     *
+     * @var (callable(): mixed)|null
+     */
+    private $feedResponse = null;
+
+    private bool $feedRegistered = false;
+
     /** @var array<string, string> account code => id */
     private array $accounts = [];
 
@@ -101,6 +118,11 @@ final class CurrencyEnforcementRules
                 'the functional currency is always present and enabled' => $this->functionalCurrencyIsMirrored(),
                 'a stored rate is superseded, never edited' => $this->ratesAreImmutable(),
                 'the lookup is effective-dated and never reaches forward' => $this->lookupIsEffectiveDated(),
+                'a rate on a line says WHICH rate, not just what number' => $this->rateProvenanceIsRequired(),
+                'a feed outage does not stop the business trading' => $this->anOutageDoesNotStopTrading(),
+                'a degraded fetch raises an alert nobody can miss' => $this->degradationIsAlerted(),
+                'a feed sending an impossible rate is not partly believed' => $this->impossibleRatesAreRejected(),
+                'a finished fetch run cannot be rewritten' => $this->fetchRunsAreFinal(),
             ];
         } catch (Throwable $e) {
             return ['currency controls could not be checked' => [
@@ -498,7 +520,385 @@ final class CurrencyEnforcementRules
     }
 
     /**
+     * A line records which rate it used, not merely the number - PF-069.
+     *
+     * The value alone answers none of the questions actually asked about a
+     * posting: was the rate current, was it the market or the statutory one,
+     * which feed said so. Nor can it be looked up afterwards - the row may
+     * have been superseded, and two feeds can have sent the same figure for
+     * different days.
+     *
+     * The staleness requirement depends on this entirely. "A rate older than
+     * the threshold is flagged on every document that uses it" is not
+     * answerable from a number.
+     *
+     * @return list<string>
+     */
+    public function rateProvenanceIsRequired(): array
+    {
+        $violations = [];
+
+        $bare = $this->refusal(function (): void {
+            $this->connection->table('journal_lines')->insert([
+                'id' => (string) Str::ulid(),
+                'entity_id' => $this->entityId,
+                'journal_entry_id' => (string) Str::ulid(),
+                'accounting_date' => $this->postingDate,
+                'period_id' => $this->periodId,
+                'account_id' => $this->accounts['1.1.1.1'],
+                'amount' => '4000.0000',
+                'currency' => 'EUR',
+                'fx_rate' => '4.012500000000',
+                // Deliberately no set, date or provider.
+                'functional_amount' => '16050.0000',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        });
+
+        if ($bare === null) {
+            $violations[] = 'a line was accepted carrying a rate with no date, set or provider. The figure can '.
+                'be checked and not placed, and whether it was stale - which every document using it is '.
+                'required to show - cannot be worked out at all';
+        }
+
+        // A rate dated AFTER the transaction did not exist when it happened.
+        $fromTheFuture = $this->writeLinesWith(
+            rateAsOf: Carbon::parse($this->postingDate)->addDays(5)->toDateString(),
+        );
+
+        if ($fromTheFuture === null) {
+            $violations[] = 'a posting was translated at a rate dated after the transaction, which is a rate '.
+                'that did not exist when it happened - booking at it silently restates the period';
+        }
+
+        // A set nobody can resolve answers none of the questions either.
+        $unknownSet = $this->writeLinesWith(rateSet: 'not_a_real_set');
+
+        if ($unknownSet === null) {
+            $violations[] = 'a line named a rate set that does not exist, so "was this the market rate or the '.
+                'statutory one" has an answer nobody can look up';
+        }
+
+        return $violations;
+    }
+
+    /**
+     * A correctly translated pair, with one piece of provenance altered.
+     *
+     * Returns the refusal, or null if it was accepted.
+     */
+    private function writeLinesWith(?string $rateSet = null, ?string $rateAsOf = null): ?string
+    {
+        $entryId = (string) Str::ulid();
+
+        return $this->refusal(function () use ($entryId, $rateSet, $rateAsOf): void {
+            $this->connection->table('journal_entries')->insert([
+                'id' => $entryId,
+                'entity_id' => $this->entityId,
+                'journal_id' => $this->journalId,
+                'period_id' => $this->periodId,
+                'number' => 'FXPRV-'.Str::random(8),
+                'accounting_date' => $this->postingDate,
+                'entered_at' => now(),
+                'status' => 'posted',
+                'posted_at' => now(),
+                'posting_rule' => 'check.currency',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            $line = fn (string $code, string $amount, string $functional): array => [
+                'id' => (string) Str::ulid(),
+                'entity_id' => $this->entityId,
+                'journal_entry_id' => $entryId,
+                'accounting_date' => $this->postingDate,
+                'period_id' => $this->periodId,
+                'account_id' => $this->accounts[$code],
+                'amount' => $amount,
+                'currency' => 'EUR',
+                'fx_rate' => '4.012500000000',
+                'fx_rate_set' => $rateSet ?? $this->rateSet,
+                'fx_rate_as_of' => $rateAsOf ?? $this->postingDate,
+                'fx_rate_provider' => 'manual',
+                'functional_amount' => $functional,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ];
+
+            $this->connection->table('journal_lines')->insert([
+                $line('1.1.1.1', '4000.0000', '16050.0000'),
+                $line('4.1', '-4000.0000', '-16050.0000'),
+            ]);
+
+            $this->connection->statement('SET CONSTRAINTS ALL IMMEDIATE');
+        });
+    }
+
+    /**
+     * PF-069: the feeds are down and the business keeps trading.
+     *
+     * The requirement is unusual and worth restating: an invoice that cannot
+     * be issued because a third party's API is down is a WORSE outcome than
+     * an invoice issued at yesterday's rate. The second is correctable; the
+     * first is a customer not being billed.
+     *
+     * So the checks here are mostly about what does NOT happen.
+     *
+     * @return list<string>
+     */
+    public function anOutageDoesNotStopTrading(): array
+    {
+        $rates = app(ExchangeRates::class);
+        $fetcher = app(RateFetcher::class);
+        $violations = [];
+
+        $friday = Carbon::parse($this->postingDate);
+        $monday = $friday->copy()->addDays(3);
+
+        // Friday's rate is on file. Monday every feed is down.
+        $rates->record('EUR', 'SAR', $friday, '4.012500000000', rateSet: $this->rateSet);
+        $this->configureFeed(fn () => Http::response('gateway timeout', 504));
+
+        $result = $fetcher->fetch($monday, $this->rateSet);
+
+        if (! $this->mentions($result['from_fallback'], 'EUR/SAR')) {
+            $violations[] = 'with every feed down, EUR/SAR was not reported as falling back to the last known '.
+                'rate - so either it was silently refused, which stops the business billing, or it was '.
+                'silently invented';
+        }
+
+        /*
+         | Nothing may be written forward.
+         |
+         | Copying Friday's rate to Monday would assert that a feed published
+         | it on Monday. It did not - and the rate would then look current on
+         | every document that used it, which defeats the staleness flag the
+         | same requirement asks for.
+         */
+        $copied = $this->connection->table('fx_rates')
+            ->where('rate_set', $this->rateSet)
+            ->where('from_currency', 'EUR')
+            ->where('to_currency', 'SAR')
+            ->where('as_of_date', $monday->toDateString())
+            ->exists();
+
+        if ($copied) {
+            $violations[] = "Friday's rate was copied forward under Monday's date, which claims a feed "
+                .'published it on Monday and makes it look current on every document that uses it';
+        }
+
+        // And the conversion must still work, at the real date.
+        try {
+            $rate = $rates->rateFor('EUR', 'SAR', $monday, $this->rateSet);
+
+            if ($rate->date->format('Y-m-d') !== $friday->toDateString()) {
+                $violations[] = 'the rate used on Monday does not carry its real date, so nothing downstream '.
+                    'can tell how old it was';
+            }
+        } catch (Throwable $e) {
+            $violations[] = 'with the feeds down, converting EUR to SAR was refused outright - a feed outage '.
+                'must not stop an invoice being issued: '.Str::limit($e->getMessage(), 120);
+        }
+
+        // A second run must add nothing.
+        $before = $this->connection->table('fx_rates')->where('rate_set', $this->rateSet)->count();
+        $fetcher->fetch($monday, $this->rateSet);
+        $after = $this->connection->table('fx_rates')->where('rate_set', $this->rateSet)->count();
+
+        if ($after !== $before) {
+            $violations[] = sprintf(
+                're-running the fetch inserted %d more row(s); it has to be idempotent per pair, date, set and '.
+                'provider, because a partial failure is the normal way a rate job ends and retrying is the '.
+                'normal response',
+                $after - $before,
+            );
+        }
+
+        return $violations;
+    }
+
+    /** @return list<string> */
+    public function degradationIsAlerted(): array
+    {
+        $fetcher = app(RateFetcher::class);
+        $violations = [];
+
+        $this->configureFeed(fn () => Http::response('down', 503));
+
+        $result = $fetcher->fetch(Carbon::parse($this->postingDate), $this->rateSet);
+
+        if ($result['outcome'] === 'ok') {
+            return ['a fetch in which every feed returned 503 reported itself as ok'];
+        }
+
+        $run = $this->connection->table('fx_rate_fetch_runs')->where('id', $result['run_id'])->first();
+
+        if ($run === null) {
+            return ['the fetch left no run record, so there is nothing to alert on and nothing to read later'];
+        }
+
+        if ($run->alert_raised !== true) {
+            $violations[] = 'a degraded run did not raise an alert. Falling back silently is the failure mode: '.
+                'a month of invoices at a three-week-old rate produces a difference that is found at the '.
+                'close, is material, and every individual invoice looked fine at the time';
+        }
+
+        if ($run->provider_attempts === null || ! str_contains((string) $run->provider_attempts, '503')) {
+            $violations[] = 'the run does not record what each provider said, so "why is this rate from the '.
+                'fallback" cannot be answered without reading application logs';
+        }
+
+        /*
+         | The audit log as well as the run row.
+         |
+         | A log line is rotated and is not chained. The audit entry is
+         | append-only and sits beside the documents it explains, which is
+         | what somebody needs in March when asked why February's invoices
+         | carry a January rate.
+         */
+        $audited = $this->connection->table('audit_log')
+            ->where('subject_id', $result['run_id'])
+            ->where('action', 'fx.rates.'.$result['outcome'])
+            ->exists();
+
+        if (! $audited) {
+            $violations[] = 'the degradation reached no audit entry, so the only record of it is a log line '.
+                'that will be rotated away';
+        }
+
+        return $violations;
+    }
+
+    /** @return list<string> */
+    public function impossibleRatesAreRejected(): array
+    {
+        $fetcher = app(RateFetcher::class);
+        $date = Carbon::parse($this->postingDate)->addDays(2);
+
+        /*
+         | A feed sending a zero.
+         |
+         | The tempting handling is to skip that pair and keep the rest. It
+         | is wrong: a feed that sends a zero has broken in a way that gives
+         | no reason to trust the values beside it, and a rate of zero
+         | converts every amount to nothing while still balancing.
+         */
+        $this->configureFeed(fn () => Http::response(['rates' => ['SAR' => '0']], 200));
+
+        $result = $fetcher->fetch($date, $this->rateSet);
+
+        $stored = $this->connection->table('fx_rates')
+            ->where('rate_set', $this->rateSet)
+            ->where('as_of_date', $date->toDateString())
+            ->where('provider', 'probe_feed')
+            ->exists();
+
+        $violations = [];
+
+        if ($stored) {
+            $violations[] = 'a rate from a response that also contained a zero was stored; the whole response '.
+                'has to be treated as unusable, because nothing in it is now trustworthy';
+        }
+
+        $reported = collect($result['attempts'])->contains(
+            static fn (array $attempt): bool => $attempt['failure'] !== null,
+        );
+
+        if (! $reported) {
+            $violations[] = 'a feed that sent a rate of zero was not recorded as having failed, so it keeps '.
+                'its place in the precedence order and its failure counter stays at nought';
+        }
+
+        return $violations;
+    }
+
+    /** @return list<string> */
+    public function fetchRunsAreFinal(): array
+    {
+        $fetcher = app(RateFetcher::class);
+
+        $this->configureFeed(fn () => Http::response(['rates' => ['SAR' => '4.0125']], 200));
+        $result = $fetcher->fetch(Carbon::parse($this->postingDate), $this->rateSet);
+
+        $rewritten = $this->refusal(fn () => $this->connection->table('fx_rate_fetch_runs')
+            ->where('id', $result['run_id'])
+            ->update(['outcome' => 'ok', 'notes' => null, 'alert_raised' => false]));
+
+        if ($rewritten === null) {
+            return ['a finished fetch run was rewritten. It is the record of what the feeds said at that '.
+                'moment, which is the answer to why a document carries the rate it carries - and an answer '.
+                'that can be edited afterwards is not one'];
+        }
+
+        return [];
+    }
+
+    /**
+     * Point a single probe feed at a fake HTTP response.
+     *
+     * The provider row and the configuration are both written here, because
+     * the two halves live in different places on purpose - the precedence is
+     * an operator decision in the tenant's database, and the URL is a
+     * deployment concern in config - and a check that sets only one of them
+     * silently exercises nothing.
+     */
+    private function configureFeed(callable $response): void
+    {
+        $this->feedResponse = $response;
+
+        if (! $this->feedRegistered) {
+            // Registered once. See the note on $feedResponse.
+            Http::fake(fn () => ($this->feedResponse)());
+            $this->feedRegistered = true;
+        }
+
+        config(['fx.providers.probe_feed' => [
+            'driver' => 'http',
+            'url' => 'https://rates.invalid/{date}?base={base}&symbols={symbols}',
+            'rates_path' => 'rates',
+            'timeout' => 2,
+        ]]);
+
+        /*
+         | A precedence far from any real one. `fx_providers.precedence` is
+         | unique - two providers at the same rank means an arbitrary winner -
+         | so a check cannot reuse a number a seeded provider holds.
+         */
+        $this->connection->table('fx_providers')->updateOrInsert(
+            ['code' => 'probe_feed'],
+            [
+                'name' => 'Enforcement check feed',
+                'precedence' => 9001,
+                'active' => true,
+                'consecutive_failures' => 0,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        );
+    }
+
+    /** @param list<string> $haystack */
+    private function mentions(array $haystack, string $needle): bool
+    {
+        foreach ($haystack as $entry) {
+            if (str_contains($entry, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Write an entry with the given lines, returning the refusal or null.
+     *
+     * The provenance columns are derived from the rate rather than passed,
+     * because `journal_lines_rate_is_complete` demands all four together and
+     * a check that had to spell them out every time would get them wrong -
+     * which it did: the first version of this file supplied the rate and not
+     * its date, and the constraint refused the entries that were supposed to
+     * be ACCEPTED. The guard was right and the check was wrong.
      *
      * @param  list<array{0: string, 1: string, 2: string, 3: string|null, 4: string}>  $lines
      *     [account code, amount, currency, fx_rate, functional_amount]
@@ -536,6 +936,9 @@ final class CurrencyEnforcementRules
                     'amount' => $amount,
                     'currency' => $currency,
                     'fx_rate' => $rate,
+                    'fx_rate_set' => $rate === null ? null : $this->rateSet,
+                    'fx_rate_as_of' => $rate === null ? null : $this->postingDate,
+                    'fx_rate_provider' => $rate === null ? null : 'manual',
                     'functional_amount' => $functional,
                     'created_at' => now(),
                     'updated_at' => now(),

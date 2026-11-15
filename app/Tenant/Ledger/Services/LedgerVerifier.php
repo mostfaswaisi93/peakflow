@@ -44,7 +44,106 @@ final class LedgerVerifier
             ...$this->linesOutOfStepWithTheirEntry($entityId),
             ...$this->controlAccountsPostedManually($entityId),
             ...$this->orphanedLines($entityId),
+            ...$this->translationsWithNoProvenance($entityId),
+            ...$this->translationsAtStaleRates($entityId),
         ]);
+    }
+
+    /**
+     * Lines that used a rate and cannot say which one - PF-069.
+     *
+     * A warning, not a critical finding, and not something the database
+     * refuses on these rows: the completeness constraint on `journal_lines`
+     * is NOT VALID, so it governs every new line and leaves alone the ones
+     * translated before the provenance columns existed.
+     *
+     * That was deliberate. Those lines have a rate value and nothing else,
+     * and the provenance cannot be recovered - two feeds can have sent the
+     * same figure for different days, and the row may since have been
+     * superseded. Filling the columns with a plausible guess would be
+     * inventing audit evidence.
+     *
+     * So they are reported by name instead. "We know these cannot be traced
+     * and here they are" is a position an auditor can work with; discovering
+     * it mid-audit is not.
+     *
+     * @return list<LedgerFinding>
+     */
+    private function translationsWithNoProvenance(?string $entityId): array
+    {
+        $rows = $this->query($entityId, <<<'SQL'
+            SELECT e.number, count(*) AS lines
+            FROM journal_lines l
+            JOIN journal_entries e ON e.id = l.journal_entry_id
+            WHERE l.fx_rate IS NOT NULL
+              AND (l.fx_rate_set IS NULL OR l.fx_rate_as_of IS NULL OR l.fx_rate_provider IS NULL)
+              AND (cast(? AS char(26)) IS NULL OR l.entity_id = cast(? AS char(26)))
+            GROUP BY e.number
+            LIMIT 50
+        SQL);
+
+        return array_map(static fn (object $row): LedgerFinding => LedgerFinding::warning(
+            'translation with no provenance',
+            sprintf(
+                'Entry %s has %d line(s) carrying a rate with no date, set or provider.',
+                $row->number,
+                (int) $row->lines,
+            ),
+            'The figure can be checked but not placed: nobody can say whether the rate was current, whether it '.
+            'was the market or the statutory one, or which feed supplied it. These lines predate the provenance '.
+            'columns and the information cannot be recovered - a guess here would be invented audit evidence.',
+        ), $rows);
+    }
+
+    /**
+     * Postings translated at a rate older than its set allows - PF-069.
+     *
+     * The requirement is that a stale rate is flagged on every document that
+     * uses it, and this is the ledger-wide form of the same question. It is a
+     * warning because trading on an old rate is legitimate - a feed outage
+     * must not stop a business issuing invoices - and silently normal is what
+     * it must never be.
+     *
+     * Measured against the LINE's accounting date rather than today, because
+     * the question is whether the rate was stale when the posting was made.
+     * Against today, every rate in a closed year eventually looks stale and
+     * the finding becomes noise nobody reads.
+     *
+     * @return list<LedgerFinding>
+     */
+    private function translationsAtStaleRates(?string $entityId): array
+    {
+        $rows = $this->query($entityId, <<<'SQL'
+            SELECT
+                e.number,
+                l.fx_rate_set,
+                max(l.accounting_date - l.fx_rate_as_of) AS days_old,
+                s.staleness_threshold_days AS threshold,
+                count(*) AS lines
+            FROM journal_lines l
+            JOIN journal_entries e ON e.id = l.journal_entry_id
+            JOIN fx_rate_sets s ON s.code = l.fx_rate_set
+            WHERE l.fx_rate_as_of IS NOT NULL
+              AND l.accounting_date - l.fx_rate_as_of > s.staleness_threshold_days
+              AND (cast(? AS char(26)) IS NULL OR l.entity_id = cast(? AS char(26)))
+            GROUP BY e.number, l.fx_rate_set, s.staleness_threshold_days
+            LIMIT 50
+        SQL);
+
+        return array_map(static fn (object $row): LedgerFinding => LedgerFinding::warning(
+            'posted at a stale rate',
+            sprintf(
+                'Entry %s used a %s rate up to %d days old, against a threshold of %d, on %d line(s).',
+                $row->number,
+                $row->fx_rate_set,
+                (int) $row->days_old,
+                (int) $row->threshold,
+                (int) $row->lines,
+            ),
+            'Trading on an old rate is legitimate when a feed is down and must not block an invoice - but it '.
+            'has to be visible, because a month of invoices at a stale rate produces a difference that is '.
+            'found at the close and explained by nobody.',
+        ), $rows);
     }
 
     /**
