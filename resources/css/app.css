@@ -329,9 +329,26 @@
     /* Typography. The Arabic face carries the UI; the Latin face carries the
        numerals. Both are self-hosted - nothing is fetched from a third party
        at runtime, so an offline load keeps its typography. */
-    --font-sans: 'IBM Plex Sans Arabic', 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
-    --font-figure: 'IBM Plex Sans', 'IBM Plex Sans Arabic', sans-serif;
-    --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+    /*
+     | The fallbacks are named Arabic faces, not the generic `sans-serif`.
+     |
+     | IBM Plex is self-hosted only when the build fetched it
+     | (PEAKFLOW_FETCH_FONTS=1 - see vite.config.js), and the default build
+     | does not. So the fallback is the common case, and `sans-serif` alone is
+     | not a good one: on Linux the generic resolves to a Latin-first face
+     | whose Arabic coverage is whatever fontconfig substitutes, which is how
+     | an Arabic interface ends up rendered in a face nobody chose.
+     |
+     | So each platform's own Arabic UI face is named before the generic:
+     | Noto Sans Arabic on Linux, Android and ChromeOS; Geeza Pro on macOS and
+     | iOS; Segoe UI and Tahoma on Windows. The emoji faces come after the
+     | text faces, so they only ever serve codepoints a text face lacks.
+     */
+    --font-sans: 'IBM Plex Sans Arabic', 'Noto Sans Arabic', 'Geeza Pro', 'Segoe UI', Tahoma,
+        'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
+    --font-figure: 'IBM Plex Sans', 'IBM Plex Sans Arabic', 'Noto Sans Arabic', 'Segoe UI', Tahoma,
+        sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
     /* Motion - 120-240ms. Nothing over 500ms, nothing that loops. */
     --ease-standard: cubic-bezier(0.2, 0, 0, 1);

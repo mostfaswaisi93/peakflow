@@ -67,6 +67,7 @@ final class RepositoryRules
                 'composer setup takes a clone to a running application' => $this->setupIsComplete(),
                 'the development seeder refuses to run outside local' => $this->theSeederRefusesProduction(),
                 'the laptop setup is documented with measured numbers' => $this->theLaptopSetupIsDocumented(),
+                'nothing is fetched from a third party at runtime' => $this->nothingIsFetchedAtRuntime(),
             ];
         } finally {
             foreach (glob($this->temporary.'/*') ?: [] as $file) {
@@ -278,6 +279,161 @@ final class RepositoryRules
         if (! str_contains($composer, 'bin/setup')) {
             $problems[] = 'composer.json does not call bin/setup, so `composer setup` does something '.
                 'other than what is tested here.';
+        }
+
+        return $problems;
+    }
+
+    /**
+     * No stylesheet, template or built asset may reach a third party - PF-017.
+     *
+     * ## What this is really protecting
+     *
+     * Two things, and the privacy one is the one people forget. A webfont
+     * fetched from a CDN tells that CDN which pages a customer's finance team
+     * opens, request by request, with their IP address attached - and an
+     * accounting system's URLs say what the company is doing. The other is
+     * availability: a page whose typography depends on a third party loses it
+     * the moment that third party is unreachable, which is also the moment
+     * nobody can be asked about it.
+     *
+     * ## The vendoring itself is one flag and one allowed host away
+     *
+     * `vite.config.js` downloads IBM Plex at build time when
+     * `PEAKFLOW_FETCH_FONTS=1`, and the default is off because the download
+     * needs `fonts.bunny.net` - a build environment that denies that host
+     * would fail the WHOLE build rather than the font step, which is a worse
+     * failure than falling back to a system face.
+     *
+     * So what is asserted here is the part that holds either way: the built
+     * output contains no remote URL at all, every `@font-face` resolves to a
+     * local file, and the fallback stack names a real Arabic face rather than
+     * the generic `sans-serif` - because on Linux the generic resolves to
+     * whatever fontconfig substitutes, which is how an Arabic interface ends
+     * up rendered in a face nobody chose.
+     *
+     * @return list<string>
+     */
+    private function nothingIsFetchedAtRuntime(): array
+    {
+        $problems = [];
+        $base = $this->base();
+
+        $hosts = ['fonts.googleapis.com', 'fonts.gstatic.com', 'fonts.bunny.net', 'use.typekit.net', 'cdnjs.cloudflare.com', 'cdn.jsdelivr.net', 'unpkg.com'];
+
+        $files = array_merge(
+            glob($base.'/resources/css/*.css') ?: [],
+            glob($base.'/resources/views/**/*.blade.php') ?: [],
+            glob($base.'/resources/views/*.blade.php') ?: [],
+            glob($base.'/public/build/assets/*.css') ?: [],
+            glob($base.'/public/build/assets/*.js') ?: [],
+        );
+
+        foreach ($files as $file) {
+            $source = (string) file_get_contents($file);
+            $relative = str_replace($base.'/', '', $file);
+
+            foreach ($hosts as $host) {
+                if (str_contains($source, $host)) {
+                    $problems[] = sprintf(
+                        '%s references %s. A webfont or script fetched from a CDN tells that CDN which '.
+                        'pages a customer\'s finance team opens, request by request, with their IP '.
+                        'attached - and an accounting system\'s URLs say what the company is doing.',
+                        $relative,
+                        $host,
+                    );
+                }
+            }
+
+            /*
+             | And any remote URL in a BUILT asset, not only a known host.
+             |
+             | The built CSS is what a browser actually loads. A `url(https:...)`
+             | in it is a request to somewhere, whoever it belongs to.
+             */
+            if (str_contains($relative, 'public/build/')
+                && preg_match('#url\(\s*[\'"]?https?://#i', $source, $m) === 1) {
+                $problems[] = sprintf(
+                    '%s contains a remote url() (%s). The built CSS is what a browser loads, so a remote '.
+                    'URL in it is a request to a third party on every page view.',
+                    $relative,
+                    $m[0],
+                );
+            }
+        }
+
+        /*
+         | Every `@font-face` src must resolve to a file that exists.
+         |
+         | A vendored font that was deleted leaves a stylesheet asking for a
+         | 404, and the symptom is the fallback face - which looks like a
+         | design decision.
+         */
+        foreach (glob($base.'/resources/css/*.css') ?: [] as $file) {
+            $source = (string) file_get_contents($file);
+
+            if (preg_match_all('#src:\s*url\(\s*[\'"]?([^\'")]+)#i', $source, $matches) === 0) {
+                continue;
+            }
+
+            foreach ($matches[1] as $url) {
+                if (str_starts_with($url, 'http') || str_starts_with($url, 'data:')) {
+                    continue;
+                }
+
+                $resolved = realpath(\dirname($file).'/'.ltrim($url, '/'));
+
+                if ($resolved === false) {
+                    $problems[] = sprintf(
+                        '%s declares a @font-face src of "%s", which does not resolve to a file. The '.
+                        'symptom is the fallback face, which looks like a design decision.',
+                        str_replace($base.'/', '', $file),
+                        $url,
+                    );
+                }
+            }
+        }
+
+        /*
+         | The Arabic fallback, which is the part that is wrong by default.
+         |
+         | `sans-serif` alone is not a fallback for an Arabic interface: the
+         | generic resolves to a Latin-first face on Linux and the Arabic
+         | coverage is whatever fontconfig substitutes.
+         */
+        $css = (string) file_get_contents($base.'/resources/css/app.css');
+
+        if (preg_match('/--font-sans:\s*([^;]+);/s', $css, $stack) !== 1) {
+            $problems[] = 'resources/css/app.css declares no --font-sans token.';
+
+            return $problems;
+        }
+
+        $arabicFallbacks = ['Noto Sans Arabic', 'Geeza Pro', 'Tahoma', 'Segoe UI'];
+        $named = 0;
+
+        foreach ($arabicFallbacks as $face) {
+            if (str_contains($stack[1], $face)) {
+                $named++;
+            }
+        }
+
+        if ($named < 2) {
+            $problems[] = sprintf(
+                'The --font-sans stack names %d Arabic-capable fallback face(s) and should name several: '.
+                'Noto Sans Arabic on Linux and Android, Geeza Pro on macOS, Segoe UI or Tahoma on '.
+                'Windows. Falling through to the generic `sans-serif` leaves an Arabic interface in '.
+                'whatever fontconfig substitutes, which is a face nobody chose.',
+                $named,
+            );
+        }
+
+        // And the build flag has to be documented, or nobody knows it exists.
+        $example = (string) file_get_contents($base.'/.env.example');
+
+        if (! str_contains($example, 'PEAKFLOW_FETCH_FONTS')) {
+            $problems[] = '.env.example does not mention PEAKFLOW_FETCH_FONTS, so the switch that '.
+                'self-hosts the fonts is a thing only vite.config.js knows about.';
         }
 
         return $problems;

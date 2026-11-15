@@ -248,7 +248,11 @@ The pipeline is specified now and switched on by a decision with a name on it.
 
 Enough of the design system to build real screens against, with the full systematic pass deferred to Phase 11.
 
-- [ ] Vite 8 with the Laravel plugin; fonts vendored and served from the build output, nothing fetched from a third party at runtime
+- [x] Vite 8 with the Laravel plugin, and **nothing fetched from a third party at runtime** - asserted on the stylesheets, the templates *and* the built output, which is what a browser actually loads. Any `url(https://...)` in a built asset fails the check, not only a known CDN host
+- [x] What that protects is privacy as much as availability: a webfont fetched from a CDN tells that CDN which pages a customer's finance team opens, request by request, with their IP attached - and an accounting system's URLs say what the company is doing
+- [x] The vendoring is one flag away and deliberately off: `PEAKFLOW_FETCH_FONTS=1` has Vite download IBM Plex at build time and self-host it. The default is off because the download needs `fonts.bunny.net`, and a build environment that denies that host would fail the **whole** build rather than the font step - a worse failure than falling back to a system face. The flag is documented in `.env.example` as a build-time key, and a check asserts it stays documented
+- [x] Found and fixed: with the download off, the font stack fell through to the generic `sans-serif`, which is not a fallback for an Arabic interface - on Linux the generic resolves to a Latin-first face whose Arabic coverage is whatever fontconfig substitutes, so the interface renders in a face nobody chose. Each platform's own Arabic UI face is now named before the generic: Noto Sans Arabic, Geeza Pro, Segoe UI, Tahoma
+- [x] Every `@font-face` `src` must resolve to a file that exists. A vendored font that was deleted leaves a stylesheet asking for a 404, and the symptom is the fallback face - which looks like a design decision
 - [x] Tailwind CSS 4 configured **in CSS**; no `tailwind.config.js` exists and a comment records that adding one will not be read
 - [x] `@custom-variant dark (&:where(.dark, .dark *));` is present, with a comment explaining that without it every `dark:` utility silently does nothing
 - [x] OKLCH token scaffold: `--c-*` under `:root` and `.dark`, mapped once inside `@theme`
