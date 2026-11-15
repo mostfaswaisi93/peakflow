@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+#
+# Bring the local services up and confirm the application can reach them.
+#
+# `compose.yaml` is the documented way to run these, but a sandbox or a CI
+# runner often has PostgreSQL and Redis installed directly. This script works
+# either way: it uses Docker Compose when the daemon is available, and the
+# system services when it is not.
+#
+# Idempotent. Run it as often as you like.
+#
+#   bin/dev-up            services, then a readiness check
+#   bin/dev-up --migrate  also run the platform migrations
+#
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+say()  { printf '\033[1m%s\033[0m\n' "$1"; }
+ok()   { printf '  \033[32mok\033[0m    %s\n' "$1"; }
+fail() { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; }
+
+say 'Services'
+
+if docker info >/dev/null 2>&1 && [ -f compose.yaml ]; then
+    docker compose up -d --wait postgres redis >/dev/null 2>&1 \
+        && ok 'docker compose: postgres, redis' \
+        || fail 'docker compose could not start the services'
+else
+    # No Docker daemon. Use whatever is installed on the host.
+    if command -v pg_isready >/dev/null 2>&1; then
+        pg_isready >/dev/null 2>&1 || service postgresql start >/dev/null 2>&1 || true
+        pg_isready >/dev/null 2>&1 && ok 'postgresql (system service)' || fail 'postgresql is not accepting connections'
+    else
+        fail 'no postgresql found - the feature suite cannot run without one, by design'
+    fi
+
+    if command -v redis-cli >/dev/null 2>&1; then
+        redis-cli ping >/dev/null 2>&1 \
+            || redis-server --daemonize yes --save '' --appendonly no >/dev/null 2>&1 || true
+        redis-cli ping >/dev/null 2>&1 && ok 'redis (system service)' || fail 'redis is not responding'
+    else
+        fail 'no redis found - cache, queues and the scheduler locks need one'
+    fi
+fi
+
+say 'Application'
+
+[ -f .env ] || { cp .env.example .env && php artisan key:generate --force --quiet; }
+ok '.env present'
+
+if php artisan db:show --database=platform >/dev/null 2>&1; then
+    ok 'platform database reachable'
+else
+    fail 'platform database not reachable - check DB_* in .env'
+fi
+
+if [ "${1:-}" = '--migrate' ]; then
+    say 'Migrations'
+    # As the MIGRATOR role, from a separate connection. The application role
+    # has no DDL privileges at all - see PF-010.
+    php artisan migrate --database=migrator --force --quiet && ok 'platform schema up to date'
+fi
+
+say 'Checks'
+php bin/verify | tail -3

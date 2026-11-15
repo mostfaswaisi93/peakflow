@@ -11,38 +11,38 @@ The identity work in this phase is not generic authentication. It is the part of
 ### PF-018 · Platform schema
 `Platform` · **3 pts** · depends: PF-010 · standards: —
 
-- [ ] `operators`, `tenants`, `plans`, `subscriptions`, `database_connections`, `platform_settings`, `activity_logs`
-- [ ] ULID primary keys throughout
-- [ ] `database_connections.password` encrypted at the column level with the application key, and excluded from every model's serialization
-- [ ] `activity_logs` indexed on `created_at` and on `(operator_id, created_at)` - a composite leading with the filter and trailing with the sort, because PostgreSQL uses one index per table reference and a lone `operator_id` index lets it filter or sort, never both
+- [x] `operators`, `tenants`, `plans`, `subscriptions`, `database_connections`, `platform_settings`, `activity_logs`
+- [x] ULID primary keys throughout
+- [x] `database_connections.password` encrypted at the column level with the application key, and excluded from every model's serialization
+- [x] `activity_logs` indexed on `created_at` and on `(operator_id, created_at)` - a composite leading with the filter and trailing with the sort, because PostgreSQL uses one index per table reference and a lone `operator_id` index lets it filter or sort, never both
 
 ### PF-019 · Tenant provisioning, create mode
 `Platform` · **8 pts** · depends: PF-018 · standards: — · `risk:high`
 
-- [ ] `tenants:provision` issues `CREATE DATABASE`, `CREATE ROLE`, `GRANT`, runs the tenant migrations and seeds the baseline
-- [ ] Each tenant gets its own database **role** with a generated password, not a shared one
-- [ ] The whole provision is idempotent and transactional at the step level: a failure half way leaves no orphan database and no half-registered tenant
+- [x] `tenants:provision` issues `CREATE DATABASE`, `CREATE ROLE`, `GRANT`, runs the tenant migrations and seeds the baseline
+- [x] Each tenant gets its own database **role** with a generated password, not a shared one
+- [x] The whole provision is idempotent and transactional at the step level: a failure half way leaves no orphan database and no half-registered tenant
 - [ ] A rollback path drops what it created, and is tested by injecting a failure at each step
-- [ ] Provisioning runs as `peakflow_migrator`, never as the application role
+- [x] Provisioning runs as `peakflow_migrator`, never as the application role
 
 ### PF-020 · Tenant provisioning, link mode
 `Platform` · **3 pts** · depends: PF-019 · standards: —
 
 For managed hosting where `CREATE DATABASE` is not available.
 
-- [ ] A pre-created database and credentials can be attached to a new tenant
-- [ ] The connection is verified, the schema version checked, and migrations applied before the tenant is marked usable
-- [ ] The mode is recorded on the tenant, because the backup and restore procedure differs between them
+- [x] A pre-created database and credentials can be attached to a new tenant
+- [x] The connection is verified, the schema version checked, and migrations applied before the tenant is marked usable
+- [x] The mode is recorded on the tenant, because the backup and restore procedure differs between them
 
 ### PF-021 · Connection resolution and middleware ordering
 `Platform` · **5 pts** · depends: PF-019 · standards: — · `risk:high`
 
-- [ ] `TenantConnectionResolver` rewrites `database.connections.tenant` and purges the connection
-- [ ] `tenant.session` resolves from the session; `tenant.header` resolves from `X-Tenant`
-- [ ] Both are pinned **ahead of** the auth middleware via `prependToPriorityList`, and a test asserts the resolved order - because the user table lives in the tenant database and a guard that ran first would query the wrong one
-- [ ] The resolved tenant is bound into the container as `currentTenant`
+- [x] `TenantConnectionResolver` rewrites `database.connections.tenant` and purges the connection
+- [x] `tenant.session` resolves from the session; `tenant.header` resolves from `X-Tenant`
+- [x] Both are pinned **ahead of** the auth middleware via `prependToPriorityList`, and a test asserts the resolved order - because the user table lives in the tenant database and a guard that ran first would query the wrong one
+- [x] The resolved tenant is bound into the container as `currentTenant`
 - [ ] A subscription that became invalid between page loads tears down the session and redirects to a dedicated page rather than failing the next query
-- [ ] A tenant mid-migration returns `503` with `Retry-After`
+- [x] A tenant mid-migration returns `503` with `Retry-After`
 
 ### PF-022 · Subscription lifecycle and plan gating
 `Platform` · **3 pts** · depends: PF-021 · standards: —
@@ -56,25 +56,25 @@ For managed hosting where `CREATE DATABASE` is not available.
 `Platform` · **5 pts** · depends: PF-019 · standards: —
 
 - [ ] `tenants:migrate {tenant}` and `--all`, with batching, concurrency limits and per-tenant failure isolation
-- [ ] A dry-run mode reporting what would change per tenant
+- [x] A dry-run mode reporting what would change per tenant
 - [ ] A pre-flight check refusing a migration that is not safe to run while the application serves traffic - adding a non-nullable column without a default, rewriting a large table, taking an `ACCESS EXCLUSIVE` lock on a partitioned table
-- [ ] A schema-version row per tenant, so a request can detect a tenant that is behind and respond rather than fail
-- [ ] A documented note that the plain `migrate` command applies only the platform schema
+- [x] A schema-version row per tenant, so a request can detect a tenant that is behind and respond rather than fail
+- [x] A documented note that the plain `migrate` command applies only the platform schema
 
 ### PF-024 · Tenant identity schema
 `Identity` · **3 pts** · depends: PF-023 · standards: —
 
-- [ ] `users`, `roles`, `permissions`, `role_permissions`, `user_entity_roles`, `sessions`, `authenticators`, `audit_log`
-- [ ] A user's roles are held **per entity**, not globally - a group accountant holds roles in four companies, a subsidiary clerk in one
-- [ ] Soft deletes on `users`, so a document created three years ago still resolves its author
+- [x] `users`, `roles`, `permissions`, `role_permissions`, `user_entity_roles`, `sessions`, `authenticators`, `audit_log`
+- [x] A user's roles are held **per entity**, not globally - a group accountant holds roles in four companies, a subsidiary clerk in one
+- [x] Soft deletes on `users`, so a document created three years ago still resolves its author
 
 ### PF-025 · The entity model
 `Tenancy` · **5 pts** · depends: PF-024 · standards: IAS 21 · `risk:high`
 
-- [ ] `entities` with legal name, registration numbers, country, **functional currency**, fiscal calendar reference and presentation-currency default
-- [ ] One or more `tax_registrations` per entity, each with a jurisdiction, a scheme and an identifier
-- [ ] The functional currency is immutable once the entity has posted anything - changing it is an IAS 21 re-presentation, not an edit, and the UI explains that
-- [ ] Documented: what an entity owns exclusively (chart, currency, calendar, registrations, numbering, postings) and what is shared across the tenant (users, parties, items, currencies, rates, documents)
+- [x] `entities` with legal name, registration numbers, country, **functional currency**, fiscal calendar reference and presentation-currency default
+- [x] One or more `tax_registrations` per entity, each with a jurisdiction, a scheme and an identifier
+- [x] The functional currency is immutable once the entity has posted anything - changing it is an IAS 21 re-presentation, not an edit, and the UI explains that
+- [x] Documented: what an entity owns exclusively (chart, currency, calendar, registrations, numbering, postings) and what is shared across the tenant (users, parties, items, currencies, rates, documents)
 
 ### PF-026 · Entity scoping and row-level security
 `Tenancy` · **8 pts** · depends: PF-025 · standards: — · `risk:high` `type:security`
@@ -83,8 +83,8 @@ Two independent mechanisms, because one of them will eventually have a hole.
 
 - [ ] `entity.scope` middleware binds `currentEntity` and refuses an entity the user holds no role in
 - [ ] A global Eloquent scope applies `entity_id` to every financial model
-- [ ] PostgreSQL **row-level security** policies on every financial table inside the tenant database, keyed on a session variable set per request
-- [ ] A test proves that bypassing the Eloquent scope - raw query, console command - still returns nothing for a foreign entity
+- [x] PostgreSQL **row-level security** policies on every financial table inside the tenant database, keyed on a session variable set per request
+- [x] A test proves that bypassing the Eloquent scope - raw query, console command - still returns nothing for a foreign entity
 - [ ] The architecture test from `PF-005` requiring `entity_id` is extended to require an RLS policy for each such table
 
 ### PF-027 · Entity switching

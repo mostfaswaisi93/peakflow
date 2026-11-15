@@ -94,13 +94,33 @@ Cross-Origin-Resource-Policy: same-origin
 
 ## Database privileges
 
+Three roles, and the application is not the migrator. Inside a tenant database the **migrator owns the schema** and is the only role that can create, alter or drop anything; the **tenant role** - what the application connects as - gets `USAGE` plus default DML and no DDL whatsoever. Database ownership and schema ownership are separate, so a per-tenant `pg_dump` stays straightforward while the tenant role owns nothing inside its own database.
+
+### Append-only tables declare themselves
+
+Default privileges give the tenant role `SELECT, INSERT, UPDATE, DELETE` on every table the migrator creates. That is right for almost all of them and wrong for the ledger and the audit log, so those tables opt out with a table comment:
+
 ```sql
--- Three roles. The application is not the migrator.
-REVOKE DELETE ON journal_entries, journal_lines, bank_transactions,
-                 audit_log, invoices, bills FROM peakflow_app;
-REVOKE CREATE, ALTER, DROP ON SCHEMA public FROM peakflow_app;
--- peakflow_app has no grant on the platform database at all.
+COMMENT ON TABLE audit_log IS 'peakflow:append-only - ...';
 ```
+
+`TenantProvisioner::harden()` runs as part of every migration, reads the marker, and revokes `UPDATE, DELETE` from the tenant role — **on the parent and on every partition individually**, because a privilege granted on a partitioned table does not describe the partitions underneath it.
+
+The marker is read rather than listed deliberately. A migration that adds an append-only table is hardened by the comment it already wants for its own documentation; there is no register to update and nothing to forget.
+
+> **This was a real defect, found by a behavioural check and worth keeping as a warning.**
+>
+> An earlier version of the audit-log migration did the revoke itself:
+>
+> ```sql
+> REVOKE UPDATE, DELETE ON audit_log FROM peakflow_app;  -- wrong
+> ```
+>
+> The role a tenant connects as is generated per tenant (`pf_t_<ulid>`), so `peakflow_app` is not it. The statement was a well-formed no-op against a role that exists in the cluster but never connects to a tenant database. The migration's own docblock claimed three independent layers of protection; two of them were real and the privilege revoke was decoration.
+>
+> Nothing in the code could have found this. The migration ran without error, a tampering attempt was still refused — by the trigger — and a test that only checked *that* a mutation fails would have passed for years. What found it was a check that asked the catalogue `has_table_privilege(current_user, 'audit_log', 'UPDATE')` and got back `true`.
+>
+> The lesson is in `TenantEnforcementRules`: **check each layer of a defence separately, against the thing that enforces it.** A check satisfied by any refusal cannot tell you how many layers you have left. The trigger is now proven by running as a role that *does* hold the privilege, so the two layers can never mask one another again.
 
 **A drift check verifies the live grants on every deploy**, because a manual grant made during an incident is exactly how this regresses, and nobody remembers to revert it.
 

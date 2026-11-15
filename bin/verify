@@ -20,6 +20,7 @@ declare(strict_types=1);
  |   php bin/verify            everything
  |   php bin/verify arch       architecture rules only (source files)
  |   php bin/verify wiring     wiring rules only (the booted application)
+ |   php bin/verify tenant     what the tenant database actually enforces
  |   php bin/verify examples   worked examples only
  |
  | Exits non-zero on any violation.
@@ -59,12 +60,16 @@ if ($only === 'all' || $only === 'wiring') {
     $suites['Wiring'] = (new Tests\Support\WiringRules($app))->all();
 }
 
+if ($only === 'all' || $only === 'tenant') {
+    $suites['Tenant enforcement'] = (new Tests\Support\TenantEnforcementRules())->all();
+}
+
 if ($only === 'all' || $only === 'examples') {
     $suites['Worked examples'] = (new Tests\Support\WorkedExamples())->all();
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | examples\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | examples\n");
     exit(2);
 }
 
