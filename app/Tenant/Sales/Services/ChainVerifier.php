@@ -151,6 +151,10 @@ final class ChainVerifier
             'issue_date' => $document->issue_date->toDateString(),
             'tax_point' => ($document->tax_point ?? $document->issue_date)->toDateString(),
             'currency' => $document->currency,
+
+            // Which form it was issued in - PF-101. Material: a simplified
+            // invoice and a full one carry different obligations.
+            'simplified' => (bool) $document->simplified,
             'totals' => [
                 'net' => $document->net_amount,
                 'tax' => $document->tax_amount,

@@ -56,7 +56,7 @@ final class Invoice extends TenantModel
         'presentation_exponent', 'supplier_snapshot', 'customer_snapshot',
         'terms_snapshot', 'tax_decision_snapshot',
         'issued_at', 'issued_by', 'canonical', 'canonical_hash', 'previous_hash', 'chain_index',
-        'profile', 'note', 'created_by',
+        'profile', 'note', 'created_by', 'simplified',
     ];
 
     protected $casts = [
@@ -70,6 +70,7 @@ final class Invoice extends TenantModel
         'terms_snapshot' => 'array',
         'tax_decision_snapshot' => 'array',
         'presentation_exponent' => 'integer',
+        'simplified' => 'boolean',
         'chain_index' => 'integer',
     ];
 

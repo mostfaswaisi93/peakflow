@@ -208,6 +208,8 @@ if ($only === 'all' || $only === 'sales') {
     $suites['Credit notes'] = $suite(static fn (): array => (new Tests\Support\CreditNoteRules())->all());
     $suites['Debit notes and corrections'] = $suite(static fn (): array => (new Tests\Support\CorrectionRules())->all());
     $suites['Prepayments'] = $suite(static fn (): array => (new Tests\Support\PrepaymentRules())->all());
+    $suites['Self-billing'] = $suite(static fn (): array => (new Tests\Support\SelfBillingRules())->all());
+    $suites['Simplified and B2C'] = $suite(static fn (): array => (new Tests\Support\SimplifiedInvoiceRules())->all());
 }
 
 if ($only === 'all' || $only === 'sod') {

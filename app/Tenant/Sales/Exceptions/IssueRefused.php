@@ -66,6 +66,14 @@ final class IssueRefused extends RuntimeException
         ));
     }
 
+    public static function aLineWithNoExpenseAccount(): self
+    {
+        return new self(
+            'A line of a self-billed invoice has no expense account. A purchase posts to an expense, '.
+            'and a line with nowhere to post is a cost the books will never show.',
+        );
+    }
+
     public static function aFinalInvoiceWithNoPrepayment(): self
     {
         return new self(

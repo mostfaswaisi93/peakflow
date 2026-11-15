@@ -154,6 +154,7 @@ enum DocumentType: string
             self::CreditNote => 'sales.credit_note_issued',
             self::CorrectedInvoice => 'sales.corrected_invoice_issued',
             self::PrepaymentInvoice => 'sales.prepayment_invoice_issued',
+            self::SelfBilledInvoice => 'sales.self_billed_invoice_issued',
             default => 'sales.invoice_issued',
         };
     }

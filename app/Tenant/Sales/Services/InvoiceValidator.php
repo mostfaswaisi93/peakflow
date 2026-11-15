@@ -59,12 +59,16 @@ final class InvoiceValidator
         }
 
         foreach ($lines as $line) {
-            foreach ($this->checkLine($line) as $finding) {
+            foreach ($this->checkLine($line, $invoice) as $finding) {
                 $findings[] = $finding;
             }
         }
 
         foreach ($this->checkTotals($invoice, $lines->all()) as $finding) {
+            $findings[] = $finding;
+        }
+
+        foreach ($this->checkTheForm($invoice) as $finding) {
             $findings[] = $finding;
         }
 
@@ -96,10 +100,45 @@ final class InvoiceValidator
     }
 
     /** @return list<InvoiceFinding> */
-    private function checkLine(InvoiceLine $line): array
+    private function checkLine(InvoiceLine $line, Invoice $invoice): array
     {
         $findings = [];
         $field = 'lines.'.$line->line_no;
+
+        /*
+         | The account's TYPE has to match the document's side - PF-100.
+         |
+         | `revenue_account_id` holds the account a line posts to, and on a
+         | purchase-side document that is an expense account. The name is
+         | historical and the ambiguity is real, so it is checked rather than
+         | assumed: a self-billed invoice whose lines point at revenue
+         | accounts posts a purchase into revenue, and every figure in that
+         | entry looks defensible.
+         */
+        $expected = $invoice->document_type->isPurchaseSide() ? 'expense' : 'revenue';
+        $account = $line->revenue_account_id === null
+            ? null
+            : \App\Tenant\Ledger\Models\Account::query()
+                ->whereKey((string) $line->revenue_account_id)
+                ->first(['id', 'type']);
+
+        $type = $account === null ? null : $account->type->value;
+
+        if ($type !== null && $type !== $expected) {
+            $findings[] = InvoiceFinding::blocking(
+                $field.'.revenue_account_id',
+                'the_wrong_side_of_the_books',
+                sprintf(
+                    'This line posts to a %s account and a %s document posts to %s. A purchase posted '.
+                    'into revenue, or a sale into an expense, balances and adds up - what is wrong is '.
+                    'the direction of the whole document.',
+                    $type,
+                    $invoice->document_type->label('en'),
+                    $expected,
+                ),
+                sprintf('هذا السطر يُرحّل إلى حساب %s والمستند يجب أن يُرحّل إلى %s.', $type, $expected),
+            );
+        }
 
         if ($line->tax_code_id === null) {
             $findings[] = InvoiceFinding::blocking(
@@ -243,6 +282,62 @@ final class InvoiceValidator
     }
 
     /**
+     * The simplified form, and the threshold that ends it - PF-101.
+     *
+     * Checked here as well as in `Simplified::mark()`, because a draft marked
+     * simplified at 80 EUR and then edited to 120 is the ordinary way a
+     * document outgrows its form - and the person editing can fix it now
+     * while at the moment of issue the only options are to abandon it or to
+     * change its form.
+     *
+     * @return list<InvoiceFinding>
+     */
+    private function checkTheForm(Invoice $invoice): array
+    {
+        if (! (bool) $invoice->simplified) {
+            return [];
+        }
+
+        $profile = (string) ($invoice->profile ?? config('jurisdictions.default_profile', 'generic'));
+
+        try {
+            $form = app(\App\Tenant\Sales\Services\Simplified::class)->formFor($profile);
+        } catch (\Throwable $e) {
+            return [InvoiceFinding::blocking(
+                'simplified',
+                'simplified_form_is_not_declared',
+                $e->getMessage(),
+                'لم يُعلَن عن الفاتورة المبسطة لهذا النظام الضريبي.',
+            )];
+        }
+
+        $gross = \App\Support\Money\Money::of((string) $invoice->gross_amount, (string) $invoice->currency);
+
+        if ($form->admits($gross)) {
+            return [];
+        }
+
+        return [InvoiceFinding::blocking(
+            'simplified',
+            'above_the_simplified_threshold',
+            sprintf(
+                'This document is for %s %s and the %s profile\'s simplified form does not reach it. '.
+                'Above the limit the form is not available at all, so the document has to be issued '.
+                'in full - which is an upgrade of the type rather than a document that is slightly '.
+                'wrong.',
+                (string) $gross->amount,
+                (string) $gross->currency,
+                $profile,
+            ),
+            sprintf(
+                'قيمة المستند %s %s تتجاوز حد الفاتورة المبسطة في هذا النظام، فيجب إصدارها كفاتورة كاملة.',
+                (string) $gross->amount,
+                (string) $gross->currency,
+            ),
+        )];
+    }
+
+    /**
      * @param  list<InvoiceLine>  $lines
      * @return list<InvoiceFinding>
      */
@@ -260,7 +355,27 @@ final class InvoiceValidator
             )];
         }
 
-        if (! (bool) $party->is_customer) {
+        /*
+         | Which side of the relationship the party has to be on - PF-100.
+         |
+         | A self-billed invoice is a purchase: the buyer issues it on the
+         | supplier's behalf, and the party it names is a supplier. Checking
+         | `is_customer` for every document type would refuse every
+         | self-billed invoice, and dropping the check for all of them would
+         | let an ordinary invoice be addressed to a supplier record - which
+         | is how a payment ends up chasing the wrong side of a relationship.
+         */
+        if ($invoice->document_type->isPurchaseSide()) {
+            if (! (bool) $party->is_supplier) {
+                $findings[] = InvoiceFinding::blocking(
+                    'party_id',
+                    'party_is_not_a_supplier',
+                    'A self-billed invoice records money owed to the party it names, and this party is '.
+                    'not marked as a supplier.',
+                    'الفاتورة الذاتية تُسجّل مبلغاً مستحقاً للطرف المذكور، وهذا الطرف غير مُعلَّم كمورّد.',
+                );
+            }
+        } elseif (! (bool) $party->is_customer) {
             $findings[] = InvoiceFinding::blocking(
                 'party_id',
                 'party_is_not_a_customer',

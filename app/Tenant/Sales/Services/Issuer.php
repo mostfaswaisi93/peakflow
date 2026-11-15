@@ -384,6 +384,15 @@ final class Issuer
             'issue_date' => $draft->issue_date->toDateString(),
             'tax_point' => ($draft->tax_point ?? $draft->issue_date)->toDateString(),
             'currency' => $draft->currency,
+
+            /*
+             | Which form it was issued in - PF-101.
+             |
+             | Material, not cosmetic: a simplified invoice and a full one
+             | carry different obligations, and a document changed from one
+             | to the other after issue has to break the chain.
+             */
+            'simplified' => (bool) $draft->simplified,
             'totals' => [
                 'net' => $draft->net_amount,
                 'tax' => $draft->tax_amount,

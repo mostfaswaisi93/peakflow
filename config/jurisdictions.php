@@ -310,6 +310,92 @@ return [
         'jofotara' => 'at_prepayment',
     ],
 
+    /*
+    |---------------------------------------------------------------------------
+    | Simplified invoices - PF-101
+    |---------------------------------------------------------------------------
+    |
+    |   permitted   whether the regime has a simplified document at all
+    |   threshold   the gross above which it may NOT be used, in `currency`,
+    |               or null where the regime sets no value limit
+    |   omits       the fields the simplified form does not require
+    |
+    | A simplified invoice is a real document with a reduced mandatory field
+    | set, not a prettier receipt. Its existence and its limits are the
+    | regime's, which is why they are declared here: a system that invents a
+    | threshold issues documents the authority rejects, and one that invents
+    | the reduced field set issues documents that are missing something.
+    |
+    | Exceeding the threshold does not make the document invalid-but-sent: it
+    | **upgrades the type**. `Simplified` refuses to mark one above the limit
+    | and names the figure, because the alternative is a document already
+    | filed under a form that does not apply to it.
+    |
+    | The threshold is read by the service and NOT by the database: it is a
+    | figure per regime in a currency, and storing it per tenant would make
+    | it a number somebody maintains. The database enforces what it can see -
+    | which document types may be simplified at all.
+    */
+    'simplified' => [
+        'generic' => [
+            'permitted' => true,
+            'threshold' => null,
+            'currency' => null,
+            'omits' => ['customer_registration'],
+        ],
+
+        /*
+         | The EU's simplified invoice: permitted below EUR 100 - Council
+         | Directive 2006/112/EC Art. 220a and 238, as implemented by each
+         | member state. The amount is the directive's ceiling; a state may
+         | set a lower one, which is a per-country figure this does not model.
+         */
+        'peppol' => [
+            'permitted' => true,
+            'threshold' => '100.00',
+            'currency' => 'EUR',
+            'omits' => ['customer_registration', 'customer_address'],
+        ],
+        'facturx' => [
+            'permitted' => true,
+            'threshold' => '100.00',
+            'currency' => 'EUR',
+            'omits' => ['customer_registration', 'customer_address'],
+        ],
+
+        /*
+         | ZATCA's simplified tax invoice is the B2C form, with no value
+         | limit: what decides it is the customer, not the amount. A B2B
+         | supply needs a standard invoice whatever it is worth.
+         */
+        'zatca' => [
+            'permitted' => true,
+            'threshold' => null,
+            'currency' => null,
+            'omits' => ['customer_registration', 'customer_address'],
+        ],
+
+        /*
+         | Egypt's consumer sales go through the e-receipt system rather than
+         | the e-invoice one, which is a different submission with a
+         | different schema - so there is no simplified INVOICE here, and
+         | saying so is better than offering one the authority will not take.
+         */
+        'eta' => [
+            'permitted' => false,
+            'threshold' => null,
+            'currency' => null,
+            'omits' => [],
+        ],
+
+        'jofotara' => [
+            'permitted' => true,
+            'threshold' => null,
+            'currency' => null,
+            'omits' => ['customer_registration'],
+        ],
+    ],
+
     'rounding' => [
         'generic' => [
             'mode' => 'half_up',

@@ -231,6 +231,41 @@ Three details that are easy to get wrong and are each checked:
 
 A prepayment is applied to **exactly one** invoice, by primary key. Splitting one across several is deliberately not modelled: it needs a balance per prepayment, ordering rules for when two invoices compete for the remainder, and a report of what is left — an allocation ledger rather than a column. Returning part of one is a credit note.
 
+## Self-billed invoices
+
+The buyer writes the supplier's invoice on their behalf, under an agreement both parties signed. Every regime that permits it requires that agreement, and most require it to be produced on request — so it is a row with a reference, a signing date and a half-open validity range, not a checkbox on the party. The question an auditor asks is which agreement was in force on the date of the document.
+
+Two agreements with one party cannot overlap (an exclusion constraint), because two in force at once is two answers to "which agreement is this document under" and the document carries one reference. The trigger refuses a `389` whose supplier has no agreement covering its tax point, so a second issuing path cannot produce a document the regime does not recognise.
+
+**It posts as a purchase**, which is the part that is easy to get backwards:
+
+```
+Dr  the line's expense account    each line's net
+Dr  vat_input @ the jurisdiction  each rate group's tax
+Cr  accounts_payable              the gross owed to the supplier
+```
+
+Posted as a sale it looks right in every individual figure: the supplier appears as a customer who owes money, the tax lands in output so the return declares tax on a purchase and claims nothing back, and revenue rises by the cost of the goods. The entry balances and the trial balance adds up — what is wrong is the direction of the whole document. So the check reads the **side** of each account rather than the amounts, and the validator refuses a line whose account type does not match the document's side (`invoice_lines.revenue_account_id` holds an expense account here; the name is historical and the ambiguity is real).
+
+## Simplified and B2C documents
+
+A simplified invoice is a real document with a reduced mandatory field set, not a prettier receipt. Its existence, its limits and what it omits are the regime's:
+
+| Profile | Simplified form | Threshold | Omits |
+|---|---|---|---|
+| `peppol`, `facturx` | yes | EUR 100 | customer registration, address |
+| `zatca` | yes | none — the customer decides, not the amount | customer registration, address |
+| `generic`, `jofotara` | yes | none | customer registration |
+| `eta` | **no** — consumer sales go through the e-receipt system | — | — |
+
+Exceeding the threshold **upgrades the document type**. It does not make a simplified invoice slightly wrong: the regimes that set a limit set it as a condition of using the form at all, so the document has to be issued in full — with the customer's registration and address, which is what somebody chose the simplified form to avoid typing. That is refused when the form is chosen *and* re-checked at issue, because a draft marked simplified at 80 and edited to 120 is the ordinary way a document outgrows its form.
+
+A threshold in another currency is not converted: doing so would be this system deciding what the regime's limit means on a rate of its choosing. The standard form is always acceptable; the simplified one is the concession.
+
+Which form a document was issued in is **under the hash**, because a simplified invoice and a full one carry different obligations.
+
+**B2C** is not a document type — it is a customer with no tax registration. The document omits the registration because there is none, and nothing about that may block the sale. What does change is the place of supply: a digital service to a consumer abroad is taxed where the consumer is, and the same service to a business abroad is reverse-charged. Both come from `PF-078`'s rule book.
+
 ## Recurring billing
 
 A schedule is a template plus an RFC 5545 `RRULE`, which is why "the last working day of every quarter" is expressible rather than approximated:
