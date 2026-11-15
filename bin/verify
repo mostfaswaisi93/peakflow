@@ -184,6 +184,7 @@ if ($only === 'all' || $only === 'tax') {
     $suites['Tax computation'] = $suite(static fn (): array => (new Tests\Support\TaxComputationRules())->all());
     $suites['Withholding'] = $suite(static fn (): array => (new Tests\Support\WithholdingRules())->all());
     $suites['Tax posting'] = $suite(static fn (): array => (new Tests\Support\TaxPostingRules())->all());
+    $suites['Return periods'] = $suite(static fn (): array => (new Tests\Support\ReturnPeriodRules())->all());
 }
 
 if ($only === 'all' || $only === 'ops') {

@@ -347,6 +347,36 @@ Checked by `php bin/verify tax`: eleven rules in `tests/Support/TaxPostingRules.
 
 A return is a period's **box-by-box summary with drill-down from every box to the journal lines behind it.**
 
+### The periods (PF-085, as built)
+
+`return_periods` is its own table, keyed by entity and jurisdiction, and the accounting calendar from PF-035 is left alone. **A return period is not an accounting period**: monthly VAT on an entity that closes quarterly is normal, and so is the reverse. Deriving one from the other makes a return unfileable in a way that looks fine — the figures are right and the window is wrong, so the return either includes a month belonging to the next one or omits one that belonged to the last.
+
+The frequency lives on the **registration**, because that is what it is a property of — some regimes set it from turnover, so it changes for a business that grows. One entity registered in Saudi Arabia and Jordan can file monthly in one and quarterly in the other, over one set of documents, and a check exercises exactly that: one supply on 15 May falls into `2026-05` in SA and `2026-Q2` in JO.
+
+Periods are **generated from the registration, not on demand**. A period created by whichever document arrived first would take its frequency from a guess, and that frequency decides the window every later document falls into. Generation refuses when the registration declares no frequency, when there is no registration, and when the year already exists — because if the frequency changed, the existing periods are the ones documents have already been reported in, and replacing them moves supplies between returns.
+
+The due date is deliberately **not computed**. Every regime sets it differently — a fixed day of the following month, a number of days after the period ends, the next working day when that falls on a weekend — and a wrong due date is a late-filing penalty. It is null until the regime's rule is recorded: visibly unknown rather than quietly wrong.
+
+#### A document belongs to a period by its tax point
+
+A document raised on 1 June for a supply delivered on 30 May belongs to **May's return** and **June's accounting period**. Using one date for both questions puts a supply in the wrong return about as often as month ends fall near a weekend.
+
+#### A tax point in a filed period is refused, not moved
+
+The tempting behaviour is to put it in the next open period, and it is silent: both returns are then mis-stated, nobody chose it, and nothing records it. Measured with the refusal replaced by that behaviour: *"a tax point inside a filed period was accepted into 2026-06"*. The refusal names PF-087 instead, so the next person does not move the document by hand.
+
+A filed period is immutable, enforced by a **trigger**: its window cannot move, it cannot be relabelled or reopened, and a second filing is refused. A correction script, a migration and a psql session all write rows the same way, and the trigger is the only thing standing between them and a filed return whose window has moved under it.
+
+### The boxes (PF-085, as built)
+
+A return is a form with numbered boxes, and an authority's portal takes figures **per box** — "total output tax" is not a box on any form. The forms are data in [`config/tax_returns.php`](../../config/tax_returns.php): three of them (`generic`, `sa`, `jo`), each box carrying a `side`, labels in both languages and the form's source. A jurisdiction with no form of its own falls back to `generic` **explicitly**, in that file, where somebody can see that it does.
+
+`side` is `output`, `input`, `net` or `memo`, and it is required: PF-088 reconciles the movement on the control accounts against the boxes carrying each side, so a box with no side could not be reconciled against anything — and the box nobody reconciles is the one that is wrong.
+
+Box **numbering** is marked unverified where it could not be checked in this environment. The structure of each form is from the published return; a guessed number is worse than an unnumbered box, because it reads as checked and a figure in the wrong box is a mis-statement the authority sees before we do.
+
+`ReturnBoxes::codesWithoutABox()` reports every tax code that maps to no box, to a box its form does not have, or to a box on the **wrong side** — output tax reported as input tax is a refund request. A tax code can be complete, correct and unfileable, and without this the discovery happens on the day of a deadline.
+
 ### Before filing
 
 A pre-filing checklist, reporting every blocking item at once rather than failing on the first:

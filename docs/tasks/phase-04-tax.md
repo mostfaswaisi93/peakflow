@@ -143,10 +143,14 @@ The engine's organising principle is that **tax is data, not code**. A rate that
 ### PF-085 · Return periods and box mapping
 `Tax` · **5 pts** · depends: PF-084 · standards: — · `type:compliance`
 
-- [ ] Return periods per registration, which need not match accounting periods - monthly VAT on a quarterly-closing entity is normal
-- [ ] Each tax code maps to the boxes of each return it appears on
-- [ ] A document belongs to a return period by its **tax point**, and a document whose tax point falls in a filed period is refused rather than silently landing in the next one
-- [ ] Mapping is data per jurisdiction with a documented source
+- [x] Return periods per registration, which need not match accounting periods - monthly VAT on a quarterly-closing entity is normal. Its own table with its own state machine; the frequency lives on the **registration**, because some regimes set it from turnover and it changes for a business that grows. A check exercises one entity filing monthly in SA and quarterly in JO over one set of documents
+- [x] Each tax code maps to the boxes of each return it appears on. `codesWithoutABox()` reports a code that maps to **no** box, to a box its form **does not have**, or to a box on the **wrong side** - output tax reported as input tax is a refund request. A tax code can be complete, correct and unfileable, and without this the discovery happens on the day of a deadline
+- [x] A document belongs to a return period by its **tax point**, and a document whose tax point falls in a filed period is refused rather than silently landing in the next one. Measured with the refusal replaced by that behaviour: "a tax point inside a filed period was accepted into 2026-06" - both returns mis-stated, nobody choosing it, nothing recording it
+- [x] Mapping is data per jurisdiction with a documented source. Three forms in `config/tax_returns.php`, each box with a `side`, labels in both languages and the form's source; a jurisdiction with no form falls back to `generic` **explicitly**, where somebody can see that it does
+- [x] A filed period is **immutable, by trigger**: its window cannot move, it cannot be relabelled or reopened, and a second filing is refused. A correction script, a migration and a psql session all write rows the same way, and the trigger is the only thing between them and a filed return whose window has moved under it
+- [x] Periods are **generated from the registration, not on demand**. A period created by whichever document arrived first takes its frequency from a guess, and that frequency decides the window every later document falls into. Generation refuses with no declared frequency, with no registration, and when the year already exists - because replacing existing periods moves supplies between returns
+- [x] The due date is deliberately **not computed**. Every regime sets it differently, and a wrong one is a late-filing penalty: it is null until the rule is recorded, which is visibly unknown rather than quietly wrong
+- [x] Overlapping windows are refused by an exclusion constraint, which is what makes "the period for this tax point" a question with one answer. The bite that widened each window by a month was caught by the database rather than by the code
 
 ### PF-086 · Return generation
 `Tax` · **8 pts** · depends: PF-085 · standards: — · `risk:high` `type:compliance`

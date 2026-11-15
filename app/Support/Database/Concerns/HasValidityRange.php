@@ -36,10 +36,26 @@ use Illuminate\Database\Eloquent\Builder;
  */
 trait HasValidityRange
 {
+    /**
+     * The column holding the range.
+     *
+     * Overridable because the word is not always right: a tax code's row is
+     * VALID for a period, while a return's row IS a period, and calling the
+     * second one `validity` would make every query read as though it were
+     * asking the first question.
+     */
+    protected static function validityColumn(): string
+    {
+        return 'validity';
+    }
+
     /** @param  Builder<covariant static>  $query */
     public function scopeEffectiveOn(Builder $query, CarbonInterface $date): Builder
     {
-        return $query->whereRaw('validity @> ?::date', [$date->toDateString()]);
+        return $query->whereRaw(
+            sprintf('%s @> ?::date', static::validityColumn()),
+            [$date->toDateString()],
+        );
     }
 
     /**
@@ -92,7 +108,7 @@ trait HasValidityRange
     /** One bound of the stored range: 0 is the lower, 1 the upper. */
     private function bound(int $which): string
     {
-        $inner = trim((string) $this->validity, '[]()');
+        $inner = trim((string) $this->{static::validityColumn()}, '[]()');
         $parts = explode(',', $inner);
 
         return trim($parts[$which] ?? '', '"');
