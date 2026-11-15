@@ -9,6 +9,8 @@ use App\Tenant\Ledger\Events\RevaluationRun;
 use App\Tenant\Ledger\Listeners\CheckBalancesAfterARevaluation;
 use App\Tenant\Ledger\Posting\PostingRuleRegistry;
 use App\Tenant\Ledger\Posting\Rules\ForeignCurrencyRevaluationRule;
+use App\Tenant\Ledger\Posting\Rules\InterEntityDueFromRule;
+use App\Tenant\Ledger\Posting\Rules\InterEntityDueToRule;
 use App\Tenant\Ledger\Posting\Rules\OpeningBalanceRule;
 use App\Tenant\Ledger\Posting\Rules\YearEndCloseRule;
 use Illuminate\Support\Facades\Event;
@@ -67,6 +69,17 @@ final class LedgerServiceProvider extends ServiceProvider
          | read, drilled into and reversed.
          */
         $registry->register(new YearEndCloseRule());
+
+        /*
+         | Both sides of an inter-entity transaction - PF-057.
+         |
+         | Two rules rather than one parameterised by direction, because the
+         | sides post in different entities, at different rates, against
+         | different charts - and a reserved journal names ONE rule, so two
+         | sides sharing a key could not be told apart by where they landed.
+         */
+        $registry->register(new InterEntityDueFromRule());
+        $registry->register(new InterEntityDueToRule());
 
         /*
          | The one queued listener in the ledger, and it verifies rather

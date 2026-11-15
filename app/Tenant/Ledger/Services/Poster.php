@@ -210,6 +210,10 @@ final class Poster
                     'party_id' => $line->partyId,
                     'tax_code_id' => $line->taxCodeId,
                     'narration' => $line->narration,
+                    // PF-057. A database trigger requires this on any line
+                    // reaching an inter-entity account and forbids it on any
+                    // other, so a null here is a positive statement.
+                    'inter_entity_transaction_id' => $line->interEntityTransactionId,
                     'dimension_1' => $line->dimensions[1] ?? null,
                     'dimension_2' => $line->dimensions[2] ?? null,
                     'dimension_3' => $line->dimensions[3] ?? null,

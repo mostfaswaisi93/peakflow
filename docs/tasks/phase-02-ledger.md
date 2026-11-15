@@ -221,11 +221,14 @@ The global proof. An individual assertion can be written to pass; this cannot.
 ### PF-057 · Inter-entity postings
 `Ledger` · **8 pts** · depends: PF-052, PF-047 · standards: IAS 1 · `risk:high` `type:posting`
 
-- [ ] A transaction between two entities of the same tenant posts two mirrored entries, each balanced in its own entity's functional currency
-- [ ] A reciprocal `due_to` / `due_from` pair is created and linked
-- [ ] The pair must net to zero in consolidation; the close process checks it and **refuses to pass silently** when it does not
-- [ ] FX between two entities with different functional currencies is handled explicitly, with the translation difference identified rather than absorbed
-- [ ] A test creates a four-entity group, posts inter-entity transactions in both directions and in three currencies, and proves the eliminations net to zero
+- [x] A transaction between two entities of the same tenant posts two mirrored entries, each balanced in its own entity's functional currency. Each side posts inside its own entity's scope, against its own chart, period and number series - so neither rule has to reason about the other entity's books
+- [x] A reciprocal `due_to` / `due_from` pair is created and linked. **One row holds one settlement amount in one currency** and both entries derive from it. Two rows (one per side) is how inter-company balances come to disagree; one row cannot
+- [x] The pair must net to zero in consolidation; the close process checks it and **refuses to pass silently** when it does not. Three conditions, each a different failure: a transaction missing one of its two entries, a settlement residual, and an inter-entity balance with no transaction behind it. Refused before anything is posted, because a close that proceeds carries an unexplainable balance into retained earnings and locks it in a year that needs a permission, a reason and a compliance entry to reopen
+- [x] FX between two entities with different functional currencies is handled explicitly, with the translation difference **identified rather than absorbed** - per pair, because a group total nets differences in opposite directions and reads as zero. Measured on the four-entity group: six pairs, four of them crossing a currency boundary, differences from -250.00 to +208.70 SAR and **-319.71 SAR in total**, each attributable to its own balance
+- [x] A test creates a four-entity group (two SAR, one EUR, one USD), posts six transactions in both directions and in three currencies - settled in the lender's currency, in the borrower's, in a third, and in one both share - and proves the settlement amounts cancel exactly while the translation differences are each reported
+- [x] **An inter-entity line cannot exist without a transaction**, and a transaction cannot be named on a line that is not one. A database trigger enforces both directions, because the failure that actually happens is somebody reaching the inter-company account another way and the balance sitting there growing with nothing to explain it
+- [x] The transaction row is deliberately **not** entity-scoped - it belongs to two entities, and scoping it to either would hide the pair from one of the two places that need to reconcile it. Its own row-level security policy admits a row from either side
+- [x] A foreign settlement with no rate is **refused**, not defaulted to 1. A rate of 1 asserts the two currencies are at par and the assertion is invisible afterwards
 
 ### PF-058 · The trial balance and its budget
 `Ledger` · **3 pts** · depends: PF-053, PF-042 · standards: IAS 1

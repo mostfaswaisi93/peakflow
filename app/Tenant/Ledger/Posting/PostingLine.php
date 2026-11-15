@@ -47,6 +47,16 @@ final readonly class PostingLine
          * never a rate of 1; see the class note.
          */
         public ?Translation $translation = null,
+        /**
+         * The inter-entity transaction this line belongs to - PF-057.
+         *
+         * Required on a line reaching an account with the `inter_entity`
+         * role and forbidden on any other, both enforced by a database
+         * trigger. An inter-company balance with no counterpart cannot be
+         * eliminated in consolidation and cannot be explained to the other
+         * entity's accountant; it simply sits there, growing.
+         */
+        public ?string $interEntityTransactionId = null,
     ) {}
 
     /**
@@ -127,6 +137,7 @@ final readonly class PostingLine
         RoundingPolicy $policy,
         ?string $partyId = null,
         ?string $narration = null,
+        ?string $interEntityTransactionId = null,
     ): self {
         $translation = Translation::of($original, $rate, $policy);
 
@@ -139,6 +150,33 @@ final readonly class PostingLine
             null,
             [],
             $translation,
+            $interEntityTransactionId,
+        );
+    }
+
+    /**
+     * A line against a control account, in the entity's own currency.
+     *
+     * The same as {@see toRole()} and able to carry an inter-entity
+     * transaction - which the two-currency case needs through
+     * {@see translatedToRole()} and the single-currency case needs here.
+     */
+    public static function toRoleFor(
+        ControlRole $role,
+        Money $amount,
+        string $interEntityTransactionId,
+        ?string $narration = null,
+    ): self {
+        return new self(
+            $amount,
+            $role,
+            null,
+            null,
+            $narration,
+            null,
+            [],
+            null,
+            $interEntityTransactionId,
         );
     }
 

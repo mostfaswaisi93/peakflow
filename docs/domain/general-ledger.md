@@ -419,6 +419,74 @@ Up to **eight** axes per entity — cost centre, project, department, branch, fu
 
 Stored as **columns** on `journal_lines`, not JSON and not an EAV side table, because every financial report filters and groups by them and an index on a JSON path is not a substitute. An account may require a dimension; validity rules can forbid a combination, including a value belonging to another entity.
 
+## Inter-entity postings
+
+A transaction between two entities of the same tenant — A pays a supplier invoice on behalf of B, C recharges D for shared services — posts **two entries in two sets of books**, each balancing in its own entity's functional currency.
+
+### One row, one amount
+
+The obvious shape is two rows, one per side: A records what it is owed, B records what it owes. It is also how inter-company balances come to disagree in every system that has them, because two rows can hold two numbers and nothing makes them the same.
+
+So there is one row holding **one settlement amount in one currency**, and both entries derive from it. The pair cannot fail to net to zero in the settlement currency, because there is only one figure. Eliminating it in consolidation is then arithmetic rather than a reconciliation.
+
+### Why the pair is denominated in a settlement currency
+
+A keeps books in SAR, B in EUR, and A lends B 1,000 USD. There is no single "amount" in either entity's currency:
+
+| | records | at | giving |
+|--|---------|----|--------|
+| A (SAR) | a 1,000 USD receivable | 3.75 | 3,750.00 SAR |
+| B (EUR) | a 1,000 USD payable | 0.8625 | 862.50 EUR |
+
+The 1,000 USD is the fact both sides agree on. Each functional amount is a **translation of it**, recorded with its rate, rate set, date and provider on the line — and revalued at each period end by the monetary revaluation, because an inter-entity balance is a monetary item like any other.
+
+### The translation difference is identified, not absorbed
+
+In the consolidation, the settlement amounts cancel exactly. The two functional figures, translated into the presentation currency at the closing rate, do not — because each side was booked at its own rate on its own day. Measured on the four-entity group in `bin/verify group`:
+
+| pair | settlement | lender, in SAR | borrower, in SAR | difference |
+|------|-----------|----------------|------------------|-----------|
+| A → B | 10,000.00 SAR | 10,000.00 | −10,120.00 | **−120.00** |
+| B → A | 4,000.00 EUR | 17,600.00 | −17,391.30 | **+208.70** |
+| A → C | 25,000.00 USD | 93,750.00 | −94,000.00 | **−250.00** |
+| C → D | 8,000.00 USD | 30,080.00 | −30,000.00 | **+80.00** |
+| D → B | 15,000.00 SAR | 15,000.00 | −15,180.00 | **−180.00** |
+| B → C | 2,500.00 EUR | 11,000.00 | −10,898.55 | **+101.45** |
+| | | | **total** | **−319.71** |
+
+That total is a figure the consolidation reports. Absorbing it is how a consolidated balance sheet acquires an unexplained plug nobody can trace — and reporting only the total would net the differences in opposite directions and lose which balance each one is on, which is the question during a consolidation.
+
+A pair settled in a currency both entities share shows **zero**, asserted separately: a difference there would be a rounding artefact wearing the name of a translation difference, and it would send somebody looking for a rate that was never applied.
+
+### An inter-entity line cannot exist without a transaction
+
+This is the guard that matters in practice. The control-account rule already stops a human posting into an inter-entity account; this stops a *registered rule* doing it without a counterpart — which is the shape of every inter-company balance nobody can explain.
+
+A database trigger enforces both directions:
+
+- a line reaching an account with the `inter_entity` role **must** name a transaction
+- a line that is not an inter-entity line **must not**, because the elimination would then remove a figure that is not the inter-company balance
+
+### Reading a pair needs both entities' scopes
+
+The transaction row is deliberately **not** entity-scoped: it belongs to two entities, and scoping it to either would hide the pair from one of the two places that need to reconcile it. Its own row-level security policy admits a row when the current entity is *either* side.
+
+Which means a consolidation cannot read it with one cross-entity query. That was the first implementation and it returned **nothing**: with no entity established `peakflow_current_entity()` is null, so the policy matched no rows, and the consolidation reported zero pairs, zero translation difference and "eliminates: true" on a group with six live transactions.
+
+A query that returns nothing looks like data. So each entity reads its own side inside its own scope and the halves are joined by transaction id — one query per entity, no row-level-security bypass anywhere, and it proves something the single query could not: that each side is visible from its own books. The number of sides actually seen is counted and reported, so "the consolidation found nothing" is a finding rather than a clean result.
+
+### The close refuses
+
+A close that proceeds over a broken pair carries an unexplainable inter-company balance into retained earnings and locks it there — in a year that then needs a permission, a reason and a compliance entry to reopen. So `YearEndClose` checks three things before it posts anything:
+
+| refused when | because |
+|--------------|---------|
+| a transaction has one entry | a deferred constraint makes that impossible to commit, so something wrote the table directly |
+| the settlement amounts leave a residual | the single settlement figure has stopped being what both sides derive from |
+| an inter-entity balance has no transaction | it cannot be eliminated and cannot be explained |
+
+A translation difference is **not** a reason to refuse. It is expected, it is reported by the consolidation, and refusing on it would mean a group with two currencies could never close a year.
+
 ## The trial balance, and why it reads a cache
 
 A trial balance aggregating ten million journal lines takes **8.5 seconds**. That is measured, not estimated, and it is the reason `account_balances` exists.

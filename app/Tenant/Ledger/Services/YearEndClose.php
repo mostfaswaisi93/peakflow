@@ -11,6 +11,7 @@ use App\Tenant\Ledger\Exceptions\YearEndCloseRefused;
 use App\Tenant\Ledger\Models\FiscalYear;
 use App\Tenant\Ledger\Models\JournalEntry;
 use App\Tenant\Ledger\Posting\Rules\YearEndCloseRule;
+use App\Tenant\Ledger\Services\InterEntityReconciliation;
 use App\Tenant\Tenancy\Models\Entity;
 use Brick\Math\BigDecimal;
 use Illuminate\Support\Carbon;
@@ -55,6 +56,7 @@ final class YearEndClose
         private readonly Reverser $reverser,
         private readonly PeriodStateMachine $periods,
         private readonly AuditTrail $audit,
+        private readonly InterEntityReconciliation $interEntity,
     ) {}
 
     /**
@@ -97,6 +99,29 @@ final class YearEndClose
         if ($openPeriods !== []) {
             throw YearEndCloseRefused::periodsStillOpen((string) $year->label, $openPeriods);
         }
+
+        /*
+         | The inter-entity pairs, before anything is posted - PF-057.
+         |
+         | A close that proceeds over a half-posted inter-entity transaction
+         | carries an unexplainable inter-company balance into retained
+         | earnings and locks it there. The pair is then wrong in a year
+         | nobody can reopen without a permission, a reason and a compliance
+         | entry.
+         |
+         | Refused rather than warned about, and refused HERE rather than
+         | after the posting, because the alternative is a close that printed
+         | a warning nobody read. "Refuses to pass silently" is the criterion
+         | and silence is the default behaviour of a warning.
+         |
+         | What is checked is the SETTLEMENT currency and the pairing. A
+         | translation difference between two entities keeping books in
+         | different currencies is expected, is reported by the
+         | consolidation, and is not a reason to refuse a close - refusing on
+         | it would mean a group with two currencies could never close a
+         | year.
+         */
+        $this->assertInterEntityPairsAreWhole($year);
 
         $balances = $this->closingBalances($entityId, $year);
 
@@ -535,5 +560,74 @@ final class YearEndClose
             ->where('entity_id', $entityId)
             ->where('role', 'retained_earnings')
             ->value('account_id');
+    }
+
+    /**
+     * Refuse a close over an inter-entity pair that is not whole - PF-057.
+     *
+     * Three conditions, and each is a different failure:
+     *
+     *   - a transaction missing one of its two entries, which the deferred
+     *     constraint makes impossible to commit and which is therefore
+     *     evidence that something wrote the table directly
+     *   - a pair whose settlement amounts do not cancel, which means the
+     *     single settlement figure has stopped being what both sides derive
+     *     from
+     *   - an inter-entity balance with no transaction behind it, which is the
+     *     inter-company balance nobody can explain and consolidation cannot
+     *     eliminate
+     *
+     * @throws YearEndCloseRefused
+     */
+    private function assertInterEntityPairsAreWhole(FiscalYear $year): void
+    {
+        $asAt = Carbon::parse((string) $year->ends_on);
+
+        $halfPosted = $this->interEntity->halfPosted();
+
+        if ($halfPosted !== []) {
+            throw YearEndCloseRefused::interEntityIsHalfPosted(
+                (string) $year->label,
+                array_map(
+                    static fn (array $row): string => sprintf('%s is missing %s', $row['reference'], $row['missing']),
+                    $halfPosted,
+                ),
+            );
+        }
+
+        $unexplained = $this->interEntity->unexplainedBalances($asAt);
+
+        if ($unexplained !== []) {
+            throw YearEndCloseRefused::interEntityIsUnexplained(
+                (string) $year->label,
+                array_map(
+                    static fn (array $row): string => sprintf(
+                        '%s %s carries %s across %d line(s) with no transaction',
+                        $row['entity'],
+                        $row['account'],
+                        $row['balance'],
+                        $row['lines'],
+                    ),
+                    $unexplained,
+                ),
+            );
+        }
+
+        /*
+         | The settlement residual, read in the settlement currency.
+         |
+         | No rates are passed, so a pair between two entities with different
+         | functional currencies reports a missing rate and no translation -
+         | which is fine, because the translation difference is not what is
+         | being checked. The settlement residual needs no rate at all.
+         */
+        $eliminations = $this->interEntity->eliminations($asAt, 'XXX', []);
+
+        if (! BigDecimal::of($eliminations['settlement_residual'])->isZero()) {
+            throw YearEndCloseRefused::interEntityDoesNotEliminate(
+                (string) $year->label,
+                $eliminations['settlement_residual'],
+            );
+        }
     }
 }

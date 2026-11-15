@@ -102,4 +102,49 @@ final class YearEndCloseRefused extends RuntimeException
             $year,
         ));
     }
+
+    /**
+     * @param  list<string>  $details
+     */
+    public static function interEntityIsHalfPosted(string $year, array $details): self
+    {
+        return new self(sprintf(
+            'Year %s cannot be closed: %d inter-entity transaction(s) have only one side (%s). A '.
+            'receivable with no payable is carried into retained earnings by the close and locked there '.
+            '- and the year is then wrong in a way that needs a permission, a reason and a compliance '.
+            'entry to reopen. A deferred constraint makes this impossible to commit, so something wrote '.
+            'the table directly.',
+            $year,
+            count($details),
+            implode('; ', $details),
+        ));
+    }
+
+    /**
+     * @param  list<string>  $details
+     */
+    public static function interEntityIsUnexplained(string $year, array $details): self
+    {
+        return new self(sprintf(
+            'Year %s cannot be closed: there are inter-entity balances with no transaction behind them '.
+            '(%s). An inter-company balance with no counterpart cannot be eliminated in consolidation '.
+            'and cannot be explained to the other entity\'s accountant. A database trigger requires '.
+            'every line reaching an inter-entity account to name a transaction, so these were written '.
+            'around it.',
+            $year,
+            implode('; ', $details),
+        ));
+    }
+
+    public static function interEntityDoesNotEliminate(string $year, string $residual): self
+    {
+        return new self(sprintf(
+            'Year %s cannot be closed: the inter-entity pairs leave %s in the settlement currency '.
+            'rather than cancelling. One transaction holds one settlement amount and both sides derive '.
+            'from it, so a residual means that is no longer true - and the group accounts would carry a '.
+            'permanent unexplained difference of exactly this amount.',
+            $year,
+            $residual,
+        ));
+    }
 }
