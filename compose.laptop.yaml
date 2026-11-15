@@ -1,0 +1,76 @@
+# =============================================================================
+#  PeakFlow - the cut-down local setup for a laptop
+# =============================================================================
+#  An OVERRIDE, not a profile. The two do different things and both are needed:
+#
+#    --profile laptop                       fewer SERVICES (postgres + redis)
+#    -f compose.yaml -f compose.laptop.yaml  the same services, smaller
+#
+#  Use both:
+#
+#    docker compose -f compose.yaml -f compose.laptop.yaml --profile laptop up -d --wait
+#
+#  A compose profile can only include or exclude a service. It cannot change
+#  one's command, so the only way to run a smaller PostgreSQL is an override
+#  file - which is why "a cut-down profile for a laptop" is two mechanisms
+#  rather than one.
+#
+#  See docs/operations/local-development.md for the measured numbers these
+#  come from.
+# =============================================================================
+
+services:
+  postgres:
+    command:
+      - postgres
+      # pg_stat_statements stays: the query-budget checks assert index and
+      # partition use through EXPLAIN, and dropping it would make those
+      # checks pass on a laptop for the wrong reason.
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+      # Still 256. A journal with monthly partitions takes many locks in one
+      # transaction, and lowering this turns a correct migration into
+      # "out of shared memory" - which is not a resource trade, it is a
+      # feature that stops working.
+      - -c
+      - max_locks_per_transaction=256
+      # 32 MB rather than the 128 MB default. PeakFlow's working set on a
+      # laptop is one or two tenant databases of about 19 MB each, so the
+      # default buys nothing and costs a tenth of a gigabyte of resident
+      # memory that an editor and a browser both want.
+      - -c
+      - shared_buffers=32MB
+      # 40 rather than 100, and this is the number to understand before
+      # lowering it further: tenancy.connections.max_per_tenant is 5, so 40
+      # connections is EIGHT concurrently-served tenants plus headroom for
+      # the migrator. A `tenants:migrate --all` with the default concurrency
+      # of 4 holds four of them at once.
+      - -c
+      - max_connections=40
+      # Log the slow ones only. The default in compose.yaml is 250ms, which
+      # on a laptop under an editor and a browser logs most things.
+      - -c
+      - log_min_duration_statement=1000ms
+      # A laptop's disk is the thing that wears out, and development data is
+      # disposable. `synchronous_commit=off` risks losing the last few
+      # transactions on a hard power cut and never corrupts anything, which
+      # is an acceptable trade for seed data and not for anything else.
+      - -c
+      - synchronous_commit=off
+
+  redis:
+    command:
+      - redis-server
+      # No persistence. Redis holds the cache, the queue and the scheduler
+      # locks; all three are rebuildable, and an AOF on a laptop is write
+      # amplification for data nobody will miss.
+      - --save
+      - ''
+      - --appendonly
+      - 'no'
+      - --maxmemory
+      - 128mb
+      - --maxmemory-policy
+      - allkeys-lru

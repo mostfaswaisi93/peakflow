@@ -58,6 +58,7 @@ Start with the [root README](../README.md) for the whole system in one pass. Com
 
 | Document | Answers |
 |----------|---------|
+| [`operations/local-development.md`](operations/local-development.md) | `composer setup && composer dev`, the seeded credentials, the commit-message hook, and the measured resource expectations |
 | [`operations/configuration.md`](operations/configuration.md) | Every key a deployment can set, the safe ranges, and the values a production boot refuses to start without |
 | [`operations/database-roles.md`](operations/database-roles.md) | The four database roles, the boundary enforced at the connection, and why an empty PostgreSQL ACL is not "nobody" |
 | [`operations/testing-strategy.md`](operations/testing-strategy.md) | Every test layer, what it is for, and what it cannot catch |

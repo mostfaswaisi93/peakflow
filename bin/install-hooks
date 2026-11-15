@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+#
+# Point git at the versioned hooks - PF-001.
+#
+# `core.hooksPath` rather than copying files into `.git/hooks`: a copy goes
+# stale the moment the hook changes and nobody re-runs the installer, which
+# makes the hook a thing that works on the machine of whoever wrote it.
+#
+# Idempotent, and quiet when there is nothing to do. Run by `composer setup`.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+if [ ! -d .git ]; then
+    # A tarball or a vendored copy. Not an error: there is no repository to
+    # install a hook into, and failing here would break `composer setup` for
+    # a deployment that does not have one.
+    echo "  no .git directory - skipping the commit-message hook"
+    exit 0
+fi
+
+if [ ! -d .githooks ]; then
+    echo "  .githooks is missing - skipping" >&2
+    exit 0
+fi
+
+current=$(git config --get core.hooksPath || echo '')
+
+if [ "$current" = '.githooks' ]; then
+    echo "  commit-message hook already installed"
+    exit 0
+fi
+
+git config core.hooksPath .githooks
+chmod +x .githooks/* 2>/dev/null || true
+
+echo "  commit-message hook installed (core.hooksPath = .githooks)"

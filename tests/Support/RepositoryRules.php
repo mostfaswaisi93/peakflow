@@ -1,0 +1,403 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Support;
+
+use Database\Seeders\DevelopmentSeeder;
+use Illuminate\Support\Str;
+
+/**
+ * The repository conventions, and the one command that makes a clone work - PF-001, PF-011.
+ *
+ * ## Why the hook is tested by running it
+ *
+ * A commit-message hook is a shell script, and the only honest test of a shell
+ * script is to run it. So each case below writes a message to a file and
+ * invokes `.githooks/commit-msg` as git would - which also means the test
+ * fails if the file loses its execute bit, which is the way a hook most often
+ * stops working.
+ */
+final class RepositoryRules
+{
+    /**
+     * Messages that must be accepted, and messages that must not.
+     *
+     * The first rejection is the shape this repository's own history took for
+     * nine commits - `PF-006: ...` instead of `feat(iso): ...`. The hook did
+     * not exist yet; it does now, and those nine are history that
+     * CONTRIBUTING.md forbids rewriting.
+     *
+     * @var array<string, array{bool, string}>
+     */
+    private const MESSAGES = [
+        'a conventional subject with a scope and a task' => [true, "feat(ledger): enforce the balanced-entry invariant\n\nRefs PF-043"],
+        'a fix with a scope' => [true, "fix(banking): reject a statement with a continuity gap\n\nRefs PF-081"],
+        'docs with no scope and no task' => [true, 'docs: explain why the registries are files'],
+        'a chore' => [true, 'chore: bump the lockfile'],
+        'a breaking change marker' => [true, "refactor(money)!: the rounding policy is required\n\nRefs PF-006"],
+        'a summary starting with an acronym' => [true, "feat(iso): RFC 9457 problem types\n\nRefs PF-015"],
+        'a merge commit' => [true, 'Merge branch main into pf-001'],
+        'a fixup a rebase will fold away' => [true, 'fixup! feat(ledger): something'],
+
+        'a bare task prefix, which is what this history did' => [false, 'PF-006: read a number somebody typed, or refuse it'],
+        'a capitalised summary' => [false, "feat: Added the thing\n\nRefs PF-001"],
+        'a full stop at the end' => [false, "feat(ledger): enforce the invariant.\n\nRefs PF-043"],
+        'a non-blank second line' => [false, "feat(ledger): enforce the invariant\nRefs PF-043"],
+        'a subject over 72 characters' => [false, "feat(ledger): this subject is deliberately far longer than seventy-two characters so it is refused\n\nRefs PF-043"],
+        'a behaviour change with no task' => [false, 'feat(ledger): no task reference at all'],
+        'a type that is not in the list' => [false, 'wip: something'],
+        'a capitalised scope' => [false, "feat(Ledger): capitalised scope\n\nRefs PF-001"],
+        'no type at all' => [false, 'just a sentence with no type'],
+    ];
+
+    private string $temporary = '';
+
+    /** @return array<string, list<string>> */
+    public function all(): array
+    {
+        $this->temporary = sys_get_temp_dir().'/peakflow-hook-'.Str::random(8);
+        mkdir($this->temporary, 0o700, true);
+
+        try {
+            return [
+                'the commit-message hook accepts and refuses the right messages' => $this->theHookWorks(),
+                'the hook is installed by composer setup' => $this->theHookIsInstalled(),
+                'the hook and CONTRIBUTING.md agree on the types' => $this->theTypesAgree(),
+                'composer setup takes a clone to a running application' => $this->setupIsComplete(),
+                'the development seeder refuses to run outside local' => $this->theSeederRefusesProduction(),
+                'the laptop setup is documented with measured numbers' => $this->theLaptopSetupIsDocumented(),
+            ];
+        } finally {
+            foreach (glob($this->temporary.'/*') ?: [] as $file) {
+                @unlink($file);
+            }
+
+            @rmdir($this->temporary);
+        }
+    }
+
+    private function base(): string
+    {
+        return \dirname(__DIR__, 2);
+    }
+
+    /** @return list<string> */
+    private function theHookWorks(): array
+    {
+        $problems = [];
+        $hook = $this->base().'/.githooks/commit-msg';
+
+        if (! is_file($hook)) {
+            return ['.githooks/commit-msg is missing, so nothing checks a commit message before it is '.
+                'written - and after it is written the only fix is rewriting history, which '.
+                'CONTRIBUTING.md forbids on a shared branch.'];
+        }
+
+        if (! is_executable($hook)) {
+            $problems[] = '.githooks/commit-msg is not executable. Git runs it as a program, so it would '.
+                'be skipped silently - which is the way a hook most often stops working.';
+        }
+
+        foreach (self::MESSAGES as $description => [$shouldPass, $message]) {
+            $file = $this->temporary.'/msg-'.substr(md5($description), 0, 8);
+            file_put_contents($file, $message);
+
+            exec(escapeshellarg($hook).' '.escapeshellarg($file).' 2>&1', $output, $status);
+
+            $passed = $status === 0;
+
+            if ($passed === $shouldPass) {
+                continue;
+            }
+
+            $problems[] = $shouldPass
+                ? sprintf(
+                    'The hook refused %s, which is valid: %s',
+                    $description,
+                    implode(' ', array_slice($output, 0, 3)),
+                )
+                : sprintf(
+                    'The hook accepted %s. The subject was "%s".',
+                    $description,
+                    strtok($message, "\n"),
+                );
+        }
+
+        return $problems;
+    }
+
+    /** @return list<string> */
+    private function theHookIsInstalled(): array
+    {
+        $problems = [];
+
+        $composer = (string) file_get_contents($this->base().'/composer.json');
+
+        if (! str_contains($composer, 'bin/install-hooks')) {
+            $problems[] = 'composer.json does not run bin/install-hooks, so the hook is a file in the '.
+                'repository that nothing points git at. PF-001 asks for it to be installed BY `composer '.
+                'setup`, because a hook somebody has to remember to install is a hook that works on one '.
+                'machine.';
+        }
+
+        $installer = $this->base().'/bin/install-hooks';
+
+        if (! is_file($installer) || ! is_executable($installer)) {
+            $problems[] = 'bin/install-hooks is missing or not executable.';
+
+            return $problems;
+        }
+
+        $source = (string) file_get_contents($installer);
+
+        if (! str_contains($source, 'core.hooksPath')) {
+            $problems[] = 'bin/install-hooks does not set core.hooksPath. Copying into .git/hooks goes '.
+                'stale the moment the hook changes and nobody re-runs the installer.';
+        }
+
+        /*
+         | And it must survive having no repository.
+         |
+         | `composer setup` runs in a deployment built from a tarball, where
+         | there is no `.git` at all. An installer that failed there would
+         | break setup for the case that needs it least and complains loudest.
+         */
+        if (! str_contains($source, '-d .git')) {
+            $problems[] = 'bin/install-hooks does not check for a .git directory. `composer setup` also '.
+                'runs in a deployment built from a tarball, where failing here would break setup for a '.
+                'hook nobody can use anyway.';
+        }
+
+        return $problems;
+    }
+
+    /** @return list<string> */
+    private function theTypesAgree(): array
+    {
+        $problems = [];
+
+        $hook = (string) file_get_contents($this->base().'/.githooks/commit-msg');
+        $contributing = (string) file_get_contents($this->base().'/CONTRIBUTING.md');
+
+        if (preg_match("/^TYPES='([^']+)'/m", $hook, $matches) !== 1) {
+            return ['The hook does not declare a TYPES list this check can read.'];
+        }
+
+        $types = explode('|', $matches[1]);
+
+        foreach ($types as $type) {
+            if (! str_contains($contributing, '`'.$type.'`')) {
+                $problems[] = sprintf(
+                    'The hook accepts the type `%s` and CONTRIBUTING.md does not list it. A contributor '.
+                    'reads the document and the hook decides, so the two disagreeing means somebody is '.
+                    'refused for following the instructions.',
+                    $type,
+                );
+            }
+        }
+
+        /*
+         | And the other direction, which is the one that bites.
+         |
+         | A type documented and not accepted is a contributor doing what the
+         | guide says and being refused by a script - and the refusal message
+         | quotes the guide back at them.
+         */
+        if (preg_match('/Types in use: (.+?)\. The scope/', $contributing, $documented) === 1) {
+            preg_match_all('/`([a-z]+)`/', $documented[1], $listed);
+
+            foreach ($listed[1] as $type) {
+                if (! \in_array($type, $types, true)) {
+                    $problems[] = sprintf(
+                        'CONTRIBUTING.md lists the type `%s` and the hook refuses it.',
+                        $type,
+                    );
+                }
+            }
+        }
+
+        return $problems;
+    }
+
+    /** @return list<string> */
+    private function setupIsComplete(): array
+    {
+        $problems = [];
+        $setup = $this->base().'/bin/setup';
+
+        if (! is_file($setup) || ! is_executable($setup)) {
+            return ['bin/setup is missing or not executable.'];
+        }
+
+        /*
+         | Comments blanked first.
+         |
+         | The script's own header explains the bug it fixes - that
+         | `php artisan migrate` used to run as the application role - and the
+         | regression check below flagged that explanation. The fourth time in
+         | this codebase a textual rule has reported the prose describing it,
+         | and the fix is the same each time.
+         */
+        $source = $this->withoutShellComments((string) file_get_contents($setup));
+
+        $required = [
+            '.env.example' => 'copy .env from the example, or a fresh clone has no configuration at all',
+            'key:generate' => 'generate an APP_KEY, without which every encrypted value and signed URL fails',
+            'install-hooks' => 'install the commit-message hook, which PF-001 asks `composer setup` to do',
+            '--database=migrator' => 'migrate as the MIGRATOR. The application role has no DDL (PF-010), '.
+                'so `php artisan migrate` on its own fails with a permission error that reads as a '.
+                'broken database - and that is exactly what a fresh clone used to do',
+            'DevelopmentSeeder' => 'seed something to sign into. Without it a clone ends at a login form '.
+                'with no workspace and no discoverable credentials',
+            'npm run build' => 'build the assets, or every page renders with no styles',
+            '--wait' => 'wait on the compose healthchecks rather than racing them, which is the '.
+                'difference between a setup that works and one that works on a fast machine',
+        ];
+
+        foreach ($required as $needle => $why) {
+            if (! str_contains($source, $needle)) {
+                $problems[] = sprintf('bin/setup does not %s (no `%s`).', $why, $needle);
+            }
+        }
+
+        /*
+         | The bare `artisan migrate` must NOT be there.
+         |
+         | This is the regression that matters: adding `migrate` back without
+         | the flag would make a fresh clone fail again, and the error names
+         | a password rather than a privilege.
+         */
+        if (preg_match('/artisan migrate(?![^\n]*--database)/', $source) === 1) {
+            $problems[] = 'bin/setup runs `artisan migrate` without `--database=migrator`. The '.
+                'application role has no DDL, so this fails on a fresh clone with a permission error.';
+        }
+
+        $composer = (string) file_get_contents($this->base().'/composer.json');
+
+        if (! str_contains($composer, 'bin/setup')) {
+            $problems[] = 'composer.json does not call bin/setup, so `composer setup` does something '.
+                'other than what is tested here.';
+        }
+
+        return $problems;
+    }
+
+    /**
+     * Blank every `#` comment, keeping the line count.
+     *
+     * The shell's own rule: a `#` starts a comment when it begins a word -
+     * at the start of a line or after whitespace. That is wrong inside a
+     * quoted string containing ` #`, which this script does not have and a
+     * future one might; the cost of being wrong is a positive check failing
+     * on a command it cannot see, which is a visible failure rather than a
+     * silent pass.
+     */
+    private function withoutShellComments(string $source): string
+    {
+        return (string) preg_replace_callback(
+            '/(^|\s)#[^\n]*/m',
+            static fn (array $m): string => $m[1].(string) preg_replace('/./', ' ', substr($m[0], \strlen($m[1]))),
+            $source,
+        );
+    }
+
+    /** @return list<string> */
+    private function theSeederRefusesProduction(): array
+    {
+        $problems = [];
+        $source = (string) file_get_contents($this->base().'/database/seeders/DevelopmentSeeder.php');
+
+        if (! str_contains($source, "environment(['local', 'testing'])")) {
+            $problems[] = 'DevelopmentSeeder does not check the environment. It sets a known password, '.
+                'and `db:seed --class=DevelopmentSeeder --force` is one typo away from a production '.
+                'shell - with `--force` existing precisely to get past the confirmation that would '.
+                'otherwise have stopped it.';
+        }
+
+        if (DevelopmentSeeder::PASSWORD === '') {
+            $problems[] = 'The development password is empty, so nobody can sign in with what the setup '.
+                'script prints.';
+        }
+
+        /*
+         | And the documented credentials must be the real ones.
+         |
+         | A document that prints a password the seeder does not set is a
+         | document that costs five minutes every time somebody trusts it.
+         */
+        $doc = (string) file_get_contents($this->base().'/docs/operations/local-development.md');
+
+        foreach ([DevelopmentSeeder::USER_EMAIL, DevelopmentSeeder::OPERATOR_EMAIL, DevelopmentSeeder::PASSWORD, DevelopmentSeeder::TENANT_SLUG] as $value) {
+            if (! str_contains($doc, $value)) {
+                $problems[] = sprintf(
+                    'docs/operations/local-development.md does not mention "%s", which the seeder '.
+                    'actually creates. A document that prints the wrong credentials costs five minutes '.
+                    'every time somebody trusts it.',
+                    $value,
+                );
+            }
+        }
+
+        return $problems;
+    }
+
+    /** @return list<string> */
+    private function theLaptopSetupIsDocumented(): array
+    {
+        $problems = [];
+        $override = $this->base().'/compose.laptop.yaml';
+
+        if (! is_file($override)) {
+            return ['compose.laptop.yaml is missing. A compose PROFILE can only include or exclude a '.
+                'service, so running a smaller PostgreSQL needs an override file - which is why "a '.
+                'cut-down profile for a laptop" is two mechanisms rather than one.'];
+        }
+
+        $source = (string) file_get_contents($override);
+
+        foreach (['shared_buffers', 'max_connections', 'maxmemory'] as $setting) {
+            if (! str_contains($source, $setting)) {
+                $problems[] = sprintf('compose.laptop.yaml does not reduce %s.', $setting);
+            }
+        }
+
+        /*
+         | Two things must NOT be reduced, and both for the same kind of
+         | reason: they are not resource trades, they are features.
+         */
+        if (! str_contains($source, 'pg_stat_statements')) {
+            $problems[] = 'compose.laptop.yaml drops pg_stat_statements. The query-budget checks assert '.
+                'index and partition use through EXPLAIN, so dropping it makes those checks pass on a '.
+                'laptop for the wrong reason.';
+        }
+
+        if (! str_contains($source, 'max_locks_per_transaction=256')) {
+            $problems[] = 'compose.laptop.yaml does not keep max_locks_per_transaction at 256. A journal '.
+                'with monthly partitions takes many locks in one transaction, and lowering it turns a '.
+                'correct migration into "out of shared memory" - not a resource trade, a feature that '.
+                'stops working.';
+        }
+
+        $doc = (string) file_get_contents($this->base().'/docs/operations/local-development.md');
+
+        foreach (['max_connections', 'compose.laptop.yaml', '--profile laptop'] as $topic) {
+            if (! str_contains($doc, $topic)) {
+                $problems[] = sprintf('The local development document does not explain %s.', $topic);
+            }
+        }
+
+        /*
+         | The resource numbers have to be measured, not guessed, so the
+         | document is required to carry the units that make a number
+         | checkable by somebody repeating the measurement.
+         */
+        if (preg_match('/\b19 MB\b/', $doc) !== 1) {
+            $problems[] = 'The local development document no longer states the measured size of a '.
+                'migrated tenant database. "Resource expectations" without a number is a sentence '.
+                'nobody can plan against.';
+        }
+
+        return $problems;
+    }
+}

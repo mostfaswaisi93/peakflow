@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+#
+# A fresh clone to a signed-in application, in one command - PF-001, PF-011.
+#
+# Run by `composer setup`. Idempotent: run it as often as you like.
+#
+# ## Why this is a script and not a list in composer.json
+#
+# The list was five lines and three of them were wrong in ways a list cannot
+# express. `php artisan migrate` ran as the APPLICATION role, which PF-010
+# gives no DDL at all, so a fresh clone's first command failed with a
+# permission error that reads as a broken database. It also started no
+# services, so the migration had nothing to connect to, and it seeded nothing,
+# so what a developer got at the end was a login form with no workspace to log
+# into and no way to discover the credentials.
+#
+# Those are conditionals, ordering and error messages. A composer script array
+# has none of the three.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+say()  { printf '\n\033[1m%s\033[0m\n' "$1"; }
+ok()   { printf '  \033[32mok\033[0m    %s\n' "$1"; }
+skip() { printf '  \033[2m-\033[0m     %s\n' "$1"; }
+fail() { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; }
+die()  { fail "$1"; printf '\n%s\n\n' "$2"; exit 1; }
+
+say 'Environment'
+
+if [ -f .env ]; then
+    skip '.env already present'
+else
+    cp .env.example .env
+    ok '.env created from .env.example'
+fi
+
+if grep -q '^APP_KEY=base64:' .env; then
+    skip 'APP_KEY already set'
+else
+    php artisan key:generate --force --quiet
+    ok 'APP_KEY generated'
+fi
+
+say 'Repository'
+./bin/install-hooks
+
+say 'Services'
+
+if docker info >/dev/null 2>&1 && [ -f compose.yaml ]; then
+    # `--wait` rather than a sleep: compose.yaml declares healthchecks, and
+    # waiting on them is the difference between a setup that works and one
+    # that works on a fast machine.
+    if docker compose up -d --wait postgres redis >/dev/null 2>&1; then
+        ok 'postgres and redis are up and healthy'
+    else
+        die 'docker compose could not bring up postgres and redis' \
+            'Run `docker compose up postgres redis` to see why. The roles PeakFlow needs are created by
+database/docker/init/*.sql, which only runs on a FIRST start - if the volume already exists from an
+earlier attempt, `docker compose down -v` and try again.'
+    fi
+elif command -v pg_isready >/dev/null 2>&1 && pg_isready >/dev/null 2>&1; then
+    ok 'postgresql is accepting connections (system service)'
+    command -v redis-cli >/dev/null 2>&1 && redis-cli ping >/dev/null 2>&1 \
+        && ok 'redis is responding (system service)' \
+        || skip 'no redis - cache, queues and scheduler locks need one'
+else
+    die 'no PostgreSQL available' \
+        'PeakFlow requires PostgreSQL 16+ and will not run on SQLite - the tenant schema uses deferrable
+constraint triggers, row-level security and declarative partitioning, and the ledger invariants live
+there rather than in application code. See docs/architecture/decisions/0002.
+
+Either start Docker and re-run this, or install PostgreSQL and create the roles in
+database/docker/init/01-roles.sql by hand.'
+fi
+
+say 'Schema'
+
+# As the MIGRATOR, from its own credentials. The application role has no DDL,
+# which is the whole of PF-010 - and `migrate` without this flag is the first
+# thing a fresh clone got wrong.
+if php artisan migrate --database=migrator --force --quiet; then
+    ok 'platform schema migrated (as peakflow_migrator)'
+else
+    die 'the platform migration failed' \
+        'Check DB_MIGRATOR_USERNAME and DB_MIGRATOR_PASSWORD in .env. The application role deliberately
+cannot create tables, so a migration run as DB_USERNAME fails with a permission error - see
+docs/operations/database-roles.md.'
+fi
+
+php artisan db:seed --force --quiet && ok 'plans and platform settings seeded'
+
+say 'Development data'
+
+if php artisan db:seed --class=DevelopmentSeeder --force; then
+    :
+else
+    die 'the development seeder failed' \
+        'It provisions a tenant database, so it needs the migrator role to be able to CREATE DATABASE.
+See docs/operations/database-roles.md.'
+fi
+
+say 'Assets'
+
+if [ -d node_modules ]; then
+    skip 'node_modules present'
+else
+    npm install --ignore-scripts >/dev/null 2>&1 && ok 'npm packages installed' || die 'npm install failed' 'Run `npm install` to see why.'
+fi
+
+npm run build >/dev/null 2>&1 && ok 'assets built' || die 'the asset build failed' 'Run `npm run build` to see why.'
+
+say 'Next'
+printf '  Start everything with:  \033[1mcomposer dev\033[0m\n'
+printf '  Then open:              \033[1mhttp://localhost:8000\033[0m\n\n'

@@ -9,8 +9,9 @@
 #
 # Idempotent. Run it as often as you like.
 #
-#   bin/dev-up            services, then a readiness check
-#   bin/dev-up --migrate  also run the platform migrations
+#   bin/dev-up              services, then a readiness check and the checks
+#   bin/dev-up --migrate    also run the platform migrations
+#   bin/dev-up --no-verify  skip the checks - what `composer dev` passes
 #
 set -euo pipefail
 
@@ -62,5 +63,10 @@ if [ "${1:-}" = '--migrate' ]; then
     php artisan migrate --database=migrator --force --quiet && ok 'platform schema up to date'
 fi
 
-say 'Checks'
-php bin/verify | tail -3
+# The checks are the point of `bin/dev-up` on its own and noise in front of
+# `composer dev`, which runs this to wait for the services and then starts
+# four long-running processes. `--no-verify` is what `composer dev` passes.
+if [ "${1:-}" != '--no-verify' ] && [ "${2:-}" != '--no-verify' ]; then
+    say 'Checks'
+    php bin/verify | tail -3
+fi

@@ -14,8 +14,14 @@ The application skeleton, plus the repository conventions that are annoying to i
 - [x] Laravel 13 on PHP 8.3, `composer.json` pinning the extensions the app actually requires (`intl`, `pgsql`, `dom`, `xsl`, `zip`, `sodium`, `mbstring`). `bcmath`/`gmp` are under `suggest`: `brick/math` falls back to a pure-PHP calculator, exactly as correct and slower
 - [x] `.editorconfig`, `.gitattributes` with `* text=auto eol=lf`, `.gitignore`
 - [x] `CHANGELOG.md` in Keep a Changelog format; `CONTRIBUTING.md` stating the Conventional Commits types in use
-- [ ] A commit-message check runs locally via a git hook installed by `composer setup`
-- [ ] `composer setup` takes a fresh clone to a running application in one command
+- [x] A commit-message check runs locally via a git hook installed by `composer setup`. POSIX `sh` with no dependencies - it runs on the machine with no bash, no node and no vendor directory - installed by pointing `core.hooksPath` at `.githooks` rather than copying, because a copy goes stale the moment the hook changes and nobody re-runs the installer
+- [x] **A CI check is not a substitute.** It reports the message after the commit exists, and the only fix is rewriting history, which CONTRIBUTING.md forbids on a shared branch. The check has to run before the commit is written, and the only place that happens is a hook
+- [x] It refuses: a subject that is not `type(scope): summary`, one over 72 characters, a capitalised summary that is not an acronym, a trailing full stop, a non-blank second line, and a `feat`/`fix`/`refactor`/`perf` with no `PF-###`. `docs`, `chore`, `ci`, `build`, `test` and `revert` need no task - a typo fix with a task number is paperwork, and paperwork that is required is paperwork that gets faked
+- [x] Tested by **running** it, 17 messages through the real script, which also fails if the file loses its execute bit - the way a hook most often stops working. And a check asserts the hook's type list and CONTRIBUTING.md's agree in both directions, because a type documented and refused means a contributor is rejected for following the instructions
+- [x] **This repository's own history violates it**, for the nine commits numbered `PF-006` to `PF-015`: the hook did not exist when they were written, and rewriting them is what CONTRIBUTING.md forbids. The first rejection case in the check is that exact shape
+- [x] `composer setup` takes a fresh clone to a running application in one command. It is `bin/setup`, a script rather than a list in `composer.json`, because the list was five lines and three were wrong in ways a list cannot express - conditionals, ordering and error messages
+- [x] Found and fixed: it ran `php artisan migrate`, which runs as the **application** role, and PF-010 gives that role no DDL at all. A fresh clone's first command failed with a permission error that reads as a broken database. A check now refuses an `artisan migrate` without `--database=migrator`
+- [x] It also started no services, so the migration had nothing to connect to, and seeded nothing, so a clone ended at a login form with no workspace to log into and no way to discover the credentials
 
 ### PF-002 · Formatting and static analysis at maximum
 `—` · **3 pts** · depends: PF-001 · standards: —
@@ -155,9 +161,16 @@ The application must not be able to do things it has no business doing, regardle
 `—` · **3 pts** · depends: PF-001 · standards: —
 
 - [x] `compose.yaml` with PostgreSQL 16, Redis 8, Meilisearch, Gotenberg, veraPDF and MailPit, with profiles for `laptop`, `documents`, `search` and `full`
-- [ ] Volumes and healthchecks so `composer dev` can wait for readiness rather than racing it
-- [ ] Documented resource expectations and a cut-down profile for a laptop
-- [ ] A fresh clone reaches a seeded, logged-in application with `composer setup && composer dev` and nothing else
+- [x] Volumes and healthchecks so `composer dev` can wait for readiness rather than racing it. `composer dev` now runs `bin/dev-up --no-verify` first, and both it and `bin/setup` use `docker compose up -d --wait`, which blocks on the healthchecks `compose.yaml` already declared. The `--no-verify` is deliberate: `bin/dev-up` on its own ends by running the checks, which is the point of running it by hand and noise in front of four long-running processes
+- [x] Documented resource expectations, **measured**: a migrated tenant database is 19 MB and the platform database 9 MB, so a hundred tenants is about 2 GB; `vendor/` is 482 MB and `node_modules/` 88 MB
+- [x] The number that bites first is `max_connections`. `tenancy.connections.max_per_tenant` is 5, so PostgreSQL's default of 100 is **twenty** concurrently-served tenants - and it is a cluster setting, so no application tuning moves it
+- [x] A cut-down setup for a laptop, and it is **two mechanisms** because a compose profile can only include or exclude a service, not change its command: `--profile laptop` for postgres + redis only, and `compose.laptop.yaml` to make those two smaller (`shared_buffers` 128 MB -> 32 MB, `max_connections` 100 -> 40, `synchronous_commit=off`, Redis with no persistence capped at 128 MB)
+- [x] Two things are deliberately **not** reduced, for the same kind of reason - they are not resource trades, they are features. `pg_stat_statements` stays loaded, because the query-budget checks assert index and partition use through `EXPLAIN` and dropping it makes them pass on a laptop for the wrong reason. `max_locks_per_transaction` stays at 256, because a journal with monthly partitions takes many locks in one transaction and lowering it turns a correct migration into "out of shared memory"
+- [x] A fresh clone reaches a seeded, logged-in application with `composer setup && composer dev` and nothing else. `DevelopmentSeeder` creates an operator, a tenant with its own database, an entity with an `ifrs-generic` chart, and a user who owns it - then prints the credentials, because a seeder nobody can use is a slow seeder and a line in a README goes stale
+- [x] It provisions through the **real** provisioner rather than inserting a row. A seeder that writes the `tenants` row directly produces a tenant with no database, which fails at the first query with a message about a missing password - so the developer's first experience of the product is a bug that exists only in their seed data
+- [x] It throws outside `local` and `testing`. The password is a known constant, which is the point of a development seeder and a catastrophe in production - and `db:seed --class=DevelopmentSeeder --force` is one typo away from a production shell, with `--force` existing precisely to get past the confirmation that would otherwise have stopped it
+- [x] Idempotent, proved by running it twice (238 ms, then 37 ms). A seeder that only works on an empty database is a seeder people stop running, and then the data it creates stops matching what the code expects
+- [x] The credentials the document prints are asserted to be the ones the seeder sets, because a document printing the wrong password costs five minutes every time somebody trusts it
 
 ### PF-012 · Configuration skeleton and `.env.example`
 `—` · **3 pts** · depends: PF-001 · standards: The Twelve-Factor App

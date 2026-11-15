@@ -62,14 +62,11 @@
     },
     "scripts": {
         "setup": [
-            "@php -r \"file_exists('.env') || copy('.env.example', '.env');\"",
-            "@php artisan key:generate --ansi",
-            "@php artisan migrate --force --ansi",
-            "npm install --ignore-scripts",
-            "npm run build"
+            "bash bin/setup"
         ],
         "dev": [
             "Composer\\Config::disableProcessTimeout",
+            "bash bin/dev-up --no-verify",
             "npx concurrently -c \"#4169E1,#DC382D,#F7DF1E,#8892BF\" \"php artisan serve\" \"php artisan queue:listen --tries=1 --timeout=0\" \"npm run dev\" \"php artisan pail --timeout=0\" --names=server,queue,vite,logs --kill-others"
         ],
         "test": [
@@ -99,7 +96,13 @@
         "post-root-package-install": [
             "@php -r \"file_exists('.env') || copy('.env.example', '.env');\""
         ],
-        "verify": "@php bin/verify"
+        "verify": "@php bin/verify",
+        "seed:dev": [
+            "@php artisan db:seed --class=DevelopmentSeeder --force --ansi"
+        ],
+        "hooks": [
+            "bash bin/install-hooks"
+        ]
     },
     "scripts-descriptions": {
         "setup": "Take a fresh clone to a running application in one command.",
