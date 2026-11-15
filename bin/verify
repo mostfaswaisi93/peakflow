@@ -35,6 +35,7 @@ declare(strict_types=1);
  |   php bin/verify canonical  canonical JSON and XML, and the hashes that depend on them
  |   php bin/verify roles      what each database role can actually reach
  |   php bin/verify config     .env.example completeness, and the settings production may not get wrong
+ |   php bin/verify lang       ICU messages, and the sentences Arabic will not let you assemble
  |   php bin/verify charts     the chart templates, and the charts they produce
  |   php bin/verify property   the balanced-entry invariant over generated entries
  |   php bin/verify group      inter-entity postings across a four-entity group
@@ -140,6 +141,10 @@ if ($only === 'all' || $only === 'iban') {
     $suites['Bank identifiers'] = (new Tests\Support\BankIdentifierRules())->all();
 }
 
+if ($only === 'all' || $only === 'lang') {
+    $suites['Localization'] = (new Tests\Support\LocalizationRules())->all();
+}
+
 if ($only === 'all' || $only === 'config') {
     $suites['Configuration'] = (new Tests\Support\ConfigurationRules())->all();
 }
@@ -169,7 +174,7 @@ if ($only === 'all' || $only === 'examples') {
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | charts | queue | group | manual | logging | property | examples | rollback\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | charts | queue | group | manual | logging | property | examples | rollback\n");
     exit(2);
 }
 

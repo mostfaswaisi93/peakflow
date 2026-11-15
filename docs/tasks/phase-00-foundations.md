@@ -205,10 +205,19 @@ The pipeline is specified now and switched on by a decision with a name on it.
 `—` · **5 pts** · depends: PF-001 · standards: ICU MessageFormat, CLDR
 
 - [x] `ar` and `en` catalogs; `ar` is the default locale and `en` the fallback
-- [ ] ICU MessageFormat is the mechanism, so Arabic's six plural categories are expressible
+- [x] ICU MessageFormat is the mechanism, so Arabic's six plural categories are expressible. `trans_choice()`'s pipe syntax cannot express them and no range expression can: the CLDR rule for `few` is `n % 100 = 3..10`, so **103 counts the way 3 does**. `App\Support\Lang\Message` formats through `MessageFormatter`, and a check forbids `trans_choice` rather than discouraging it
+- [x] Found and fixed: `ArabicCount` offered **four** forms and selected with hand-written ranges on the raw count. Measured, `entries(103)` gave `103 قيدًا` where CLDR says `few` (`103 قيود`), and `entries(100)` gave `100 قيدًا` where CLDR says `other` (`100 قيد`) - 11 takes the accusative singular and 100 the genitive, which is a different word. The category now comes from ICU and there is no range arithmetic left in the class
+- [x] Found and fixed: `ImportReport::summary()` was two `sprintf` templates behind `$locale === 'ar'`, and English got **no pluralisation at all** - "Ready: 1 rows in 1 entries" - because the branch that handled it was the Arabic one. One ICU message per locale now, with neither form count in the code
+- [x] A message that cannot render is **refused**, not degraded: the unformatted form is `{count, plural, zero{...`, which a user reads as broken software next to a figure they were about to act on. A missing argument is refused before formatting, because ICU does not treat one as an error - measured, it returned the string `{count}`, so the page rendered and nothing logged it
+- [x] The argument scanner is a parser, because a regular expression cannot do it: `{bad, plural, one{has} other{have}}` has branch bodies syntactically identical to placeholders, and the first version demanded arguments called `has` and `have`
+- [x] The catalogs are held to the consequences: the same ICU keys in every served locale, every message rendering at every category boundary (0, 1, 2, 3, 11, 100, 103, 111), every plural node declaring every category the locale has, and no branch for a category it does not
+- [x] Found on the way: that node rule was per-MESSAGE first, and a sentence with two plurals satisfied it from either one. Measured - deleting the `few` branch from the first plural left the check passing
 - [x] `SetLocale` resolves from the user, then the tenant default, then `Accept-Language`, and sets `dir` accordingly
 - [x] A test asserts: every `__()` key in the codebase exists in **both** catalogs, both files are sorted, their key sets are identical, and no English value has been left as Arabic text
-- [ ] A documented rule, with an example, that a translated label is never concatenated with a value - because Arabic adjectives agree in gender and `":label جديدة"` is wrong for every masculine noun
+- [x] A documented rule, with an example, that a translated label is never concatenated with a value - `docs/architecture/localization.md`, and enforced by a check that tokenises rather than greps. `__('حساب') . ' جديد'` is right and `__('فاتورة') . ' جديد'` is wrong, and nothing at the concatenation site knows which noun arrived
+- [x] `sprintf(__('%s جديد'), $x)` is caught by the same rule: the translator controls where the value goes and still not how the words around it agree with it, because the adjective is in the format string and the noun is not
+- [x] There were **no violations** when that rule was written, which is why it was written - the first one would otherwise have been found by a reader
+- [x] A locale ternary picking between two **labels** is deliberately *not* forbidden. There is no pluralisation and no agreement in one word, and the enum or the row is the authority on it; dozens exist on purpose
 
 ### PF-017 · Vite, Tailwind v4 and the token scaffold
 `—` · **5 pts** · depends: PF-001 · standards: WCAG 2.2 AA

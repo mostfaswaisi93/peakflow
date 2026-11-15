@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tenant\Ledger\Manual;
 
-use App\Support\Lang\ArabicCount;
+use App\Support\Lang\Message;
 
 /**
  * What a spreadsheet import would do, before it does any of it - PF-055.
@@ -62,40 +62,39 @@ final readonly class ImportReport
     }
 
     /**
-     * A one-line summary for the top of the screen.
+     * A one-line summary for the top of the screen - PF-016.
      *
      * Counting the ROWS rejected rather than the problems found, because one
      * row can have three problems and "27 problems" reads as 27 rows to fix.
+     *
+     * ## One ICU message per sentence, and no locale branch
+     *
+     * This was two `sprintf` templates behind `$locale === 'ar'`, with the
+     * Arabic one assembling a sentence out of `ArabicCount` fragments. It had
+     * two problems, and the English one is the embarrassing one:
+     *
+     *     Ready: 1 rows in 1 entries, all balanced.
+     *
+     * English got no pluralisation at all, because the branch that handled it
+     * was the Arabic one. A locale branch in the code means every sentence is
+     * written twice and only the locale the author speaks gets checked.
+     *
+     * So the sentence lives in the catalog as one ICU message per locale, and
+     * CLDR decides the forms - six of them in Arabic, two in English, and
+     * neither number appears here.
      */
     public function summary(string $locale): string
     {
         if ($this->clean) {
-            return $locale === 'ar'
-                ? sprintf(
-                    'جاهز: %s في %s، كلها متوازنة. لم يُكتب شيء بعد.',
-                    ArabicCount::rows($this->rows),
-                    ArabicCount::entries(count($this->entries)),
-                )
-                : sprintf(
-                    'Ready: %d rows in %d entries, all balanced. Nothing has been written yet.',
-                    $this->rows,
-                    count($this->entries),
-                );
+            return Message::of('import.summary.ready', [
+                'rows' => $this->rows,
+                'entries' => count($this->entries),
+            ], $locale);
         }
 
-        $rows = count(array_unique(array_column($this->rejections, 'row')));
-
-        return $locale === 'ar'
-            ? sprintf(
-                'مرفوض: %d من %s بها مشكلة. لم يُكتب شيء - الملف يُرحَّل كاملًا أو لا يُرحَّل.',
-                $rows,
-                ArabicCount::rows($this->rows),
-            )
-            : sprintf(
-                'Rejected: %d of %d rows have a problem. Nothing was written - the file posts whole or '.
-                'not at all.',
-                $rows,
-                $this->rows,
-            );
+        return Message::of('import.summary.rejected', [
+            'bad' => count(array_unique(array_column($this->rejections, 'row'))),
+            'rows' => $this->rows,
+        ], $locale);
     }
 }

@@ -1,4 +1,6 @@
 {
+    "import.summary.ready": "جاهز: {rows, plural, zero{لا صفوف} one{صف واحد} two{صفان} few{# صفوف} many{# صفًا} other{# صف}} في {entries, plural, zero{لا قيود} one{قيد واحد} two{قيدان} few{# قيود} many{# قيدًا} other{# قيد}}، كلها متوازنة. لم يُكتب شيء بعد.",
+    "import.summary.rejected": "مرفوض: {bad, number} من {rows, plural, zero{لا صفوف} one{صف واحد} two{صفان} few{# صفوف} many{# صفًا} other{# صف}} بها مشكلة. لم يُكتب شيء - الملف يُرحَّل كاملًا أو لا يُرحَّل.",
     "أسبوع": "أسبوع",
     "أمر بيع": "أمر بيع",
     "أمر شراء": "أمر شراء",

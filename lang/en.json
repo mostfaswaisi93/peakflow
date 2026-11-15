@@ -1,4 +1,6 @@
 {
+    "import.summary.ready": "Ready: {rows, plural, one{# row} other{# rows}} in {entries, plural, one{# entry} other{# entries}}, all balanced. Nothing has been written yet.",
+    "import.summary.rejected": "Rejected: {bad, number} of {rows, plural, one{# row} other{# rows}} {bad, plural, one{has} other{have}} a problem. Nothing was written - the file posts whole or not at all.",
     "أسبوع": "week",
     "أمر بيع": "sales order",
     "أمر شراء": "purchase order",
