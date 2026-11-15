@@ -59,13 +59,33 @@ final class ArchitectureRules
         $violations = [];
 
         foreach ($this->phpFiles('app') as $file) {
-            $source = (string) file_get_contents($file);
+            /*
+             | Comments are blanked before scanning, not stripped.
+             |
+             | A comment explaining WHY a float must not be used contains the
+             | word, so the rule flagged the explanation of itself - and the
+             | only ways out were to delete the explanation or to annotate it
+             | with the escape hatch meant for genuine exceptions. Both make
+             | the codebase worse to read in order to satisfy a check.
+             |
+             | Blanking rather than removing keeps every byte offset, so the
+             | line numbers in a violation still point at the right line.
+             */
+            $original = (string) file_get_contents($file);
+            $source = $this->withoutComments($original);
             $relative = $this->relative($file);
 
             // A float type declaration on a parameter, property or return.
             if (preg_match_all('/(?:^|[\s(,])(?:\?)?(?:float|double)(?:\s+\$|\s*\))/i', $source, $m, PREG_OFFSET_CAPTURE)) {
                 foreach ($m[0] as [$match, $offset]) {
-                    if ($this->lineIsAnnotated($source, $offset)) {
+                    /*
+                     | Matched in the blanked source, annotated against the
+                     | ORIGINAL - `@arch-allow` lives in a comment, and
+                     | blanking comments blanked the exemptions along with
+                     | the prose they were exempting. Offsets are identical
+                     | between the two because blanking preserves length.
+                     */
+                    if ($this->lineIsAnnotated($original, $offset)) {
                         continue;
                     }
 
@@ -81,7 +101,8 @@ final class ArchitectureRules
                     // legitimate case: ICU's NumberFormatter takes a float, and
                     // the value has already been rounded to the currency's
                     // exponent. It is annotated at the call site.
-                    if (! $this->lineIsAnnotated($source, $pos)) {
+                    // Against the ORIGINAL: the annotation is a comment.
+                    if (! $this->lineIsAnnotated($original, $pos)) {
                         $violations[] = sprintf('%s:%d uses %s', $relative, $this->lineAt($source, $pos), $needle);
                     }
                     $pos += strlen($needle);
@@ -602,6 +623,48 @@ final class ArchitectureRules
         }
 
         return $violations;
+    }
+
+    /**
+     * The same source with every comment blanked out.
+     *
+     * Tokenised rather than regexed: `//` inside a string literal is not a
+     * comment, and `$url = 'https://example.test'` would otherwise lose the
+     * rest of its line and take any real violation after it with it.
+     *
+     * Each comment is replaced by spaces of the same length, so byte offsets
+     * - and therefore reported line numbers - are unchanged.
+     */
+    private function withoutComments(string $source): string
+    {
+        $tokens = @token_get_all($source);
+
+        if ($tokens === false) {
+            // Unparseable: scan it as-is rather than silently skipping a file
+            // that might be where the violation is.
+            return $source;
+        }
+
+        $result = '';
+
+        foreach ($tokens as $token) {
+            if (is_array($token)) {
+                if ($token[0] === T_COMMENT || $token[0] === T_DOC_COMMENT) {
+                    // Keep the newlines so line numbers survive.
+                    $result .= preg_replace('/[^\n]/', ' ', $token[1]);
+
+                    continue;
+                }
+
+                $result .= $token[1];
+
+                continue;
+            }
+
+            $result .= $token;
+        }
+
+        return $result;
     }
 
     /**

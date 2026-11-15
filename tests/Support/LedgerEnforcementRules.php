@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Support;
 
+use Brick\Math\BigDecimal;
 use App\Platform\Models\Tenant;
 use App\Platform\Services\TenantConnectionResolver;
 use App\Tenant\Ledger\Exceptions\EntryDoesNotBalance;
@@ -15,6 +16,8 @@ use App\Tenant\Ledger\Posting\RuleDescription;
 use App\Tenant\Ledger\Services\ChartTemplate;
 use App\Tenant\Ledger\Services\LedgerVerifier;
 use App\Tenant\Ledger\Services\Poster;
+use App\Tenant\Ledger\Services\Reverser;
+use App\Tenant\Ledger\Services\TrialBalance;
 use App\Tenant\Ledger\Services\FiscalCalendarGenerator;
 use App\Tenant\Tenancy\Models\Entity;
 use App\Tenant\Tenancy\Services\EntityContext;
@@ -85,6 +88,7 @@ final class LedgerEnforcementRules
                 'the chart opens with every required control role' => $this->chartIsUsable(),
                 'a posting rule that does not balance is refused by name' => $this->badRulesFailByName(),
                 'ledger:verify finds an entry someone unbalanced' => $this->verifyCatchesDamage(),
+                'a reversed entry still counts in the trial balance' => $this->reversalsNetOut(),
             ];
         } catch (Throwable $e) {
             return ['ledger invariants could not be checked' => [
@@ -486,6 +490,79 @@ final class LedgerEnforcementRules
         }
 
         return $violations;
+    }
+
+    /**
+     * A reversed entry's lines still count - PF-056, PF-058.
+     *
+     * `reversed` records that a REVERSING ENTRY EXISTS, not that the original
+     * lines were withdrawn. The posting happened and is part of the history;
+     * the reversal is a separate entry whose own lines cancel it.
+     *
+     * A report filtering on `status = 'posted'` therefore drops the original
+     * and keeps the reversal, and every reversed transaction appears as its
+     * own negative. A 1,234.56 receipt reversed in the next period showed a
+     * cash balance of MINUS 1,234.56 - a sign error on a figure somebody
+     * would have acted on, produced by a filter that reads as obviously
+     * correct.
+     *
+     * @return list<string>
+     */
+    public function reversalsNetOut(): array
+    {
+        $entity = Entity::query()->whereKey($this->entityId)->firstOrFail();
+        $poster = app(Poster::class);
+        $reverser = app(Reverser::class);
+        $trialBalance = app(TrialBalance::class);
+
+        $date = Carbon::parse($this->postingDate);
+        $cashCode = '1.1.1.1';
+
+        $before = $this->balanceOf($trialBalance, $entity, $cashCode, $date);
+
+        $entry = $poster->post(
+            $entity,
+            \App\Tenant\Ledger\Posting\Rules\OpeningBalanceRule::KEY,
+            ['balances' => [['account_id' => $this->accounts[$cashCode], 'amount' => '1234.5600']]],
+            $date,
+            journalCode: 'OPN',
+        );
+
+        $afterPosting = $this->balanceOf($trialBalance, $entity, $cashCode, $date);
+
+        $violations = [];
+
+        if (! $afterPosting->minus($before)->isEqualTo(BigDecimal::of('1234.5600'))) {
+            $violations[] = sprintf(
+                'posting 1234.5600 moved the trial balance by %s',
+                (string) $afterPosting->minus($before),
+            );
+        }
+
+        $reverser->reverse($entry, $date, 'checking that a reversal nets out');
+
+        $afterReversal = $this->balanceOf($trialBalance, $entity, $cashCode, $date);
+
+        if (! $afterReversal->isEqualTo($before)) {
+            $violations[] = sprintf(
+                'after reversing, the balance is %s instead of returning to %s - a report that counts the '.
+                'reversal without counting what it reverses shows every reversed transaction as its own '.
+                'negative',
+                (string) $afterReversal,
+                (string) $before,
+            );
+        }
+
+        return $violations;
+    }
+
+    private function balanceOf(TrialBalance $trialBalance, Entity $entity, string $code, Carbon $date): BigDecimal
+    {
+        $row = $trialBalance
+            ->for($this->entityId, (string) $entity->functional_currency, $date)['rows']
+            ->firstWhere('code', $code);
+
+        return BigDecimal::of($row['balance'] ?? '0');
     }
 
     /**

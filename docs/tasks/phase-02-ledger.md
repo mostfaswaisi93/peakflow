@@ -174,10 +174,10 @@ The global proof. An individual assertion can be written to pass; this cannot.
 ### PF-056 · Reversals
 `Ledger` · **3 pts** · depends: PF-055 · standards: IAS 8 · `type:posting`
 
-- [ ] A posted entry is corrected by a reversing entry, linked in both directions and visible from either
-- [ ] Reversal in a later period is permitted and normal; reversal into a closed period is refused
-- [ ] A reversal cannot itself be reversed - it is corrected by a new entry, so a chain of reversals cannot obscure the original
-- [ ] The reversal reason is mandatory and appears on the drill-down
+- [x] A posted entry is corrected by a reversing entry, linked in both directions and visible from either
+- [x] Reversal in a later period is permitted and normal; reversal into a closed period is refused
+- [x] A reversal cannot itself be reversed - it is corrected by a new entry, so a chain of reversals cannot obscure the original
+- [x] The reversal reason is mandatory and appears on the drill-down
 
 ### PF-057 · Inter-entity postings
 `Ledger` · **8 pts** · depends: PF-052, PF-047 · standards: IAS 1 · `risk:high` `type:posting`
@@ -191,7 +191,7 @@ The global proof. An individual assertion can be written to pass; this cannot.
 ### PF-058 · The trial balance and its budget
 `Ledger` · **3 pts** · depends: PF-053, PF-042 · standards: IAS 1
 
-- [ ] Trial balance for any date and any period, with and without adjusting entries, in functional or presentation currency
-- [ ] Drill-down from any figure to its journal lines
+- [x] Trial balance for any date and any period, with and without adjusting entries, in functional or presentation currency
+- [x] Drill-down from any figure to its journal lines
 - [ ] A performance test asserts it stays inside its query budget and its time budget on a seeded dataset of **10 million** journal lines, with partition pruning proven by `EXPLAIN`
-- [ ] The query count does not change with the number of accounts returned - an N+1 here is invisible to every functional test
+- [x] The query count does not change with the number of accounts returned - an N+1 here is invisible to every functional test

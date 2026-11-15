@@ -89,7 +89,9 @@ final class LedgerVerifier
             SELECT e.number, p.label, p.state
             FROM journal_entries e
             JOIN periods p ON p.id = e.period_id
-            WHERE e.status = 'posted'
+            -- A reversed entry was posted too, and if it went into a closed
+            -- period that is just as wrong as a live one being there.
+            WHERE e.status IN ('posted', 'reversed')
               AND p.state NOT IN ('open', 'soft_closed')
               AND (cast(? AS char(26)) IS NULL OR e.entity_id = cast(? AS char(26)))
             LIMIT 50
