@@ -7,9 +7,11 @@ namespace App\Providers;
 use App\Platform\Models\Tenant;
 use App\Platform\Services\PlatformCeilings;
 use App\Support\Audit\AuditChain;
+use App\Support\Authorization\RequiresStepUp;
 use App\Support\Authorization\SegregatesDuties;
 use App\Tenant\Identity\Services\AuditChainVerifier;
 use App\Tenant\Identity\Services\SodEngine;
+use App\Tenant\Identity\Services\StepUpGuard;
 use App\Tenant\Tenancy\Services\Settings;
 use App\Support\Limits\Ceilings;
 use App\Tenant\Identity\Models\User;
@@ -74,6 +76,16 @@ final class TenancyServiceProvider extends ServiceProvider
          | capability is declared in Support and bound here.
          */
         $this->app->bind(AuditChain::class, AuditChainVerifier::class);
+
+        /*
+         | Step-up, by its Support contract - PF-032.
+         |
+         | The acts that need it belong to the modules that own them -
+         | reopening a period is Ledger, releasing a payment is Settlement -
+         | and none of them may depend on Identity. Same shape as the three
+         | above.
+         */
+        $this->app->bind(RequiresStepUp::class, StepUpGuard::class);
     }
 
     public function boot(): void

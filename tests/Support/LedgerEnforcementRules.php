@@ -21,6 +21,10 @@ use App\Tenant\Ledger\Posting\RuleDescription;
 use App\Tenant\Ledger\Services\BalanceRebuilder;
 use App\Tenant\Ledger\Services\ChartTemplate;
 use App\Support\Audit\AuditChain;
+use App\Tenant\Identity\Services\StepUpGuard;
+use App\Support\Authorization\RequiresStepUp;
+use App\Tenant\Identity\Services\MfaService;
+use App\Support\Mfa\Totp;
 use App\Tenant\Identity\Models\Role;
 use App\Tenant\Identity\Models\User;
 use App\Tenant\Identity\Models\UserEntityRole;
@@ -117,6 +121,7 @@ final class LedgerEnforcementRules
                 'opening balances are permissioned, reasoned and time-bounded' => $this->openingBalancesAreBounded(),
                 'an adjustment lands in period 13, and the statement says so' => $this->adjustmentsAreDeclared(),
                 'the balance model and the journal give the same statement' => $this->bothSidesAgree(),
+                'a stolen session cannot reopen a closed period' => $this->reopeningNeedsAFreshFactor(),
             ], $this->entityId);
         } catch (Throwable $e) {
             return ['ledger invariants could not be checked' => [
@@ -2382,6 +2387,237 @@ final class LedgerEnforcementRules
         }
 
         app(EntityContext::class)->use($this->entityId);
+
+        return $violations;
+    }
+
+    /**
+     * Reopening a closed period needs a fresh factor - PF-032.
+     *
+     * ## Why this is asserted in the service and not on a route
+     *
+     * The middleware exists and is proven, and it protects the one route
+     * there is. The same method is reached from a console command, a queued
+     * job and a future API endpoint - each of which is a route that does not
+     * exist yet, and a middleware protects only the one that does.
+     *
+     * So `PeriodStateMachine::transition()` asserts it on the write path,
+     * which is the only place that cannot be reached around.
+     *
+     * ## Closing does not need it; reopening does
+     *
+     * Closing a period stops postings, which is the safe direction.
+     * Reopening lets somebody change a figure that has been reported, and a
+     * stolen session passes every check that looks at the session. It fails
+     * this one.
+     *
+     * ## And the assertion is scoped to the period
+     *
+     * An assertion made to reopen March must not authorise reopening
+     * December in the same five minutes. That is the difference between
+     * re-proving a factor and holding a five-minute licence to reopen
+     * anything - and it is the half of step-up that gets dropped, because an
+     * unscoped assertion makes every test pass.
+     *
+     * @return list<string>
+     */
+    public function reopeningNeedsAFreshFactor(): array
+    {
+        $violations = [];
+        $entity = $this->freshEntity('STP');
+        $entityId = (string) $entity->getKey();
+        $machine = app(PeriodStateMachine::class);
+
+        $date = Carbon::parse($this->postingDate);
+
+        $march = app(FiscalCalendarGenerator::class)->periodFor($entityId, $date);
+        $december = app(FiscalCalendarGenerator::class)
+            ->periodFor($entityId, $date->copy()->endOfYear());
+
+        if ($march === null || $december === null || $march->getKey() === $december->getKey()) {
+            return ['the fresh entity does not have two distinct periods to compare'];
+        }
+
+        $before = auth()->guard('web')->user();
+
+        try {
+            $user = $this->userWithRole('controller', $entityId);
+            auth()->guard('web')->setUser($user);
+
+            foreach ([$march, $december] as $period) {
+                if ($period->state !== PeriodState::Open) {
+                    $machine->transition($period, PeriodState::Open, 'opened for the step-up check');
+                }
+
+                $machine->transition(
+                    $period->refresh(),
+                    PeriodState::Closed,
+                    'closed for the step-up check, which needs a closed period to reopen',
+                );
+            }
+
+            /*
+             | Closing worked without a factor, which is the point.
+             |
+             | If closing needed step-up too, the two lines above would have
+             | thrown and this check would be asserting nothing - so the
+             | successful close IS the first assertion.
+             */
+            if ($march->refresh()->state !== PeriodState::Closed) {
+                $violations[] = 'closing a period required a step-up assertion. Closing stops postings, '.
+                    'which is the safe direction, and demanding a factor for it trains people to produce '.
+                    'one on request';
+            }
+
+            $refusal = $this->refusal(fn () => $machine->transition(
+                $march->refresh(),
+                PeriodState::Open,
+                'reopening to test that a stolen session is not enough for this',
+            ));
+
+            if ($refusal === null) {
+                $violations[] = 'a closed period was reopened with no fresh factor. A stolen session '.
+                    'passes every check that looks at the session, and reopening lets somebody change a '.
+                    'figure that has been reported';
+            } elseif (! str_contains(mb_strtolower($refusal), 'step')
+                && ! str_contains(mb_strtolower($refusal), 'factor')
+                && ! str_contains(mb_strtolower($refusal), 'تحقّق')) {
+                $violations[] = sprintf(
+                    'reopening was refused for some other reason, so nothing here is testing step-up: %s',
+                    Str::limit($refusal, 120),
+                );
+            }
+
+            /*
+             | Now with an assertion for MARCH, and December must still be
+             | refused.
+             |
+             | This is the half that gets dropped. An unscoped assertion
+             | makes the reopen-March case pass and leaves a five-minute
+             | licence to reopen anything, which no test would notice.
+             */
+            $guard = app(RequiresStepUp::class);
+
+            /*
+             | A real TOTP enrolment and a real code.
+             |
+             | Not a back door into the guard. `recordAssertion()` verifies
+             | the code against an enrolled authenticator, and a method that
+             | skipped that would be a method somebody could call in
+             | production - so the check enrols a factor and computes the
+             | code the way an authenticator app would, from the secret and
+             | the clock.
+             |
+             | Which also means this check exercises the TOTP path, so a
+             | step-up that accepted any code would fail here rather than
+             | somewhere nobody is looking.
+             */
+            $enrolment = app(MfaService::class)->beginTotpEnrolment($user, 'Check authenticator');
+            $secret = (string) $enrolment['secret'];
+
+            /*
+             | One code per time step, because a used code is refused.
+             |
+             | TOTP replay protection is doing its job: confirming the
+             | enrolment consumes the code for the current step, and asking
+             | for the same code again - which `Totp::at()` returns for 30
+             | seconds - gets it refused. Measured while writing this: the
+             | enrolment confirmed, `hasConfirmedFactor` was true, and a
+             | fresh `verifyCode()` with the same code came back false.
+             |
+             | So the codes are taken from explicit, consecutive steps rather
+             | than from "now" twice. The drift window accepts one step
+             | either side, so step N+1 is still valid when the assertion is
+             | recorded.
+             */
+            $step = Totp::stepAt(time());
+
+            app(MfaService::class)->confirmTotpEnrolment(
+                $enrolment['authenticator'],
+                Totp::at($secret, $step * 30),
+            );
+
+            $assertion = app(StepUpGuard::class)->recordAssertion(
+                $user->refresh(),
+                'period.reopen',
+                (string) $march->getKey(),
+                Totp::at($secret, ($step + 1) * 30),
+            );
+
+            if ($assertion === null) {
+                $violations[] = 'a valid code from the next time step was not accepted, so nothing below '.
+                    'is testing a satisfied assertion';
+            }
+
+            /*
+             | The guard reads the user from the auth guard, and that
+             | instance is STALE.
+             |
+             | It was set before the enrolment, so its `authenticators`
+             | relation is the empty one it was loaded with - and
+             | `hasConfirmedFactor()` on it is false however many factors the
+             | database now holds. Which produced "Set up a second factor
+             | before you 2026-03" on a user who had just enrolled one.
+             */
+            auth()->guard('web')->setUser($user->refresh());
+
+            /*
+             | And the session has to say a factor was proved at login.
+             |
+             | `period.reopen` demands BOTH: a confirmed factor on the
+             | account and a factor asserted in this session. The login flow
+             | sets `factor_asserted_at`; a check suite has no HTTP session,
+             | so it says so explicitly rather than the guard quietly
+             | treating "no session" as "satisfied".
+             |
+             | Which is the right default for the guard and is why this line
+             | is needed: a console command has no second factor and must not
+             | be refused, so `sessionAssertedAFactor()` returning false
+             | makes `isSatisfied` false - exactly as it should for a request
+             | that never proved one.
+             */
+            session(['factor_asserted_at' => now()->toIso8601String()]);
+
+            if (! $guard->isSatisfied('period.reopen', (string) $march->getKey())) {
+                $violations[] = 'an assertion recorded for March does not satisfy reopening March, so '.
+                    'the subject is not being matched at all';
+            }
+
+            if ($guard->isSatisfied('period.reopen', (string) $december->getKey())) {
+                $violations[] = 'an assertion recorded for March also authorises reopening December. '.
+                    'That is a five-minute licence to reopen anything rather than a factor re-proved for '.
+                    'one act';
+            }
+
+            $reopened = $this->refusal(fn () => $machine->transition(
+                $march->refresh(),
+                PeriodState::Open,
+                'reopening March with a factor re-proved for March',
+            ));
+
+            if ($reopened !== null) {
+                $violations[] = sprintf(
+                    'reopening March was refused even with an assertion recorded for it: %s',
+                    Str::limit($reopened, 140),
+                );
+            }
+
+            $decemberRefusal = $this->refusal(fn () => $machine->transition(
+                $december->refresh(),
+                PeriodState::Open,
+                'reopening December on an assertion that was made for March',
+            ));
+
+            if ($decemberRefusal === null) {
+                $violations[] = 'December was reopened on an assertion made for March';
+            }
+        } finally {
+            $before === null
+                ? auth()->guard('web')->forgetUser()
+                : auth()->guard('web')->setUser($before);
+
+            app(EntityContext::class)->use($this->entityId);
+        }
 
         return $violations;
     }

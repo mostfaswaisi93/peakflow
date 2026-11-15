@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tenant\Ledger\Services;
 
 use App\Support\Audit\AuditTrail;
+use App\Support\Authorization\RequiresStepUp;
 use App\Tenant\Ledger\Enums\PeriodState;
 use App\Tenant\Ledger\Events\PeriodClosed;
 use App\Tenant\Ledger\Events\PeriodReopened;
@@ -49,7 +50,10 @@ use Illuminate\Support\Str;
  */
 final class PeriodStateMachine
 {
-    public function __construct(private readonly AuditTrail $audit) {}
+    public function __construct(
+        private readonly AuditTrail $audit,
+        private readonly RequiresStepUp $stepUp,
+    ) {}
 
     /**
      * Move a period to a new state.
@@ -99,6 +103,27 @@ final class PeriodStateMachine
 
         if (trim($reason) === '') {
             throw PeriodTransitionRefused::transitionNeedsAReason($period->label, $to);
+        }
+
+        /*
+         | Step-up, on a reopening only - PF-032.
+         |
+         | Closing a period stops postings, which is the safe direction.
+         | Reopening one lets somebody change a figure that has been
+         | reported, and a stolen session must not be enough for that.
+         |
+         | Asserted HERE rather than on a route, because the same method is
+         | reached from a console command, a queued job and a future API
+         | endpoint - each of which is a route that does not exist yet, and
+         | a middleware protects only the one that does.
+         |
+         | Object-scoped to this period: an assertion made to reopen March
+         | must not authorise reopening December in the same five minutes.
+         | That is the difference between re-proving a factor and holding a
+         | five-minute licence to reopen anything.
+         */
+        if ($reopening) {
+            $this->stepUp->assert('period.reopen', (string) $period->getKey(), (string) $period->label);
         }
 
         return DB::connection('tenant')->transaction(function () use (

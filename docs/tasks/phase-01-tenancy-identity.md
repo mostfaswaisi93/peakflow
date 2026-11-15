@@ -135,9 +135,11 @@ Two independent mechanisms, because one of them will eventually have a hole.
 `Identity` · **3 pts** · depends: PF-030 · standards: OWASP ASVS 5.0 · `type:security`
 
 - [x] A `step-up` middleware requiring a fresh factor assertion within a short window, independent of session age
-- [ ] Applied to releasing a payment run and to reopening a closed period - a stolen session must not be enough for either
-  - Waiting on the routes themselves: period reopening is PF-02x, payment runs are PF-09x. The middleware and `StepUpGuard::assert()` both exist and are proven; the call sites go in the services rather than on the routes, so they land with the services.
-  - The middleware and the guard both exist and are proven; there are no payment-run or period routes to apply them to until PF-09x and PF-04x. `StepUpGuard::assert()` is called on the write path, not only in the route, so those call sites will be inside the services rather than bolted to the routes.
+- [x] Applied to **reopening a closed period** - a stolen session is not enough for it. Asserted inside `PeriodStateMachine::transition()` rather than on a route, because the same method is reached from a console command, a queued job and a future API endpoint, each of which is a route that does not exist yet; a middleware protects only the one that does
+  - Closing a period needs no factor and the check asserts that too: closing stops postings, which is the safe direction, and demanding a factor for it trains people to produce one on request
+  - The assertion is **object-scoped**: one recorded to reopen March does not authorise reopening December in the same five minutes. That is the half that gets dropped, because an unscoped assertion makes every test pass - so the check records one for March and asserts December is still refused
+  - Reached through a new `Support` contract, `RequiresStepUp`, because the acts that need step-up belong to the modules that own them and none of them may depend on `Identity`
+  - Releasing a payment run is PF-09x and lands with the payment run itself, at the same call site inside the service
 - [x] The step-up event is audited with what it authorized
 
 ### PF-033 · The segregation-of-duties engine

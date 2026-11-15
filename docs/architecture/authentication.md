@@ -78,3 +78,34 @@ The cost of this decision is real and worth stating: some users have no smartpho
 WebAuthn Level 3, planned as the primary factor with TOTP as the fallback; the schema (`authenticators.credential_id`, `public_key`, `sign_count`) is in place and `sign_count` already carries the monotonic-counter invariant that both factor types share.
 
 **Not yet implemented**, and honestly so: WebAuthn attestation parsing and COSE key handling are not something to write by hand in the authentication path, and the library is not installable in this environment (the package registry route the build uses is blocked — see the Composer note in `docs/operations/`). The gap is recorded as open in PF-030 rather than ticked.
+
+## Step-up re-authentication, and where it is asserted
+
+A session being old is not the question. Somebody who has been working all day is still the person who logged in. The question is whether the factor was re-proved recently enough to authorise **this act** — which is why the window is minutes rather than hours, and why it is per permission.
+
+**A stolen session passes every check that looks at the session. It fails this one.**
+
+### It is asserted on the write path, not only in a route
+
+The middleware exists and protects the one route there is. The same service method is reached from a console command, a queued job and a future API endpoint — each of which is a route that does not exist yet, and a middleware protects only the one that does.
+
+So `PeriodStateMachine::transition()` asserts it itself, through the `RequiresStepUp` Support contract. The contract exists because the acts needing step-up belong to the modules that own them — reopening a period is `Ledger`, releasing a payment run is `Settlement` — and none of them may depend on `Identity`.
+
+### Closing a period needs no factor; reopening does
+
+Closing stops postings, which is the safe direction. Reopening lets somebody change a figure that has been reported.
+
+Demanding a factor for the safe direction is not free: it trains people to produce one on request, which is exactly the habit a phishing attempt relies on. So the check asserts that closing works **without** one, as well as that reopening does not.
+
+### The assertion is scoped to the subject
+
+An assertion recorded to reopen March does not authorise reopening December in the same five minutes. Otherwise step-up is a five-minute licence to reopen anything, which is a different control with the same name.
+
+This is the half that gets dropped, because an unscoped assertion makes the obvious test pass. So the check records an assertion for March and asserts that December is **still** refused — and removing the subject match from the guard fails it.
+
+### What the TOTP replay guard cost the test, and why that is right
+
+Writing the check surfaced the replay protection working as designed: confirming an enrolment consumes the code for the current 30-second step, and asking for the same code again — which is what `Totp::at()` returns for 30 seconds — gets it refused.
+
+Measured: the enrolment confirmed, `hasConfirmedFactor()` was true, and a fresh `verifyCode()` with the same code came back false. The check now takes codes from explicit consecutive steps, one per use, which is how an authenticator app is actually used.
+

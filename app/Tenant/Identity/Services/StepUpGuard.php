@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tenant\Identity\Services;
 
+use App\Support\Authorization\RequiresStepUp;
 use App\Support\Limits\Ceilings;
 use App\Tenant\Identity\Exceptions\StepUpRequired;
 use App\Tenant\Identity\Models\Authenticator;
@@ -38,7 +39,7 @@ use Illuminate\Support\Carbon;
  * Call {@see assert()} on the write path, next to the SoD check, and never
  * only in the controller that renders the form.
  */
-final class StepUpGuard
+final class StepUpGuard implements RequiresStepUp
 {
     /**
      * How long an assertion remains usable, by default.
@@ -61,11 +62,21 @@ final class StepUpGuard
      *
      * @throws StepUpRequired
      */
+    /*
+     | `$user` moved to LAST, so the signature satisfies the Support
+     | contract.
+     |
+     | PHP lets an implementation add optional parameters and not reorder
+     | required ones, and the contract cannot name `User` - it lives in
+     | Identity, which the modules asserting step-up may not depend on. One
+     | caller passed the third argument and it was the middleware passing
+     | two, so the reorder cost nothing.
+     */
     public function assert(
         string $permission,
         ?string $subjectId = null,
-        ?User $user = null,
         ?string $label = null,
+        ?User $user = null,
     ): void {
         $permissionModel = $this->catalogue->get($permission);
 
