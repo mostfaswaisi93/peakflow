@@ -22,7 +22,7 @@ final class Journal extends TenantModel
 
     protected $fillable = [
         'entity_id', 'code', 'type', 'name_ar', 'name_en',
-        'reserved', 'allowed_account_paths', 'active',
+        'reserved', 'posting_rule', 'allowed_account_paths', 'active',
     ];
 
     protected $casts = [

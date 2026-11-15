@@ -395,6 +395,37 @@ return new class extends Migration
                 END LOOP;
 
                 /*
+                 | A RESERVED journal is exempt from the requirement.
+                 |
+                 | Not a convenience. A requirement added in June cannot
+                 | reach back to January's lines, because posted lines are
+                 | immutable - so the year-end close, which mechanically
+                 | zeroes whatever is there, would have to post a line
+                 | without a dimension for every balance that predates the
+                 | rule. Refusing that makes the year unclosable with no way
+                 | forward: there is nothing to fix, because the old lines
+                 | cannot be changed.
+                 |
+                 | The same applies to the revaluation and the opening
+                 | balance. All three are consequences of what already
+                 | exists rather than new assertions about the world, so the
+                 | requirement governs what may be POSTED and not what may
+                 | be carried.
+                 |
+                 | The validity checks above still apply: a dimension that
+                 | IS supplied must be real, belong to this entity and be
+                 | postable. This exempts only the demand for one.
+                 */
+                IF EXISTS (
+                    SELECT 1
+                    FROM journal_entries e
+                    JOIN journals j ON j.id = e.journal_id
+                    WHERE e.id = NEW.journal_entry_id AND j.reserved
+                ) THEN
+                    RETURN NEW;
+                END IF;
+
+                /*
                  | An account that requires an axis gets one.
                  |
                  | This is what makes dimensional reporting trustworthy: a

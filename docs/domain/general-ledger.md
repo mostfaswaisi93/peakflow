@@ -303,13 +303,29 @@ Each run keeps its workings - exposure, rate, rate date, booked value, restated 
 
 The pair must net to zero in consolidation; the close process checks it and **refuses to pass silently** when it does not.
 
-**`YearClosed`** — an ordinary entry in a reserved journal, so it is visible, drillable and reversible
+**`ledger.year_end_close`** — an ordinary entry in the reserved `CLS` journal, so it is visible, drillable and reversible
 
-| Dr/Cr | Account | Amount |
-|-------|---------|--------|
-| Dr | every revenue account | its credit balance |
-| Cr | every expense account | its debit balance |
-| Dr/Cr | `retained_earnings` | the net |
+A year with revenue of **120,000** and cost of sales of **45,000**:
+
+| Dr/Cr | Account | Amount | Dimensions |
+|-------|---------|--------|------------|
+| Dr | every revenue account | its credit balance (120,000.0000) | the ones that account **requires** |
+| Cr | every expense account | its debit balance (45,000.0000) | the ones that account **requires** |
+| Dr/Cr | `retained_earnings` | the net (75,000.0000 Cr) | — |
+
+**An ordinary journal entry, not a flag on a row.** Three reasons, in the order they matter. It is **drillable**: "why is retained earnings 4.2 million" is answered by opening the entry and reading the lines, the same as any other figure, and a close implemented as a flag has no lines to read. It is **reversible**: a close run against a year with a misposted accrual has to come back out, and reversing a journal entry is a mechanism that already exists and is already audited, while un-setting a flag is not. And it is **visible** in the journal, the audit log and the trial balance's own movements, so nobody has to know that closing is a special case in order to see that it happened.
+
+**A second close refuses; it does not recompute.** Recomputing looks idempotent and is not: the first close moved the revenue accounts to zero, so a recomputation either sees nothing and posts nothing, or deliberately excludes the close's own entries and posts the same profit again. Both are wrong and one is silent. The refusal names the entry to reverse.
+
+**The balances exclude the closing journal**, by journal and not by date - the closing entry is dated the last day of the year, which is also when plenty of real transactions are. Without the exclusion, a reversal followed by a re-close would read the reversal as ordinary activity and close it again.
+
+**Every period of the year must be closed first.** A year closed while December still accepts postings means a posting can land after the closing entry and never be carried forward: the year's revenue understated, retained earnings short by exactly that amount, and no total anywhere disagreeing with another.
+
+**The closing lines carry the dimensions each account requires.** An expense account closed without its cost centre leaves that cost centre's profit never zeroed, so the following year's dimensional P&L opens with last year's figures still in it. Only the required axes, because grouping by all eight multiplies the entry - fifty cost centres by twenty projects is a thousand lines for one account - and the axes an account does not require are ones the business said it does not need broken out.
+
+**Reversible while the new year's first period is still open and unposted.** Once somebody has posted into the new year on top of the carried-forward balances, un-closing the old one changes figures those postings were made against, and the new year's trial balance stops tying to the closing figures it was opened from.
+
+**Nothing else may post into `CLS`.** The journal declares the one rule that may, and a trigger enforces it - a closing entry typed by hand is indistinguishable from the real one, and is found a year later by whoever compares this year's opening to last year's closing. A **reversal** is the one exception, because it mirrors an entry that is already there rather than asserting anything new; without that exception the close could never be undone, which would make its own reversibility requirement unachievable.
 
 ## Periods
 

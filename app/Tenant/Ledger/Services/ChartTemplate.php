@@ -185,6 +185,20 @@ final class ChartTemplate
             }
 
             foreach ($this->journals() as [$code, $type, $nameAr, $nameEn, $reserved]) {
+                /*
+                 | A reserved journal declares WHICH rule may post into it.
+                 |
+                 | `reserved` on its own was a comment: any rule could post
+                 | into the opening-balances journal, and an opening balance
+                 | typed by hand is indistinguishable from the real one.
+                 */
+                $rule = match ($type) {
+                    'opening' => 'ledger.opening_balance',
+                    'closing' => 'ledger.year_end_close',
+                    'revaluation' => 'ledger.fx_revaluation',
+                    default => null,
+                };
+
                 Journal::create([
                     'entity_id' => $entityId,
                     'code' => $code,
@@ -192,6 +206,7 @@ final class ChartTemplate
                     'name_ar' => $nameAr,
                     'name_en' => $nameEn,
                     'reserved' => $reserved,
+                    'posting_rule' => $rule,
                 ]);
             }
 

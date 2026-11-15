@@ -4,12 +4,13 @@ declare(strict_types=1);
 
 namespace Tests\Support;
 
-use Brick\Math\BigDecimal;
 use App\Platform\Models\Tenant;
+use Brick\Math\BigDecimal;
 use App\Platform\Services\TenantConnectionResolver;
 use App\Tenant\Ledger\Enums\PeriodState;
 use App\Tenant\Ledger\Exceptions\EntryDoesNotBalance;
 use App\Tenant\Ledger\Exceptions\PeriodTransitionRefused;
+use App\Tenant\Ledger\Exceptions\YearEndCloseRefused;
 use App\Tenant\Ledger\Posting\PostingContext;
 use App\Tenant\Ledger\Posting\PostingLine;
 use App\Tenant\Ledger\Posting\PostingRule;
@@ -21,6 +22,7 @@ use App\Tenant\Ledger\Services\PeriodStateMachine;
 use App\Tenant\Ledger\Services\Poster;
 use App\Tenant\Ledger\Services\Reverser;
 use App\Tenant\Ledger\Services\TrialBalance;
+use App\Tenant\Ledger\Services\YearEndClose;
 use App\Tenant\Ledger\Services\FiscalCalendarGenerator;
 use App\Tenant\Tenancy\Models\Entity;
 use App\Tenant\Tenancy\Services\EntityContext;
@@ -96,6 +98,7 @@ final class LedgerEnforcementRules
                 'a required dimension is refused when absent' => $this->requiredDimensionsBite(),
                 'every period transition is recorded, with a reason' => $this->transitionsAreRecorded(),
                 'a reopening is flagged and reaches the compliance report' => $this->reopeningsAreVisible(),
+                'a year closes once, reversibly, in a reserved journal' => $this->yearEndCloseHolds(),
             ];
         } catch (Throwable $e) {
             return ['ledger invariants could not be checked' => [
@@ -439,6 +442,273 @@ final class LedgerEnforcementRules
         );
 
         return $violations;
+    }
+
+    /**
+     * PF-052: a year closes once, and the close is an ordinary entry.
+     *
+     * ## A second close REFUSES; it does not recompute
+     *
+     * Recomputing looks idempotent and is not. The first close moved the
+     * revenue accounts to zero, so a recomputation either sees nothing and
+     * posts nothing, or deliberately excludes the close's own entries and
+     * posts the same profit again. Both are wrong and one is silent.
+     *
+     * ## Two bugs this check found
+     *
+     * The close reopened the adjusting period while the poster resolved
+     * December from the entry's date, so it reopened one period and wrote
+     * into another - which was closed.
+     *
+     * And after a reversal the year still read as closed, because the
+     * reverser copies `source_type` and `source_id` onto the reversal - so
+     * "already closed by CLS-2026/00002" named the reversal of 00001, and a
+     * re-close was impossible.
+     *
+     * @return list<string>
+     */
+    public function yearEndCloseHolds(): array
+    {
+        $closer = app(YearEndClose::class);
+        $machine = app(PeriodStateMachine::class);
+        $violations = [];
+
+        $year = \App\Tenant\Ledger\Models\FiscalYear::query()
+            ->where('entity_id', $this->entityId)
+            ->orderBy('starts_on')
+            ->first();
+
+        if ($year === null) {
+            return ['the entity has no fiscal year, so there is nothing to close'];
+        }
+
+        /*
+         | Revenue 120,000 and cost of sales 45,000: a result of 75,000.
+         |
+         | `5.1` and not `5.2`, because the dimension check above gives
+         | `5.2` a required axis - and every check in this file shares one
+         | transaction, so they share the database. Pointing both at the
+         | same account made this one fail for want of a department, which
+         | is the third time that lesson has come up and the reason each
+         | check now owns its accounts.
+         */
+        $this->writeEntry([['4.1', '-120000.0000'], ['1.1.1.1', '120000.0000']]);
+        $this->writeEntry([['5.1', '45000.0000'], ['1.1.1.1', '-45000.0000']]);
+
+        /*
+         | An open period blocks the close, and that is the criterion that
+         | matters most.
+         |
+         | A year closed while December still takes postings means a
+         | posting can land after the closing entry and never be carried
+         | forward - the year's revenue understated, retained earnings short
+         | by exactly that, and no total anywhere disagreeing with another.
+         */
+        try {
+            $closer->close($this->entity(), $year);
+
+            $violations[] = 'a year was closed while a period still accepted postings. A posting made after '.
+                'the closing entry would never be carried forward, and no total anywhere would disagree '.
+                'with another';
+        } catch (YearEndCloseRefused) {
+            // Correct.
+        }
+
+        foreach (
+            \App\Tenant\Ledger\Models\Period::query()
+                ->where('entity_id', $this->entityId)
+                ->where('fiscal_year_id', $year->getKey())
+                ->orderBy('ordinal')
+                ->get() as $period
+        ) {
+            if ($period->state === PeriodState::Future) {
+                $machine->transition($period, PeriodState::Open, 'opened so the year can be closed in order');
+            }
+
+            $machine->transition($period->refresh(), PeriodState::Closed, 'month-end figures signed off');
+        }
+
+        /*
+         | The expectation is COMPUTED, not assumed.
+         |
+         | The first version asserted exactly 75,000 - the revenue and cost
+         | of sales this check posts - and got 77,080, because every other
+         | check in this file posts to revenue and expense accounts too and
+         | they all share one transaction. The close zeroes the whole year,
+         | so it carries all of it.
+         |
+         | Reading the net first is also a stronger assertion: it proves the
+         | close carries the net of whatever is there, rather than a figure
+         | somebody happened to know.
+         */
+        $expected = (string) BigDecimal::of((string) $this->connection->selectOne(<<<'SQL'
+            SELECT coalesce(sum(l.functional_amount), 0) AS net
+            FROM journal_lines l
+            JOIN journal_entries e ON e.id = l.journal_entry_id
+            JOIN accounts a ON a.id = l.account_id
+            WHERE l.entity_id = ?
+              AND e.status IN ('posted', 'reversed')
+              AND a.type IN ('revenue', 'expense')
+        SQL, [$this->entityId])->net);
+
+        $result = $closer->close($this->entity(), $year);
+
+        if ($result['entry'] === null) {
+            return ['the close posted no entry at all'];
+        }
+
+        $journalCode = (string) $this->connection->table('journals')
+            ->where('id', $result['entry']->journal_id)
+            ->value('code');
+
+        if ($journalCode !== 'CLS') {
+            $violations[] = sprintf(
+                'the closing entry went into the %s journal rather than the reserved closing one. A close '.
+                'that is an ordinary entry anywhere is a close somebody can type by hand',
+                $journalCode,
+            );
+        }
+
+        $retained = (string) $this->connection->table('account_roles')
+            ->where('entity_id', $this->entityId)
+            ->where('role', 'retained_earnings')
+            ->value('account_id');
+
+        $carried = (string) $this->connection->table('journal_lines')
+            ->where('journal_entry_id', $result['entry']->getKey())
+            ->where('account_id', $retained)
+            ->value('functional_amount');
+
+        if (! BigDecimal::of($carried)->isEqualTo(BigDecimal::of($expected))) {
+            $violations[] = sprintf(
+                "the close carried %s to retained earnings rather than the year's net of %s. Retained ".
+                "earnings takes the opposite of the revenue and expense accounts' own signed sum",
+                $carried,
+                $expected,
+            );
+        }
+
+        // A second close refuses, and posts nothing.
+        $before = $this->connection->table('journal_entries')
+            ->where('entity_id', $this->entityId)
+            ->where('source_type', 'year_end_close')
+            ->count();
+
+        try {
+            $closer->close($this->entity(), $year);
+
+            $violations[] = 'a year was closed twice, posting the same profit to retained earnings again';
+        } catch (YearEndCloseRefused $e) {
+            if (! str_contains($e->getMessage(), 'twice')) {
+                $violations[] = 'the second close was refused without saying what would have gone wrong';
+            }
+        }
+
+        $after = $this->connection->table('journal_entries')
+            ->where('entity_id', $this->entityId)
+            ->where('source_type', 'year_end_close')
+            ->count();
+
+        if ($after !== $before) {
+            $violations[] = 'the refused second close still wrote an entry';
+        }
+
+        /*
+         | And it is reversible - which is the whole reason it is an
+         | ordinary entry rather than a flag.
+         |
+         | A close run against a year with a misposted accrual has to come
+         | back out, and reversing a journal entry is a mechanism that
+         | already exists and is already audited.
+         */
+        $closer->reopen(
+            $this->entity(),
+            $year,
+            'the December accrual was misposted and the year has to be re-closed after the correction',
+        );
+
+        $reclosed = $closer->close($this->entity(), $year);
+
+        $recarried = (string) $this->connection->table('journal_lines')
+            ->where('journal_entry_id', $reclosed['entry']?->getKey())
+            ->where('account_id', $retained)
+            ->value('functional_amount');
+
+        if (! BigDecimal::of($recarried)->isEqualTo(BigDecimal::of($expected))) {
+            $violations[] = sprintf(
+                're-closing after a reversal carried %s rather than the same %s. Reading its own entries as '.
+                'activity would double it; reading nothing would give zero - the close has to see past the '.
+                'closing journal',
+                $recarried,
+                $expected,
+            );
+        }
+
+        /*
+         | Nothing else may post into the reserved journal.
+         |
+         | `reserved` was a comment until now: any rule could post into the
+         | opening-balances journal, and an opening balance typed by hand is
+         | indistinguishable from the real one.
+         */
+        $byHand = $this->refusal(function () use ($year): void {
+            $this->connection->table('journal_entries')->insert([
+                'id' => (string) Str::ulid(),
+                'entity_id' => $this->entityId,
+                'journal_id' => $this->connection->table('journals')
+                    ->where('entity_id', $this->entityId)
+                    ->where('code', 'CLS')
+                    ->value('id'),
+                'period_id' => $this->periodId,
+                'number' => 'HAND-'.Str::random(6),
+                'accounting_date' => (string) $year->ends_on,
+                'entered_at' => now(),
+                'status' => 'draft',
+                'posting_rule' => 'check.by_hand',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        });
+
+        if ($byHand === null) {
+            $violations[] = 'an arbitrary rule posted into the reserved closing journal. A closing entry '.
+                'typed by hand is indistinguishable from the real one, and is found a year later by whoever '.
+                "compares this year's opening to last year's closing";
+        }
+
+        return $violations;
+    }
+
+    /** The entity under check, as a model. */
+    private function entity(): Entity
+    {
+        /** @var Entity $entity */
+        $entity = Entity::query()->findOrFail($this->entityId);
+
+        return $entity;
+    }
+
+    /**
+     * A write expected to be refused, in its own savepoint.
+     *
+     * A refused statement aborts the whole transaction, not just itself.
+     */
+    private function refusal(callable $write): ?string
+    {
+        $savepoint = 'refuse_'.bin2hex(random_bytes(4));
+
+        $this->connection->statement('SAVEPOINT '.$savepoint);
+
+        try {
+            $write();
+            $this->connection->statement('ROLLBACK TO SAVEPOINT '.$savepoint);
+
+            return null;
+        } catch (Throwable $e) {
+            $this->connection->statement('ROLLBACK TO SAVEPOINT '.$savepoint);
+
+            return Str::limit(preg_replace('/\s+/', ' ', $e->getMessage()) ?? '', 200);
+        }
     }
 
     /**
@@ -1187,7 +1457,7 @@ final class LedgerEnforcementRules
             ->where('code', 'GEN')
             ->value('id');
 
-        foreach (['1', '1.1.1.1', '1.1.1.2', '4.1', '5.2'] as $code) {
+        foreach (['1', '1.1.1.1', '1.1.1.2', '4.1', '5.1', '5.2'] as $code) {
             $this->accounts[$code] = (string) $this->connection->table('accounts')
                 ->where('entity_id', $this->entityId)
                 ->where('code', $code)

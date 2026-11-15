@@ -7,6 +7,7 @@ namespace App\Providers;
 use App\Tenant\Ledger\Posting\PostingRuleRegistry;
 use App\Tenant\Ledger\Posting\Rules\ForeignCurrencyRevaluationRule;
 use App\Tenant\Ledger\Posting\Rules\OpeningBalanceRule;
+use App\Tenant\Ledger\Posting\Rules\YearEndCloseRule;
 use Illuminate\Support\ServiceProvider;
 
 /**
@@ -42,5 +43,13 @@ final class LedgerServiceProvider extends ServiceProvider
          | ledger from needing to know what the catalog is.
          */
         $registry->register(new ForeignCurrencyRevaluationRule());
+
+        /*
+         | The year-end close, for the same reason as the other two: no
+         | document produces it. It is a consequence of a year ending, and
+         | it posts as an ordinary entry in a reserved journal so it can be
+         | read, drilled into and reversed.
+         */
+        $registry->register(new YearEndCloseRule());
     }
 }

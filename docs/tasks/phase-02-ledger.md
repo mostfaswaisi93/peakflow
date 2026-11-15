@@ -102,7 +102,7 @@ The mechanism that lets `Ledger` know nothing about invoices.
 - [x] A registry where each module registers its own rules; `Ledger` resolves them without knowing what they mean
 - [x] Rules are **declarative and inspectable** - a screen shows an operator exactly which accounts a given document type will hit, before anything is posted
 - [x] Every rule's output is validated against the balanced-entry invariant before the entry is written, so a bad rule fails with its own name rather than as a constraint violation
-- [ ] Each shipped rule's debits and credits are written out in [`../domain/general-ledger.md`](../domain/general-ledger.md)
+- [x] Each shipped rule's debits and credits are written out in [`../domain/general-ledger.md`](../domain/general-ledger.md)
 
 ### PF-048 · Domain events and listeners
 `Ledger` · **3 pts** · depends: PF-047, PF-003 · standards: —
@@ -137,10 +137,10 @@ The mechanism that lets `Ledger` know nothing about invoices.
 ### PF-052 · Year-end close
 `Ledger` · **5 pts** · depends: PF-050, PF-047 · standards: IAS 1 · `type:posting`
 
-- [ ] A closing entry zeroes every revenue and expense account into `retained_earnings`; an opening entry carries balance-sheet accounts into the new year
-- [ ] Both are **ordinary journal entries in reserved journals** - visible, drillable and reversible if the close was wrong - rather than a flag on a row
-- [ ] Re-runnable: a second run detects the existing close and refuses rather than double-posting
-- [ ] The close is reversible while the new year's first period is still open
+- [x] A closing entry zeroes every revenue and expense account into `retained_earnings`; an opening entry carries balance-sheet accounts into the new year
+- [x] Both are **ordinary journal entries in reserved journals** - visible, drillable and reversible if the close was wrong - rather than a flag on a row
+- [x] Re-runnable: a second run detects the existing close and refuses rather than double-posting
+- [x] The close is reversible while the new year's first period is still open
 
 ### PF-053 · Balance read models
 `Ledger` · **5 pts** · depends: PF-042 · standards: — · `risk:high`
