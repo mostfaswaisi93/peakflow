@@ -387,6 +387,54 @@ final class TenantProvisioner
             );
             $platform->statement(sprintf('DROP DATABASE IF EXISTS %s', $grammar->wrap($database)));
         };
+
+        $this->sealDatabase($database, $owner);
+    }
+
+    /**
+     * Take CONNECT away from PUBLIC - PF-010.
+     *
+     * ## The hole this closes, measured
+     *
+     * A freshly created PostgreSQL database has an EMPTY ACL, and an empty ACL
+     * is not "nobody": it means the built-in default applies, which grants
+     * CONNECT and TEMPORARY to PUBLIC. Every login role on the cluster can
+     * therefore open a session in every tenant database, and `GRANT CONNECT TO
+     * <role>` does not change that because there was never anything to revoke.
+     *
+     * Measured, with the platform role against a live tenant database: it
+     * connected, and from inside that session `pg_class` listed 129 tables
+     * WITH ROW ESTIMATES - `accounts (~336 rows)`, `account_roles (~120 rows)`.
+     * The schema privileges held, so no business row was readable, and that is
+     * not much comfort: how many accounts a tenant has, which modules they
+     * use, and whether they have posted anything are facts about that customer.
+     *
+     * `pg_class` is world-readable and cannot be revoked. So the defence has to
+     * be the connection itself, which is why this runs on every database at
+     * creation rather than relying on schema grants to contain a session that
+     * should not exist.
+     *
+     * ## Why the migrator keeps CONNECT
+     *
+     * It owns the schema and runs the migrations. Revoking its CONNECT would
+     * make the database unmigratable, which is a different outage.
+     */
+    private function sealDatabase(string $database, string $owner): void
+    {
+        $platform = DB::connection('migrator');
+        $grammar = $platform->getQueryGrammar();
+
+        $platform->statement(sprintf(
+            'REVOKE ALL ON DATABASE %s FROM PUBLIC',
+            $grammar->wrap($database),
+        ));
+
+        $platform->statement(sprintf(
+            'GRANT CONNECT, TEMPORARY ON DATABASE %s TO %s, %s',
+            $grammar->wrap($database),
+            $grammar->wrap($owner),
+            $grammar->wrap((string) config('database.connections.migrator.username')),
+        ));
     }
 
     private function grantSchema(string $database, string $username): void

@@ -57,6 +57,7 @@ Start with the [root README](../README.md) for the whole system in one pass. Com
 
 | Document | Answers |
 |----------|---------|
+| [`operations/database-roles.md`](operations/database-roles.md) | The four database roles, the boundary enforced at the connection, and why an empty PostgreSQL ACL is not "nobody" |
 | [`operations/testing-strategy.md`](operations/testing-strategy.md) | Every test layer, what it is for, and what it cannot catch |
 | [`operations/security-hardening.md`](operations/security-hardening.md) | Threat model, abuse cases, controls, ASVS mapping |
 | [`operations/observability.md`](operations/observability.md) | Traces, business metrics, and the invariant alerts |

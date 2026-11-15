@@ -33,8 +33,35 @@ BEGIN
 END
 $$;
 
+-- =============================================================================
+--  CONNECT is taken away from PUBLIC first, and this is not a formality.
+-- =============================================================================
+--  A PostgreSQL database with an empty ACL is not one nobody may connect to.
+--  An empty ACL means the built-in default applies, and the built-in default
+--  grants CONNECT and TEMPORARY to PUBLIC - so every login role on the cluster
+--  can open a session in it, and a later `GRANT CONNECT TO <role>` does not
+--  change that because there was never anything to revoke.
+--
+--  Measured before this line existed: a tenant role opened a session in the
+--  PLATFORM database. The schema privileges held, so it read no row - but
+--  `pg_class` is world-readable and cannot be revoked, so from inside that
+--  session it could list the tables and their row estimates. The same test in
+--  the other direction had the platform role reading 129 table names out of a
+--  tenant's database, with `accounts (~336 rows)` among them.
+--
+--  So the boundary has to be the connection. `REVOKE ALL` here removes the
+--  PUBLIC default; the GRANT that follows puts back exactly what is needed.
+--  TEMPORARY goes with it: a role that can create temporary tables in a
+--  database it has no business in can fill that database's disk.
+-- =============================================================================
+
+REVOKE ALL ON DATABASE peakflow FROM PUBLIC;
+
+GRANT CONNECT, TEMPORARY ON DATABASE peakflow TO peakflow_app;
+GRANT CONNECT ON DATABASE peakflow TO peakflow_readonly;
+GRANT ALL ON DATABASE peakflow TO peakflow_migrator;
+
 -- The application connects, but owns nothing and cannot create anything.
-GRANT CONNECT ON DATABASE peakflow TO peakflow_app, peakflow_readonly;
 GRANT USAGE ON SCHEMA public TO peakflow_app, peakflow_readonly;
 
 -- No DDL for the application. This is the grant that makes "the application
