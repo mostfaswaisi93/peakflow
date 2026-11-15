@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Tenant\Identity\Http\Controllers\EntitySwitchController;
 use App\Tenant\Identity\Http\Controllers\LoginController;
 use Illuminate\Support\Facades\Route;
 
@@ -29,7 +30,18 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
-Route::get('/', static fn () => redirect()->route('health'))->name('home');
+/*
+| `/` asks the auth guard whether anyone is signed in, and the guard reads the
+| users table - which lives in the TENANT database. So this route needs the
+| tenant resolver, exactly like every other route that touches the guard.
+|
+| Without it this answered 500 to every signed-in visitor, which is the precise
+| failure the middleware priority pinning exists to prevent, reintroduced in a
+| one-line closure that never went through the priority list at all.
+*/
+Route::middleware(['tenant.session'])->get('/', static fn () => auth()->guard('web')->check()
+    ? redirect()->route('overview')
+    : redirect()->route('login'))->name('home');
 
 /*
 | The page a user lands on when their workspace stopped being usable while they
@@ -79,4 +91,29 @@ Route::middleware(['tenant.session'])->group(static function (): void {
     Route::post('/logout', [LoginController::class, 'destroy'])
         ->middleware('auth')
         ->name('logout');
+});
+
+/*
+| The application itself - behind the tenant resolver, the auth guard and the
+| entity scope, in that order. The ordering is pinned in bootstrap/app.php
+| rather than here, because route order does not survive a framework upgrade
+| and the priority list does.
+*/
+Route::middleware(['tenant.session', 'auth'])->group(static function (): void {
+    /*
+    | The chooser and the switch sit OUTSIDE `entity.scope`, deliberately.
+    |
+    | Both exist to establish an entity, so a middleware that requires one
+    | already established would refuse to render the page whose job is to
+    | establish it - a redirect loop in place of a question.
+    */
+    Route::get('/entity/choose', static fn () => view('app.choose-entity', [
+        'entities' => auth()->user()?->entitiesForSwitcher() ?? collect(),
+    ]))->name('entity.choose');
+
+    Route::post('/entity/switch', EntitySwitchController::class)->name('entity.switch');
+});
+
+Route::middleware(['tenant.session', 'auth', 'entity.scope'])->group(static function (): void {
+    Route::view('/overview', 'app.home')->name('overview');
 });

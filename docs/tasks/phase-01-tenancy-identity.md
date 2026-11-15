@@ -91,10 +91,10 @@ Two independent mechanisms, because one of them will eventually have a hole.
 ### PF-027 · Entity switching
 `Identity` · **3 pts** · depends: PF-026 · standards: WCAG 2.2 AA · `type:a11y`
 
-- [ ] An entity switcher in the shell, listing only entities the user holds a role in
-- [ ] Switching re-evaluates permissions and re-scopes the session; the scope is re-checked per request rather than trusted from the cookie
-- [ ] The active entity is visible on every screen and on every print output - a user posting into the wrong company is the failure this prevents
-- [ ] Keyboard operable, announced on change through a live region
+- [x] An entity switcher in the shell, listing only entities the user holds a role in
+- [x] Switching re-evaluates permissions and re-scopes the session; the scope is re-checked per request rather than trusted from the cookie
+- [x] The active entity is visible on every screen and on every print output - a user posting into the wrong company is the failure this prevents
+- [x] Keyboard operable, announced on change through a live region
 
 ### PF-028 · The permission catalogue
 `Identity` · **3 pts** · depends: PF-024 · standards: —

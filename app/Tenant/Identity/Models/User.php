@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 /**
  * A user of one tenant - PF-024.
@@ -128,6 +129,31 @@ final class User extends Authenticatable implements AuthenticatableContract
     public function entityIds(): Collection
     {
         return $this->entityRoles()->distinct()->pluck('entity_id');
+    }
+
+    /**
+     * The entities this user may switch between - PF-027.
+     *
+     * Read from the GRANTS, every time, and never from the session. A user
+     * whose access to a subsidiary was revoked five minutes ago must stop
+     * seeing it in the switcher now, not at their next sign-in. The list is
+     * also what the switch handler validates against, so the control and the
+     * check read the same source.
+     *
+     * Inactive entities are excluded: an entity that has been closed is not
+     * somewhere anyone should be posting, and leaving it in the list invites
+     * exactly that.
+     *
+     * @return Collection<int, object>
+     */
+    public function entitiesForSwitcher(): Collection
+    {
+        return DB::connection('tenant')->table('entities')
+            ->whereIn('id', $this->entityIds())
+            ->where('active', true)
+            ->whereNull('deleted_at')
+            ->orderBy('code')
+            ->get(['id', 'code', 'legal_name']);
     }
 
     /** Drop the per-request memo - after a role change, or an entity switch. */

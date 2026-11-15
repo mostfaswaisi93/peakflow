@@ -90,6 +90,7 @@ final class TenantEnforcementRules
             'money-moving permissions demand a second factor' => [],
             'a TOTP code works exactly once' => [],
             'a refusal inside a transaction does not deadlock' => [],
+            'the entity switcher offers only what the user may use' => [],
         ];
 
         foreach ($tenants as $tenant) {
@@ -132,6 +133,7 @@ final class TenantEnforcementRules
                 'money-moving permissions demand a second factor' => $this->moneyMoversDemandAFactor(),
                 'a TOTP code works exactly once' => $this->totpCodeWorksOnce(),
                 'a refusal inside a transaction does not deadlock' => $this->refusalDoesNotDeadlock(),
+                'the entity switcher offers only what the user may use' => $this->switcherOffersOnlyPermitted(),
             ];
         } finally {
             $this->connection->rollBack();
@@ -1141,6 +1143,69 @@ final class TenantEnforcementRules
                 'writer and the out-of-band writer contend for one lock',
                 implode(', ', $heads),
             );
+        }
+
+        return $violations;
+    }
+
+    /**
+     * The switcher lists entities from the GRANTS, not from the session -
+     * PF-027.
+     *
+     * Two things it must never show: an entity the user holds no role in,
+     * and one that has been closed. The second matters because an inactive
+     * entity in a switcher is an invitation to post into a company that
+     * stopped trading, and the posting will look entirely normal afterwards.
+     *
+     * Reading from the grants on every render is also what makes a revoked
+     * role take effect immediately rather than at the user's next sign-in.
+     *
+     * @return list<string>
+     */
+    public function switcherOffersOnlyPermitted(): array
+    {
+        $user = $this->probeUser('switcher-probe');
+
+        if ($user === null) {
+            return ['could not create a probe user, so the switcher could not be checked'];
+        }
+
+        app(EntityContext::class)->use($this->entityA);
+
+        $violations = [];
+        $offered = $user->entitiesForSwitcher()->pluck('id')->all();
+
+        if (! in_array($this->entityA, $offered, true)) {
+            $violations[] = 'the switcher does not offer an entity the user holds a role in';
+        }
+
+        if (in_array($this->entityB, $offered, true)) {
+            $violations[] = 'the switcher offers an entity the user holds NO role in';
+        }
+
+        // Close the entity they do hold a role in: it must drop out.
+        DB::connection('tenant')->table('entities')
+            ->where('id', $this->entityA)
+            ->update(['active' => false]);
+
+        if (in_array($this->entityA, $user->entitiesForSwitcher()->pluck('id')->all(), true)) {
+            $violations[] = 'the switcher still offers an entity that has been deactivated, which invites '.
+                'posting into a company that stopped trading';
+        }
+
+        DB::connection('tenant')->table('entities')
+            ->where('id', $this->entityA)
+            ->update(['active' => true]);
+
+        // And revoking the role removes it at once, without a new sign-in.
+        UserEntityRole::query()
+            ->where('user_id', $user->getKey())
+            ->where('entity_id', $this->entityA)
+            ->delete();
+
+        if ($user->entitiesForSwitcher()->isNotEmpty()) {
+            $violations[] = 'a revoked role still appears in the switcher; it is being read from somewhere '.
+                'other than the grants';
         }
 
         return $violations;

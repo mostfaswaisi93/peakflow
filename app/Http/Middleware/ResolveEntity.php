@@ -47,7 +47,24 @@ final class ResolveEntity
         $requested = $this->requestedEntityId($request, $user);
 
         if ($requested === null) {
-            throw EntityNotInScope::forQueryOn(Entity::class);
+            /*
+             | The user holds roles in several entities and has not chosen
+             | one - a first sign-in, or a session that was torn down.
+             |
+             | Refusing here is what the first version did, and it answered a
+             | first-ever login with a 400. Picking one for them is worse:
+             | silently landing somebody in whichever company sorted first is
+             | precisely the "posting into the wrong company" failure this
+             | whole design exists to prevent.
+             |
+             | So they are asked. One entity still resolves without a
+             | question, because there is no choice to make.
+             */
+            if ($request->expectsJson()) {
+                throw EntityNotInScope::forQueryOn(Entity::class);
+            }
+
+            return redirect()->route('entity.choose');
         }
 
         // Authorization. Asked of the grants, not of the session.
