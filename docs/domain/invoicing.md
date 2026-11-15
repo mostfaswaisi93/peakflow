@@ -287,6 +287,37 @@ Which form a document was issued in is **under the hash**, because a simplified 
 
 ## Recurring billing
 
+A schedule is a template plus an **`RRULE`**, because "the last working day of every quarter" has to be expressible rather than approximated:
+
+```
+FREQ=MONTHLY;INTERVAL=3;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1
+```
+
+The Gulf working week is the same rule with `BYDAY=SU,MO,TU,WE,TH`, which is what makes it a rule rather than a hard-coded notion of a working day.
+
+What is implemented is a **deliberate subset** of RFC 5545 — `FREQ`, `INTERVAL`, `COUNT`, `UNTIL`, `BYMONTH`, `BYMONTHDAY`, `BYDAY` with ordinals, `BYSETPOS` of ±1 — and everything else is refused **by name**, so the reader can tell whether to rewrite the rule or ask for the part to be built. One divergence is written down: `BYMONTHDAY=31` **clamps** to the month's length instead of skipping February, because a subscription billed on the 31st is billed every month and the customer who signed up on the 31st of January does not get February free.
+
+**Nothing is activated without a preview.** `preview()` returns the next twelve occurrences with their dates and amounts, computed by the same code the generator uses — a preview computed differently is worse than none, because it is believed. A check generates the first previewed occurrence and compares the figures.
+
+**Proration shows its basis on the line**: "Support and maintenance (prorated 12/31 days, 2026-03-20 to 2026-03-31)". Whether a customer who joins on the 20th pays 12/31 of the month or all of it is a commercial decision businesses make differently, and the system must not pick. A full period carries no label, because noise on every line is noise nobody reads.
+
+### Generating exactly once
+
+| Guard | What it is for |
+|---|---|
+| `recurring_occurrences (schedule_id, occurrence_date)` unique | **the guarantee** — the second writer loses, whoever it is |
+| a lock per `(task, tenant, schedule, occurrence)` | an **optimisation** — two workers do not do the work twice |
+
+The row is claimed **before** the invoice is drafted, so a generator interrupted between the two leaves a claim with no invoice — which the next run retries — rather than an invoice nobody has a record of asking for, which the next run would produce again.
+
+The lock is not the guarantee on purpose: it is a service that can be down, misconfigured or shared with a second deployment, and "nobody double-bills as long as Redis is healthy" is not a property worth claiming. Measured: with the index gone and the lock in place, three simultaneous workers still produce one invoice; with both gone they produce two. The concurrency suite proves the pair, and the single-process suite — which calls the generator twice where no lock is contended — is what catches a missing index.
+
+Each occurrence is its own claim and its own transaction, so a customer whose price list has a gap does not stop the other two hundred invoices. After three attempts the occurrence is surfaced in the audit trail rather than retried forever, and the command exits non-zero when any occurrence failed.
+
+**The timezone is the entity's**, copied onto the schedule: a group with a company in Riyadh and one in Casablanca is one tenant with two entities, and "daily at 01:00" means a different moment for each. A generator on the server clock bills one of them on the wrong date for the week each March and October when only one has changed — the hardest kind of wrong to notice, because every other week it is right.
+
+
+
 A schedule is a template plus an RFC 5545 `RRULE`, which is why "the last working day of every quarter" is expressible rather than approximated:
 
 ```

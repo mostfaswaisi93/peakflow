@@ -215,6 +215,7 @@ if ($only === 'all' || $only === 'tax') {
 if ($only === 'all' || $only === 'sales') {
     $suites['Quotes'] = $suite(static fn (): array => (new Tests\Support\QuoteRules())->all());
     $suites['Sales orders'] = $suite(static fn (): array => (new Tests\Support\SalesOrderRules())->all());
+    $suites['Recurring schedules'] = $suite(static fn (): array => (new Tests\Support\RecurringScheduleRules())->all());
     $suites['Invoice schema'] = $suite(static fn (): array => (new Tests\Support\InvoiceSchemaRules())->all());
     $suites['Invoice validation'] = $suite(static fn (): array => (new Tests\Support\InvoiceValidationRules())->all());
     $suites['Issuing a document'] = $suite(static fn (): array => (new Tests\Support\InvoiceIssuingRules())->all());

@@ -19,6 +19,9 @@ declare(strict_types=1);
  |                        sequence cannot survive
  |   crash-after-lock     issue, then die without committing, the way a worker
  |                        killed by the OOM killer or a deploy does
+ |   recurring <id|date>  generate one occurrence of a recurring schedule -
+ |                        two of these at once is the scheduler firing on two
+ |                        nodes in the same minute
  |   credit-raw <draft>   issue a prepared credit-note draft with one raw
  |                        UPDATE, bypassing the issuer - the path that is NOT
  |                        serialised by the number series lock
@@ -70,6 +73,28 @@ $say = static function (array $line): void {
 
 for ($i = 0; $i < (int) $count; $i++) {
     try {
+        if ($mode === 'recurring') {
+            /*
+             | One occurrence of one schedule, from a separate process.
+             |
+             | `$target` is "<scheduleId>|<date>". Two of these started at
+             | once is the scheduler firing on two nodes in the same minute,
+             | which is the scenario the unique index exists for.
+             */
+            [$scheduleId, $occurrence] = explode('|', (string) $target, 2) + ['', ''];
+
+            $schedule = App\Tenant\Sales\Models\RecurringSchedule::query()->findOrFail($scheduleId);
+
+            $outcome = app(App\Tenant\Sales\Services\RecurringGenerator::class)->generate(
+                $schedule,
+                Carbon\CarbonImmutable::parse($occurrence),
+            );
+
+            $say(['ok' => ($outcome['outcome'] ?? '') === 'generated'] + $outcome);
+
+            continue;
+        }
+
         if ($mode === 'credit-raw') {
             /*
              | One raw UPDATE, bypassing the issuer entirely.

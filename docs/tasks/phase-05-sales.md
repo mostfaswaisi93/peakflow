@@ -210,20 +210,26 @@ Five concerns, one transaction. It either all happens or none of it does.
 ### PF-105 · Recurring schedules
 `Sales` · **5 pts** · depends: PF-095 · standards: RFC 5545
 
-- [ ] A template plus an `RRULE`, so "the last working day of every quarter" is expressible rather than approximated
-- [ ] Proration rules for mid-period starts and stops, with the proration basis visible on the generated line
-- [ ] End conditions: a date, an occurrence count, or open-ended
-- [ ] A **dry-run preview** showing the next twelve occurrences with their amounts and dates before anything is activated
-- [ ] Price changes on the underlying items are picked up by effective date, and the schedule records which price list it resolves against
+- [x] A template plus an `RRULE`, so "the last working day of every quarter" is expressible rather than approximated - `FREQ=MONTHLY;INTERVAL=3;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1`, and the Gulf working week is the same rule with a different `BYDAY`, which is what makes it a rule rather than a hard-coded notion of "working day"
+- [x] A **deliberate subset** of RFC 5545, with everything else refused **by name**: `FREQ`, `INTERVAL`, `COUNT`, `UNTIL`, `BYMONTH`, `BYMONTHDAY`, `BYDAY` with ordinals, and `BYSETPOS` of ±1. A rule nobody can express is a conversation; a rule silently approximated is an invoice on the wrong day that somebody has to find - and the refusal names the part, so the reader can tell whether to rewrite the rule or ask for the part to be built
+- [x] One **divergence from the specification**, written down: `BYMONTHDAY=31` clamps to the month's length instead of skipping February. The specification is right for a calendar - there is no 31st of February to meet on - and wrong for billing, where a subscription on the 31st is billed every month and the customer who signed up on the 31st of January does not get February free
+- [x] Proration rules for mid-period starts and stops, with the proration basis visible on the generated line - "Support and maintenance (prorated 12/31 days, 2026-03-20 to 2026-03-31)". Whether a customer who joins on the 20th pays 12/31 of the month or all of it is a commercial decision different businesses make differently, and the one thing none of them wants is for the system to pick
+- [x] A full period is **not** labelled as prorated. Noise on every line is noise nobody reads, and the label is there to answer a question
+- [x] End conditions: a date, an occurrence count, or open-ended - and not two at once, which is the rule RFC 5545 has for `COUNT` and `UNTIL` and for the same reason: the two answer one question differently and nothing says which wins
+- [x] A **dry-run preview** showing the next twelve occurrences with their amounts and dates before anything is activated, computed by the same code the generator uses. A recurring schedule is the one object in a billing system that acts on its own for years, and "activate and see what happens next month" is how a business finds out it mis-set a rule by being told by a customer. A check generates the first previewed occurrence and asserts the figures match - a preview computed differently from the generator is worse than none, because it is believed
+- [x] Price changes on the underlying items are picked up by effective date, resolved at the **occurrence** date rather than the schedule's start - resolving at the start would bill 2024's price in 2027. A fixed price on the line is how a contract with a fixed price is expressed, the two are distinguishable in the preview, and a line with neither a price nor an item is refused rather than billed at zero
+- [x] The timezone is on the **entity** and copied onto the schedule: a group with a company in Riyadh and one in Casablanca is one tenant with two entities, and changing a company's timezone must not retroactively move the billing dates of every schedule that already exists
 
 ### PF-106 · Recurring generation idempotency
 `Sales` · **3 pts** · depends: PF-105 · standards: — · `risk:high`
 
-- [ ] Generation is idempotent on `(schedule_id, occurrence_date)` - a scheduler that fires twice cannot bill twice
-- [ ] A Redis lock per `(task, tenant, occurrence)`, so a two-node scheduler cannot double-bill
-- [ ] Runs in the **tenant's own timezone**: "daily at 01:00" means 01:00 where the business is, and a tenant in Riyadh and one in Casablanca do not share a moment
-- [ ] A failed occurrence is retried without skipping the next, and a permanently failed one is surfaced rather than retried forever
-- [ ] A test fires the same occurrence from two workers simultaneously and asserts exactly one invoice
+- [x] Generation is idempotent on `(schedule_id, occurrence_date)` - a scheduler that fires twice cannot bill twice. A unique index, and the occurrence row is **claimed before the invoice is drafted**: a generator interrupted between the two leaves a claim with no invoice, which the next run retries, rather than an invoice nobody has a record of asking for, which the next run would produce again
+- [x] A lock per `(task, tenant, schedule, occurrence)`, so a two-node scheduler does not do the work twice - and it is documented as an **optimisation, not the guarantee**. A lock is a service that can be down, misconfigured or shared with a second deployment, and "nobody double-bills as long as Redis is healthy" is not a property worth claiming
+- [x] Runs in the **entity's own timezone**: "daily at 01:00" means 01:00 where the business is, and a company in Riyadh and one in Casablanca do not share a moment. A generator on the server clock bills one of them on the wrong date for the week each March and October when only one has changed, which is the hardest kind of wrong to notice because every other week it is right
+- [x] A failed occurrence is retried without skipping the next - each occurrence is its own claim and its own transaction, because a customer whose price list has a gap must not stop the other two hundred invoices going out - and a permanently failed one is surfaced in the audit trail after three attempts rather than retried forever: a job that retries an impossible occurrence every hour is a job whose log nobody reads, and the occurrence it cannot bill is a customer who is not being invoiced
+- [x] The command exits non-zero when any occurrence failed, because a customer who is not being invoiced is a problem whether or not the other two hundred went out
+- [x] A test fires the same occurrence from **three** workers simultaneously and asserts exactly one invoice, in the concurrency suite against real PostgreSQL
+- [x] And the two checks are documented as covering different things, which was measured: with the index gone and the lock in place the concurrency check still passes - the lock turns the later workers away before they reach the claim - and it is the single-process check that catches a missing index, where no lock is contended. Neither covers the other, and saying which is which is the difference between a suite and a reassurance
 
 ### PF-107 · Revenue recognition
 `Sales` · **8 pts** · depends: PF-099, PF-052 · standards: IFRS 15 · `risk:high` `type:posting`

@@ -56,6 +56,7 @@ final class Entity extends TenantModel
         'code', 'legal_name', 'trading_name', 'registration_number',
         'country', 'functional_currency', 'presentation_currency',
         'jurisdiction_profiles', 'address', 'logo_path', 'active', 'created_by',
+        'timezone',
     ];
 
     protected $casts = [

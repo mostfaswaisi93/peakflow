@@ -103,6 +103,7 @@ final class ConcurrencyRules
                 'a crashed worker consumes no number' => $this->aCrashedWorker(),
                 'one series under lock does not block another' => $this->twoSeriesDoNotBlock(),
                 'two credit notes cannot both take the last of an invoice' => $this->theOverCreditCap(),
+                'three workers on one billing occurrence produce one invoice' => $this->oneOccurrenceOneInvoice(),
             ], $this->entityId);
         } catch (Throwable $e) {
             return ['the gapless proof could not run' => [$e::class.': '.$e->getMessage()]];
@@ -595,6 +596,142 @@ final class ConcurrencyRules
         }
     }
 
+    /**
+     * The same billing occurrence, from three processes - PF-106.
+     *
+     * ## Why this is the check the task names
+     *
+     * A scheduler on two nodes fires the same minute. A retry after a
+     * timeout fires again. Somebody runs the command by hand while
+     * investigating. Every one of those produces a second attempt at one
+     * occurrence, and a customer billed twice for one month notices before
+     * the business does.
+     *
+     * The lock makes the duplicate work cheap to avoid. The unique index on
+     * `(schedule_id, occurrence_date)` is what makes the second invoice
+     * impossible.
+     *
+     * ## What this check proves, and what it does not
+     *
+     * Measured, by removing each guard in turn: with the index gone and the
+     * lock in place, this check still passes - the lock serialises the three
+     * workers and the later ones are turned away before they reach the
+     * claim. With both gone it fails, reporting two invoices for one
+     * occurrence.
+     *
+     * So this is the check that proves the pair holds under contention, and
+     * `RecurringScheduleRules` is the one that catches a missing index: it
+     * calls the generator twice in one process, where no lock is contended
+     * and the index is the only thing left. Neither check covers the other,
+     * and saying which is which is the difference between a suite and a
+     * reassurance.
+     *
+     * @return list<string>
+     */
+    public function oneOccurrenceOneInvoice(): array
+    {
+        $violations = [];
+        $schedule = $this->recurringSchedule();
+
+        if ($schedule === null) {
+            return ['the recurring fixture could not be created'];
+        }
+
+        $date = $schedule->upcoming(1)[0] ?? null;
+
+        if ($date === null) {
+            return ['the schedule produces no occurrences'];
+        }
+
+        $target = sprintf('%s|%s', (string) $schedule->getKey(), $date->toDateString());
+
+        $lines = $this->collect(array_values(array_filter([
+            $this->spawn('INV', 1, 'recurring', $target),
+            $this->spawn('INV', 1, 'recurring', $target),
+            $this->spawn('INV', 1, 'recurring', $target),
+        ])), 180);
+
+        $generated = array_values(array_filter(
+            $lines,
+            static fn (array $l): bool => ($l['outcome'] ?? '') === 'generated',
+        ));
+
+        if (\count($generated) !== 1) {
+            $violations[] = sprintf(
+                '%d of three workers generated the occurrence and exactly one may. The others '.
+                'reported: %s',
+                \count($generated),
+                implode('; ', array_map(
+                    static fn (array $l): string => (string) ($l['outcome'] ?? 'nothing').': '.(string) ($l['error'] ?? ''),
+                    $lines,
+                )),
+            );
+        }
+
+        $occurrences = DB::connection('tenant')->table('recurring_occurrences')
+            ->where('recurring_schedule_id', (string) $schedule->getKey())
+            ->whereDate('occurrence_date', $date->toDateString())
+            ->count();
+
+        if ($occurrences !== 1) {
+            $violations[] = sprintf('%d occurrence rows exist for one date', $occurrences);
+        }
+
+        $invoices = DB::connection('tenant')->table('invoice_references')
+            ->where('entity_id', $this->entityId)
+            ->where('kind', 'contract')
+            ->where('reference', (string) $schedule->reference)
+            ->count();
+
+        if ($invoices !== 1) {
+            $violations[] = sprintf(
+                '%d invoices exist for one billing occurrence. A customer billed twice for one month '.
+                'notices before the business does',
+                $invoices,
+            );
+        }
+
+        return $violations;
+    }
+
+    /** A committed, active monthly schedule for the probe entity. */
+    private function recurringSchedule(): ?\App\Tenant\Sales\Models\RecurringSchedule
+    {
+        $party = \Tests\Support\Concurrency\Burst::customer($this->entityId);
+        $code = \App\Tenant\Tax\Models\TaxCode::query()
+            ->where('entity_id', $this->entityId)
+            ->value('id');
+
+        $account = \App\Tenant\Ledger\Models\Account::query()
+            ->where('entity_id', $this->entityId)
+            ->where('type', 'revenue')
+            ->where('postable', true)
+            ->orderBy('code')
+            ->value('id');
+
+        try {
+            $schedule = app(\App\Tenant\Sales\Services\RecurringSchedules::class)->draft(
+                $this->entity ?? throw new \RuntimeException('no entity'),
+                \App\Tenant\Parties\Models\Party::query()->findOrFail($party),
+                'FREQ=MONTHLY;BYMONTHDAY=1',
+                \Carbon\CarbonImmutable::now()->startOfMonth(),
+                [[
+                    'description' => 'Support and maintenance, under contention',
+                    'quantity' => '1.00000000',
+                    'unit_price' => '100.00000000',
+                    'tax_code_id' => (string) $code,
+                    'tax_rate' => '15.000000',
+                    'tax_category' => 'S',
+                    'revenue_account_id' => (string) $account,
+                ]],
+            );
+
+            return app(\App\Tenant\Sales\Services\RecurringSchedules::class)->activate($schedule);
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
     /** What has been credited against an invoice, from the documents. */
     private function creditedAgainst(Invoice $invoice): string
     {
@@ -902,6 +1039,7 @@ final class ConcurrencyRules
                 'invoice_references', 'invoices',
                 'journal_lines', 'journal_entries', 'account_balances',
                 'number_series', 'return_periods', 'tax_codes', 'tax_rates',
+                'recurring_occurrences', 'recurring_schedule_lines', 'recurring_schedules',
                 'account_roles', 'accounts', 'periods', 'fiscal_years',
                 'entity_currencies', 'tax_registrations',
 
