@@ -15,6 +15,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\Console\Output\NullOutput;
@@ -56,6 +57,8 @@ final class WiringRules
             'the plan gate refuses with an upgrade path, not a 403' => $this->planGateOffersAnUpgrade(),
             'every reporting command actually runs' => $this->reportingCommandsRun(),
             'the login form is not an account oracle' => $this->loginIsNotAnOracle(),
+            'every operator route is guarded' => $this->operatorRoutesAreGuarded(),
+            'no operator route can reach a tenant connection' => $this->operatorRoutesAvoidTenants(),
         ];
     }
 
@@ -338,6 +341,99 @@ final class WiringRules
                 $messages,
                 JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
             );
+        }
+
+        return $violations;
+    }
+
+    /**
+     * Every route under `ops.` is behind `auth:ops` - PF-036.
+     *
+     * Checked by enumerating the router rather than by reading the routes
+     * file, because the question is what the application will actually serve.
+     * A route added outside the guarded group still appears in the file next
+     * to guarded ones and looks right.
+     *
+     * The sign-in pages are the only exception, and they must carry
+     * `guest:ops` so an authenticated operator cannot be walked back through
+     * a login form.
+     *
+     * @return list<string>
+     */
+    public function operatorRoutesAreGuarded(): array
+    {
+        $violations = [];
+
+        foreach (Route::getRoutes() as $route) {
+            $name = (string) $route->getName();
+
+            if (! str_starts_with($name, 'ops.')) {
+                continue;
+            }
+
+            $middleware = $route->gatherMiddleware();
+            $isSignIn = in_array($name, ['ops.login', 'ops.login.store'], true);
+
+            if ($isSignIn) {
+                if (! in_array('guest:ops', $middleware, true)) {
+                    $violations[] = sprintf('%s is not behind guest:ops', $name);
+                }
+
+                continue;
+            }
+
+            if (! in_array('auth:ops', $middleware, true)) {
+                $violations[] = sprintf(
+                    '%s (%s) is not behind auth:ops - an unguarded operator page is not a smaller version of '.
+                    'this problem, it is the whole of it',
+                    $name,
+                    $route->uri(),
+                );
+            }
+
+            // And never the tenant guard: an operator authenticated against a
+            // customer's user table is the failure the two planes exist to
+            // make impossible.
+            if (in_array('auth', $middleware, true) || in_array('auth:web', $middleware, true)) {
+                $violations[] = sprintf('%s uses the TENANT auth guard', $name);
+            }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * No operator page may resolve a tenant connection.
+     *
+     * An operator who can read a customer's data from the console reads it
+     * UNATTRIBUTABLY: nothing in that tenant's own audit log says they did,
+     * because the tenant's audit log is only written by things running inside
+     * the tenant. Reading requires impersonation, which requires the tenant's
+     * recorded prior consent and writes an event in both planes.
+     *
+     * So the tenant resolvers must not appear on these routes at all. The
+     * inconvenience is the control.
+     *
+     * @return list<string>
+     */
+    public function operatorRoutesAvoidTenants(): array
+    {
+        $violations = [];
+        $tenantMiddleware = ['tenant.session', 'tenant.header', 'entity.scope'];
+
+        foreach (Route::getRoutes() as $route) {
+            if (! str_starts_with((string) $route->getName(), 'ops.')) {
+                continue;
+            }
+
+            foreach (array_intersect($tenantMiddleware, $route->gatherMiddleware()) as $found) {
+                $violations[] = sprintf(
+                    '%s carries %s, so an operator could read a customer\'s data from the console without '.
+                    'impersonation - which means without it appearing in that customer\'s audit log',
+                    (string) $route->getName(),
+                    $found,
+                );
+            }
         }
 
         return $violations;

@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use App\Platform\Http\Controllers\OpsLoginController;
+use App\Platform\Http\Controllers\OpsTenantController;
 use App\Tenant\Identity\Http\Controllers\EntitySwitchController;
 use App\Tenant\Identity\Http\Controllers\LoginController;
 use Illuminate\Support\Facades\Route;
@@ -116,4 +118,30 @@ Route::middleware(['tenant.session', 'auth'])->group(static function (): void {
 
 Route::middleware(['tenant.session', 'auth', 'entity.scope'])->group(static function (): void {
     Route::view('/overview', 'app.home')->name('overview');
+});
+
+/*
+| The operator console - PF-036.
+|
+| `auth:ops`, never `auth`. These routes must never touch a tenant connection:
+| an operator reading customer data from here would read it unattributably,
+| because nothing in that tenant's own audit log would say they had. Reading
+| requires impersonation, which requires the tenant's prior consent.
+|
+| Every route in this group is guarded, and a check asserts it - an
+| unguarded operator page is not a smaller version of this problem, it is the
+| whole of it.
+*/
+Route::prefix('ops')->name('ops.')->group(static function (): void {
+    Route::middleware('guest:ops')->group(static function (): void {
+        Route::get('/login', [OpsLoginController::class, 'show'])->name('login');
+        Route::post('/login', [OpsLoginController::class, 'store'])->name('login.store');
+    });
+
+    Route::middleware('auth:ops')->group(static function (): void {
+        Route::post('/logout', [OpsLoginController::class, 'destroy'])->name('logout');
+
+        Route::get('/tenants', [OpsTenantController::class, 'index'])->name('tenants');
+        Route::post('/tenants/{tenant}/status', [OpsTenantController::class, 'setStatus'])->name('tenants.status');
+    });
 });

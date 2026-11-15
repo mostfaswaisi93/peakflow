@@ -18,6 +18,27 @@
         {{ __('تخطَّ إلى المحتوى') }}
     </a>
 
+    @if (session('impersonated_by'))
+        {{--
+            The impersonation banner - PF-036.
+
+            Deliberately loud, deliberately unmissable, and deliberately NOT
+            dismissible. An operator acting inside a customer's workspace must
+            never forget which they are in, and a banner that can be closed is
+            a banner that is closed within the first minute.
+
+            It names the operator, because the people whose workspace this is
+            may be looking over their shoulder, and "someone from support" is
+            not an answer anybody finds reassuring.
+        --}}
+        <div role="alert"
+             class="sticky top-0 z-40 border-b-2 border-warning bg-warning px-6 py-2 text-center text-sm font-medium text-on-warning">
+            {{ __('أنت تتصفح بالنيابة عن هذه المساحة بصفة :operator. كل إجراء يُسجَّل.', [
+                'operator' => session('impersonated_by'),
+            ]) }}
+        </div>
+    @endif
+
     <header class="border-b border-outline bg-surface">
         <div class="mx-auto flex max-w-5xl flex-wrap items-center gap-4 px-6 py-3">
             <span class="font-semibold text-on-surface">{{ config('app.name') }}</span>
