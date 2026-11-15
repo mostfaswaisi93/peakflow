@@ -1370,8 +1370,23 @@ final class ArchitectureRules
             }
         }
 
-        // Every __() key in the source must exist in both catalogs.
-        foreach ($this->phpFiles('app') as $file) {
+        /*
+         | Every `__()` key in the source must exist in both catalogs - and
+         | the SOURCE includes the templates.
+         |
+         | This rule scanned `app/` only, which is where the fewest
+         | user-facing strings are. A view key missing from a catalog is
+         | exactly the failure the rule exists to prevent: `__()` does not
+         | throw, it prints the key, so the English page silently shows
+         | Arabic - and the people who would report it are the ones not
+         | reading that page.
+         */
+        $sources = array_merge(
+            $this->phpFiles('app'),
+            $this->filesMatching('resources/views', '/\.blade\.php$/'),
+        );
+
+        foreach ($sources as $file) {
             $source = (string) file_get_contents($file);
 
             if (preg_match_all("/__\(\s*'((?:[^'\\\\]|\\\\.)*)'/", $source, $m)) {

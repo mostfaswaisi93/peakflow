@@ -143,7 +143,9 @@ Route::prefix('ops')->name('ops.')->group(static function (): void {
         Route::post('/logout', [OpsLoginController::class, 'destroy'])->name('logout');
 
         Route::get('/tenants', [OpsTenantController::class, 'index'])->name('tenants');
+        Route::post('/tenants', [OpsTenantController::class, 'store'])->name('tenants.store');
         Route::post('/tenants/{tenant}/status', [OpsTenantController::class, 'setStatus'])->name('tenants.status');
+        Route::post('/tenants/{tenant}/expire', [OpsTenantController::class, 'expire'])->name('tenants.expire');
 
         Route::get('/settings', [OpsSettingsController::class, 'show'])->name('settings');
         Route::post('/settings/{setting}', [OpsSettingsController::class, 'update'])->name('settings.update');
