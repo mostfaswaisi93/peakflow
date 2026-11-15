@@ -6,7 +6,9 @@ namespace App\Providers;
 
 use App\Platform\Models\Tenant;
 use App\Platform\Services\PlatformCeilings;
+use App\Support\Audit\AuditChain;
 use App\Support\Authorization\SegregatesDuties;
+use App\Tenant\Identity\Services\AuditChainVerifier;
 use App\Tenant\Identity\Services\SodEngine;
 use App\Tenant\Tenancy\Services\Settings;
 use App\Support\Limits\Ceilings;
@@ -62,6 +64,16 @@ final class TenancyServiceProvider extends ServiceProvider
          | keeps them from each depending on Identity for it.
          */
         $this->app->bind(SegregatesDuties::class, SodEngine::class);
+
+        /*
+         | The audit chain, by its Support contract - PF-054.
+         |
+         | The ledger's global proof has to include "the record of who did
+         | what has not been edited", and the chain belongs to Identity,
+         | which Ledger may not depend on. Same shape as the two above: the
+         | capability is declared in Support and bound here.
+         */
+        $this->app->bind(AuditChain::class, AuditChainVerifier::class);
     }
 
     public function boot(): void

@@ -71,6 +71,7 @@ final class TreeBenchmark extends Benchmark
                 $this->directChildren(),
                 $this->ancestors(),
                 $this->rollUpAWholeStatement(),
+                $this->theModelsOwnRelations(),
                 $this->movingASubtree(),
             ];
         } catch (Throwable $e) {
@@ -169,10 +170,24 @@ final class TreeBenchmark extends Benchmark
          | a scan that reads the table and throws away rows OUTSIDE the
          | subtree would mean the bounds are not being applied at all.
          */
-        if ($plan['rows_removed'] > 5055 - 1011) {
+        /*
+         | The bound is MEASURED, not assumed.
+         |
+         | The first version compared against 5,055 - 1,011 and failed by 42
+         | rows: the table holds other entities' accounts too, and
+         | `Rows Removed by Filter` counts every row the scan threw away,
+         | including the ones row-level security removed. A benchmark whose
+         | threshold is arithmetic on the fixture's own numbers is a
+         | benchmark that fails for reasons that are not regressions.
+         */
+        $inTheTable = (int) ($this->connection()->selectOne('SELECT count(*) AS n FROM accounts')->n ?? 0);
+
+        if ($plan['rows_removed'] > $inTheTable) {
             $violations[] = sprintf(
-                'the scan discarded %d rows, which is more than the chart holds outside this statement',
+                'the scan discarded %d rows while the table holds %d, so it is reading something other '.
+                'than this table',
                 $plan['rows_removed'],
+                $inTheTable,
             );
         }
 
@@ -272,6 +287,62 @@ final class TreeBenchmark extends Benchmark
             'rolling up a statement from the read model',
             sprintf('%.3f ms, %d accounts over %d balance rows',
                 $elapsed, $rolled['accounts'], $this->seeded),
+            $violations,
+        );
+    }
+
+    /**
+     * `Account::descendants()` and `Account::subtree()`, exercised.
+     *
+     * ## Why this case exists
+     *
+     * Those two relations were rewritten to go through
+     * {@see AccountTree::rangeOf()}, and then a restore from a stale file
+     * removed `rangeOf()` - leaving two product methods calling a method that
+     * did not exist. Every check and every benchmark stayed green, because
+     * nothing ran them.
+     *
+     * A method nothing calls is a method that is not there, and the way to
+     * stop that recurring is to call it.
+     *
+     * @return array{label: string, measured: string, violations: list<string>}
+     */
+    private function theModelsOwnRelations(): array
+    {
+        $group = Account::query()
+            ->where('entity_id', $this->entityId)
+            ->where('code', '1.1')
+            ->firstOrFail();
+
+        $started = hrtime(true);
+        $descendants = $group->descendants()->where('entity_id', $this->entityId)->count();
+        $subtree = $group->subtree()->where('entity_id', $this->entityId)->count();
+        $elapsed = (hrtime(true) - $started) / 1_000_000;
+
+        $violations = [];
+
+        if ($descendants !== 100) {
+            $violations[] = sprintf(
+                'Account::descendants() returned %d where 100 belong',
+                $descendants,
+            );
+        }
+
+        if ($subtree !== 101) {
+            $violations[] = sprintf(
+                'Account::subtree() returned %d where 101 belong - the group itself and its 100 '.
+                'descendants',
+                $subtree,
+            );
+        }
+
+        if ($elapsed > 20.0) {
+            $violations[] = sprintf('%.2f ms exceeds the 20 ms budget for two counts', $elapsed);
+        }
+
+        return $this->result(
+            "the model's own descendants() and subtree()",
+            sprintf('%.3f ms, %d and %d rows', $elapsed, $descendants, $subtree),
             $violations,
         );
     }

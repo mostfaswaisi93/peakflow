@@ -52,6 +52,8 @@ use Throwable;
  */
 final class PartyEnforcementRules
 {
+    use \Tests\Support\Concerns\ProvesTheLedger;
+
     private ?Connection $connection = null;
 
     private string $entityId = '';
@@ -82,7 +84,7 @@ final class PartyEnforcementRules
         try {
             $this->seed();
 
-            return [
+            return $this->withTheLedgerProof([
                 'a bank account number never becomes an attribute' => $this->numberIsNotAnAttribute(),
                 'a new or changed account is unusable until verified' => $this->changesRequireVerification(),
                 'the person who changed an account cannot verify it' => $this->verifierIsNotTheAuthor(),
@@ -94,7 +96,7 @@ final class PartyEnforcementRules
                 'a dispute suspends dunning and keeps the debt' => $this->disputesSuspendOnly(),
                 'a merge keeps the loser, and exposure sums across the chain' => $this->mergeKeepsHistory(),
                 "a document goes out in the RECIPIENT's language" => $this->deliveryUsesTheirLanguage(),
-            ];
+            ], $this->entityId);
         } catch (Throwable $e) {
             return ['party controls could not be checked' => [
                 Str::limit(preg_replace('/\s+/', ' ', $e->getMessage()) ?? '', 200),

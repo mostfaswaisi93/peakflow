@@ -421,23 +421,79 @@ Stored as **columns** on `journal_lines`, not JSON and not an EAV side table, be
 
 ## `ledger:verify`
 
-The global proof. An individual assertion can be written to pass; this cannot.
+The global proof. An individual assertion can be written to pass: a check that posts an invoice and then asserts the receivable moved by the invoice total passes even if the rule posted twice, posted to the wrong receivable, or posted into a period that was closed — because the check only looks at what its author thought to look at.
 
 ```bash
-php artisan ledger:verify {entity} [--period=]
+php artisan ledger:verify {entity}   # or --all
 ```
 
-| Assertion | Catches |
-|-----------|---------|
-| Every entry sums to zero in functional currency | A bypassed constraint, a bad posting rule |
-| AR subledger = `accounts_receivable` | A manual posting into a control account, a broken allocation |
-| AP subledger = `accounts_payable` | The same, on the payable side |
-| Tax accounts = the period's return | A rate resolved at the wrong date, a missed breakdown |
-| Bank GL = statement ± reconciling items | An unexplained reconciliation |
-| `payments_in_transit` = released and unreconciled | A payment that left and never arrived |
-| Inter-entity pairs net to zero | A one-sided inter-entity posting |
-| Nothing posted into a non-accepting period | A backfill that ignored period state |
-| No posted entry mutated | A tampered audit chain |
-| Read models match a fresh rebuild | Drift in a materialized balance |
+It exits non-zero with a specific, actionable report. These questions cannot be faked by an individual check, because they are asked of the whole ledger:
 
-It exits non-zero with a specific, actionable report, and **it runs as the final assertion of every feature test that posts anything** — wired into the test case rather than remembered per test.
+| Finding | Asks |
+|---------|------|
+| unbalanced entry | does every entry sum to zero in the functional currency |
+| posting into a period that was not accepting | was the period accepting postings **when the entry was posted** |
+| postings that recorded no period state | did anything write an entry the period trigger never saw |
+| line out of step with its entry | does every line carry its entry's date and period |
+| control account posted manually | did anything reach a control account without a registered rule |
+| orphaned line | is every line attached to an entry that exists |
+| translation with no provenance | can every rate used be placed, and said to be the right one |
+| translation at a stale rate | was any rate older than the fallback window |
+| **entry substance changed** | does every entry still match the fingerprint taken when it was posted |
+| **entries outside the proof** | how many posted entries carry no fingerprint at all |
+| **audit chain broken** | has the record of who did what been edited or excised |
+
+Three more belong here and are not written yet, because the other side of the comparison does not exist: a subledger total against its control account needs a subledger. AR and output VAT arrive with Phase 05, AP and input VAT with Phase 07, bank and in-transit with Phases 08–09. Writing them now against tables that are not there would make them pass by being vacuous, which is the worst kind of green.
+
+The balance read model is compared against a fresh rebuild by [`BalanceRebuilder`](../../app/Tenant/Ledger/Services/BalanceRebuilder.php), on its own schedule rather than inside this command — a full recomputation is not something to put in the path of a check that should be cheap enough to run after every test.
+
+### The fingerprint, and what the immutability triggers do not prove
+
+`journal_entries_posted_immutable` refuses an UPDATE to a posted entry. That proves exactly one thing: **no statement went through it and changed a posted figure.**
+
+It proves nothing about a statement that did not. A role that can `ALTER TABLE ... DISABLE TRIGGER`, a restore from a doctored dump, a superuser session, a bug in a future migration — each leaves a ledger in which every trigger is present and correct and a figure has moved. Nothing in the schema would notice, and **the trial balance would still tie**, because a tamper that balances is the only kind worth doing.
+
+So each entry's substance is hashed at commit by a deferred trigger, into `journal_entry_fingerprints`, and `ledger:verify` recomputes it with the same function. Measured, on a real database:
+
+```
+-- every trigger on journal_lines disabled
+UPDATE journal_lines SET amount =  55555.0000 WHERE ... AND functional_amount > 0;
+UPDATE journal_lines SET amount = -55555.0000 WHERE ... AND functional_amount < 0;
+-- the entry still balances: sum(functional_amount) = 0.0000
+-- the trial balance still ties
+
+$ php artisan ledger:verify acme
+  entry_substance_changed
+    Entry GEN-2026/00001 of 2026-06-03 no longer matches the fingerprint taken
+    when it was posted at 2026-11-15 13:40:19+00. It had 2 line(s) then and has 2 now.
+```
+
+Four decisions inside that are worth stating:
+
+**A separate table, not a column.** The obvious design is `journal_entries.content_hash`, written by a trigger. It cannot work — the entry is inserted with `status = 'posted'`, so the trigger's own UPDATE is refused by the immutability trigger, and carving an exception into that refusal would widen the one control that has no business being widened.
+
+**Computed in the database, at commit.** The application hashing its own work proves only that the application wrote what it meant to write; an import that bypasses the Poster would get no fingerprint at all. At commit rather than per statement because an entry is transiently incomplete while its lines are inserted — and a deferred trigger is per-row, so the first line of a fifty-line entry computes the hash and the other forty-nine see a line count that already matches and return. One hash per entry, not fifty.
+
+**Write-once, by transaction id.** A fingerprint may be refined only inside the transaction that created it. The first version of that guard compared `fingerprinted_at` against `now()` and refused everything: `timestampTz` stores whole seconds and `now()` has microseconds, so the two are never equal. A transaction id is what the test actually means and has no precision to get wrong.
+
+**`status` is not in the hash.** An entry moves from `posted` to `reversed` legitimately. Including it would make every reversal look like a tamper, and a check that cries wolf is a check nobody runs.
+
+### "Was the period accepting postings" is a question about the past
+
+This check was wrong twice, in opposite directions, and both are worth recording because both look right.
+
+The first version asked whether the entry's period is closed **today**. Closing February does not invalidate the entries posted into February while it was open — so in production this would have reported every entry in every closed period from the first month-end onwards. Thousands of critical findings, every one of them correct behaviour, which is how a report stops being read. It was found by running the global proof at the end of the ledger suite, where a year-end close legitimately closes a period it had just posted into.
+
+The second read the state from the transition log, taking the latest transition at or before the entry's `posted_at`. That is the right question and the data cannot answer it: `now()` in PostgreSQL is the **transaction** timestamp, so a close and a posting in one transaction carry the identical instant and cannot be ordered. Measured on a year-end close and its reversal: eight transitions and three entries, all stamped the same second.
+
+So the period trigger — which reads the state anyway, in order to decide whether to refuse — writes down what it saw. A recorded fact instead of a reconstruction, and `NULL` becomes the other half of the finding: the column is only ever written by the thing a bypass goes around.
+
+### It runs at the end of every suite that posts
+
+Not by convention. The `ProvesTheLedger` trait makes it one line, and an architecture rule fails the build for any suite in `tests/Support` that writes to `journal_lines` without it. Forgetting it is a build failure — the only form of "wired in" that survives the person who wrote the convention leaving.
+
+It runs inside each suite's transaction, which is why it cannot live in the runner: every suite rolls back in a `finally`, so by the time `bin/verify` saw the results there would be nothing left to verify.
+
+### It reports, it does not repair
+
+Silent repair hides the bug that caused the drift, and the bug will produce it again — differently, later, after more has been built on top. A figure that was wrong for a week was on a report for a week, in an email, possibly in a filed return, and a repair erases the only evidence of how long.

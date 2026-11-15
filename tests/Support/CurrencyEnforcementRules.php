@@ -83,6 +83,8 @@ use Throwable;
  */
 final class CurrencyEnforcementRules
 {
+    use \Tests\Support\Concerns\ProvesTheLedger;
+
     private ?Connection $connection = null;
 
     private string $entityId = '';
@@ -142,7 +144,7 @@ final class CurrencyEnforcementRules
              | be checked", hiding the four checks that had already found the
              | real problem.
              */
-            return $this->runEach([
+            return $this->withTheLedgerProof($this->runEach([
                 // FIRST. Every check below would pass with the guard off.
                 'the translation guard is enabled' => fn (): array => $this->guardIsEnabled(),
                 'a foreign line without a rate is refused, not read as 1' => fn (): array => $this->aMissingRateIsNeverOne(),
@@ -159,7 +161,7 @@ final class CurrencyEnforcementRules
                 'a finished fetch run cannot be rewritten' => fn (): array => $this->fetchRunsAreFinal(),
                 'only monetary items are revalued' => fn (): array => $this->onlyMonetaryItemsAreRevalued(),
                 'a revaluation is reversed and recomputed, never accumulated' => fn (): array => $this->revaluationDoesNotAccumulate(),
-            ]);
+            ]), $this->entityId);
         } catch (Throwable $e) {
             return ['currency controls could not be checked' => [
                 Str::limit(preg_replace('/\s+/', ' ', $e->getMessage()) ?? '', 200),

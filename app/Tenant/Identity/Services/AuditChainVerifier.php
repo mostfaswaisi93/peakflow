@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tenant\Identity\Services;
 
+use App\Support\Audit\AuditChain;
 use App\Support\Hashing\ChainLink;
 use Illuminate\Support\Facades\DB;
 
@@ -16,8 +17,33 @@ use Illuminate\Support\Facades\DB;
  * needs "record 4,812, written at 09:14 by farah@…, is not what it claims" -
  * not forty thousand lines saying the same thing.
  */
-final class AuditChainVerifier
+final class AuditChainVerifier implements AuditChain
 {
+    /**
+     * The Support-contract view of the chain - PF-054.
+     *
+     * Flattened to primitives because the caller is the ledger's global
+     * proof, which may not depend on this module and so cannot name
+     * {@see AuditChainVerdict}.
+     *
+     * No limit: the global proof walks the whole log. A limit exists on
+     * `verify()` for the places that want a fast partial answer, and this is
+     * not one of them - a chain checked to its first thousand records says
+     * nothing about the record somebody edited last week.
+     *
+     * @return array{intact: bool, checked: int, detail: ?string}
+     */
+    public function verdict(): array
+    {
+        $verdict = $this->verify();
+
+        return [
+            'intact' => $verdict->isIntact,
+            'checked' => $verdict->recordsChecked,
+            'detail' => $verdict->isIntact ? null : $verdict->summary(),
+        ];
+    }
+
     /**
      * Verify every chain, and report the first divergence found in any.
      *

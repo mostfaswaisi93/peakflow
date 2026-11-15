@@ -257,20 +257,27 @@ final class DimensionBenchmark extends Benchmark
         $natural = $this->plan($sql, $bindings);
 
         /*
-         | Allowed to discard what lies outside the year, and no more.
+         | Allowed to discard what the TABLE holds, and no more.
          |
-         | A sequential scan discards exactly the rows of the other periods,
-         | which is correct on this data. What this catches is a plan that
-         | reads something else entirely - a join blown up, or a bound lost.
+         | A sequential scan discards the rows of the other periods, which is
+         | correct on this data, and it also discards other entities' rows -
+         | `Rows Removed by Filter` counts everything thrown away, row-level
+         | security included. So the bound is the table's own size, measured.
+         | Comparing against arithmetic on the fixture's numbers failed by the
+         | difference, which is not a regression.
+         |
+         | What this still catches is a plan reading something else entirely:
+         | a join blown up, or a bound lost.
          */
-        $outsideTheYear = $this->seeded - $inTheYear;
+        $inTheTable = (int) ($this->connection()
+            ->selectOne('SELECT count(*) AS n FROM account_balances')->n ?? 0);
 
-        if ($natural['rows_removed'] > $outsideTheYear) {
+        if ($natural['rows_removed'] > $inTheTable) {
             $violations[] = sprintf(
-                'the scan discarded %d rows while only %d lie outside the year, so it is reading more '.
-                'than the table holds for this entity',
+                'the scan discarded %d rows while the table holds %d, so it is reading something other '.
+                'than this table',
                 $natural['rows_removed'],
-                $outsideTheYear,
+                $inTheTable,
             );
         }
 

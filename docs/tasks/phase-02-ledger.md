@@ -175,10 +175,16 @@ The global proof. An individual assertion can be written to pass; this cannot.
 
 - [x] Asserts every entry balances in functional currency
 - [ ] Asserts every subledger total equals its control account - AR, AP, VAT input and output, bank, in-transit
-- [x] Asserts nothing is posted into a period that does not accept postings
-- [ ] Asserts no posted entry has been mutated, by re-checking the audit chain
+  - `controlTotals()` reads the control-account side today. The other side does not exist yet: AR and output VAT arrive with Phase 05, AP and input VAT with Phase 07, bank and in-transit with Phases 08-09. Left open deliberately - a comparison against a table that is not there would pass by being vacuous, which is the worst kind of green
+- [x] Asserts nothing is posted into a period that does not accept postings - and the state is the one the period was in **then**, recorded by the period trigger as it decides whether to refuse. Two earlier versions were wrong in opposite directions: the first asked whether the period is closed *today*, which would have reported every entry in every closed period from the first month-end; the second read the transition log at the entry's `posted_at`, which the data cannot answer because `now()` is the transaction timestamp and a close and a posting in one transaction share an instant
+- [x] An entry that recorded **no** period state is reported too. The column is written only by the trigger a bypass goes around, so a growing count of them is the trace of writes the trigger never saw
+- [x] Asserts no posted entry has been mutated. Two halves, because neither is enough alone: each entry's substance is hashed by a deferred database trigger at commit and the proof recomputes it, and the audit chain is re-walked through a `Support` contract. Without the chain, whoever changed a figure could delete the record showing they did; without the fingerprint, an intact chain proves only that nobody edited the **log**
+- [x] The fingerprint is what the immutability triggers cannot give. They prove no statement went *through* them and changed a posted figure; they prove nothing about a statement that did not - a disabled trigger, a restored dump, a superuser session. **Measured**: with every trigger off, a posted entry's two lines were changed from 12,345.67 to 99,999.00, the entry still balanced to the halala, the trial balance still tied, and `ledger:verify` named the entry
+- [x] The fingerprint lives in its own table and may be refined only inside the transaction that created it - identified by transaction id, not by timestamp, because `timestampTz` stores whole seconds and `now()` does not
+- [x] `status` is deliberately **not** in the hash. An entry moves from `posted` to `reversed` legitimately, and including it would make every reversal look like a tamper
 - [x] Exits non-zero with a specific, actionable report
-- [ ] **Runs as the final assertion of every feature test that posts anything**, wired into the test case rather than remembered per test
+- [x] **Runs as the final assertion of every suite that posts anything**, wired in rather than remembered: the `ProvesTheLedger` trait makes it one line, and an architecture rule fails the build for any suite in `tests/Support` that writes to `journal_lines` without it. Forgetting it is a build failure, which is the only form of "wired in" that survives the person who wrote the convention leaving
+- [x] It runs **inside** each suite's transaction, which is why it cannot live in the runner: every suite rolls back in a `finally`, so by the time `bin/verify` saw the results there would be nothing left to verify
 
 ### PF-055 · Manual journal entry
 `Ledger` · **5 pts** · depends: PF-047, PF-046 · standards: — · `type:a11y`

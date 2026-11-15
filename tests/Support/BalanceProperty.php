@@ -58,6 +58,8 @@ use Throwable;
  */
 final class BalanceProperty
 {
+    use \Tests\Support\Concerns\ProvesTheLedger;
+
     /** How many entries of each kind. */
     private const CASES = 120;
 
@@ -103,12 +105,12 @@ final class BalanceProperty
         try {
             $this->seedLedger();
 
-            return [
+            return $this->withTheLedgerProof([
                 'any set of lines summing to zero commits' => $this->balancedEntriesCommit(),
                 'any set not summing to zero is refused' => $this->unbalancedEntriesAreRefused(),
                 'the smallest representable imbalance is refused' => $this->theSmallestImbalanceIsRefused(),
                 'an entry with one line is refused unless it is zero' => $this->singleLineEntries(),
-            ];
+            ], $this->entityId);
         } catch (Throwable $e) {
             return ['the balanced-entry property could not be checked' => [
                 sprintf('seed %d: %s', $this->seed,

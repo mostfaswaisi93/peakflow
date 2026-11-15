@@ -18,6 +18,8 @@ use App\Tenant\Ledger\Posting\PostingRuleRegistry;
 use App\Tenant\Ledger\Posting\RuleDescription;
 use App\Tenant\Ledger\Services\BalanceRebuilder;
 use App\Tenant\Ledger\Services\ChartTemplate;
+use App\Support\Audit\AuditChain;
+use App\Tenant\Ledger\Services\LedgerFinding;
 use App\Tenant\Ledger\Services\LedgerVerifier;
 use App\Tenant\Ledger\Services\PeriodStateMachine;
 use App\Tenant\Ledger\Services\Poster;
@@ -53,6 +55,8 @@ use Throwable;
  */
 final class LedgerEnforcementRules
 {
+    use \Tests\Support\Concerns\ProvesTheLedger;
+
     private ?Connection $connection = null;
 
     private string $entityId = '';
@@ -83,7 +87,7 @@ final class LedgerEnforcementRules
         try {
             $this->seed();
 
-            return [
+            return $this->withTheLedgerProof([
                 // FIRST, because every check below is meaningless if a guard
                 // is switched off - and they would all pass.
                 'every ledger guard is enabled' => $this->guardsAreEnabled(),
@@ -101,7 +105,9 @@ final class LedgerEnforcementRules
                 'a reopening is flagged and reaches the compliance report' => $this->reopeningsAreVisible(),
                 'a year closes once, reversibly, in a reserved journal' => $this->yearEndCloseHolds(),
                 'the balance read model follows the journal, and drift is reported' => $this->balancesFollowTheJournal(),
-            ];
+                'a posted entry carries a fingerprint, and a divergence is found' => $this->fingerprintsAreChecked(),
+                'the global proof includes the audit chain' => $this->theProofIncludesTheChain(),
+            ], $this->entityId);
         } catch (Throwable $e) {
             return ['ledger invariants could not be checked' => [
                 Str::limit(preg_replace('/\s+/', ' ', $e->getMessage()) ?? '', 200),
@@ -1529,6 +1535,150 @@ final class LedgerEnforcementRules
     /**
      * @param  array<string, string|null>  $dimensions  applied to the FIRST line only
      */
+    /**
+     * The fingerprint is taken, and a divergence from it is found - PF-054.
+     *
+     * ## Why this cannot be tested with a real tamper
+     *
+     * A real tamper means changing a posted line, and that takes disabling a
+     * trigger - which takes a privilege this connection does not have, and
+     * should not. The tamper WAS performed by hand against a real database
+     * while this was built: a posted entry's two lines were changed from
+     * 12,345.67 to 99,999.00 with every trigger off, the entry still balanced
+     * to the halala, the trial balance still tied, and `ledger:verify` named
+     * the entry.
+     *
+     * What this check covers is the half that can silently rot: the
+     * DETECTION. The stored hash is replaced with a wrong one inside this
+     * transaction - which the write-once guard permits, because a transaction
+     * may settle its own fingerprint - and the proof has to notice.
+     *
+     * A detector that has never fired is a detector nobody has tested, and
+     * the first time that matters is during an audit.
+     *
+     * @return list<string>
+     */
+    public function fingerprintsAreChecked(): array
+    {
+        $violations = [];
+        $verifier = app(LedgerVerifier::class);
+        $entryId = (string) Str::ulid();
+
+        if ($this->writeEntry([['1.1.1.1', '880.0000'], ['4.1', '-880.0000']], entryId: $entryId) !== null) {
+            return ['could not write a healthy entry to fingerprint'];
+        }
+
+        $stored = $this->connection->table('journal_entry_fingerprints')
+            ->where('journal_entry_id', $entryId)
+            ->first();
+
+        if ($stored === null) {
+            return ['a posted entry got no fingerprint, so nothing can detect a change to it later'];
+        }
+
+        $recomputed = (string) $this->connection
+            ->selectOne('SELECT peakflow_entry_fingerprint(?) AS h', [$entryId])->h;
+
+        if ($recomputed !== (string) $stored->content_hash) {
+            $violations[] = 'the fingerprint does not match a recomputation of the entry that was just '.
+                'written, so every entry would read as tampered and the check would be worthless';
+        }
+
+        if ((int) $stored->line_count !== 2) {
+            $violations[] = sprintf(
+                'the fingerprint covers %d line(s) of 2, so a line added later would not change it',
+                (int) $stored->line_count,
+            );
+        }
+
+        /*
+         | Now break the stored hash and see whether the proof notices.
+         |
+         | Permitted here because the row was written in this transaction;
+         | after a commit the guard refuses it, which is the point of the
+         | guard and is asserted separately below.
+         */
+        $this->connection->table('journal_entry_fingerprints')
+            ->where('journal_entry_id', $entryId)
+            ->update(['content_hash' => str_repeat('a', 64)]);
+
+        $found = $verifier->verify($this->entityId)
+            ->contains(fn (LedgerFinding $finding): bool => $finding->kind === 'entry_substance_changed');
+
+        if (! $found) {
+            $violations[] = 'the global proof did not report an entry whose fingerprint no longer matches '.
+                'its contents. That is the only check that can see a figure changed by something which '.
+                'bypassed the immutability trigger - a disabled trigger, a restored dump, a direct '.
+                'session - and a tamper that balances is the only kind worth doing';
+        }
+
+        // Put it back, so the suite's own closing proof is not reporting this.
+        $this->connection->table('journal_entry_fingerprints')
+            ->where('journal_entry_id', $entryId)
+            ->update(['content_hash' => $recomputed]);
+
+        if ($verifier->verify($this->entityId)
+            ->contains(fn (LedgerFinding $finding): bool => $finding->kind === 'entry_substance_changed')) {
+            $violations[] = 'the proof still reports a divergence after the fingerprint was restored, so '.
+                'it is reading something other than the stored hash';
+        }
+
+        return $violations;
+    }
+
+    /**
+     * The global proof reports a broken audit chain - PF-054, PF-035.
+     *
+     * ## Why this is asserted through a stub
+     *
+     * The audit log is append-only with UPDATE and DELETE revoked from the
+     * application role, so this connection cannot break the chain - which is
+     * the correct arrangement and leaves no way to produce the condition.
+     *
+     * What can rot is the WIRING: the chain is reached through a `Support`
+     * contract because the ledger may not depend on `Identity`, and a binding
+     * is exactly the kind of thing that gets removed during a refactor with
+     * nothing to notice. Deleting the line from `verify()` left every check
+     * green until this one existed.
+     *
+     * So the contract is replaced with one that reports a break, and the
+     * proof has to surface it. The real chain walker has its own checks
+     * against the real log.
+     *
+     * @return list<string>
+     */
+    public function theProofIncludesTheChain(): array
+    {
+        $real = app(AuditChain::class);
+
+        app()->instance(AuditChain::class, new class implements AuditChain
+        {
+            public function verdict(): array
+            {
+                return [
+                    'intact' => false,
+                    'checked' => 41,
+                    'detail' => 'record 42 does not follow record 41 (stubbed by the check suite)',
+                ];
+            }
+        });
+
+        try {
+            $findings = (new LedgerVerifier(app(AuditChain::class)))->verify($this->entityId);
+        } finally {
+            app()->instance(AuditChain::class, $real);
+        }
+
+        if (! $findings->contains(fn (LedgerFinding $finding): bool => $finding->kind === 'audit_chain_broken')) {
+            return ['the global proof does not report a broken audit chain. The fingerprint says an '.
+                'entry\'s substance is unchanged; the chain says the record of who did what has not been '.
+                'edited. Without the chain, whoever changed a figure could delete the entry showing they '.
+                'did'];
+        }
+
+        return [];
+    }
+
     private function writeEntry(
         array $lines,
         ?string $rule = null,

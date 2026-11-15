@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tenant\Ledger\Services;
 
+use App\Support\Audit\AuditChain;
 use App\Tenant\Ledger\Enums\ControlRole;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -33,6 +34,8 @@ use Illuminate\Support\Facades\DB;
  */
 final class LedgerVerifier
 {
+    public function __construct(private readonly AuditChain $chain) {}
+
     /**
      * @return Collection<int, LedgerFinding>
      */
@@ -46,6 +49,9 @@ final class LedgerVerifier
             ...$this->orphanedLines($entityId),
             ...$this->translationsWithNoProvenance($entityId),
             ...$this->translationsAtStaleRates($entityId),
+            ...$this->entriesWhoseSubstanceChanged($entityId),
+            ...$this->postedEntriesWithNoFingerprint($entityId),
+            ...$this->theAuditChain(),
         ]);
     }
 
@@ -182,25 +188,118 @@ final class LedgerVerifier
      *
      * @return list<LedgerFinding>
      */
+    /**
+     * Entries posted while their period did not accept postings - PF-054.
+     *
+     * ## Two earlier versions of this were wrong, in opposite directions
+     *
+     * The first asked whether the entry's period is closed TODAY. Closing
+     * February does not invalidate the entries posted into February while it
+     * was open, so in production this would have reported every entry in
+     * every closed period from the first month-end - thousands of critical
+     * findings, every one of them correct behaviour. Found by running the
+     * global proof at the end of the ledger suite, where a year-end close
+     * legitimately closes a period it had just posted into.
+     *
+     * The second read the state from the transition log at the entry's
+     * `posted_at`. Right question, and the data cannot answer it: `now()` is
+     * the TRANSACTION timestamp, so a close and a posting in one transaction
+     * carry the identical instant and cannot be ordered. Measured on a
+     * year-end close and its reversal: eight transitions and three entries,
+     * all stamped the same second.
+     *
+     * So the state is read from `period_state_when_posted`, which the period
+     * trigger writes down as it decides whether to refuse. A recorded fact
+     * instead of a reconstruction.
+     *
+     * ## And NULL is the other half of the finding
+     *
+     * The column is only ever written by the trigger a bypass goes around, so
+     * "posted and recording no state" is the trace of a write the trigger
+     * never saw. Separated by date from the entries that predate the column,
+     * because those are a migration boundary rather than a bypass.
+     */
     private function postingsInUnacceptingPeriods(?string $entityId): array
     {
         $rows = $this->query($entityId, <<<'SQL'
-            SELECT e.number, p.label, p.state
+            SELECT
+                e.number,
+                p.label,
+                p.state AS state_now,
+                e.period_state_when_posted AS state_then,
+                coalesce(e.posted_at, e.entered_at, e.created_at) AS posted_at
             FROM journal_entries e
             JOIN periods p ON p.id = e.period_id
-            -- A reversed entry was posted too, and if it went into a closed
-            -- period that is just as wrong as a live one being there.
+            -- A reversed entry was posted too, and if it went into a period
+            -- that was not accepting that is just as wrong as a live one
+            -- being there.
             WHERE e.status IN ('posted', 'reversed')
-              AND p.state NOT IN ('open', 'soft_closed')
+              AND e.period_state_when_posted IS NOT NULL
+              AND e.period_state_when_posted NOT IN ('open', 'soft_closed')
               AND (cast(? AS char(26)) IS NULL OR e.entity_id = cast(? AS char(26)))
             LIMIT 50
         SQL);
 
-        return array_map(static fn (object $row): LedgerFinding => LedgerFinding::critical(
-            'posting in a closed period',
-            sprintf('Entry %s is posted in period %s, which is %s.', $row->number, $row->label, $row->state),
-            'A figure somebody has already reported on has changed since they reported it.',
+        $findings = array_map(static fn (object $row): LedgerFinding => LedgerFinding::critical(
+            'posting into a period that was not accepting',
+            sprintf(
+                'Entry %s was posted at %s, when period %s was %s. It is %s now.',
+                (string) $row->number,
+                (string) $row->posted_at,
+                (string) $row->label,
+                (string) $row->state_then,
+                (string) $row->state_now,
+            ),
+            'The period trigger records the state it saw as it decides whether to refuse, so an entry '.
+            'carrying a non-accepting state got past it. A figure has entered a period somebody had '.
+            'already reported on.',
         ), $rows);
+
+        return [...$findings, ...$this->postingsThatRecordedNoPeriodState($entityId)];
+    }
+
+    /**
+     * Posted entries that recorded no period state at all.
+     *
+     * Reported as one finding with a count, not one per entry: on a database
+     * that predates the column every entry is in this set, and fifty thousand
+     * findings is a report nobody reads.
+     *
+     * @return list<LedgerFinding>
+     */
+    private function postingsThatRecordedNoPeriodState(?string $entityId): array
+    {
+        $rows = $this->query($entityId, <<<'SQL'
+            SELECT
+                count(*)               AS entries,
+                min(e.accounting_date) AS earliest,
+                max(e.accounting_date) AS latest
+            FROM journal_entries e
+            WHERE e.status IN ('posted', 'reversed')
+              AND e.period_state_when_posted IS NULL
+              AND (cast(? AS char(26)) IS NULL OR e.entity_id = cast(? AS char(26)))
+        SQL);
+
+        $row = $rows[0] ?? null;
+
+        if ($row === null || (int) $row->entries === 0) {
+            return [];
+        }
+
+        return [LedgerFinding::warning(
+            'postings that recorded no period state',
+            sprintf(
+                '%d posted entr%s between %s and %s recorded no period state.',
+                (int) $row->entries,
+                (int) $row->entries === 1 ? 'y' : 'ies',
+                (string) $row->earliest,
+                (string) $row->latest,
+            ),
+            'The column is written only by the trigger that decides whether a period accepts a posting, '.
+            'so an entry with none was either posted before the column existed - a fixed set that does '.
+            'not grow - or written by something that went around the trigger. A number that grows is the '.
+            'second.',
+        )];
     }
 
     /**
@@ -297,6 +396,150 @@ final class LedgerVerifier
      *
      * @return Collection<int, array{role: string, total: string}>
      */
+    /**
+     * Entries whose substance no longer matches their fingerprint - PF-054.
+     *
+     * ## The one check the immutability triggers cannot make
+     *
+     * They refuse an UPDATE to a posted entry, which proves that no statement
+     * went THROUGH them and changed a figure. It proves nothing about a
+     * statement that did not: a role that can disable a trigger, a restore
+     * from a doctored dump, a superuser session, a bug in a future migration.
+     *
+     * Each of those leaves a ledger where every trigger is present and
+     * correct and a figure has moved - and the trial balance still ties,
+     * because a tamper that balances is the only kind worth doing.
+     *
+     * The fingerprint is recomputed in the database by the same function that
+     * wrote it, so this compares like with like. A changed amount, a moved
+     * account, an added or removed line, a re-dated entry: each changes the
+     * hash.
+     *
+     * @return list<LedgerFinding>
+     */
+    public function entriesWhoseSubstanceChanged(?string $entityId = null): array
+    {
+        $rows = DB::connection('tenant')->select(<<<'SQL'
+            SELECT
+                e.number,
+                e.accounting_date,
+                f.fingerprinted_at,
+                f.line_count AS lines_then,
+                (SELECT count(*) FROM journal_lines l WHERE l.journal_entry_id = e.id) AS lines_now
+            FROM journal_entry_fingerprints f
+            JOIN journal_entries e ON e.id = f.journal_entry_id
+            WHERE (cast(? AS char(26)) IS NULL OR e.entity_id = cast(? AS char(26)))
+              AND peakflow_entry_fingerprint(e.id) <> f.content_hash
+            ORDER BY e.accounting_date, e.number
+        SQL, [$entityId, $entityId]);
+
+        return array_map(
+            static fn (object $row): LedgerFinding => LedgerFinding::critical(
+                'entry_substance_changed',
+                sprintf(
+                    'Entry %s of %s no longer matches the fingerprint taken when it was posted at %s. It '.
+                    'had %d line(s) then and has %d now.',
+                    (string) $row->number,
+                    (string) $row->accounting_date,
+                    (string) $row->fingerprinted_at,
+                    (int) $row->lines_then,
+                    (int) $row->lines_now,
+                ),
+                'A posted figure has changed without going through the immutability trigger, which means '.
+                'it was changed by something that bypassed the application entirely - a disabled trigger, '.
+                'a restored dump, a direct session. Every report printed from this entry since it was '.
+                'posted is wrong, and the trial balance may still tie: a tamper that balances is the only '.
+                'kind worth doing. Stop writing, find out what ran, and restore from a backup taken '.
+                'before the fingerprint diverged.',
+            ),
+            $rows,
+        );
+    }
+
+    /**
+     * Posted entries with no fingerprint at all - PF-054.
+     *
+     * A warning rather than critical, because there is a legitimate reason
+     * for it: entries posted before the fingerprint existed have none, and
+     * cannot be given a trustworthy one after the fact - a retroactive hash
+     * certifies whatever the table says today.
+     *
+     * It is still worth reporting, and the count is the point. A handful of
+     * old entries is the migration boundary. A growing number means something
+     * is writing entries in a way that bypasses the deferred trigger, and
+     * those entries are outside the proof.
+     *
+     * @return list<LedgerFinding>
+     */
+    public function postedEntriesWithNoFingerprint(?string $entityId = null): array
+    {
+        $rows = DB::connection('tenant')->select(<<<'SQL'
+            SELECT
+                count(*)             AS entries,
+                min(e.accounting_date) AS earliest,
+                max(e.accounting_date) AS latest
+            FROM journal_entries e
+            LEFT JOIN journal_entry_fingerprints f ON f.journal_entry_id = e.id
+            WHERE (cast(? AS char(26)) IS NULL OR e.entity_id = cast(? AS char(26)))
+              AND e.status IN ('posted', 'reversed')
+              AND f.journal_entry_id IS NULL
+        SQL, [$entityId, $entityId]);
+
+        $row = $rows[0] ?? null;
+
+        if ($row === null || (int) $row->entries === 0) {
+            return [];
+        }
+
+        return [LedgerFinding::warning(
+            'entries_outside_the_proof',
+            sprintf(
+                '%d posted entr%s between %s and %s carr%s no fingerprint.',
+                (int) $row->entries,
+                (int) $row->entries === 1 ? 'y' : 'ies',
+                (string) $row->earliest,
+                (string) $row->latest,
+                (int) $row->entries === 1 ? 'ies' : 'y',
+            ),
+            'Those entries are outside the tamper proof: a change to one of them would not be detected. '.
+            'Entries posted before the fingerprint existed legitimately have none and cannot be given a '.
+            'trustworthy one afterwards. A number that GROWS means something is writing entries in a way '.
+            'that bypasses the deferred trigger.',
+        )];
+    }
+
+    /**
+     * The audit chain, as part of the same proof - PF-054, PF-035.
+     *
+     * Through the `Support` contract, because the chain belongs to `Identity`
+     * and the ledger may not depend on it.
+     *
+     * Two claims make up "no posted entry has been mutated" and this is the
+     * second. The fingerprint says the entry's substance is unchanged; the
+     * chain says the record of who did what has not been edited. Without the
+     * chain, whoever changed a figure could delete the audit entry showing
+     * they did. Without the fingerprint, an intact chain proves only that
+     * nobody edited the LOG.
+     *
+     * @return list<LedgerFinding>
+     */
+    public function theAuditChain(): array
+    {
+        $verdict = $this->chain->verdict();
+
+        if ($verdict['intact']) {
+            return [];
+        }
+
+        return [LedgerFinding::critical(
+            'audit_chain_broken',
+            $verdict['detail'] ?? sprintf('the audit chain diverges after %d record(s)', $verdict['checked']),
+            'The record of who changed what has been edited or excised. Everything before the divergence '.
+            'is still intact and everything after it is unverifiable - including, for any figure that '.
+            'moved, the entry that would say who moved it.',
+        )];
+    }
+
     public function controlTotals(string $entityId): Collection
     {
         $rows = DB::connection('tenant')->select(<<<'SQL'

@@ -49,6 +49,7 @@ final class ArchitectureRules
             'a posting is never queued, and a side effect always is' => $this->postingIsNeverDeferred(),
             'an event carries no other module\'s models' => $this->eventsCarryNoModels(),
             'a subtree is read as a range, never as a LIKE' => $this->subtreesAreReadAsRanges(),
+            'a suite that posts ends with the global proof' => $this->postingSuitesProveTheLedger(),
         ];
     }
 
@@ -1186,6 +1187,77 @@ final class ArchitectureRules
         $line = substr($source, $lineStart, ($lineEnd === false ? strlen($source) : $lineEnd) - $lineStart);
 
         return str_contains($line, '@arch-allow');
+    }
+
+    /**
+     * A check suite that writes to the ledger ends with the global proof - PF-054.
+     *
+     * ## This rule IS the wiring
+     *
+     * PF-054 asks that `ledger:verify` run as the final assertion of every
+     * suite that posts, "wired into the test case rather than remembered per
+     * test". A trait makes it one line; it does not make it wired - the next
+     * suite somebody writes can simply not call it, and nothing notices until
+     * an invariant breaks somewhere else entirely.
+     *
+     * So forgetting it is a build failure. That is the only form of "wired in"
+     * that survives the person who wrote the convention leaving.
+     *
+     * ## Why the proof cannot live in the runner instead
+     *
+     * Every suite rolls back its transaction in a `finally`, so by the time
+     * `bin/verify` saw the results there would be nothing left to verify. The
+     * proof has to be the last thing the suite does while its data still
+     * exists, which means it has to be inside the suite.
+     *
+     * @return list<string>
+     */
+    public function postingSuitesProveTheLedger(): array
+    {
+        $violations = [];
+
+        foreach ($this->phpFiles('tests/Support') as $file) {
+            $original = (string) file_get_contents($file);
+            $source = $this->withoutComments($original);
+
+            /*
+             | "Writes to journal_lines" is the test, and it is deliberately
+             | textual: a suite that names the table is a suite that puts
+             | figures in the ledger, whichever helper it goes through.
+             */
+            if (! str_contains($source, "'journal_lines'") && ! str_contains($source, 'journal_lines')) {
+                continue;
+            }
+
+            // The trait itself, and the rules file, name the table in prose.
+            if (str_contains($source, 'trait ProvesTheLedger')
+                || str_contains($source, 'postingSuitesProveTheLedger')) {
+                continue;
+            }
+
+            if (str_contains($source, 'ProvesTheLedger')) {
+                if (! str_contains($source, 'withTheLedgerProof') && ! str_contains($source, 'theLedgerProof')) {
+                    $violations[] = sprintf(
+                        '%s imports the ProvesTheLedger trait and never calls it, so the proof does not '.
+                        'run',
+                        $this->relative($file),
+                    );
+                }
+
+                continue;
+            }
+
+            $violations[] = sprintf(
+                '%s writes to journal_lines and does not end with the global proof. An individual check '.
+                'passes even when the posting went to the wrong account, went in twice, or left an entry '.
+                'whose fingerprint no longer matches - because it only looks at what its author thought '.
+                'to look at. Use the ProvesTheLedger trait and wrap the returned checks in '.
+                'withTheLedgerProof()',
+                $this->relative($file),
+            );
+        }
+
+        return $violations;
     }
 
     /** The 1-based line a byte offset falls on. */
