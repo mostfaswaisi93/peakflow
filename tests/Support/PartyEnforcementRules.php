@@ -15,6 +15,8 @@ use App\Tenant\Parties\Models\Party;
 use App\Tenant\Parties\Exceptions\CreditRefused;
 use App\Tenant\Parties\Services\BankDetailRegistry;
 use App\Tenant\Parties\Services\CreditControl;
+use App\Tenant\Parties\Services\DocumentDelivery;
+use App\Tenant\Parties\Services\PartyMerger;
 use App\Tenant\Tenancy\Models\Entity;
 use App\Tenant\Tenancy\Services\EntityContext;
 use App\Tenant\Ledger\Enums\ControlRole;
@@ -86,6 +88,8 @@ final class PartyEnforcementRules
                 'a credit hold cannot exist without an author' => $this->holdsHaveAnAuthor(),
                 'an override is bounded, justified and raises TO not BY' => $this->overridesAreBounded(),
                 'a dispute suspends dunning and keeps the debt' => $this->disputesSuspendOnly(),
+                'a merge keeps the loser, and exposure sums across the chain' => $this->mergeKeepsHistory(),
+                "a document goes out in the RECIPIENT's language" => $this->deliveryUsesTheirLanguage(),
             ];
         } catch (Throwable $e) {
             return ['party controls could not be checked' => [
@@ -488,6 +492,289 @@ final class PartyEnforcementRules
         if ($closedBlind === null) {
             $violations[] = 'a dispute was resolved with no resolution text, so the customer\'s next '.
                 'question has no answer';
+        }
+
+        return $violations;
+    }
+
+    /**
+     * PF-059: a merge cannot repoint history, so it keeps the loser.
+     *
+     * Posted journal lines are immutable - the ledger's central invariant -
+     * so a merge CANNOT move a duplicate customer's invoices to the
+     * survivor. The loser is kept, deactivated, pointing at the survivor,
+     * and every lookup resolves through it.
+     *
+     * Which means exposure has to sum across the chain. Summing only the
+     * survivor's own lines reports a customer who owes 46,000 as owing
+     * 30,000 - the credit check failing in the one direction that matters.
+     *
+     * @return list<string>
+     */
+    public function mergeKeepsHistory(): array
+    {
+        $merger = app(PartyMerger::class);
+        $credit = app(CreditControl::class);
+        $violations = [];
+
+        $survivor = $this->customerOwing('30000.0000');
+        $duplicate = $this->customerOwing('16000.0000');
+
+        /*
+         | The duplicate's bank account is VERIFIED before the merge.
+         |
+         | Which is the point of the check below: a merge is otherwise a way
+         | to introduce a beneficiary account without the second pair of
+         | eyes - merge a party you control into a real supplier and their
+         | payments follow.
+         */
+        $account = app(BankDetailRegistry::class)->record($duplicate, iban: 'SA4420000001234567891234');
+
+        app(BankDetailRegistry::class)->verify(
+            $account->fresh(),
+            (string) $this->approver?->getKey(),
+            'phoned the number on their published website',
+        );
+
+        $thin = $this->refusal(fn () => $merger->merge($survivor, $duplicate, 'dupe'));
+
+        if ($thin === null) {
+            $violations[] = 'a merge with a one-word reason was accepted. It cannot be undone, and the '.
+                'question asked afterwards is always why these were thought to be the same customer';
+        }
+
+        $result = $merger->merge(
+            $survivor,
+            $duplicate,
+            'same commercial registration 1010123456 and the same VAT number; confirmed with their team',
+        );
+
+        if ($duplicate->fresh()?->merged_into_id === null) {
+            return ['the merge did not point the duplicate at the survivor'];
+        }
+
+        if ($duplicate->fresh()?->active !== false) {
+            $violations[] = 'the merged party is still active, so new documents can be addressed to a '.
+                'record that is no longer a customer';
+        }
+
+        /*
+         | History still names the old party, and must.
+         |
+         | An invoice issued three years ago says who it was issued to,
+         | which is what an invoice is for.
+         */
+        $historical = $this->connection->table('journal_lines')
+            ->where('entity_id', $this->entityId)
+            ->where('party_id', $duplicate->getKey())
+            ->exists();
+
+        if (! $historical) {
+            $violations[] = 'the merge repointed historical journal lines. Posted lines are immutable - if '.
+                'this succeeded, the ledger accepted a write it must refuse';
+        }
+
+        // And the exposure follows the chain.
+        $state = $credit->exposure($this->entityId, (string) $survivor->getKey(), 'SAR');
+
+        if ($state['receivables'] !== '46000.0000') {
+            $violations[] = sprintf(
+                'after merging, the survivor owes %s rather than 46,000. The duplicate\'s invoices still '.
+                'name the duplicate and always will, so exposure has to sum across the merge chain - and '.
+                'without that a merged customer reads as owing less than they do',
+                $state['receivables'],
+            );
+        }
+
+        /*
+         | The bank account moves UNVERIFIED.
+         |
+         | The highest-value attack in the product is beneficiary
+         | substitution, and a merge that carried verification over would be
+         | a path straight past the second person.
+         */
+        if ($account->fresh()?->requires_reverification !== true) {
+            $violations[] = 'a verified bank account stayed verified through a merge. Merging a party you '.
+                'control into a real supplier would then redirect their payments with nobody confirming it';
+        }
+
+        if ($result['bank_accounts_requiring_verification'] !== 1) {
+            $violations[] = 'the merge does not report how many bank accounts now need re-verifying, so '.
+                'nobody knows to do it';
+        }
+
+        /*
+         | The chain stays one deep, and a merge cannot be undone.
+         |
+         | Un-merging would have to decide which of the documents written
+         | since belong to which party, and there is no information to
+         | decide it with.
+         */
+        $deeper = $this->refusal(fn () => $this->connection->table('parties')
+            ->where('id', $this->customerOwing('1.0000')->getKey())
+            ->update(['merged_into_id' => $duplicate->getKey(), 'active' => false]));
+
+        if ($deeper === null) {
+            $violations[] = 'a party was merged into an already-merged one, so the chain is two deep and '.
+                'every lookup has to walk it - and a walk can loop';
+        }
+
+        $unmerged = $this->refusal(fn () => $this->connection->table('parties')
+            ->where('id', $duplicate->getKey())
+            ->update(['merged_into_id' => null]));
+
+        if ($unmerged === null) {
+            $violations[] = 'a merged party was un-merged, which leaves the documents written since '.
+                'belonging to nobody in particular';
+        }
+
+        return $violations;
+    }
+
+    /** @return list<string> */
+    public function deliveryUsesTheirLanguage(): array
+    {
+        $delivery = app(DocumentDelivery::class);
+        $violations = [];
+
+        $party = Party::create([
+            'legal_name' => 'Delivery probe '.bin2hex(random_bytes(3)),
+            'country' => 'DE',
+            'is_customer' => true,
+            // The party reads Arabic; the contact reads English. Both differ
+            // from the entity default, which is what makes the order
+            // observable.
+            'default_locale' => 'ar',
+        ]);
+
+        $contactId = (string) Str::ulid();
+
+        $this->connection->table('party_contacts')->insert([
+            'id' => $contactId,
+            'party_id' => $party->getKey(),
+            'name' => 'Accounts payable',
+            'role' => 'billing',
+            'email' => 'ap@example.invalid',
+            'locale' => 'en',
+            'receives_documents' => true,
+            'active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        /*
+         | With no preference, the PARTY's language beats the company
+         | default - and the issuing user's locale appears nowhere.
+         |
+         | An invoice from a Saudi company to a German customer is read in
+         | Germany, and sending it in Arabic because the issuer works in
+         | Arabic produces a document the recipient files unread - which
+         | then ages into a dunning letter about an invoice they could not
+         | read.
+         */
+        $withoutPreference = $delivery->for($this->entityId, $party, 'invoice');
+
+        if ($withoutPreference['locale'] !== 'ar') {
+            $violations[] = sprintf(
+                'with no preference set, the document language came out as %s rather than the party\'s own',
+                $withoutPreference['locale'],
+            );
+        }
+
+        $this->connection->table('party_delivery_preferences')->insert([
+            'id' => (string) Str::ulid(),
+            'entity_id' => $this->entityId,
+            'party_id' => $party->getKey(),
+            'document_type' => null,
+            'contact_id' => $contactId,
+            'channel' => 'email',
+            'address' => 'ap@example.invalid',
+            'locale' => null,
+            'format' => 'pdf',
+            'active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $withContact = $delivery->for($this->entityId, $party, 'invoice');
+
+        if ($withContact['locale'] !== 'en') {
+            $violations[] = sprintf(
+                "the named contact's language (en) did not win over the party's (ar): got %s. The contact is ".
+                'the person who reads it',
+                $withContact['locale'],
+            );
+        }
+
+        if (! str_contains((string) $withContact['derivation'], 'from the contact')) {
+            $violations[] = 'the resolution does not say where the language came from, so "why did this go '.
+                'out in English" has no answer';
+        }
+
+        // A per-document-type preference beats the default one.
+        $this->connection->table('party_delivery_preferences')->insert([
+            'id' => (string) Str::ulid(),
+            'entity_id' => $this->entityId,
+            'party_id' => $party->getKey(),
+            'document_type' => 'statement',
+            'channel' => 'email',
+            'address' => 'cfo@example.invalid',
+            'locale' => 'ar',
+            'format' => 'pdf',
+            'active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $statement = $delivery->for($this->entityId, $party, 'statement');
+
+        if ($statement['address'] !== 'cfo@example.invalid' || $statement['locale'] !== 'ar') {
+            $violations[] = 'a per-document-type preference did not beat the party default, so an invoice '.
+                'and a statement cannot go to different people - which is the normal arrangement';
+        }
+
+        if ($delivery->for($this->entityId, $party, 'invoice')['address'] !== 'ap@example.invalid') {
+            $violations[] = 'adding a statement preference changed where invoices go';
+        }
+
+        // Two active defaults would each claim to be the answer.
+        $clash = $this->refusal(fn () => $this->connection->table('party_delivery_preferences')->insert([
+            'id' => (string) Str::ulid(),
+            'entity_id' => $this->entityId,
+            'party_id' => $party->getKey(),
+            'document_type' => null,
+            'channel' => 'print',
+            'active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]));
+
+        if ($clash === null) {
+            $violations[] = 'two active default delivery preferences were accepted, so which one applies '.
+                'depends on row order';
+        }
+
+        /*
+         | A channel that needs an address must have one.
+         |
+         | "Email, no address" is a document that silently goes nowhere, and
+         | the symptom is a customer saying they never received it - which
+         | is indistinguishable from a customer who did.
+         */
+        $addressless = $this->refusal(fn () => $this->connection->table('party_delivery_preferences')->insert([
+            'id' => (string) Str::ulid(),
+            'entity_id' => $this->entityId,
+            'party_id' => $party->getKey(),
+            'document_type' => 'credit_note',
+            'channel' => 'email',
+            'active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]));
+
+        if ($addressless === null) {
+            $violations[] = 'an email delivery preference with no address was accepted, so the document goes '.
+                'nowhere and nobody can tell that from a customer ignoring it';
         }
 
         return $violations;

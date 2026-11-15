@@ -13,7 +13,7 @@ The master data every document references. Two parts of this phase carry more ri
 - [x] Legal name, trading name, registration numbers, country, default currency, default language, payment terms, tax treatment
 - [x] Parties are shared across the tenant; a party's **balances** are per entity, because a customer billed by two companies owes each of them separately
 - [x] Soft deletes, so a party's name still resolves on a document issued years ago
-- [ ] Merge for duplicates: re-points documents, preserves both histories, is audited and is reversible
+- [x] Merge for duplicates: re-points documents, preserves both histories, is audited and is reversible
 
 ### PF-060 · Addresses and tax registrations
 `Parties` · **3 pts** · depends: PF-059 · standards: ISO 3166-1, EN 16931, Peppol EAS
@@ -48,8 +48,8 @@ The highest-value fraud surface in the product.
 `Parties` · **2 pts** · depends: PF-059 · standards: —
 
 - [x] Multiple contacts per party with roles (`billing`, `ap`, `primary`) and per-contact locale
-- [ ] Document delivery preferences: which channel, which address, which language, which format
-- [ ] A document is rendered in the **recipient's** language, not the sender's, which is the whole reason locale lives on the contact
+- [x] Document delivery preferences: which channel, which address, which language, which format
+- [x] A document is rendered in the **recipient's** language, not the sender's, which is the whole reason locale lives on the contact
 
 ### PF-064 · Billable items
 `Catalog` · **5 pts** · depends: PF-007, PF-026 · standards: UN/CEFACT Rec 20, UNSPSC, GS1 GPC, UNCL 7143 · `type:schema`

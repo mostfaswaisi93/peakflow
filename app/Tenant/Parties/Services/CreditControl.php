@@ -50,7 +50,10 @@ use Illuminate\Support\Str;
  */
 final class CreditControl
 {
-    public function __construct(private readonly AuditTrail $audit) {}
+    public function __construct(
+        private readonly AuditTrail $audit,
+        private readonly PartyMerger $merges,
+    ) {}
 
     /**
      * What this customer is carrying, against what they are allowed.
@@ -404,16 +407,28 @@ final class CreditControl
      */
     private function openReceivables(string $entityId, string $partyId): string
     {
-        $total = DB::connection('tenant')->selectOne(<<<'SQL'
+        /*
+         | Across the MERGE CHAIN, not just this party.
+         |
+         | Posted journal lines are immutable, so a merge cannot repoint
+         | them - a duplicate customer's invoices still name the party they
+         | were issued to, and always will. Summing only the survivor's own
+         | lines reports a customer who owes 46,000 as owing nothing, which
+         | is the exposure check failing in the one direction that matters.
+         */
+        $identities = $this->merges->identities($partyId);
+        $placeholders = implode(', ', array_fill(0, count($identities), 'cast(? AS char(26))'));
+
+        $total = DB::connection('tenant')->selectOne(<<<SQL
             SELECT coalesce(sum(l.functional_amount), 0) AS total
             FROM journal_lines l
             JOIN journal_entries e ON e.id = l.journal_entry_id
             JOIN account_roles ar ON ar.account_id = l.account_id AND ar.entity_id = l.entity_id
             WHERE l.entity_id = cast(? AS char(26))
-              AND l.party_id = cast(? AS char(26))
+              AND l.party_id IN ({$placeholders})
               AND ar.role = 'accounts_receivable'
               AND e.status IN ('posted', 'reversed')
-        SQL, [$entityId, $partyId]);
+        SQL, [$entityId, ...$identities]);
 
         return (string) ($total->total ?? '0');
     }
@@ -445,9 +460,11 @@ final class CreditControl
 
     private function disputedAmount(string $entityId, string $partyId): string
     {
+        // The chain again: a dispute raised against the merged party is
+        // still a dispute about money this customer owes.
         $total = DB::connection('tenant')->table('document_disputes')
             ->where('entity_id', $entityId)
-            ->where('party_id', $partyId)
+            ->whereIn('party_id', $this->merges->identities($partyId))
             ->where('status', 'open')
             ->sum('disputed_amount');
 
