@@ -32,7 +32,11 @@ return [
         'generic' => true,   // EN 16931 + UBL 2.1. The baseline every other
                              // profile specializes, and the one that works end
                              // to end with no third-party credentials.
-        'peppol' => false,   // Needs an access point and a participant id.
+        'peppol' => false,   // BUILT: the CIUS, the customization identifier and the
+                             // business process are implemented and checked. Still
+                             // off, because the AS4 transport and the SMP lookup are
+                             // PF-122 and PF-121: a tenant selecting it today would
+                             // produce documents that validate and cannot be sent.
         'zatca' => false,    // Needs onboarding and a production CSID.
         'facturx' => false,  // Needs the PDF/A-3 pipeline (PF-102).
         'eta' => false,      // Egypt. Needs ETA credentials.

@@ -425,7 +425,7 @@ final class ExchangeRules
              | reason: a message a reader cannot act on is not a message.
              */
             preg_match_all(
-                "/'((?:BR|EN16931)-[A-Z0-9-]+)'/",
+                "/'((?:BR|EN16931|PEPPOL)-[A-Z0-9-]+)'/",
                 (string) file_get_contents($file),
                 $matches,
             );

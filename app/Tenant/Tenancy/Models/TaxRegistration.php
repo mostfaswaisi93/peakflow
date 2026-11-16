@@ -28,7 +28,7 @@ final class TaxRegistration extends TenantModel
     protected $table = 'tax_registrations';
 
     protected $fillable = [
-        'entity_id', 'jurisdiction', 'scheme', 'identifier',
+        'entity_id', 'jurisdiction', 'scheme', 'identifier', 'eas_code',
         'effective_from', 'effective_to', 'is_primary', 'filing_frequency',
     ];
 

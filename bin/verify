@@ -234,6 +234,7 @@ if ($only === 'all' || $only === 'exchange') {
     $suites['UBL 2.1'] = $suite(static fn (): array => (new Tests\Support\UblSerializerRules())->all());
     $suites['CII D16B'] = $suite(static fn (): array => (new Tests\Support\CiiSerializerRules())->all());
     $suites['Profiles and the pipeline'] = $suite(static fn (): array => (new Tests\Support\ProfilePipelineRules())->all());
+    $suites['Peppol BIS Billing 3.0'] = $suite(static fn (): array => (new Tests\Support\PeppolProfileRules())->all());
 }
 
 if ($only === 'all' || $only === 'sod') {

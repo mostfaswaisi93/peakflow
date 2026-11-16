@@ -148,6 +148,16 @@ final class Snapshots
             'jurisdiction' => (string) $registration->jurisdiction,
             'scheme' => (string) $registration->scheme,
             'identifier' => (string) $registration->identifier,
+            /*
+             | The EAS scheme, frozen with the rest - PF-120, BT-34.
+             |
+             | Peppol routes on the seller's electronic address and its
+             | scheme. Frozen rather than read live, because a document
+             | reserialized next year must carry the address it was sent
+             | from: the recipient's copy says that one, and the two have to
+             | hash the same.
+             */
+            'eas_code' => $registration->eas_code === null ? null : (string) $registration->eas_code,
             'qualified' => sprintf(
                 '%s:%s:%s',
                 $registration->jurisdiction,

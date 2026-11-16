@@ -71,6 +71,7 @@ final class SemanticModelRules
                 'the tax breakdown becomes one BG-23 per rate group' => fn (): array => $this->breakdown(),
                 'a credit note carries the document it credits' => fn (): array => $this->creditNoteReference(),
                 'BR-CO-10 fires when the line sum disagrees' => fn (): array => $this->brCo10(),
+                'BR-CO-11 fires when an allowance has no total' => fn (): array => $this->brCo11(),
                 'BR-CO-13 fires when the net total disagrees' => fn (): array => $this->brCo13(),
                 'BR-CO-14 fires when the tax total disagrees with the breakdown' => fn (): array => $this->brCo14(),
                 'BR-CO-15 fires when the gross total disagrees' => fn (): array => $this->brCo15(),
@@ -260,6 +261,27 @@ final class SemanticModelRules
     {
         return $this->tamper('BR-CO-10', function (SemanticNode $root): void {
             $root->first(BG::DocumentTotals)?->set(BT::SumOfLineNetAmounts, '999.00');
+        });
+    }
+
+    /**
+     * An adjustment with no total is a violation, not an absence.
+     *
+     * A document carrying a 40.00 discount whose `BT-107` is missing reads
+     * to the recipient as a document with no discount - while its net total
+     * has been reduced by one. The comparison said nothing about it, because
+     * a missing stated value looked like a cardinality question.
+     *
+     * @return list<string>
+     */
+    private function brCo11(): array
+    {
+        return $this->tamper('BR-CO-11', function (SemanticNode $root): void {
+            $allowance = SemanticNode::of(BG::DocumentLevelAllowances);
+            $allowance->set(BT::DocumentAllowanceAmount, '40.00')
+                ->set(BT::DocumentAllowanceVatCategoryCode, 'S')
+                ->set(BT::DocumentAllowanceReason, 'A discount with no total');
+            $root->nest($allowance);
         });
     }
 

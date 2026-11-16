@@ -112,6 +112,38 @@ final class CalculationRules
                 $sum = $sum->plus($this->decimal($instance->get($amount)));
             }
 
+            /*
+             | An adjustment with no total is a violation, not an absence.
+             |
+             | `compare()` treats a missing stated value as a cardinality
+             | question and says nothing, which is right for a document that
+             | has no allowances at all. It is wrong here: the sum of a
+             | non-empty set is not absent, and a document carrying a 40.00
+             | discount whose BT-107 is missing reads to the recipient as a
+             | document with no discount - while its net total has been
+             | reduced by one.
+             |
+             | Found by writing a Peppol check that needed a document with an
+             | allowance and no total, and getting a passing stage 3.
+             */
+            if ($instances !== [] && ! $totals->has($total)) {
+                $violations[] = SemanticViolation::internal(
+                    $rule,
+                    term: $total,
+                    value: (string) $sum,
+                    detail: sprintf(
+                        'The document carries %d %s totalling %s and %s is absent, so the recipient '.
+                        'reads a document with none.',
+                        \count($instances),
+                        $group->label(),
+                        (string) $sum,
+                        $total->value,
+                    ),
+                );
+
+                continue;
+            }
+
             $violations = [
                 ...$violations,
                 ...$this->compare($rule, $total, $totals->get($total), $sum),

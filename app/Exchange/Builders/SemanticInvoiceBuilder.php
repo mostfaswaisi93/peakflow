@@ -186,6 +186,19 @@ final class SemanticInvoiceBuilder
             $seller->set(BT::SellerTaxRegistrationIdentifier, $registration['identifier']);
         }
 
+        /*
+         | BT-34 with its EAS scheme - PF-120.
+         |
+         | The participant identifier the Peppol network resolves to an
+         | access point. `PEPPOL-EN16931-R020` refuses a document without
+         | one, and `BR-62` refuses one with no scheme: `0088` and `9930` are
+         | both electronic addresses and mean entirely different registries.
+         */
+        if (($registration['eas_code'] ?? null) !== null && ($registration['identifier'] ?? null) !== null) {
+            $seller->set(BT::SellerElectronicAddress, $registration['identifier'])
+                ->qualify(BT::SellerElectronicAddress, (string) $registration['eas_code']);
+        }
+
         $seller->nest($this->address(
             BG::SellerPostalAddress,
             (array) ($snapshot['address'] ?? []),

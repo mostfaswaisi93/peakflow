@@ -29,6 +29,7 @@ final class ProfileRegistry
     /** @var array<string, class-string<JurisdictionProfile>> */
     private const PROFILES = [
         'generic' => GenericProfile::class,
+        'peppol' => Peppol\PeppolProfile::class,
     ];
 
     /**

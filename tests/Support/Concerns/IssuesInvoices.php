@@ -214,6 +214,8 @@ trait IssuesInvoices
             'jurisdiction' => 'SA',
             'scheme' => 'VAT',
             'identifier' => '310000000000003',
+            // BT-34's scheme, so a Peppol document can be routed - PF-120.
+            'eas_code' => '0088',
             'effective_from' => '2020-01-01',
             'is_primary' => true,
             'filing_frequency' => 'monthly',
@@ -239,6 +241,14 @@ trait IssuesInvoices
             'jurisdiction' => 'SA',
             'scheme' => 'VAT',
             'identifier' => '300000000000003',
+            /*
+             | A four-digit EAS scheme, so BT-49 is populated.
+             |
+             | `0088` is a fixture value: the CIUS rules being exercised do
+             | not depend on which registry it names, and PeakFlow does not
+             | yet hold the vendored EAS code list to pick a real one from.
+             */
+            'eas_code' => '0088',
             'is_primary' => true,
             'validity' => PartyTaxRegistration::range(CarbonImmutable::parse('2019-01-01')),
         ]);

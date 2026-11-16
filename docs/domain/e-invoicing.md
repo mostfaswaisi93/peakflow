@@ -104,6 +104,16 @@ A profile declares the permitted document types, the specification identifier, t
 
 Conflating them produces a system that delivers a document the authority has not seen. It is the common failure in this area.
 
+### Peppol BIS Billing 3.0, as the second regime
+
+Peppol does not change EN 16931's meaning — it removes choices. `BT-23` becomes mandatory, a document may carry at most one note, both parties must have an electronic address, the base amount and percentage of an allowance travel together, and the line net amount has to satisfy an identity the standard states only loosely.
+
+So the profile is the baseline plus `check()`, plus a different specification identifier and a business process, and **the serializer does not change at all**. A check asserts both profiles use the same serializer class and that one model satisfies both rule sets, because a second country that needed a second serializer would mean the interface was the wrong shape.
+
+Each restriction is a document EN 16931 accepts and the Peppol network rejects. Without stage 4 the supplier issues a conformant invoice, the access point refuses it, and nobody can explain why from our side.
+
+Implemented rules use **Peppol's own identifiers**, and only where the identifier and wording are certain. The supplier reads our message and then the access point's rejection: if the two quote different identifiers for the same defect they spend the afternoon deciding which of us is wrong. The rest wait for the vendored Schematron, and the EAS code list waits with it — checking scheme *membership* against a partial copy would reject valid addresses, so only the four-digit shape is asserted.
+
 ### Enabled, and implemented, are different questions
 
 `config('jurisdictions.enabled')` gates what a tenant may select. A profile class existing does not make it selectable: a half-built ZATCA profile with no production CSID would otherwise be offered to a tenant who would issue documents the authority rejects, and the first they would know is a rejection on a real invoice. A check fails the build if a key is enabled and has no implementation.

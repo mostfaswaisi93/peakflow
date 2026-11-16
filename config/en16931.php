@@ -321,6 +321,87 @@ return [
             'en' => 'The seller must be identifiable by an identifier, a legal registration or a VAT number.',
             'ar' => 'يجب أن يكون البائع قابلاً للتعريف برقم تعريف أو سجل قانوني أو رقم ضريبي.',
         ],
+        /*
+         | The Peppol CIUS - PF-120.
+         |
+         | Peppol's own identifiers, because the supplier reads our message
+         | and then the access point's rejection: if the two quote different
+         | identifiers for the same defect they spend the afternoon deciding
+         | which of us is wrong.
+         */
+        'PEPPOL-DOCUMENT-TYPE' => [
+            'en' => 'Peppol BIS Billing does not carry this document type.',
+            'ar' => 'شبكة بيبول لا تنقل هذا النوع من المستندات.',
+        ],
+        'PEPPOL-PAYMENT-MEANS' => [
+            'en' => 'The payment means is not one Peppol permits.',
+            'ar' => 'وسيلة الدفع ليست من الوسائل التي تسمح بها بيبول.',
+        ],
+        'PEPPOL-COMMON-R050' => [
+            'en' => 'An electronic address must carry a four-digit EAS scheme code.',
+            'ar' => 'يجب أن يحمل العنوان الإلكتروني رمز مخطط EAS من أربعة أرقام.',
+        ],
+        'PEPPOL-EN16931-R001' => [
+            'en' => 'A Peppol document must state its business process (BT-23).',
+            'ar' => 'يجب أن يذكر مستند بيبول عملية الأعمال الخاصة به (BT-23).',
+        ],
+        'PEPPOL-EN16931-R002' => [
+            'en' => 'Peppol permits at most one note on the document.',
+            'ar' => 'تسمح بيبول بملاحظة واحدة على الأكثر على مستوى المستند.',
+        ],
+        'PEPPOL-EN16931-R003' => [
+            'en' => 'A buyer reference (BT-10) or a purchase order reference (BT-13) must be provided.',
+            'ar' => 'يجب ذكر مرجع المشتري (BT-10) أو مرجع أمر الشراء (BT-13).',
+        ],
+        'PEPPOL-EN16931-R004' => [
+            'en' => 'The specification identifier must be the EN 16931 one, narrowed by Peppol.',
+            'ar' => 'يجب أن يكون معرّف المواصفة هو معرّف EN 16931 مُضيَّقاً ببيبول.',
+        ],
+        'PEPPOL-EN16931-R005' => [
+            'en' => 'The VAT accounting currency must differ from the invoice currency.',
+            'ar' => 'يجب أن تختلف عملة الاحتساب الضريبي عن عملة الفاتورة.',
+        ],
+        'PEPPOL-EN16931-R010' => [
+            'en' => 'The buyer\'s electronic address (BT-49) must be provided.',
+            'ar' => 'يجب ذكر العنوان الإلكتروني للمشتري (BT-49).',
+        ],
+        'PEPPOL-EN16931-R020' => [
+            'en' => 'The seller\'s electronic address (BT-34) must be provided.',
+            'ar' => 'يجب ذكر العنوان الإلكتروني للبائع (BT-34).',
+        ],
+        'PEPPOL-EN16931-R041' => [
+            'en' => 'An allowance or charge percentage must come with its base amount.',
+            'ar' => 'يجب أن تُرفق نسبة الخصم أو الرسم بالمبلغ الأساس المحتسبة عليه.',
+        ],
+        'PEPPOL-EN16931-R042' => [
+            'en' => 'An allowance or charge base amount must come with its percentage.',
+            'ar' => 'يجب أن يُرفق المبلغ الأساس للخصم أو الرسم بنسبته.',
+        ],
+        'PEPPOL-EN16931-R046' => [
+            'en' => 'The item net price must equal the gross price less the discount.',
+            'ar' => 'يجب أن يساوي سعر الصنف الصافي السعر الإجمالي ناقص الخصم.',
+        ],
+        'PEPPOL-EN16931-R110' => [
+            'en' => 'A line period must start within the invoicing period.',
+            'ar' => 'يجب أن تبدأ فترة البند داخل فترة الفوترة.',
+        ],
+        'PEPPOL-EN16931-R111' => [
+            'en' => 'A line period must end within the invoicing period.',
+            'ar' => 'يجب أن تنتهي فترة البند داخل فترة الفوترة.',
+        ],
+        'PEPPOL-EN16931-R120' => [
+            'en' => 'The line net amount must equal its quantity, price, charges and allowances.',
+            'ar' => 'يجب أن يساوي صافي البند حصيلة كميته وسعره ورسومه وخصوماته.',
+        ],
+        'PEPPOL-EN16931-R121' => [
+            'en' => 'A price base quantity must be greater than zero.',
+            'ar' => 'يجب أن تكون كمية أساس السعر أكبر من صفر.',
+        ],
+        'PEPPOL-EN16931-R130' => [
+            'en' => 'The price base quantity unit must be the invoiced quantity unit.',
+            'ar' => 'يجب أن تكون وحدة كمية أساس السعر هي وحدة الكمية المفوترة.',
+        ],
+
         'EN16931-SERIALIZATION' => [
             'en' => 'The document could not be converted into its transmission syntax.',
             'ar' => 'لم يتمكن النظام من تحويل المستند إلى صيغة الإرسال.',
