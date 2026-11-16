@@ -6,6 +6,7 @@ namespace App\Tenant\Settlement\Services;
 
 use App\Support\Audit\AuditTrail;
 use App\Support\Money\Money;
+use App\Support\Money\Rate;
 use App\Tenant\Ledger\Models\JournalEntry;
 use App\Tenant\Ledger\Services\Poster;
 use App\Tenant\Ledger\Services\Reverser;
@@ -82,10 +83,30 @@ final class Allocations
             );
         }
 
+        if ($amount->currency !== (string) $payment->currency) {
+            throw PaymentRefused::because(sprintf(
+                'This allocation is in %s and the payment is in %s. An allocation in another '.
+                'currency is arithmetic between two different units, and the figure it produced '.
+                'would look like a rate nobody can find.',
+                $amount->currency,
+                (string) $payment->currency,
+            ));
+        }
+
         $entity = Entity::query()->findOrFail((string) $payment->entity_id);
         $on ??= Carbon::now();
 
-        return DB::connection('tenant')->transaction(function () use (
+        /*
+         | Both rates, resolved before anything is written - PF-170.
+         |
+         | The document's is what it was booked at; the payment's is what
+         | the money arrived at. Null for both when the settlement is in
+         | the books' own currency, which is the common case and realizes
+         | nothing.
+         */
+        $rates = $this->ratesFor($entity, $payment, $documentType, $documentId, $amount);
+
+        return DB::connection('tenant')->transaction(function () use ($rates, 
             $payment,
             $paymentId,
             $documentType,
@@ -102,6 +123,9 @@ final class Allocations
                 ruleKey: AllocationPostedRule::KEY,
                 event: [
                     'amount' => (string) $amount->amount,
+                    'currency' => $amount->currency,
+                    'payment_rate' => $rates['payment'],
+                    'document_rate' => $rates['document'],
                     'party_id' => $payment->party_id === null ? null : (string) $payment->party_id,
                     'payable' => \in_array($documentType, ['bill', 'supplier_credit'], true),
                     'narration' => sprintf(
@@ -144,6 +168,20 @@ final class Allocations
                 'journal_entry_id' => (string) $entry->getKey(),
                 'allocated_by' => $userId,
                 'allocated_at' => now(),
+                /*
+                 | Both rates and the figure they produced, stored.
+                 |
+                 | "We used 3.75" cannot be checked. "The invoice was
+                 | booked at 3.70 and the money arrived at 3.75, so the
+                 | difference on 1,000 is 50" is arithmetic an auditor
+                 | re-performs in a line.
+                 */
+                'document_fx_rate' => $rates['document'] === null ? null : (string) $rates['document']->value,
+                'payment_fx_rate' => $rates['payment'] === null ? null : (string) $rates['payment']->value,
+                'fx_rate_date' => $rates['payment'] === null ? null : $rates['payment']->date->format('Y-m-d'),
+                'realized_fx' => $rates['payment'] === null
+                    ? null
+                    : (string) $this->realizedOn($amount, $rates),
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
@@ -251,6 +289,104 @@ final class Allocations
                     'wrong is still there to explain the statement the customer received.',
             ];
         });
+    }
+
+    /**
+     * The two rates a settlement in a foreign currency is measured by.
+     *
+     * The document's is what it was booked at - stored on the document,
+     * not fetched again, because a rate that was corrected since would
+     * restate a gain somebody already reported. The payment's is what the
+     * money arrived at, stored when it was recorded for the same reason.
+     *
+     * @return array{document: Rate|null, payment: Rate|null}
+     *
+     * @throws PaymentRefused
+     */
+    private function ratesFor(
+        Entity $entity,
+        object $payment,
+        string $documentType,
+        string $documentId,
+        Money $amount,
+    ): array {
+        if ($amount->currency === (string) $entity->functional_currency) {
+            return ['document' => null, 'payment' => null];
+        }
+
+        if ($payment->fx_rate === null) {
+            throw PaymentRefused::because(
+                'This payment was recorded without a rate, so there is nothing to measure the '.
+                'settlement against. It cannot be allocated until the rate it arrived at is known.',
+            );
+        }
+
+        $table = $documentType === 'invoice' ? 'invoices' : 'bills';
+
+        $row = DB::connection('tenant')->table($table)
+            ->where('id', $documentId)
+            ->first(['fx_rate', 'fx_rate_date', 'currency']);
+
+        if ($row === null || $row->fx_rate === null) {
+            throw PaymentRefused::because(sprintf(
+                'This %s was booked without a rate, so the difference between what it was worth '.
+                'then and what the money is worth now cannot be computed. A realized gain nobody '.
+                'can derive is a figure nobody can defend.',
+                $documentType,
+            ));
+        }
+
+        if ((string) $row->currency !== $amount->currency) {
+            throw PaymentRefused::because(sprintf(
+                'This allocation is in %s and the %s is in %s. Settling a document in another '.
+                'currency is a conversion, and a conversion is a decision somebody makes rather '.
+                'than one an allocation performs.',
+                $amount->currency,
+                $documentType,
+                (string) $row->currency,
+            ));
+        }
+
+        $functional = (string) $entity->functional_currency;
+
+        return [
+            'document' => new Rate(
+                $amount->currency,
+                $functional,
+                (string) $row->fx_rate,
+                new \DateTimeImmutable((string) ($row->fx_rate_date ?? $payment->value_date)),
+                'document',
+                (string) ($payment->fx_rate_set ?? Rate::SET_MARKET),
+            ),
+            'payment' => new Rate(
+                $amount->currency,
+                $functional,
+                (string) $payment->fx_rate,
+                new \DateTimeImmutable((string) ($payment->fx_rate_date ?? $payment->value_date)),
+                (string) ($payment->fx_rate_provider ?? 'payment'),
+                (string) ($payment->fx_rate_set ?? Rate::SET_MARKET),
+            ),
+        ];
+    }
+
+    /**
+     * The realized difference on this allocation, and only on it.
+     *
+     * Computed on the amount being allocated rather than on the document,
+     * which is what makes a partial settlement realize a proportional
+     * share - the case that is easy to get wrong, because the figure that
+     * looks right is the whole document's difference.
+     *
+     * @param  array{document: Rate|null, payment: Rate|null}  $rates
+     */
+    private function realizedOn(Money $amount, array $rates): BigDecimal
+    {
+        $policy = \App\Support\Money\RoundingPolicy::halfUp(\App\Support\Money\Scale::Amount);
+
+        $atPayment = $rates['payment']->convert($amount, $policy);
+        $atDocument = $rates['document']->convert($amount, $policy);
+
+        return $atPayment->amount->minus($atDocument->amount);
     }
 
     /** What is left of a payment to allocate. */

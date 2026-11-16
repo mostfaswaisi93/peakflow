@@ -6,6 +6,7 @@ namespace App\Tenant\Settlement\Services;
 
 use App\Support\Audit\AuditTrail;
 use App\Support\Money\Money;
+use App\Support\Money\Rate;
 use App\Tenant\Banking\Models\BankAccount;
 use App\Tenant\Ledger\Models\Account;
 use App\Tenant\Ledger\Services\NumberAllocator;
@@ -56,6 +57,7 @@ final class Payments
         private readonly Poster $poster,
         private readonly Reverser $reverser,
         private readonly NumberAllocator $numbers,
+        private readonly \App\Tenant\Catalog\Services\ExchangeRates $rates,
     ) {}
 
     /**
@@ -98,7 +100,21 @@ final class Payments
          */
         $signed = $direction->increasesCash() ? $amount : $amount->negated();
 
-        return DB::connection('tenant')->transaction(function () use (
+        /*
+         | The rate for the value date, resolved once - PF-170.
+         |
+         | The value date is when the money was ours, so it is the rate
+         | the cash is worth at. Using today's would make the same receipt
+         | worth a different figure depending on when somebody got round
+         | to entering it, which is a figure nobody can defend.
+         |
+         | Null when the payment is already in the functional currency,
+         | and that null is meaningful: a stored 1 is indistinguishable
+         | from a rate somebody fetched.
+         */
+        $rate = $this->rateFor($entity, $amount, $valueDate);
+
+        return DB::connection('tenant')->transaction(function () use ($rate, 
             $entityId,
             $entity,
             $direction,
@@ -120,6 +136,8 @@ final class Payments
                 event: [
                     'cash_account_id' => $account['gl_account_id'],
                     'amount' => (string) $signed->amount,
+                    'currency' => $amount->currency,
+                    'rate' => $rate,
                     'party_id' => $partyId,
                     'narration' => sprintf(
                         '%s %s by %s',
@@ -154,6 +172,10 @@ final class Payments
                 'journal_entry_id' => (string) $entry->getKey(),
                 'recorded_by' => $userId,
                 'recorded_at' => now(),
+                'fx_rate' => $rate === null ? null : (string) $rate->value,
+                'fx_rate_set' => $rate?->rateSet,
+                'fx_rate_date' => $rate === null ? null : $rate->date->format('Y-m-d'),
+                'fx_rate_provider' => $rate?->provider,
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
@@ -293,6 +315,39 @@ final class Payments
                     'recorded, because what happened on that day is what the ledger is for.',
             ];
         });
+    }
+
+    /**
+     * The rate that turns this payment into the books' own currency.
+     *
+     * Null when they are the same currency, which is the common case and
+     * is not a rate of 1: a stored 1 is indistinguishable from one
+     * somebody fetched, and "which payments were translated" is the query
+     * written when a realized figure looks wrong.
+     *
+     * @throws PaymentRefused
+     */
+    private function rateFor(Entity $entity, Money $amount, Carbon $valueDate): ?Rate
+    {
+        $functional = (string) $entity->functional_currency;
+
+        if ($amount->currency === $functional) {
+            return null;
+        }
+
+        try {
+            return $this->rates->rateFor($amount->currency, $functional, $valueDate);
+        } catch (\Throwable $e) {
+            throw PaymentRefused::because(sprintf(
+                'This payment is in %s and the books are kept in %s, and there is no rate for %s. '.
+                'Posting it would mean choosing one, and a rate nobody reviewed is invisible in '.
+                'every figure it produced afterwards. (%s)',
+                $amount->currency,
+                $functional,
+                $valueDate->toDateString(),
+                $e->getMessage(),
+            ));
+        }
     }
 
     /**

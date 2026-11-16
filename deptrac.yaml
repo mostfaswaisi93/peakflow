@@ -151,6 +151,13 @@ deptrac:
       - Support
       - Tenancy
       - Ledger
+      - Parties
+      # Settling a document in another currency needs the rate for the
+      # payment's value date, and rates are Catalog's - the same
+      # dependency Sales and Purchasing have, for the same reason. The
+      # alternative is a second rate lookup in this module, which would
+      # be a second answer to "what was the rate that day".
+      - Catalog
       - Sales
       - Purchasing
       - Banking

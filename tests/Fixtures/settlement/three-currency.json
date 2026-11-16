@@ -1,0 +1,115 @@
+{
+  "_why": "A worked example of realized FX, committed with its expected postings to the cent - PF-170. A fixture whose expected figures are computed by the code under test proves that the code agrees with itself. These were worked out by hand from the rates below, and a change that moves any of them has to move this file too, in a diff somebody reads.",
+  "functional_currency": "SAR",
+  "scenario": "Three currencies. One invoice in the books' own currency, which realizes nothing. One in EUR where the rate rose between issue and settlement, which realizes a gain. One in USD where it fell, which realizes a loss - and that one is settled in two halves, because a partial allocation realizing the whole document's difference is the mistake that looks right. And one in GBP where the rate did not move at all, which realizes nothing and posts no third line - the case that separates \"a difference of zero\" from \"no difference computed\".",
+  "rates": [
+    {
+      "from": "EUR",
+      "to": "SAR",
+      "as_of": "2026-05-01",
+      "value": "3.9000000000",
+      "_why": "the day the EUR invoice was issued"
+    },
+    {
+      "from": "EUR",
+      "to": "SAR",
+      "as_of": "2026-05-18",
+      "value": "4.0000000000",
+      "_why": "the day the money arrived - the euro rose"
+    },
+    {
+      "from": "USD",
+      "to": "SAR",
+      "as_of": "2026-05-01",
+      "value": "3.8000000000",
+      "_why": "the day the USD invoice was issued"
+    },
+    {
+      "from": "USD",
+      "to": "SAR",
+      "as_of": "2026-05-18",
+      "value": "3.7000000000",
+      "_why": "the day the money arrived - the dollar fell"
+    },
+    {
+      "from": "GBP",
+      "to": "SAR",
+      "as_of": "2026-05-01",
+      "value": "4.7000000000",
+      "_why": "the day the GBP invoice was issued"
+    },
+    {
+      "from": "GBP",
+      "to": "SAR",
+      "as_of": "2026-05-18",
+      "value": "4.7000000000",
+      "_why": "the day the money arrived - the rate had not moved, which is the case that posts no third line"
+    }
+  ],
+  "cases": [
+    {
+      "name": "the books' own currency realizes nothing",
+      "currency": "SAR",
+      "invoice_gross": "1000.0000",
+      "invoice_rate": null,
+      "payment_amount": "1000.0000",
+      "payment_rate": null,
+      "allocate": "1000.0000",
+      "expected": {
+        "unapplied_cash": "1000.0000",
+        "accounts_receivable": "-1000.0000",
+        "fx_gain_loss": null,
+        "realized_fx": null,
+        "_why": "No rates, no difference, and no third line. An entry with an FX line of zero would be a line somebody has to explain."
+      }
+    },
+    {
+      "name": "the euro rose, so settling realizes a gain",
+      "currency": "EUR",
+      "invoice_gross": "1000.0000",
+      "invoice_rate": "3.9000000000",
+      "payment_amount": "1000.0000",
+      "payment_rate": "4.0000000000",
+      "allocate": "1000.0000",
+      "expected": {
+        "unapplied_cash": "4000.0000",
+        "accounts_receivable": "-3900.0000",
+        "fx_gain_loss": "-100.0000",
+        "realized_fx": "100.0000",
+        "_why": "1,000 EUR arrived worth 4,000 SAR and relieved a receivable booked at 3,900. The 100 left over is a gain, which is a credit - so it is negative in a signed ledger."
+      }
+    },
+    {
+      "name": "the dollar fell, and half of it is settled",
+      "currency": "USD",
+      "invoice_gross": "1000.0000",
+      "invoice_rate": "3.8000000000",
+      "payment_amount": "500.0000",
+      "payment_rate": "3.7000000000",
+      "allocate": "500.0000",
+      "expected": {
+        "unapplied_cash": "1850.0000",
+        "accounts_receivable": "-1900.0000",
+        "fx_gain_loss": "50.0000",
+        "realized_fx": "-50.0000",
+        "_why": "500 USD arrived worth 1,850 SAR against half a receivable booked at 1,900. The 50 shortfall is a loss, which is a debit. The whole document's difference would be 100 - and posting that on a half allocation is the mistake this case exists to catch."
+      }
+    },
+    {
+      "name": "a foreign currency whose rate did not move",
+      "currency": "GBP",
+      "invoice_gross": "200.0000",
+      "invoice_rate": "4.7000000000",
+      "payment_amount": "200.0000",
+      "payment_rate": "4.7000000000",
+      "allocate": "200.0000",
+      "expected": {
+        "unapplied_cash": "940.0000",
+        "accounts_receivable": "-940.0000",
+        "fx_gain_loss": null,
+        "realized_fx": "0.0000",
+        "_why": "Foreign, and still no third line. A gain or loss of zero is a line somebody has to explain, and the explanation is that nothing happened - which is better said by the absence of the line. The allocation still records the realized figure as zero, because \"we checked and it was nothing\" and \"we did not check\" are different facts."
+      }
+    }
+  ]
+}

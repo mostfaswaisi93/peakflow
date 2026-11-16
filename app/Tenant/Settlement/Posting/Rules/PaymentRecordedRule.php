@@ -64,11 +64,67 @@ final class PaymentRecordedRule implements PostingRule
     }
 
     /**
-     * @param  array{cash_account_id: string, amount: string, party_id?: string|null, narration?: string}  $event
+     * @param  array{
+     *     cash_account_id: string,
+     *     amount: string,
+     *     currency?: string,
+     *     rate?: \App\Support\Money\Rate|null,
+     *     party_id?: string|null,
+     *     narration?: string,
+     * }  $event
      * @return list<PostingLine>
      */
     public function lines(array $event, PostingContext $context): array
     {
+        $narration = (string) ($event['narration'] ?? 'Payment');
+        $partyId = isset($event['party_id']) ? (string) $event['party_id'] : null;
+        $currency = (string) ($event['currency'] ?? $context->functionalCurrency);
+        $rate = $event['rate'] ?? null;
+
+        /*
+         | A foreign-currency payment is translated here - PF-170.
+         |
+         | Both lines at the SAME rate, the one for the value date. The
+         | cash account and the clearing position hold the same foreign
+         | amount, so translating them differently would make the entry
+         | balance only by accident.
+         |
+         | The rate comes from the service rather than being fetched
+         | here: a rule that looked one up would be choosing a rate
+         | nobody reviewed, and the one that matters is the value date's.
+         */
+        if ($currency !== $context->functionalCurrency) {
+            if (! $rate instanceof \App\Support\Money\Rate) {
+                throw \App\Tenant\Settlement\Exceptions\PaymentRefused::because(sprintf(
+                    'A payment in %s cannot be posted into books kept in %s without a rate. '.
+                    'Choosing one here would be choosing one nobody reviewed.',
+                    $currency,
+                    $context->functionalCurrency,
+                ));
+            }
+
+            $original = \App\Support\Money\Money::of((string) $event['amount'], $currency);
+            $policy = \App\Support\Money\RoundingPolicy::halfUp(\App\Support\Money\Scale::Amount);
+
+            return [
+                PostingLine::translated(
+                    accountId: (string) $event['cash_account_id'],
+                    original: $original,
+                    rate: $rate,
+                    policy: $policy,
+                    narration: $narration,
+                ),
+                PostingLine::translatedToRole(
+                    role: ControlRole::UnappliedCash,
+                    original: $original->negated(),
+                    rate: $rate,
+                    policy: $policy,
+                    partyId: $partyId,
+                    narration: $narration,
+                ),
+            ];
+        }
+
         /*
          | `amount` is signed as the cash moved.
          |
@@ -78,8 +134,6 @@ final class PaymentRecordedRule implements PostingRule
          | about the way it went.
          */
         $amount = $context->money((string) $event['amount']);
-        $narration = (string) ($event['narration'] ?? 'Payment');
-        $partyId = isset($event['party_id']) ? (string) $event['party_id'] : null;
 
         return [
             PostingLine::toAccount(

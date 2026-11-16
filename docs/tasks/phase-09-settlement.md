@@ -44,11 +44,11 @@ This phase also contains the single highest-consequence control in the product: 
 ### PF-170 · Realized FX
 `Settlement` · **5 pts** · depends: PF-168, PF-068 · standards: IAS 21 · `risk:high` `type:posting`
 
-- [ ] On allocation, the difference between the document's booked functional value and the payment's functional value is a **realized** gain or loss, posted to `fx_gain_loss`
-- [ ] The rate used is the one on the payment's **value date**, and it is recorded on the allocation
-- [ ] A partial allocation realizes a proportional difference, which is the case that is easy to get wrong
-- [ ] Distinct from the unrealized revaluation of `PF-070`, posted to a different account, and a test asserts the two never double-count
-- [ ] A worked three-currency example is committed as a fixture with expected postings to the cent
+- [x] On allocation, the difference between the document's booked functional value and the payment's functional value is a **realized** gain or loss, posted to `fx_gain_loss`
+- [x] The rate used is the one on the payment's **value date**, and it is recorded on the allocation
+- [x] A partial allocation realizes a proportional difference, which is the case that is easy to get wrong
+- [x] Distinct from the unrealized revaluation of `PF-070`, posted to a different account, and a test asserts the two never double-count
+- [x] A worked three-currency example is committed as a fixture with expected postings to the cent
 
 ### PF-171 · Rounding differences
 `Settlement` · **3 pts** · depends: PF-168 · standards: — · `type:posting`

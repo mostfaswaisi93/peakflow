@@ -8,6 +8,10 @@ use App\Tenant\Ledger\Enums\ControlRole;
 use App\Tenant\Ledger\Posting\PostingContext;
 use App\Tenant\Ledger\Posting\PostingLine;
 use App\Tenant\Ledger\Posting\PostingRule;
+use App\Support\Money\Money;
+use App\Support\Money\Rate;
+use App\Support\Money\RoundingPolicy;
+use App\Support\Money\Scale;
 use App\Tenant\Ledger\Posting\RuleDescription;
 
 /**
@@ -59,14 +63,22 @@ final class AllocationPostedRule implements PostingRule
     }
 
     /**
-     * @param  array{amount: string, party_id?: string|null, payable?: bool, narration?: string}  $event
+     * @param  array{
+     *     amount: string,
+     *     currency?: string,
+     *     payment_rate?: \App\Support\Money\Rate|null,
+     *     document_rate?: \App\Support\Money\Rate|null,
+     *     party_id?: string|null,
+     *     payable?: bool,
+     *     narration?: string,
+     * }  $event
      * @return list<PostingLine>
      */
     public function lines(array $event, PostingContext $context): array
     {
-        $amount = $context->money((string) $event['amount']);
         $narration = (string) ($event['narration'] ?? 'Allocation');
         $partyId = isset($event['party_id']) ? (string) $event['party_id'] : null;
+        $currency = (string) ($event['currency'] ?? $context->functionalCurrency);
 
         /*
          | A bill settles the payable side, not the receivable one.
@@ -79,18 +91,101 @@ final class AllocationPostedRule implements PostingRule
             ? ControlRole::AccountsPayable
             : ControlRole::AccountsReceivable;
 
+        if ($currency === $context->functionalCurrency) {
+            $amount = $context->money((string) $event['amount']);
+
+            return [
+                PostingLine::toRole(
+                    ControlRole::UnappliedCash,
+                    $amount,
+                    partyId: $partyId,
+                    narration: $narration,
+                ),
+                PostingLine::toRole(
+                    $control,
+                    $amount->negated(),
+                    partyId: $partyId,
+                    narration: $narration,
+                ),
+            ];
+        }
+
+        /*
+         | Two rates, and the difference between them is realized - PF-170.
+         |
+         | The clearing position is released at the rate the money arrived
+         | at, because that is what was credited when it arrived. The
+         | receivable is relieved at the rate the document was booked at,
+         | because that is what was debited when it was issued. Neither
+         | figure is a choice: each line reverses exactly what it reverses.
+         |
+         | What is left over is the gain or loss, and it is left over by
+         | construction rather than computed - which is why it cannot be
+         | out. A rule that posted both sides at one rate would balance
+         | and would leave either the clearing position or the receivable
+         | holding a residue nobody can explain, in a currency nobody is
+         | owed.
+         */
+        $payment = $event['payment_rate'] ?? null;
+        $document = $event['document_rate'] ?? null;
+
+        if (! $payment instanceof Rate || ! $document instanceof Rate) {
+            throw \App\Tenant\Settlement\Exceptions\PaymentRefused::because(sprintf(
+                'An allocation in %s needs both rates: the one the document was booked at and the '.
+                'one the money arrived at. The difference between them is a realized gain or loss, '.
+                'and without both there is nothing to compute it from.',
+                $currency,
+            ));
+        }
+
+        $original = Money::of((string) $event['amount'], $currency);
+        $policy = RoundingPolicy::halfUp(Scale::Amount);
+
+        $clearing = PostingLine::translatedToRole(
+            role: ControlRole::UnappliedCash,
+            original: $original,
+            rate: $payment,
+            policy: $policy,
+            partyId: $partyId,
+            narration: $narration,
+        );
+
+        $relief = PostingLine::translatedToRole(
+            role: $control,
+            original: $original->negated(),
+            rate: $document,
+            policy: $policy,
+            partyId: $partyId,
+            narration: $narration,
+        );
+
+        $realized = $clearing->amount->plus($relief->amount);
+
+        if ($realized->isZero()) {
+            return [$clearing, $relief];
+        }
+
         return [
+            $clearing,
+            $relief,
+            /*
+             | Realized, so `fx_gain_loss` - never `fx_revaluation`.
+             |
+             | The money arrived; this difference is settled and will not
+             | move again. The revaluation account holds what is still
+             | open and still moving, and keeping them apart is what stops
+             | the two being added together by a report that cannot tell
+             | the difference.
+             */
             PostingLine::toRole(
-                ControlRole::UnappliedCash,
-                $amount,
-                partyId: $partyId,
-                narration: $narration,
-            ),
-            PostingLine::toRole(
-                $control,
-                $amount->negated(),
-                partyId: $partyId,
-                narration: $narration,
+                ControlRole::FxGainLoss,
+                $realized->negated(),
+                narration: sprintf(
+                    'Realized exchange difference on %s: booked at %s, settled at %s',
+                    (string) $original->toPresentation(),
+                    (string) $document->value,
+                    (string) $payment->value,
+                ),
             ),
         ];
     }

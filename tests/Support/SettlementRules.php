@@ -108,6 +108,15 @@ final class SettlementRules
                 'a refund needs a reason' => fn (): array => $this->refundNeedsAReason(),
                 'a credit shows as a credit, not netted away' => fn (): array => $this->creditIsVisible(),
 
+                // ---- Realized FX - PF-170 ------------------------------
+                'the worked three-currency example posts to the cent' => fn (): array => $this->threeCurrencies(),
+                'a partial settlement realizes a proportional share' => fn (): array => $this->proportionalRealization(),
+                'the rate used is the payment\'s value date' => fn (): array => $this->valueDateRate(),
+                'both rates are recorded on the allocation' => fn (): array => $this->ratesAreRecorded(),
+                'a foreign receipt posts what it is worth' => fn (): array => $this->foreignReceiptIsTranslated(),
+                'realized and unrealized never share an account' => fn (): array => $this->realizedIsNotRevaluation(),
+                'a payment with no rate cannot be allocated' => fn (): array => $this->allocatingWithoutARate(),
+
                 // ---- The property that matters -------------------------
                 'for any sequence, the balance and the control agree' => fn (): array => $this->theProperty(),
             ]));
@@ -1217,6 +1226,559 @@ final class SettlementRules
         $this->receipt($amount, $partyId);
 
         return $partyId;
+    }
+
+    // ---- Realized FX ------------------------------------------------------
+
+    /** @return list<string> */
+    private function threeCurrencies(): array
+    {
+        $fixture = json_decode(
+            (string) file_get_contents(\dirname(__DIR__).'/Fixtures/settlement/three-currency.json'),
+            true,
+            512,
+            JSON_THROW_ON_ERROR,
+        );
+
+        $this->seedTheRates($fixture['rates']);
+
+        $failures = [];
+
+        foreach ($fixture['cases'] as $case) {
+            foreach ($this->runTheCase($case) as $failure) {
+                $failures[] = sprintf('[%s] %s', $case['name'], $failure);
+            }
+        }
+
+        return $failures;
+    }
+
+    /**
+     * @param  array<string, mixed>  $case
+     * @return list<string>
+     */
+    private function runTheCase(array $case): array
+    {
+        $currency = (string) $case['currency'];
+        $expected = $case['expected'];
+
+        $invoice = $this->aForeignInvoice(
+            $currency,
+            (string) $case['invoice_gross'],
+            $case['invoice_rate'] === null ? null : (string) $case['invoice_rate'],
+        );
+
+        $account = $currency === 'SAR'
+            ? $this->bank()
+            : $this->aForeignAccount($currency);
+
+        $payment = app(Payments::class)->record(
+            entityId: $this->entityId,
+            direction: PaymentDirection::Receipt,
+            method: PaymentMethod::CreditTransfer,
+            amount: Money::of((string) $case['payment_amount'], $currency),
+            valueDate: $this->date->copy(),
+            userId: $this->actorId(),
+            bankAccountId: (string) $account->getKey(),
+            partyId: (string) $invoice->party_id,
+        );
+
+        $result = app(Allocations::class)->allocate(
+            (string) $payment['id'],
+            'invoice',
+            (string) $invoice->getKey(),
+            Money::of((string) $case['allocate'], $currency),
+            $this->actorId(),
+            on: $this->date->copy(),
+        );
+
+        $lines = DB::connection('tenant')->table('journal_lines')
+            ->where('journal_entry_id', (string) $result['journal_entry_id'])
+            ->get();
+
+        $failures = [];
+
+        /*
+         | Each line compared against a figure written down by hand.
+         |
+         | A fixture whose expected figures are computed by the code under
+         | test proves that the code agrees with itself. These were worked
+         | out from the rates, and a change that moves any of them has to
+         | move the fixture too, in a diff somebody reads.
+         */
+        foreach ([
+            [ControlRole::UnappliedCash, 'unapplied_cash'],
+            [ControlRole::AccountsReceivable, 'accounts_receivable'],
+            [ControlRole::FxGainLoss, 'fx_gain_loss'],
+        ] as [$role, $key]) {
+            $line = $lines->firstWhere('account_id', $this->accountFor($role));
+            $want = $expected[$key] ?? null;
+
+            if ($want === null) {
+                if ($line !== null) {
+                    $failures[] = sprintf(
+                        'a line was posted to %s where the worked example expects none (%s)',
+                        $role->value,
+                        (string) $line->functional_amount,
+                    );
+                }
+
+                continue;
+            }
+
+            if ($line === null) {
+                $failures[] = sprintf('nothing was posted to %s, where the example expects %s', $role->value, (string) $want);
+
+                continue;
+            }
+
+            if (! BigDecimal::of((string) $line->functional_amount)->isEqualTo((string) $want)) {
+                $failures[] = sprintf(
+                    '%s posted %s where the worked example says %s',
+                    $role->value,
+                    (string) $line->functional_amount,
+                    (string) $want,
+                );
+            }
+        }
+
+        $row = DB::connection('tenant')->table('allocations')->where('id', (string) $result['id'])->first();
+        $wantRealized = $expected['realized_fx'] ?? null;
+
+        if ($wantRealized === null) {
+            if ($row?->realized_fx !== null) {
+                $failures[] = sprintf('the allocation recorded a realized figure of %s where none was expected', (string) $row->realized_fx);
+            }
+        } elseif ($row === null || ! BigDecimal::of((string) $row->realized_fx)->isEqualTo((string) $wantRealized)) {
+            $failures[] = sprintf(
+                'the allocation recorded %s realized where the worked example says %s',
+                (string) ($row->realized_fx ?? 'nothing'),
+                (string) $wantRealized,
+            );
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function proportionalRealization(): array
+    {
+        $this->seedTheRates([
+            ['from' => 'EUR', 'to' => 'SAR', 'as_of' => '2026-05-01', 'value' => '3.9000000000'],
+            ['from' => 'EUR', 'to' => 'SAR', 'as_of' => $this->date->toDateString(), 'value' => '4.0000000000'],
+        ]);
+
+        $invoice = $this->aForeignInvoice('EUR', '1000.0000', '3.9000000000');
+        $account = $this->aForeignAccount('EUR');
+
+        $payment = app(Payments::class)->record(
+            entityId: $this->entityId,
+            direction: PaymentDirection::Receipt,
+            method: PaymentMethod::CreditTransfer,
+            amount: Money::of('1000.0000', 'EUR'),
+            valueDate: $this->date->copy(),
+            userId: $this->actorId(),
+            bankAccountId: (string) $account->getKey(),
+            partyId: (string) $invoice->party_id,
+        );
+
+        $failures = [];
+
+        /*
+         | A quarter, then another quarter.
+         |
+         | The whole document's difference is 100. A quarter of it is 25,
+         | and the mistake that looks right - realizing the document's
+         | difference on every allocation - would post 100 twice.
+         */
+        foreach (['250.0000', '250.0000'] as $slice) {
+            $result = app(Allocations::class)->allocate(
+                (string) $payment['id'],
+                'invoice',
+                (string) $invoice->getKey(),
+                Money::of($slice, 'EUR'),
+                $this->actorId(),
+                on: $this->date->copy(),
+            );
+
+            $row = DB::connection('tenant')->table('allocations')->where('id', (string) $result['id'])->first();
+
+            if ($row === null || ! BigDecimal::of((string) $row->realized_fx)->isEqualTo('25.0000')) {
+                $failures[] = sprintf(
+                    'a quarter of a 1,000 EUR invoice realized %s where the proportional share is 25',
+                    (string) ($row->realized_fx ?? 'nothing'),
+                );
+            }
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function valueDateRate(): array
+    {
+        /*
+         | Two rates: one for the value date, a different one for later.
+         |
+         | Using today's would make the same receipt worth a different
+         | figure depending on when somebody got round to entering it,
+         | which is a figure nobody can defend.
+         */
+        $this->seedTheRates([
+            ['from' => 'EUR', 'to' => 'SAR', 'as_of' => $this->date->toDateString(), 'value' => '4.0000000000'],
+            ['from' => 'EUR', 'to' => 'SAR', 'as_of' => $this->date->copy()->addDays(5)->toDateString(), 'value' => '4.5000000000'],
+        ]);
+
+        $account = $this->aForeignAccount('EUR');
+
+        $payment = app(Payments::class)->record(
+            entityId: $this->entityId,
+            direction: PaymentDirection::Receipt,
+            method: PaymentMethod::CreditTransfer,
+            amount: Money::of('100.0000', 'EUR'),
+            valueDate: $this->date->copy(),
+            userId: $this->actorId(),
+            bankAccountId: (string) $account->getKey(),
+        );
+
+        $row = DB::connection('tenant')->table('payments')->where('id', (string) $payment['id'])->first();
+
+        if ($row === null || $row->fx_rate === null) {
+            return ['a foreign-currency payment recorded no rate, so nothing can be measured against it'];
+        }
+
+        return BigDecimal::of((string) $row->fx_rate)->isEqualTo('4.0000000000')
+            ? []
+            : [sprintf(
+                'the payment was posted at %s rather than the %s on its value date',
+                (string) $row->fx_rate,
+                '4.0000000000',
+            )];
+    }
+
+    /** @return list<string> */
+    private function ratesAreRecorded(): array
+    {
+        $this->seedTheRates([
+            ['from' => 'EUR', 'to' => 'SAR', 'as_of' => '2026-05-01', 'value' => '3.9000000000'],
+            ['from' => 'EUR', 'to' => 'SAR', 'as_of' => $this->date->toDateString(), 'value' => '4.0000000000'],
+        ]);
+
+        $invoice = $this->aForeignInvoice('EUR', '500.0000', '3.9000000000');
+        $account = $this->aForeignAccount('EUR');
+
+        $payment = app(Payments::class)->record(
+            entityId: $this->entityId,
+            direction: PaymentDirection::Receipt,
+            method: PaymentMethod::CreditTransfer,
+            amount: Money::of('500.0000', 'EUR'),
+            valueDate: $this->date->copy(),
+            userId: $this->actorId(),
+            bankAccountId: (string) $account->getKey(),
+            partyId: (string) $invoice->party_id,
+        );
+
+        $result = app(Allocations::class)->allocate(
+            (string) $payment['id'],
+            'invoice',
+            (string) $invoice->getKey(),
+            Money::of('500.0000', 'EUR'),
+            $this->actorId(),
+            on: $this->date->copy(),
+        );
+
+        $row = DB::connection('tenant')->table('allocations')->where('id', (string) $result['id'])->first();
+
+        $failures = [];
+
+        /*
+         | Both rates, not one.
+         |
+         | "We used 4.00" cannot be checked. "Booked at 3.90, settled at
+         | 4.00, so the difference on 500 is 50" is arithmetic an auditor
+         | re-performs in a line.
+         */
+        if ($row === null) {
+            return ['the allocation was not recorded'];
+        }
+
+        if ($row->document_fx_rate === null || ! BigDecimal::of((string) $row->document_fx_rate)->isEqualTo('3.9000000000')) {
+            $failures[] = sprintf('the rate the document was booked at is recorded as %s', (string) ($row->document_fx_rate ?? 'nothing'));
+        }
+
+        if ($row->payment_fx_rate === null || ! BigDecimal::of((string) $row->payment_fx_rate)->isEqualTo('4.0000000000')) {
+            $failures[] = sprintf('the rate the money arrived at is recorded as %s', (string) ($row->payment_fx_rate ?? 'nothing'));
+        }
+
+        if ($row->fx_rate_date === null) {
+            $failures[] = 'the allocation does not say which day the settlement rate came from';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function foreignReceiptIsTranslated(): array
+    {
+        $this->seedTheRates([
+            ['from' => 'EUR', 'to' => 'SAR', 'as_of' => $this->date->toDateString(), 'value' => '4.0000000000'],
+        ]);
+
+        $account = $this->aForeignAccount('EUR');
+
+        $payment = app(Payments::class)->record(
+            entityId: $this->entityId,
+            direction: PaymentDirection::Receipt,
+            method: PaymentMethod::CreditTransfer,
+            amount: Money::of('100.0000', 'EUR'),
+            valueDate: $this->date->copy(),
+            userId: $this->actorId(),
+            bankAccountId: (string) $account->getKey(),
+        );
+
+        $lines = DB::connection('tenant')->table('journal_lines')
+            ->where('journal_entry_id', (string) $payment['journal_entry_id'])
+            ->get();
+
+        $failures = [];
+
+        /*
+         | The payment's own entry, which nothing else was looking at.
+         |
+         | The allocation checks read the allocation entry, so a payment
+         | rule that stopped translating would post 100 SAR for 100 EUR,
+         | balance perfectly, and leave every one of them passing. The
+         | cash account would be out by three quarters and the first sign
+         | would be a bank reconciliation.
+         */
+        /*
+         | The account's own GL id, read from the account.
+         |
+         | Not by asking for "a second bank GL account" again: that helper
+         | mints a fresh one once the previous is attached, so the check
+         | would be looking for a line on an account nothing posted to.
+         */
+        $onBank = $lines->firstWhere('account_id', (string) $account->gl_account_id);
+
+        if ($onBank === null) {
+            return ['the receipt did not reach the account it was paid into'];
+        }
+
+        if (! BigDecimal::of((string) $onBank->functional_amount)->isEqualTo('400.0000')) {
+            $failures[] = sprintf(
+                '100 EUR at 4.00 posted %s to the cash account rather than 400',
+                (string) $onBank->functional_amount,
+            );
+        }
+
+        if ((string) $onBank->currency !== 'EUR') {
+            $failures[] = sprintf(
+                'the line is denominated in %s, so what the bank actually holds is not on it',
+                (string) $onBank->currency,
+            );
+        }
+
+        if ($onBank->fx_rate === null) {
+            $failures[] = 'the line carries no rate, so the figure cannot be traced back to what produced it';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function realizedIsNotRevaluation(): array
+    {
+        $this->seedTheRates([
+            ['from' => 'EUR', 'to' => 'SAR', 'as_of' => '2026-05-01', 'value' => '3.9000000000'],
+            ['from' => 'EUR', 'to' => 'SAR', 'as_of' => $this->date->toDateString(), 'value' => '4.0000000000'],
+        ]);
+
+        $invoice = $this->aForeignInvoice('EUR', '1000.0000', '3.9000000000');
+        $account = $this->aForeignAccount('EUR');
+
+        $payment = app(Payments::class)->record(
+            entityId: $this->entityId,
+            direction: PaymentDirection::Receipt,
+            method: PaymentMethod::CreditTransfer,
+            amount: Money::of('1000.0000', 'EUR'),
+            valueDate: $this->date->copy(),
+            userId: $this->actorId(),
+            bankAccountId: (string) $account->getKey(),
+            partyId: (string) $invoice->party_id,
+        );
+
+        $result = app(Allocations::class)->allocate(
+            (string) $payment['id'],
+            'invoice',
+            (string) $invoice->getKey(),
+            Money::of('1000.0000', 'EUR'),
+            $this->actorId(),
+            on: $this->date->copy(),
+        );
+
+        $lines = DB::connection('tenant')->table('journal_lines')
+            ->where('journal_entry_id', (string) $result['journal_entry_id'])
+            ->get();
+
+        $failures = [];
+
+        /*
+         | Realized goes to fx_gain_loss; revaluation has its own account.
+         |
+         | The money arrived, so this difference is settled and will not
+         | move again. What the revaluation account holds is still open
+         | and still moving, and a report that added the two would be
+         | counting the same exposure twice - once as settled and once as
+         | outstanding.
+         */
+        if ($lines->firstWhere('account_id', $this->accountFor(ControlRole::FxRevaluation)) !== null) {
+            $failures[] = 'a realized difference reached the revaluation account, where it would be added to exposures that are still open';
+        }
+
+        if ($lines->firstWhere('account_id', $this->accountFor(ControlRole::FxGainLoss)) === null) {
+            $failures[] = 'a realized difference did not reach fx_gain_loss';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function allocatingWithoutARate(): array
+    {
+        $this->seedTheRates([
+            ['from' => 'EUR', 'to' => 'SAR', 'as_of' => $this->date->toDateString(), 'value' => '4.0000000000'],
+        ]);
+
+        $invoice = $this->aForeignInvoice('EUR', '100.0000', null);
+        $account = $this->aForeignAccount('EUR');
+
+        $payment = app(Payments::class)->record(
+            entityId: $this->entityId,
+            direction: PaymentDirection::Receipt,
+            method: PaymentMethod::CreditTransfer,
+            amount: Money::of('100.0000', 'EUR'),
+            valueDate: $this->date->copy(),
+            userId: $this->actorId(),
+            bankAccountId: (string) $account->getKey(),
+            partyId: (string) $invoice->party_id,
+        );
+
+        $refusal = $this->refusal(fn () => app(Allocations::class)->allocate(
+            (string) $payment['id'],
+            'invoice',
+            (string) $invoice->getKey(),
+            Money::of('100.0000', 'EUR'),
+            $this->actorId(),
+            on: $this->date->copy(),
+        ));
+
+        if ($refusal === null) {
+            return ['a document booked without a rate was settled anyway, so the realized figure came from nowhere'];
+        }
+
+        return str_contains($refusal, 'booked without a rate')
+            ? []
+            : [sprintf('the refusal does not say what is missing: %s', $refusal)];
+    }
+
+    // ---- FX fixture helpers -----------------------------------------------
+
+    /**
+     * Let the entity transact in a currency, which it must before it posts.
+     *
+     * The ledger refuses a posting in a currency nobody enabled, rather
+     * than converting at a rate nobody chose - which is right, and means
+     * an FX fixture has to say which currencies the business deals in
+     * before it can pretend to receive one.
+     */
+    private function enableTheCurrency(string $currency): void
+    {
+        DB::connection('tenant')->table('entity_currencies')->insertOrIgnore([
+            'id' => (string) \Illuminate\Support\Str::ulid(),
+            'entity_id' => $this->entityId,
+            'currency' => $currency,
+            'is_functional' => false,
+            'enabled' => true,
+            'presentation_exponent' => 2,
+        ]);
+    }
+
+    /** @param  list<array<string, string>>  $rates */
+    private function seedTheRates(array $rates): void
+    {
+        foreach ($rates as $rate) {
+            $this->enableTheCurrency((string) $rate['from']);
+        }
+
+        foreach ($rates as $rate) {
+            app(\App\Tenant\Catalog\Services\ExchangeRates::class)->record(
+                (string) $rate['from'],
+                (string) $rate['to'],
+                Carbon::parse((string) $rate['as_of']),
+                (string) $rate['value'],
+            );
+        }
+    }
+
+    /**
+     * An issued invoice in a foreign currency, with the rate it was booked at.
+     *
+     * Written directly rather than through the issuer, because the issuer
+     * posts - and what is being checked here is the settlement entry, not
+     * the issue one. The columns the allocation reads are the ones that
+     * matter: gross, currency and the rate.
+     */
+    private function aForeignInvoice(string $currency, string $gross, ?string $rate): object
+    {
+        $invoice = \App\Tenant\Sales\Models\Invoice::create([
+            'entity_id' => $this->entityId,
+            'series_key' => 'invoice',
+            'document_type' => '380',
+            'status' => 'issued',
+            'party_id' => (string) $this->party?->getKey(),
+            'issue_date' => '2026-05-01',
+            'tax_point' => '2026-05-01',
+            'currency' => $currency,
+            'net_amount' => $gross,
+            'tax_amount' => '0.0000',
+            'gross_amount' => $gross,
+            'payable_amount' => $gross,
+            'presentation_exponent' => 2,
+            'number' => 'FX-'.\Illuminate\Support\Str::upper(\Illuminate\Support\Str::random(8)),
+            'fx_rate' => $rate,
+            'fx_rate_date' => $rate === null ? null : '2026-05-01',
+            'fx_source' => $rate === null ? null : 'manual',
+            /*
+             | An issued invoice carries its snapshots, and the database
+             | says so.
+             |
+             | The constraint is right: a document somebody sent is a
+             | record of who the parties were and what was decided about
+             | tax at the time, and one without them cannot be defended
+             | later. The fixture satisfies it rather than working round
+             | it - a check standing on a state the system refuses is a
+             | check standing on nothing.
+             */
+            'issued_at' => '2026-05-01 09:00:00',
+            'supplier_snapshot' => ['legal_name' => 'Peakflow Trading Co.', 'country' => 'SA'],
+            'customer_snapshot' => ['legal_name' => 'Acme Industrial LLC', 'country' => 'SA'],
+            'tax_decision_snapshot' => ['treatment' => 'out_of_scope', 'why' => 'a settlement fixture, where the tax decision is not what is being checked'],
+        ]);
+
+        return $invoice;
+    }
+
+    private function aForeignAccount(string $currency): \App\Tenant\Banking\Models\BankAccount
+    {
+        return $this->openAccount(
+            openingBalance: '0.0000',
+            iban: self::DE_IBAN,
+            glAccountId: $this->secondBankGlAccountId(),
+            institutionCountry: 'DE',
+            currency: $currency,
+            bic: 'DEUTDEFF',
+            label: $currency.' account',
+        );
     }
 
     // ---- The property -----------------------------------------------------

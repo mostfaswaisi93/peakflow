@@ -78,3 +78,39 @@ It is also the shape fraud takes. A negative receipt looks like a correction; a 
 The movement itself needs no special posting rule: a refund is a **disbursement**, Dr unapplied cash and Cr bank — the exact opposite of the receipt that created the credit.
 
 **Refunding more than the credit is refused.** The money beyond it was never theirs to get back, and paying it out is a payment on account to somebody who does not have one — which surfaces later as a debit balance on a customer nobody sold anything to.
+
+## Realized exchange differences
+
+A document booked in a foreign currency was worth one figure in the books when it was issued, and the money that settles it is worth another when it arrives. The difference is **realized** — the money came, and it will not move again.
+
+### The entry has three lines, and the third is left over
+
+| Line | At which rate | Why |
+|---|---|---|
+| Dr unapplied cash | the payment's | That is what was credited when the money arrived |
+| Cr receivables | the document's | That is what was debited when it was issued |
+| Dr/Cr `fx_gain_loss` | — | Whatever is left |
+
+Neither of the first two is a choice: each line reverses exactly what it reverses. The difference is left over **by construction** rather than computed, which is why it cannot be out.
+
+A rule that posted both sides at one rate would balance, and would leave either the clearing position or the receivable holding a residue nobody can explain, in a currency nobody is owed.
+
+### The rate is the payment's value date
+
+The value date is when the money was ours. Using today's would make the same receipt worth a different figure depending on when somebody got round to entering it — a figure nobody can defend.
+
+**Both rates are stored on the allocation**, with the figure they produced. "We used 4.00" cannot be checked; "booked at 3.90, settled at 4.00, so the difference on 500 is 50" is arithmetic an auditor re-performs in a line. They are stored rather than re-fetched because a corrected rate is ordinary — a provider restates, somebody fixes a typo — and a realized figure that moved with it would restate a gain somebody reported last quarter, silently.
+
+A rate of exactly `1` is refused rather than stored for a functional-currency payment. It is what somebody fills in "for completeness", and it makes "which payments were translated" unanswerable — the one query written when a realized figure looks wrong.
+
+### Proportional, because it is computed on the allocation
+
+A partial settlement realizes a share of the difference, not the document's whole difference. That is the case that is easy to get wrong, because the figure that looks right is the one on the document. It is proportional by construction here: the arithmetic runs on the amount being allocated.
+
+### Realized is not revaluation
+
+`fx_gain_loss` holds what is settled; `fx_revaluation` holds what is still open and still moving. A report that added the two would count the same exposure twice — once as settled and once as outstanding — so a check asserts a realized difference never reaches the revaluation account.
+
+### The worked example is committed
+
+`tests/Fixtures/settlement/three-currency.json` holds three cases — the books' own currency (realizes nothing, and posts no third line), a euro invoice where the rate rose, and a dollar invoice where it fell and only half is settled — with the expected postings **written out by hand**. A fixture whose expected figures are computed by the code under test proves only that the code agrees with itself.

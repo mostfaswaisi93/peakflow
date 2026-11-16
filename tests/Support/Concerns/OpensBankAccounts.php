@@ -516,14 +516,33 @@ trait OpensBankAccounts
 
         $id = (string) Str::ulid();
 
+        /*
+         | The next free suffix, not a fixed one.
+         |
+         | This minted `.9` every time. The first call was fine, because
+         | the second call found the account it had made and reused it -
+         | and the moment a suite needed TWO extra bank accounts, the
+         | third call tried to create `.9` again and hit the unique index.
+         | A helper that works once and fails the second time is a helper
+         | that hides until somebody writes the check that needs it.
+         */
+        $suffix = 9;
+
+        while (DB::connection('tenant')->table('accounts')
+            ->where('entity_id', $this->entityId)
+            ->where('code', (string) $parent->code.'.'.$suffix)
+            ->exists()) {
+            $suffix++;
+        }
+
         DB::connection('tenant')->table('accounts')->insert([
             'id' => $id,
             'entity_id' => $this->entityId,
-            'code' => (string) $parent->code.'.9',
-            'path' => (string) $parent->path.'.9',
+            'code' => (string) $parent->code.'.'.$suffix,
+            'path' => (string) $parent->path.'.'.$suffix,
             'parent_id' => $this->bankGlAccountId,
-            'name_ar' => 'حساب بنكي ثانٍ',
-            'name_en' => 'Second bank account',
+            'name_ar' => 'حساب بنكي إضافي',
+            'name_en' => 'Additional bank account',
             'type' => (string) $parent->type,
             'postable' => true,
             'monetary' => true,
