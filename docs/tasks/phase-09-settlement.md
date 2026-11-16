@@ -36,10 +36,10 @@ This phase also contains the single highest-consequence control in the product: 
 ### PF-169 · Over-payment, credits and refunds
 `Settlement` · **5 pts** · depends: PF-168 · standards: — · `type:posting`
 
-- [ ] Over-payment becomes a customer credit balance, usable against future documents
-- [ ] A refund is its own document and its own payment, so it is traceable rather than being a negative receipt
-- [ ] A credit balance appears on statements and in the aging report, as a negative bucket rather than being netted invisibly
-- [ ] Refunding more than the credit balance is refused
+- [x] Over-payment becomes a customer credit balance, usable against future documents
+- [x] A refund is its own document and its own payment, so it is traceable rather than being a negative receipt
+- [x] A credit balance appears on statements and in the aging report, as a negative bucket rather than being netted invisibly
+- [x] Refunding more than the credit balance is refused
 
 ### PF-170 · Realized FX
 `Settlement` · **5 pts** · depends: PF-168, PF-068 · standards: IAS 21 · `risk:high` `type:posting`

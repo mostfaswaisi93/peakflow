@@ -13,6 +13,7 @@ use App\Tenant\Settlement\Enums\PaymentDirection;
 use App\Tenant\Settlement\Enums\PaymentMethod;
 use App\Tenant\Settlement\Services\Allocations;
 use App\Tenant\Settlement\Services\Payments;
+use App\Tenant\Settlement\Services\Refunds;
 use App\Tenant\Settlement\Services\UnappliedCash;
 use Brick\Math\BigDecimal;
 use Illuminate\Support\Carbon;
@@ -98,6 +99,14 @@ final class SettlementRules
                 'oldest first takes the oldest' => fn (): array => $this->oldestFirst(),
                 'a quoted reference beats the oldest' => fn (): array => $this->byReference(),
                 'a strategy says why it chose each document' => fn (): array => $this->strategyExplainsItself(),
+
+                // ---- Over-payment, credits and refunds - PF-169 --------
+                'an overpayment becomes a credit they can use' => fn (): array => $this->overpaymentIsACredit(),
+                'a refund is a document with a reason and an approver' => fn (): array => $this->refundIsADocument(),
+                'a refund is not a negative receipt' => fn (): array => $this->refundIsNotANegativeReceipt(),
+                'refunding more than the credit is refused' => fn (): array => $this->refundingTooMuch(),
+                'a refund needs a reason' => fn (): array => $this->refundNeedsAReason(),
+                'a credit shows as a credit, not netted away' => fn (): array => $this->creditIsVisible(),
 
                 // ---- The property that matters -------------------------
                 'for any sequence, the balance and the control agree' => fn (): array => $this->theProperty(),
@@ -968,6 +977,246 @@ final class SettlementRules
         return $proposal['proposed'] === []
             ? ['nothing was proposed, so this check cannot read a reason']
             : [];
+    }
+
+    // ---- Over-payment, credits and refunds --------------------------------
+
+    /** @return list<string> */
+    private function overpaymentIsACredit(): array
+    {
+        $invoice = $this->issue();
+        $gross = BigDecimal::of((string) $invoice->gross_amount);
+        $partyId = (string) $invoice->party_id;
+
+        $payment = $this->receipt((string) $gross->plus('300.0000'), $partyId);
+
+        app(Allocations::class)->allocate(
+            (string) $payment['id'],
+            'invoice',
+            (string) $invoice->getKey(),
+            Money::of((string) $gross, 'SAR'),
+            $this->actorId(),
+            on: $this->date->copy(),
+        );
+
+        $credit = app(Refunds::class)->creditFor($this->entityId, $partyId, 'SAR');
+
+        if (! $credit->amount->isEqualTo('300.0000')) {
+            return [sprintf(
+                'a customer who overpaid by 300 has %s on account, so the excess is not being held '.
+                'as a credit',
+                (string) $credit->amount,
+            )];
+        }
+
+        /*
+         | And it is usable against their next document.
+         |
+         | Which is what makes it a credit rather than a holding pen: the
+         | same unallocated cash, allocated to an invoice issued later.
+         */
+        $next = $this->issue();
+
+        $refusal = $this->refusal(fn () => app(Allocations::class)->allocate(
+            (string) $payment['id'],
+            'invoice',
+            (string) $next->getKey(),
+            Money::of('300.0000', 'SAR'),
+            $this->actorId(),
+            on: $this->date->copy(),
+        ));
+
+        return $refusal === null
+            ? []
+            : [sprintf('a credit balance could not be used against a later invoice: %s', $refusal)];
+    }
+
+    /** @return list<string> */
+    private function refundIsADocument(): array
+    {
+        $partyId = $this->aPartyWithCredit('450.0000');
+
+        $result = app(Refunds::class)->issue(
+            $this->entityId,
+            $partyId,
+            Money::of('450.0000', 'SAR'),
+            'the customer cancelled the order after paying and asked for the money back',
+            $this->actorId(),
+            (string) $this->bank()->getKey(),
+            $this->date->copy(),
+        );
+
+        $row = DB::connection('tenant')->table('refunds')->where('id', (string) $result['id'])->first();
+
+        $failures = [];
+
+        if ($row === null) {
+            return ['no refund document was written, so "how much have we refunded this year" has no answer'];
+        }
+
+        foreach (['number', 'reason', 'approved_by', 'payment_id'] as $column) {
+            if (($row->{$column} ?? null) === null) {
+                $failures[] = sprintf('the refund carries no %s', $column);
+            }
+        }
+
+        if (! app(Refunds::class)->creditFor($this->entityId, $partyId, 'SAR')->isZero()) {
+            $failures[] = 'the credit was not consumed by the refund, so the money could be refunded twice';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function refundIsNotANegativeReceipt(): array
+    {
+        $partyId = $this->aPartyWithCredit('200.0000');
+
+        $result = app(Refunds::class)->issue(
+            $this->entityId,
+            $partyId,
+            Money::of('200.0000', 'SAR'),
+            'the duplicate payment the customer made last week, returned to them',
+            $this->actorId(),
+            (string) $this->bank()->getKey(),
+            $this->date->copy(),
+        );
+
+        $payment = DB::connection('tenant')->table('payments')
+            ->where('id', (string) $result['payment_id'])
+            ->first();
+
+        $failures = [];
+
+        /*
+         | A disbursement, not a receipt with a minus in front of it.
+         |
+         | A negative receipt nets against the customer's cash in every
+         | report that sums payments, so the refund total becomes a query
+         | nobody can write - and that is the figure somebody asks for
+         | after a chargeback.
+         */
+        if ($payment === null) {
+            return ['the refund moved no money'];
+        }
+
+        if ((string) $payment->direction !== 'disbursement') {
+            $failures[] = sprintf('the refund was recorded as a %s rather than money going out', (string) $payment->direction);
+        }
+
+        if (BigDecimal::of((string) $payment->amount)->isNegative()) {
+            $failures[] = 'the refund is a negative amount, so it nets away in every report that sums payments';
+        }
+
+        $report = app(Refunds::class)->report($this->entityId);
+
+        return $report === []
+            ? [...$failures, 'the refund does not appear on the refund report']
+            : $failures;
+    }
+
+    /** @return list<string> */
+    private function refundingTooMuch(): array
+    {
+        $partyId = $this->aPartyWithCredit('100.0000');
+
+        $refusal = $this->refusal(fn () => app(Refunds::class)->issue(
+            $this->entityId,
+            $partyId,
+            Money::of('500.0000', 'SAR'),
+            'refunding more than this customer ever paid us, to see whether it is caught',
+            $this->actorId(),
+            (string) $this->bank()->getKey(),
+            $this->date->copy(),
+        ));
+
+        if ($refusal === null) {
+            return ['more was refunded than the customer had on account, leaving a debit balance on somebody nobody sold anything to'];
+        }
+
+        return str_contains($refusal, 'on account')
+            ? []
+            : [sprintf('the refusal does not say what they actually have: %s', $refusal)];
+    }
+
+    /** @return list<string> */
+    private function refundNeedsAReason(): array
+    {
+        $partyId = $this->aPartyWithCredit('100.0000');
+
+        $refusal = $this->refusal(fn () => app(Refunds::class)->issue(
+            $this->entityId,
+            $partyId,
+            Money::of('100.0000', 'SAR'),
+            'refund',
+            $this->actorId(),
+            (string) $this->bank()->getKey(),
+            $this->date->copy(),
+        ));
+
+        if ($refusal === null) {
+            return ['money went back to a customer with the word "refund" beside it, which is not an answer to why'];
+        }
+
+        /*
+         | The service's refusal, not the column's.
+         |
+         | The table refuses a short reason too, which is why it is there.
+         | A person issuing a refund should be told what the reason is for
+         | and who reads it, not handed the name of a check constraint.
+         */
+        return str_contains($refusal, 'length of a sentence')
+            ? []
+            : [sprintf('the refusal came from the table rather than from issuing the refund: %s', $refusal)];
+    }
+
+    /** @return list<string> */
+    private function creditIsVisible(): array
+    {
+        $invoice = $this->issue();
+        $partyId = (string) $invoice->party_id;
+
+        $this->receipt('400.0000', $partyId);
+
+        $statement = app(UnappliedCash::class)->statementFor($this->entityId, $partyId, $this->date->toDateString());
+        $ageing = app(UnappliedCash::class)->ageing($this->entityId, 'SAR', $this->date->toDateString());
+
+        $failures = [];
+
+        /*
+         | Shown as its own figure, never netted into what is owed.
+         |
+         | "You owe 4,000" and "you owe 5,000 and we are holding 1,000 of
+         | yours" lead to different replies, and only the second lets the
+         | customer tell you what the 1,000 was for.
+         */
+        if (! $statement['credit']->amount->isEqualTo('-400.0000')) {
+            $failures[] = sprintf(
+                'the statement reports a credit of %s rather than -400, so a customer credit is not '.
+                'presented as a credit',
+                (string) $statement['credit']->amount,
+            );
+        }
+
+        if ($statement['owed']->equals($statement['net'])) {
+            $failures[] = 'what is owed and the net are the same figure, so the credit was netted away invisibly';
+        }
+
+        if (! ($ageing['credit_buckets']['0-30'] ?? Money::zero('SAR'))->amount->isEqualTo('-400.0000')) {
+            $failures[] = 'the ageing report has no negative bucket for the credit, so it is invisible there';
+        }
+
+        return $failures;
+    }
+
+    private function aPartyWithCredit(string $amount): string
+    {
+        $invoice = $this->issue();
+        $partyId = (string) $invoice->party_id;
+
+        $this->receipt($amount, $partyId);
+
+        return $partyId;
     }
 
     // ---- The property -----------------------------------------------------

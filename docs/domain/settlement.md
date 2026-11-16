@@ -62,3 +62,19 @@ A cash method against a bank account is refused too — it puts a line on a bank
 The same code list the e-invoice carries. A payment recorded as "transfer" here and `30` on the document it settles is two vocabularies for one fact, and the mapping between them gets written twice and is wrong in one of them.
 
 The subset is what this system can post. A code outside it is refused rather than stored: a method nothing knows how to post is a payment that reaches the ledger by whichever branch happened to be last.
+
+## Over-payment, credits and refunds
+
+An overpayment is **not a special kind of object**. The customer sent more than their invoices came to, the excess sits unallocated against them, and that is a credit they can use on their next document or ask to have back. Two ways to hold a customer's money would need a reconciliation between them.
+
+A credit is shown as a credit — its own figure on the statement and a negative bucket in the ageing, never netted into what is owed. "You owe 4,000" and "you owe 5,000 and we are holding 1,000 of yours" lead to different replies, and only the second lets the customer tell you what the 1,000 was for.
+
+### A refund is a document and a payment, never a negative receipt
+
+A negative receipt nets against the customer's cash in every report that sums payments, so "how much have we refunded this year" becomes a query nobody can write — and that figure is the one a finance director asks for, usually after a chargeback.
+
+It is also the shape fraud takes. A negative receipt looks like a correction; a refund has an amount, a reason of at least a sentence, an approver and a payment behind it, and the approver is a person whose name is on a row.
+
+The movement itself needs no special posting rule: a refund is a **disbursement**, Dr unapplied cash and Cr bank — the exact opposite of the receipt that created the credit.
+
+**Refunding more than the credit is refused.** The money beyond it was never theirs to get back, and paying it out is a payment on account to somebody who does not have one — which surfaces later as a debit balance on a customer nobody sold anything to.

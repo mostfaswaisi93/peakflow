@@ -152,10 +152,26 @@ final class UnappliedCash
             ];
         }
 
+        /*
+         | Reported as a credit as well as a magnitude - PF-169.
+         |
+         | The buckets are what is held, which is a positive figure
+         | somebody can total. `credit_buckets` is the same thing with the
+         | sign it has on a customer's account, so an ageing report can
+         | show it as a negative bucket rather than netting it invisibly
+         | into what they owe.
+         */
+        $credits = array_map(
+            static fn (Money $bucket): Money => $bucket->negated(),
+            $buckets,
+        );
+
         return [
             'as_of' => $asOf,
             'total' => $total,
             'buckets' => $buckets,
+            'credit_buckets' => $credits,
+            'credit' => $total->negated(),
             'items' => $items,
             'oldest_days' => $oldest,
             'unidentified_payers' => $unidentified,
@@ -296,7 +312,17 @@ final class UnappliedCash
             'documents' => $lines,
             'unapplied' => $theirs,
             'owed' => $owed,
+            /*
+             | Shown as its own figure, never netted into what is owed.
+             |
+             | PF-169 asks for this directly, and the reason is that the
+             | two are different conversations: "you owe 4,000" and "you
+             | owe 5,000 and we are holding 1,000 of yours" lead to
+             | different replies, and only the second lets the customer
+             | tell you what the 1,000 was for.
+             */
             'held' => $held,
+            'credit' => $held->negated(),
             'net' => $owed->minus($held),
             'why' => $theirs === []
                 ? sprintf('%s is owed on %d open document(s).', (string) $owed->toPresentation(), \count($lines))
