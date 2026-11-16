@@ -400,6 +400,35 @@ EN 16931 has **no per-line tax amount**. A line carries its category and its rat
 
 Three lines of 1.03 at 15% derive 0.4635 where the group states 0.46. Without the reconciliation a bill built from a correct document would disagree with it, and the disagreement would be found by whoever reconciles the input tax to the return.
 
+### Extraction, and the routing decision that matters most
+
+A **Factur-X PDF is a structured document**. It carries the EN 16931 XML as an embedded file, so the figures are in it exactly — and an extraction pipeline that starts with OCR never asks. The result is a bill whose totals are nearly right, which is worse than one that is obviously wrong.
+
+So the route is decided first, in a method of its own so it can be checked without an engine:
+
+| The document is | The route | Why |
+|-----------------|-----------|-----|
+| XML | structured | nothing to extract; the inbound reader is exact |
+| a PDF with an embedded invoice | embedded XML | the figures are in the file |
+| a PDF without one | optical | the only way to read it, and it proposes rather than asserts |
+| anything else | optical | as above |
+
+The check for "never sent to OCR" uses a reader that records being called, because asserting on the proposal's source would pass even if the engine had been called and its answer thrown away. The cost of the call is the point: it is a guess where a fact was available.
+
+### A proposal is not a value
+
+An OCR reading is a machine's interpretation of a picture. It is recorded as a proposal with a confidence per field; fields below the threshold are flagged; a person confirms or corrects; and only then does a bill exist. `extraction_proposals_a_bill_was_confirmed_by_somebody` refuses a row that names a bill without a confirmation behind it — the point of the pipeline is to save typing, not to remove the decision.
+
+A **confidence belongs to a guess**, and a trigger enforces it both ways: embedded XML carries none, because the figures were never in doubt and a 1.0 beside a fact is how a reviewer learns to ignore the column; an OCR field must carry one, because a reading stored as a plain value is a guess nobody can tell from a fact. A trigger rather than a CHECK, because the source is on the proposal and the confidence is on the field.
+
+A correction is kept **beside** what was proposed. Overwriting loses the fact that it was misread, which is the input the accuracy figure needs — and that figure, per supplier template and worst first, is what makes a consistently misread format visible. It is a format to fix, by asking the supplier for Peppol or by teaching the engine, and a list ordered by name hides it among the ones that read perfectly.
+
+### The engine is a declared absence
+
+No OCR engine is installable here, so `extraction.driver` defaults to `none` and the reader **refuses** rather than returning nothing: "nothing could be read from this document" and "no engine is installed" look identical in a queue and mean opposite things — the first sends somebody to re-scan a legible invoice. There is deliberately no stub returning plausible figures, because a fake reading that looks real is how a suite comes to assert the behaviour of something that does not exist.
+
+Everything around the engine is built and checked, which is where the risk is.
+
 ### Email intake
 
 The intake address is `inbox+<entity code>@<domain>`, and **it is the only thing that decides whose queue a document joins** — not the sender, not the subject, not a header. A group with eight entities receives eight suppliers' invoices at eight addresses, and resolving the entity from anything the sender controls means the sender chooses which company's ledger their invoice lands in. An address nobody recognises resolves to nobody.
@@ -449,7 +478,7 @@ A line over its ceiling is **flagged with the figures, not refused** — a hotel
 | Gap | Why |
 |-----|-----|
 | Orders sent as a PDF, or by Peppol | The PDF toolchain (Gotenberg, Ghostscript, veraPDF) is not installable in this environment; Peppol transport needs the AS4 access point and SMP lookup of PF-121 and PF-122. The order document is a UBL `Order`, a different document type from the invoice the Exchange plane serializes today |
-| Document extraction - embedded XML from a Factur-X PDF, and OCR as a fallback | PF-142 |
+| An OCR engine. The pipeline around one is built: a proposal is not a value, a confidence belongs to a guess, a field below the threshold is flagged, no extracted bill posts without a confirmation, and a misread format is visible. The engine itself is a declared absence (PF-142) |
 | Receiving a document over the network: the AS4 transport and SMP lookup | PF-121 and PF-122, which need an accredited access point. What happens after delivery is built |
 | Reimbursing a claim through a payment run | The claim's balance sits in a control account a payment run can read; the run itself is Phase 09 |
 | A bill in a foreign currency booking at its tax point's rate | The columns exist; the rate service call site arrives with PF-138 |

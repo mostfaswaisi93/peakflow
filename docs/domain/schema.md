@@ -131,6 +131,9 @@ The authoritative description of every table. **A schema change updates this fil
 | `expense_claims`, `expense_claim_lines` | Employee claims | Post to `employee_payable`, a distinct control account; the claimant is a **user**, not a party; recovery needs a receipt **and** a stated reason (CHECK); the rate is frozen from the policy on the date incurred; a trigger refuses submission while a policy breach is unexplained |
 | `inbound_documents` | Email and Peppol intake, before they are bills | An inbox item is **not** a bill; unique on `(entity, content_hash)` so a retried delivery is one row; `match_method` enumerates what is allowed, so a **name match stays impossible**; a rejection must carry a report; a converted row must name its bill and its supplier |
 | `inbound_senders` | The allowlist, per supplier | An address rather than a domain - a domain allowlist is the broader grant and nobody revisits it |
+| `extraction_templates` | A supplier's document format, and how well it reads | Counters rather than a derived rate: a confirmed proposal's fields are frequently pruned, and a derived rate would fall to zero as they went |
+| `extraction_proposals` | A machine's reading of a document | A **proposal**, not a value; one per document; a row naming a bill must have a confirmation with a person and a time behind it |
+| `extraction_fields` | What was read, and what a person made of it | A trigger refuses a confidence on an `embedded_xml` field and requires one on an `ocr` field; `needs_review` is stored, not derived from today's threshold |
 | `parties.default_expense_account_id` | Where a supplier's purchases usually post | EN 16931 has no term for it: the chart is ours, not theirs. Null means the draft cannot post until a person codes it |
 
 ### Banking

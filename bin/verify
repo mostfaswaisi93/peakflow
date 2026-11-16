@@ -234,6 +234,7 @@ if ($only === 'all' || $only === 'attachments') {
 
 if ($only === 'all' || $only === 'inbound') {
     $suites['Inbound documents'] = $suite(static fn (): array => (new Tests\Support\InboundDocumentRules())->all());
+    $suites['Extraction'] = $suite(static fn (): array => (new Tests\Support\ExtractionRules())->all());
 }
 
 if ($only === 'all' || $only === 'archive') {

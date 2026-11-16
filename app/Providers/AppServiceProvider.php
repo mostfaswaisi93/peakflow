@@ -41,6 +41,23 @@ final class AppServiceProvider extends ServiceProvider
         });
 
         /*
+         | The optical reader - PF-142.
+         |
+         | The same shape as the scanner above, and for the same reason:
+         | there is no driver that invents figures. `none` throws, the
+         | pipeline records the proposal as `unavailable` with that reason,
+         | and a document carrying embedded XML is still read exactly -
+         | which is most of what matters, because a Factur-X PDF is a
+         | structured document and running OCR over the picture of its
+         | figures would be choosing a guess over a fact.
+         */
+        $this->app->bind(\App\Exchange\Extraction\OpticalReader::class, static function (): \App\Exchange\Extraction\OpticalReader {
+            return match ((string) config('extraction.driver', 'none')) {
+                default => new \App\Exchange\Extraction\UnavailableOpticalReader(),
+            };
+        });
+
+        /*
          | The audit trail, resolved by its Support contract.
          |
          | Every module writes to the audit log, and the implementation lives
