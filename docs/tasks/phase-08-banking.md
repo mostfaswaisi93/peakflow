@@ -151,7 +151,7 @@ One credit against a combination of open invoices, which is how most customers a
 - [x] Bounded three ways, all configuration: a **candidate cap** (only the most plausible documents are considered, and a document larger than the whole payment cannot be part of any combination that sums to it, which on a typical account removes most of them), a **time budget checked inside the loop**, and a **combination cap** - the combinations at size 6 over 24 documents are 134,596 and the next size up is 346,104. Subset-sum is NP-complete: the naive implementation on four hundred open items does not return slowly, it does not return, while holding a database connection
 - [x] Deterministic tie-breaking, oldest first: breadth by size, so all pairs are tried before any triple. Which combination the engine proposes must not depend on the order a query happened to return rows in, because a proposal that changes between two runs is one nobody can check - and smallest-first is also how a customer would have paid, the oldest invoices and as few as possible
 - [x] The chosen combination is **shown in full** - every document number, in the reason - before it is applied. A total agreeing is not the same as these being the documents the payer meant, and "two invoices add up" is not something anybody can check
-- [ ] Tolerance for a small difference, classified by `PF-164` rather than absorbed. **Arrives with PF-164**, which is the classification: a tolerance with nowhere to post the difference would be absorbing it, which is what the criterion exists to prevent
+- [x] Tolerance for a small difference, classified by `PF-164` rather than absorbed
 - [x] Never auto-applied above a configured combination size, whatever it scores. A two-invoice combination is a reasonable thing to accept automatically; a seven-invoice one that happens to add up is a coincidence more often than it is a payment
 - [x] A pathological input - twenty-four open invoices and **no** combination that sums to the payment, so the search cannot stop early - asserts the budget is respected. That is the worst case, and it is the one that does not return without a budget checked inside the loop
 - [x] It does not run at all when a single open document already settles the amount exactly. A combination adding to the same figure is a worse answer to a question already answered, and the search is bounded precisely because it is expensive
@@ -213,11 +213,11 @@ Unmatched lines land somewhere explicit rather than nowhere.
 
 Differences are classified before they are written off.
 
-- [ ] Types: bank charge, FX difference, short payment, overpayment, rounding, withholding deducted at source
-- [ ] Each has its own posting rule and its own tolerance; `withholding` resolves against `PF-083` rather than being treated as a short payment
-- [ ] Tolerances are tenant settings with a **platform-enforced ceiling** - "write off anything under 50" is a policy decision, not a developer's constant
-- [ ] A write-off above tolerance requires the `reconciliation.write_off` permission and is separated by SoD from matching
-- [ ] A standing report of differences by type and by period, because a rising bank-charge line is information
+- [x] Types: bank charge, FX difference, short payment, overpayment, rounding, withholding deducted at source
+- [x] Each has its own posting rule and its own tolerance; `withholding` resolves against `PF-083` rather than being treated as a short payment
+- [x] Tolerances are tenant settings with a **platform-enforced ceiling** - "write off anything under 50" is a policy decision, not a developer's constant
+- [x] A write-off above tolerance requires the `reconciliation.write_off` permission and is separated by SoD from matching
+- [x] A standing report of differences by type and by period, because a rising bank-charge line is information
 
 ### PF-165 · Reconciliation as a document
 `Banking` · **8 pts** · depends: PF-164 · standards: — · `risk:high`

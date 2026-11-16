@@ -39,6 +39,21 @@ final class BankingServiceProvider extends ServiceProvider
         $registry->register(new SuspenseClearedRule());
 
         /*
+         | One rule per kind of difference - PF-164.
+         |
+         | Not one rule with a type parameter. A posting rule is what
+         | somebody reads to answer "what does a short payment do to my
+         | accounts", and that question has six different answers; a
+         | single registry entry called "difference" answers none of them.
+         */
+        $registry->register(new \App\Tenant\Banking\Posting\Rules\BankChargeDifferenceRule());
+        $registry->register(new \App\Tenant\Banking\Posting\Rules\FxDifferenceRule());
+        $registry->register(new \App\Tenant\Banking\Posting\Rules\ShortPaymentDifferenceRule());
+        $registry->register(new \App\Tenant\Banking\Posting\Rules\OverpaymentDifferenceRule());
+        $registry->register(new \App\Tenant\Banking\Posting\Rules\RoundingDifferenceRule());
+        $registry->register(new \App\Tenant\Banking\Posting\Rules\WithholdingDifferenceRule());
+
+        /*
          | And the reason a period might not close.
          |
          | Resolved from the container rather than constructed here: the

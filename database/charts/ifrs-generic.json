@@ -1,6 +1,6 @@
 {
   "key": "ifrs-generic",
-  "version": 3,
+  "version": 4,
   "name_ar": "دليل حسابات عام وفق المعايير الدولية",
   "name_en": "Generic IFRS chart of accounts",
   "countries": [],
@@ -376,6 +376,16 @@
       "name_en": "Bad debt",
       "postable": true,
       "role": "bad_debt",
+      "monetary": false
+    },
+    {
+      "code": "5.7",
+      "parent": "5",
+      "type": "expense",
+      "name_ar": "رسوم ومصاريف بنكية",
+      "name_en": "Bank charges",
+      "postable": true,
+      "role": "bank_charges",
       "monetary": false
     }
   ],

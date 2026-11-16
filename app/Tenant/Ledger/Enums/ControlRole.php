@@ -82,6 +82,17 @@ enum ControlRole: string
     case EmployeePayable = 'employee_payable';
 
     case BadDebt = 'bad_debt';
+
+    /**
+     * What the bank charged us, found on the statement - PF-164.
+     *
+     * An expense, and its own account rather than a line in administrative
+     * costs: a rising bank-charge figure is information. A customer who
+     * short-pays every invoice by the transfer fee is telling you something
+     * about your payment terms, and that only shows when the charges are
+     * somewhere they can be added up.
+     */
+    case BankCharges = 'bank_charges';
     case EclProvision = 'ecl_provision';
 
     /**
@@ -162,7 +173,7 @@ enum ControlRole: string
             self::VatInput => AccountType::Asset,
 
             self::FxGainLoss, self::FxRevaluation, self::RoundingDifference,
-            self::BadDebt => AccountType::Expense,
+            self::BadDebt, self::BankCharges => AccountType::Expense,
         };
     }
 

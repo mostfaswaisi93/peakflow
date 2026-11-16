@@ -87,6 +87,15 @@ final class SodRuleSeeder extends Seeder
                 false,
             ],
             [
+                'match_then_write_off',
+                'bank.reconcile',
+                'reconciliation.write_off',
+                'object',
+                'من قرّر أن الدفعة لا تغطي الفاتورة لا يجوز أن يقرّر بنفسه إعدام الفرق؛ وإلا صار الفرق قراراً يتخذه شخص واحد على مستند واحد.',
+                'Whoever decided a payment did not cover an invoice must not also decide the shortfall need not be chased. Scoped to the document, because the pair that matters is on one invoice: a person may reconcile a thousand lines and approve a write-off on an invoice they never touched.',
+                true,
+            ],
+            [
                 'reconcile_then_sign_off',
                 'bank.reconcile',
                 'suspense.sign_off',

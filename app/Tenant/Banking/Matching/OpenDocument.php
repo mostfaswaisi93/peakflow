@@ -57,6 +57,29 @@ final readonly class OpenDocument
     }
 
     /**
+     * Whether an amount nearly settles this document - PF-158.
+     *
+     * Nearly, meaning the gap is real but small enough to be one of the
+     * things PF-164 classifies: a bank charge the payer's bank deducted,
+     * an exchange movement, tax withheld at source, a rounding unit.
+     *
+     * The tolerance decides what counts as **near**. It does not decide
+     * that the gap is acceptable, and nothing here absorbs it: the
+     * proposal matches what actually arrived and leaves the document
+     * short by the difference, which is then classified and posted. A
+     * pass that quietly settled the whole document for a smaller payment
+     * would be writing the difference off by arithmetic, with nobody
+     * having named it or decided it.
+     */
+    public function isNearlySettledBy(Money $amount, Money $tolerance): bool
+    {
+        $gap = $this->shortfallAgainst($amount)->abs();
+
+        return ! $gap->amount->isZero()
+            && ! $gap->amount->isGreaterThan($tolerance->abs()->amount);
+    }
+
+    /**
      * Which direction a transaction settling this document must run.
      *
      * An invoice is money coming in; a bill is money going out. Matching a

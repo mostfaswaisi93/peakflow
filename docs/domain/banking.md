@@ -309,6 +309,54 @@ Accuracy is accepted out of **decided**, not out of proposed. Dividing by the to
 
 ## Differences, classified before they are written off
 
+### Why classification is the task, not the write-off
+
+A customer pays 9,985 against an invoice for 10,000. The fifteen is a bank charge, or a rounding difference, or an exchange movement, or withholding their finance department deducted at source, or they are disputing part of the bill. Those are five different facts about the business and they post to five different accounts.
+
+An engine that absorbed all five into "difference written off" would be right about the receivable and wrong about everything else. The symptoms arrive slowly:
+
+| Misclassified as | What it costs |
+|---|---|
+| **Withholding → short payment** | The tax credit is never claimed. It is a credit against the entity's own liability — real money, thrown away quietly, at a few percent of revenue in every withholding jurisdiction the business sells into |
+| **Bank charge → bad debt** | The customer looks like a poor payer and the cost of a bank relationship is invisible |
+| **Short payment → rounding** | The one difference somebody should have chased is the one nobody sees |
+
+### The order the classifier tries things is the design
+
+**Withholding first**, before anything else can claim the difference, because it is the one whose misclassification costs money rather than reporting quality. Recognised on the **arithmetic** — the shortfall is the rate applied to the document — not on "this customer usually withholds", which would file a genuine dispute as a tax credit nobody can certify.
+
+**Rounding next**, because it is the only one recognisable with certainty: below the smallest unit the currency expresses, two correct figures disagree by one. That unit is the currency's own — 0.001 in JOD — and a rule with 0.01 written into it would absorb nine units and call it arithmetic.
+
+**Short payment last, and as the default.** Deliberately: when nothing fits, "the customer did not pay all of it" is the answer that gets somebody to look. Every alternative is an answer that gets it filed.
+
+A classification carries its reason and its **alternatives**. The default is a guess by construction, and a guess presented without them is one nobody questions.
+
+### A tolerance per type, each with a ceiling
+
+A rounding tolerance of 0.05 is arithmetic. A short-payment tolerance of 0.05 is a policy that nothing is written off without a decision. One figure for all six would have to be the largest, and the largest is the one that absorbs theft — one invoice at a time, each write-off looking like housekeeping.
+
+Each is a tenant setting bounded by a **platform ceiling**: "write off anything under 50" is a policy decision somebody in the business makes, not a developer's constant and not unlimited.
+
+Below the tolerance the difference is recorded automatically; above it, somebody's name is on it. **No type is exempt.** An earlier version let bank charges and rounding through at any size — the reasoning being that an approval step on 0.02 trains people to approve without reading, which is true — and it put the enum at odds with the constraint on the table, which refuses an above-tolerance row with no approver. Two rules that disagree is worse than either; the answer is the tolerance itself, and a bank-charge ceiling of 250 is what keeps an ordinary fee from ever reaching an approver.
+
+The tolerance that applied is **stored**, not recomputed. "It was within tolerance" is the claim and the figure is the evidence; a tenant who raises one next week would otherwise make every past difference look as though it had always been inside it.
+
+### Withholding is never absorbed
+
+Its ceiling is zero and it has no tenant setting. A customer who deducted tax at source handed us a credit against our own liability, and the only correct outcome is claiming it. Recording one is allowed — the receivable has to close — and the result says plainly that it is not a claimable credit until PF-083 has a certificate for it.
+
+### Separation of duties
+
+`reconciliation.write_off` conflicts with `bank.reconcile`, scoped to the **document**. Whoever decided a payment did not cover an invoice must not also decide the shortfall need not be chased — and scoping it to the object matters, because a person may reconcile a thousand lines and still approve a write-off on an invoice they never touched.
+
+The duty maps only to `difference.written_off`, never to `difference.recorded`. A 0.01 rounding is not a decision anybody made, and counting it would stop the same person approving a real write-off for the rest of the period — a control that fires on nothing is one people get an override for.
+
+### A standing report, by type and by period
+
+By **both**, because the figure that matters is a trend. A bank-charge line of 400 one month is a cost; the same line rising for four months is a bank that repriced, a payment route that should change, or a customer base that started paying by a more expensive method — and none of those are visible in a single total.
+
+A trend needs three months and has to rise in each of them. Two points are a line through any two numbers, and a report that cries wolf about bank charges is one people stop opening.
+
 | Classification | Posting |
 |----------------|---------|
 | Bank charge | Dr bank charges / Cr bank |

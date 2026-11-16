@@ -54,6 +54,30 @@ final class PlatformCeilings implements Ceilings
          */
         'ceiling.writeoff_tolerance' => '50.00',
         'ceiling.auto_match_tolerance' => '25.00',
+
+        /*
+         | The reconciliation difference tolerances - PF-164.
+         |
+         | Six, not one, because they absorb different things and a single
+         | figure would have to be the largest of them. A rounding
+         | tolerance of 0.05 is arithmetic. A short-payment tolerance of
+         | 0.05 is a policy that nothing is written off without a
+         | decision. Giving rounding the short-payment ceiling would be
+         | harmless; giving short payment the rounding one is the whole
+         | point, and the arithmetic cases are the ones that can be
+         | generous.
+         |
+         | Short payment and overpayment are deliberately the tightest
+         | that are useful. Deciding a customer need not pay is a decision
+         | at any amount, and the tolerance exists only so that a
+         | sub-unit residual does not demand an approval nobody reads.
+         */
+        'ceiling.difference_bank_charge' => '250.00',
+        'ceiling.difference_fx' => '500.00',
+        'ceiling.difference_short_payment' => '25.00',
+        'ceiling.difference_overpayment' => '25.00',
+        'ceiling.difference_rounding' => '1.00',
+        'ceiling.difference_withholding' => '0.00',
         'ceiling.dunning_escalations' => '8',
         'ceiling.fx_fallback_window_days' => '90',
         'ceiling.period_reopen_days' => '365',

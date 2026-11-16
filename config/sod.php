@@ -74,6 +74,17 @@ return [
         'suspense.sign_off' => ['suspense.signed_off'],
 
         /*
+         | Writing off a difference - PF-164.
+         |
+         | Only `difference.written_off`, not `difference.recorded`. A
+         | difference inside the tenant's tolerance is not a decision
+         | anybody made, and counting it as the write-off duty would mean
+         | one 0.01 rounding stopped the same person approving a genuine
+         | write-off on a different invoice for the rest of the period.
+         */
+        'reconciliation.write_off' => ['difference.written_off'],
+
+        /*
          | Posting, through the paths that record one.
          |
          | A posting made BY a document is attributed to that document's own
@@ -193,7 +204,7 @@ return [
     'declared_gaps' => [
         'payment.prepare' => 'Phase 09 - the payment run',
         'payment.release' => 'Phase 09 - the payment run',
-        'reconciliation.write_off' => 'PF-164 - difference classification, where a write-off becomes an act with a posting rule behind it',
+
 
         /*
          | Built, and not recorded.

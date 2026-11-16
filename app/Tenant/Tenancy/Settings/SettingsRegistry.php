@@ -119,6 +119,80 @@ final class SettingsRegistry
                 min: '0',
             ),
 
+            /*
+             | The reconciliation difference tolerances - PF-164.
+             |
+             | Six types of difference, five tolerances, and one of them
+             | deliberately absent: withholding has no tolerance because it
+             | is never absorbed. A customer who deducted tax at source
+             | handed us a credit against our own liability, and the only
+             | correct outcome is claiming it - which is PF-083's, not a
+             | figure to write off below.
+             |
+             | Each is bounded by its own ceiling. One number for all of
+             | them would have to be the largest, and the largest is the one
+             | that absorbs theft.
+             */
+            new SettingDefinition(
+                key: 'banking.tolerance_bank_charge',
+                type: 'decimal',
+                scope: 'entity',
+                default: '25.00',
+                descriptionAr: 'أكبر رسوم بنكية تُسجَّل تلقائياً كفرق تسوية دون مراجعة.',
+                descriptionEn: 'The largest bank charge recorded automatically as a reconciliation difference.',
+                ceilingKey: 'ceiling.difference_bank_charge',
+                ceilingDirection: 'at_most',
+                min: '0',
+            ),
+
+            new SettingDefinition(
+                key: 'banking.tolerance_fx_difference',
+                type: 'decimal',
+                scope: 'entity',
+                default: '50.00',
+                descriptionAr: 'أكبر فرق صرف يُسجَّل تلقائياً عند التسوية.',
+                descriptionEn: 'The largest exchange difference recorded automatically on reconciliation.',
+                ceilingKey: 'ceiling.difference_fx',
+                ceilingDirection: 'at_most',
+                min: '0',
+            ),
+
+            new SettingDefinition(
+                key: 'banking.tolerance_short_payment',
+                type: 'decimal',
+                scope: 'entity',
+                default: '1.00',
+                descriptionAr: 'أكبر سداد ناقص يُعدَم دون موافقة. قرار إعفاء العميل قرارٌ في كل الأحوال.',
+                descriptionEn: 'The largest short payment written off without approval. Deciding a customer need not pay is a decision at any amount.',
+                ceilingKey: 'ceiling.difference_short_payment',
+                ceilingDirection: 'at_most',
+                min: '0',
+            ),
+
+            new SettingDefinition(
+                key: 'banking.tolerance_overpayment',
+                type: 'decimal',
+                scope: 'entity',
+                default: '1.00',
+                descriptionAr: 'أكبر سداد زائد يُستوعب دون موافقة بدل إعادته للعميل.',
+                descriptionEn: 'The largest overpayment absorbed without approval rather than owed back.',
+                ceilingKey: 'ceiling.difference_overpayment',
+                ceilingDirection: 'at_most',
+                min: '0',
+            ),
+
+            new SettingDefinition(
+                key: 'banking.tolerance_rounding',
+                type: 'decimal',
+                scope: 'entity',
+                default: '0.05',
+                descriptionAr: 'أكبر فرق تقريب يُرحَّل تلقائياً إلى حساب فروق التقريب.',
+                descriptionEn: 'The largest rounding difference posted automatically to the rounding account.',
+                ceilingKey: 'ceiling.difference_rounding',
+                ceilingDirection: 'at_most',
+                min: '0',
+            ),
+
             new SettingDefinition(
                 key: 'money.rounding_mode',
                 type: 'string',
@@ -351,19 +425,28 @@ final class SettingsRegistry
 
             /*
              | How far apart an amount and a statement line may be and still
-             | be matched automatically.
+             | be proposed as a match - PF-158.
              |
-             | Risk-bearing for the same reason as the write-off tolerance: a
-             | generous threshold makes reconciliation effortless and makes a
-             | small persistent discrepancy invisible.
+             | It decides what counts as **near**. It does not decide that
+             | the gap is acceptable and nothing absorbs it: the proposal
+             | matches what arrived and leaves the document short by the
+             | difference, which PF-164 then classifies - a bank charge, an
+             | exchange movement, tax withheld, a rounding unit, or a
+             | customer who paid less. A pass that settled the whole
+             | document for a smaller payment would be writing the gap off
+             | by arithmetic, with nobody having named or decided it.
+             |
+             | Risk-bearing for the same reason as the write-off tolerance:
+             | a generous threshold makes reconciliation effortless and
+             | makes a small persistent discrepancy invisible.
              */
             new SettingDefinition(
                 key: 'banking.auto_match_tolerance',
                 type: 'decimal',
                 scope: 'entity',
                 default: '0.50',
-                descriptionAr: 'أكبر فرق يُسمح به للمطابقة التلقائية مع كشف الحساب.',
-                descriptionEn: 'The largest difference an automatic statement match may absorb.',
+                descriptionAr: 'أكبر فرق يُقترح معه تطابق مع كشف الحساب؛ يُصنَّف الفرق ولا يُستوعب.',
+                descriptionEn: 'The largest gap at which a statement line is still proposed as a match. The gap is classified, never absorbed.',
                 ceilingKey: 'ceiling.auto_match_tolerance',
                 ceilingDirection: 'at_most',
                 min: '0',

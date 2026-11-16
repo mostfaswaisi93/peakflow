@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tenant\Banking\Matching\Passes;
 
+use App\Support\Money\Money;
 use App\Tenant\Banking\Matching\Candidate;
 use App\Tenant\Banking\Matching\Confidence;
 use App\Tenant\Banking\Matching\MatchingContext;
@@ -67,7 +68,20 @@ final class AmountPartyWindowPass implements MatchingPass
         }
 
         if ($exact === []) {
-            return [];
+            /*
+             | Nothing settles it exactly - try the near misses - PF-158.
+             |
+             | A customer short-paying by the transfer fee, an exchange
+             | movement, tax withheld at source. All of them produce a
+             | payment that is nearly a document and exactly nothing, and
+             | a pass that only recognised the exact figure would send
+             | every one of them to a person to match by hand.
+             |
+             | Tried only when nothing matched exactly, because a document
+             | that IS settled by this amount is a better answer than one
+             | that is nearly settled by it.
+             */
+            return $this->nearMisses($context, $party, $window, $amount);
         }
 
         /*
@@ -86,6 +100,145 @@ final class AmountPartyWindowPass implements MatchingPass
         }
 
         return $candidates;
+    }
+
+    /**
+     * Documents this payment nearly settles - PF-158.
+     *
+     * The proposal is for **what arrived**, not for what the document is
+     * owed. Matching the full invoice against a smaller payment would
+     * settle it by arithmetic, which is writing the difference off with
+     * nobody having named or decided it - and it would over-apply the bank
+     * line, which the database refuses outright.
+     *
+     * So the document is left short by the difference, and that difference
+     * is what PF-164 classifies: a bank charge, an exchange movement, tax
+     * withheld, a rounding unit, or a customer who simply paid less.
+     *
+     * @return list<Candidate>
+     */
+    private function nearMisses(
+        MatchingContext $context,
+        ?string $party,
+        int $window,
+        Money $amount,
+    ): array {
+        $tolerance = Money::of(
+            (string) app(\App\Tenant\Tenancy\Services\Settings::class)
+                ->get('banking.auto_match_tolerance', $context->entityId),
+            $amount->currency,
+        );
+
+        if ($tolerance->isZero()) {
+            return [];
+        }
+
+        $near = [];
+
+        foreach ($context->candidates() as $document) {
+            if ($document->isNearlySettledBy($amount, $tolerance)) {
+                $near[] = $document;
+            }
+        }
+
+        if ($near === []) {
+            return [];
+        }
+
+        $competing = \count($near);
+        $candidates = [];
+
+        foreach ($near as $document) {
+            $candidates[] = $this->scoreNearMiss($context, $document, $party, $window, $competing, $amount, $tolerance);
+        }
+
+        return $candidates;
+    }
+
+    private function scoreNearMiss(
+        MatchingContext $context,
+        OpenDocument $document,
+        ?string $party,
+        int $window,
+        int $competing,
+        Money $amount,
+        Money $tolerance,
+    ): Candidate {
+        $gap = $document->shortfallAgainst($amount);
+        $days = abs($document->documentDate->diffInDays($context->bookingDate()));
+        $partyAgrees = $party !== null && $party === $document->partyId;
+
+        $confidence = Confidence::for($this->key())
+            ->because('amount_nearly_settles_it', 0.05,
+                sprintf(
+                    'the payment is %s short of settling the document, which is small enough to be '.
+                    'a charge, a rate or tax withheld',
+                    (string) $gap->abs()->toPresentation(),
+                ))
+            /*
+             | Lower than an exact match, always.
+             |
+             | An exact figure identifies a document; a near one narrows
+             | it. Scoring the two the same would let a near miss on the
+             | wrong invoice outrank an exact match on the right one the
+             | moment the payer happened to be identified.
+             */
+            ->when(true, 'not_an_exact_amount', -0.10,
+                'the amount does not settle the document, so it is a strong hint rather than an identification')
+            ->when($partyAgrees, 'party_is_identified', 0.15,
+                'the counterparty account is on file as this document\'s party, so who paid is known rather than guessed')
+            ->when($party !== null && ! $partyAgrees, 'party_disagrees', -0.35,
+                'the counterparty account is on file as a different party, so the amount being close is a coincidence')
+            ->when($party === null, 'party_is_unknown', -0.15,
+                'the counterparty is not on file, so only the amount connects this to the document')
+            ->when($days <= $window, 'dates_are_close', 0.05,
+                sprintf('the document is %d day%s old, within the %d-day window', $days, $days === 1 ? '' : 's', $window))
+            ->when($competing > 1, 'several_documents_near_this_amount', -0.25,
+                sprintf(
+                    '%d open documents are within the tolerance of this amount, so being close does '.
+                    'not identify any of them',
+                    $competing,
+                ));
+
+        return new Candidate(
+            pass: $this->key(),
+            matchedType: $document->type,
+            matchedId: $document->id,
+            label: $document->label(),
+            /*
+             | What arrived, not what is owed.
+             |
+             | The document stays short by the difference. A candidate for
+             | the full outstanding would settle the invoice for a smaller
+             | payment - writing the gap off by arithmetic - and would
+             | over-apply the bank line, which the database refuses.
+             */
+            amount: $amount,
+            confidence: $confidence->score(),
+            reason: sprintf(
+                '%s is owed %s and %s arrived, leaving %s. That is within the %s this entity allows '.
+                'for a near match, so it is a difference to classify - a bank charge, an exchange '.
+                'movement, tax withheld at source, or a customer paying less - and not one to '.
+                'absorb. The document stays short until somebody names it. %s',
+                ucfirst($document->label()),
+                (string) $document->outstanding->abs()->toPresentation(),
+                (string) $amount->abs()->toPresentation(),
+                (string) $gap->abs()->toPresentation(),
+                (string) $tolerance->toPresentation(),
+                $confidence->summary(),
+            ),
+            factors: $confidence->factors(),
+            partyId: $document->partyId,
+            /*
+             | Never applied unseen.
+             |
+             | A near miss means money is unaccounted for, and the whole
+             | point of PF-164 is that somebody says what it was. Applying
+             | one automatically would close the document and leave the
+             | difference to be discovered by a reconciliation.
+             */
+            proposalOnly: true,
+        );
     }
 
     private function score(

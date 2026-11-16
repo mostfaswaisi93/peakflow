@@ -1,6 +1,6 @@
 {
   "key": "saudi-arabia",
-  "version": 3,
+  "version": 4,
   "name_ar": "دليل حسابات للمملكة العربية السعودية",
   "name_en": "Saudi Arabia chart of accounts",
   "countries": [
@@ -471,6 +471,16 @@
       "name_en": "Employee costs",
       "postable": true,
       "role": null,
+      "monetary": false
+    },
+    {
+      "code": "5.9",
+      "parent": "5",
+      "type": "expense",
+      "name_ar": "رسوم ومصاريف بنكية",
+      "name_en": "Bank charges",
+      "postable": true,
+      "role": "bank_charges",
       "monetary": false
     }
   ],

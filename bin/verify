@@ -269,6 +269,7 @@ if ($only === 'all' || $only === 'banking') {
     $suites['The matching engine'] = $suite(static fn (): array => (new Tests\Support\MatchingRules())->all());
     $suites['Splits, and taking one back'] = $suite(static fn (): array => (new Tests\Support\SplitRules())->all());
     $suites['Suspense, and closing over it'] = $suite(static fn (): array => (new Tests\Support\SuspenseRules())->all());
+    $suites['Differences, classified'] = $suite(static fn (): array => (new Tests\Support\DifferenceRules())->all());
 }
 
 if ($only === 'all' || $only === 'sod') {
