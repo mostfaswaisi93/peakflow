@@ -15,6 +15,7 @@ use App\Tenant\Banking\Matching\Passes\SubsetSumPass;
 use App\Tenant\Banking\Models\BankTransaction;
 use App\Tenant\Banking\Models\MatchProposal;
 use App\Tenant\Banking\Services\TransactionRouting;
+use Brick\Math\BigDecimal;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -111,10 +112,29 @@ final class MatchingEngine
      */
     public function consider(BankTransaction $transaction): array
     {
+        /*
+         | The engine looks for what is LEFT to explain - PF-162.
+         |
+         | A 10,000 receipt with 4,000 already applied to an invoice is a
+         | question about 6,000. Running the passes against 10,000 asks
+         | which documents add to a figure nobody is still looking for:
+         | the amount pass finds nothing, and subset-sum spends its budget
+         | searching for a combination that cannot exist because part of
+         | the line is already spoken for.
+         |
+         | On a line with nothing applied - every line, until somebody
+         | splits one - this is the transaction amount exactly.
+         */
+        $unexplained = $this->unexplained($transaction);
+
+        if ($unexplained->isZero()) {
+            return $this->nothingLeftToExplain($transaction);
+        }
+
         $context = new MatchingContext(
             transaction: $transaction,
             entityId: (string) $transaction->entity_id,
-            amount: Money::of((string) $transaction->amount, (string) $transaction->currency),
+            amount: $unexplained,
             openDocuments: $this->documents,
             references: $this->references,
             parties: $this->parties,
@@ -179,6 +199,77 @@ final class MatchingEngine
             'ambiguous' => $ambiguous,
             'auto_appliable' => $this->autoAppliable($candidates, $ambiguous, $threshold),
             'why' => $this->summarise($candidates, $ambiguous, $threshold, $ran, $skipped),
+        ];
+    }
+
+    /**
+     * What is left of a line to explain, with the line's own sign kept.
+     *
+     * The sign says which way the money moved and decides which side's
+     * documents a pass compares against, so it survives the subtraction:
+     * a part-applied receipt is a smaller receipt, not a payment.
+     */
+    private function unexplained(BankTransaction $transaction): Money
+    {
+        $line = Money::of((string) $transaction->amount, (string) $transaction->currency);
+
+        $row = DB::connection('tenant')->selectOne(<<<'SQL'
+            SELECT coalesce(sum(abs(amount)), 0)::text AS applied
+            FROM matches
+            WHERE bank_transaction_id = ?
+              AND reversed_at IS NULL
+        SQL, [(string) $transaction->getKey()]);
+
+        $applied = BigDecimal::of((string) ($row->applied ?? '0'));
+
+        if ($applied->isZero()) {
+            return $line;
+        }
+
+        $left = $line->amount->abs()->minus($applied);
+
+        if (! $left->isPositive()) {
+            return Money::zero((string) $transaction->currency);
+        }
+
+        return Money::of(
+            (string) ($line->isNegative() ? $left->negated() : $left),
+            (string) $transaction->currency,
+        );
+    }
+
+    /**
+     * The answer for a line that is already fully applied.
+     *
+     * Not an empty candidate list. "The engine found nothing" and "there is
+     * nothing left to find" are different facts, and only the second is
+     * good news - somebody looking at a line with no proposals deserves to
+     * be told which one they are looking at.
+     *
+     * @return array{
+     *     candidates: list<Candidate>,
+     *     strategy: string,
+     *     ran: list<string>,
+     *     skipped: array<string, string>,
+     *     ambiguous: bool,
+     *     auto_appliable: Candidate|null,
+     *     why: string,
+     * }
+     */
+    private function nothingLeftToExplain(BankTransaction $transaction): array
+    {
+        $why = 'every part of this line is already applied to a document, so there is nothing '.
+            'left for this pass to find';
+
+        return [
+            'candidates' => [],
+            'strategy' => $this->routing->strategyForTransaction($transaction),
+            'ran' => [],
+            'skipped' => array_fill_keys($this->passKeys(), $why),
+            'ambiguous' => false,
+            'auto_appliable' => null,
+            'why' => 'This line is fully applied. Reverse a match on it to match it to something '.
+                'else - the proposals are not hidden, there is nothing left to propose against.',
         ];
     }
 

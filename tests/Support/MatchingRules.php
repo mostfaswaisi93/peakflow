@@ -377,22 +377,12 @@ final class MatchingRules
          | it would still read the full gross here, and the second half
          | could be matched against the whole invoice again.
          */
-        DB::connection('tenant')->table('matches')->insert([
-            'id' => (string) Str::ulid(),
-            'entity_id' => $this->entityId,
-            'bank_transaction_id' => (string) Str::ulid(),
-            'booking_date' => $this->date->toDateString(),
-            'matched_type' => 'invoice',
-            'matched_id' => (string) $invoice->getKey(),
-            'amount' => $half,
-            'currency' => 'SAR',
-            'pass' => 'exact_reference',
-            'confidence' => '0.9000',
-            'reason' => 'a match applied for the purposes of this check',
-            'applied_at' => now(),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        $this->applyAMatchDirectly(
+            'REF-HALF',
+            $half,
+            (string) $invoice->getKey(),
+            'half of the invoice, applied for the purposes of this check',
+        );
 
         $after = $this->find($documents->receivables($this->entityId, 'SAR'), (string) $invoice->getKey());
 
@@ -415,22 +405,13 @@ final class MatchingRules
     {
         $invoice = $this->issue();
 
-        DB::connection('tenant')->table('matches')->insert([
-            'id' => (string) Str::ulid(),
-            'entity_id' => $this->entityId,
-            'bank_transaction_id' => (string) Str::ulid(),
-            'booking_date' => $this->date->toDateString(),
-            'matched_type' => 'invoice',
-            'matched_id' => (string) $invoice->getKey(),
-            'amount' => (string) $invoice->gross_amount,
-            'currency' => 'SAR',
-            'pass' => 'exact_reference',
-            'confidence' => '0.9500',
-            'reason' => 'settled in full for the purposes of this check',
-            'applied_at' => now(),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        $this->applyAMatchDirectly(
+            'REF-SETTLED',
+            (string) $invoice->gross_amount,
+            (string) $invoice->getKey(),
+            'settled in full for the purposes of this check',
+            '0.9500',
+        );
 
         $open = (new OpenDocuments())->receivables($this->entityId, 'SAR');
 
@@ -1932,22 +1913,13 @@ final class MatchingRules
          | document, and the outstanding figure would go negative with
          | nothing saying why.
          */
-        DB::connection('tenant')->table('matches')->insert([
-            'id' => (string) Str::ulid(),
-            'entity_id' => $this->entityId,
-            'bank_transaction_id' => (string) Str::ulid(),
-            'booking_date' => $this->date->toDateString(),
-            'matched_type' => 'invoice',
-            'matched_id' => (string) $invoice->getKey(),
-            'amount' => $gross,
-            'currency' => 'SAR',
-            'pass' => 'exact_reference',
-            'confidence' => '0.9500',
-            'reason' => 'somebody else matched it from another screen',
-            'applied_at' => now(),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        $this->applyAMatchDirectly(
+            'REF-RACE',
+            $gross,
+            (string) $invoice->getKey(),
+            'somebody else matched it from another screen',
+            '0.9500',
+        );
 
         $refusal = $this->refusal(fn () => app(Matches::class)->accept($proposals[0], $this->actorId()));
 

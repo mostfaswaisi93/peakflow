@@ -192,10 +192,10 @@ One credit against a combination of open invoices, which is how most customers a
 ### PF-162 · Splits
 `Banking` · **5 pts** · depends: PF-158 · standards: —
 
-- [ ] One bank line across many documents, and many bank lines against one document
-- [ ] Partial matching with the remainder left open and visible on both sides
-- [ ] A split is one atomic operation - a half-applied split is not a state the system can be in
-- [ ] Unsplitting reverses cleanly, with the reversal audited
+- [x] One bank line across many documents, and many bank lines against one document
+- [x] Partial matching with the remainder left open and visible on both sides
+- [x] A split is one atomic operation - a half-applied split is not a state the system can be in
+- [x] Unsplitting reverses cleanly, with the reversal audited
 
 ### PF-163 · The suspense account
 `Banking` · **5 pts** · depends: PF-161, PF-038 · standards: — · `risk:high` `type:posting`

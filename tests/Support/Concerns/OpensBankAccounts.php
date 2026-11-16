@@ -424,6 +424,54 @@ trait OpensBankAccounts
         ];
     }
 
+    /**
+     * Apply a match directly, against a real bank line.
+     *
+     * Several checks need a document to have been settled by somebody else
+     * before the thing they are checking happens - a second person matching
+     * it from another screen, an instalment applied yesterday. Writing the
+     * `matches` row by hand is the short way to say that, and for a while
+     * these checks did it with an invented `bank_transaction_id`.
+     *
+     * That shortcut is refused now, and rightly: a match naming a line that
+     * does not exist settles nothing, and the database says so. So the line
+     * is imported first, for the amount being matched, and the match names
+     * it. The setup is one call longer and it is a state the system can
+     * actually be in - which is the only kind worth checking against.
+     */
+    protected function applyAMatchDirectly(
+        string $reference,
+        string $amount,
+        string $documentId,
+        string $reason,
+        string $confidence = '0.9000',
+        string $type = 'invoice',
+    ): string {
+        $this->importLines([$this->line($amount, ['bank_reference' => $reference])]);
+
+        $transaction = $this->transactionBy($reference);
+        $id = (string) \Illuminate\Support\Str::ulid();
+
+        \Illuminate\Support\Facades\DB::connection('tenant')->table('matches')->insert([
+            'id' => $id,
+            'entity_id' => $this->entityId,
+            'bank_transaction_id' => (string) $transaction->getKey(),
+            'booking_date' => $transaction->booking_date->toDateString(),
+            'matched_type' => $type,
+            'matched_id' => $documentId,
+            'amount' => $amount,
+            'currency' => (string) $transaction->currency,
+            'pass' => 'exact_reference',
+            'confidence' => $confidence,
+            'reason' => $reason,
+            'applied_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $id;
+    }
+
     protected function transactionBy(string $reference): \App\Tenant\Banking\Models\BankTransaction
     {
         return \App\Tenant\Banking\Models\BankTransaction::query()

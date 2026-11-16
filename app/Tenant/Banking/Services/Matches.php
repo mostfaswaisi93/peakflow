@@ -113,19 +113,31 @@ final class Matches
             ]);
 
             /*
-             | The other proposals for this line are rejected, not left.
+             | What happens to the other proposals depends on the remainder.
              |
-             | A transaction with an accepted match and three still-open
-             | proposals reads as unfinished work, and the accuracy report
-             | would count them as neither accepted nor rejected - which is
-             | how a pass comes to look worse than it is.
+             | A fully applied line: they are **rejected**. The person
+             | chose one of them and that is a decision about the rest - a
+             | transaction with an accepted match and three open proposals
+             | reads as unfinished work, and the accuracy report would
+             | count them as neither accepted nor rejected, which is how a
+             | pass comes to look worse than it is.
+             |
+             | A part-applied line - PF-162: they are **superseded**. They
+             | were never judged wrong; they answered "what is this 10,000"
+             | and the question is now "what is the remaining 6,000". The
+             | engine re-proposes against what is left, and calling the old
+             | set rejected would charge six passes with being wrong about
+             | a question nobody asked them.
              */
+            $remainder = $this->remainderOf($transaction);
+            $settled = $remainder->isZero();
+
             MatchProposal::query()
                 ->where('bank_transaction_id', (string) $proposal->bank_transaction_id)
                 ->where('id', '!=', (string) $proposal->getKey())
                 ->where('status', 'proposed')
                 ->update([
-                    'status' => 'rejected',
+                    'status' => $settled ? 'rejected' : 'superseded',
                     'decided_at' => now(),
                     'decided_by' => $userId,
                 ]);
@@ -152,17 +164,35 @@ final class Matches
                 entityId: (string) $proposal->entity_id,
             );
 
+            /*
+             | A remainder is reported, not left for somebody to notice.
+             |
+             | A part-applied line looks matched on every screen that asks
+             | "is there a match" rather than "is it explained". Saying so
+             | at the moment of applying is the cheapest place to say it.
+             */
+            $leftToExplain = $settled
+                ? ''
+                : sprintf(
+                    ' %s of this line is still unexplained, and it stays on the unreconciled list '.
+                    'until it is - the engine will propose against what is left, not against the '.
+                    'whole line.',
+                    (string) $remainder->toPresentation(),
+                );
+
             return [
                 'match_id' => $matchId,
                 'identifiers_learned' => $learned,
+                'remainder' => $remainder,
                 'why' => $automatically
                     ? sprintf(
                         'Applied automatically at %s, at or above the threshold. It is on the review '.
-                        'list and can be reversed on its own.',
+                        'list and can be reversed on its own.%s',
                         (string) $proposal->confidence,
+                        $leftToExplain,
                     )
                     : sprintf(
-                        'Matched. %s',
+                        'Matched. %s%s',
                         $learned === 0
                             ? 'Nothing new was learned about the counterparty.'
                             : sprintf(
@@ -171,6 +201,7 @@ final class Matches
                                 $learned,
                                 $learned === 1 ? '' : 's',
                             ),
+                        $leftToExplain,
                     ),
             ];
         });
@@ -410,6 +441,28 @@ final class Matches
                 $windowDays,
             ),
         ];
+    }
+
+    /**
+     * What is left of a line to explain, after every live match on it.
+     *
+     * Read here rather than through {@see Splits}, which depends on this
+     * service: the figure is one SQL sum and sharing it the other way
+     * round would make a cycle out of a subtraction.
+     */
+    private function remainderOf(BankTransaction $transaction): Money
+    {
+        $row = DB::connection('tenant')->selectOne(<<<'SQL'
+            SELECT coalesce(sum(abs(amount)), 0)::text AS applied
+            FROM matches
+            WHERE bank_transaction_id = ?
+              AND reversed_at IS NULL
+        SQL, [(string) $transaction->getKey()]);
+
+        $line = Money::of((string) $transaction->amount, (string) $transaction->currency)->abs();
+        $left = $line->amount->minus((string) ($row->applied ?? '0'));
+
+        return Money::of((string) ($left->isNegative() ? '0' : $left), (string) $transaction->currency);
     }
 
     /**

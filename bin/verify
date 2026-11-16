@@ -267,6 +267,7 @@ if ($only === 'all' || $only === 'banking') {
     $suites['Reading what a bank sends'] = $suite(static fn (): array => (new Tests\Support\StatementParserRules())->all());
     $suites['The import screen'] = $suite(static fn (): array => (new Tests\Support\BankingScreenRules())->all());
     $suites['The matching engine'] = $suite(static fn (): array => (new Tests\Support\MatchingRules())->all());
+    $suites['Splits, and taking one back'] = $suite(static fn (): array => (new Tests\Support\SplitRules())->all());
 }
 
 if ($only === 'all' || $only === 'sod') {

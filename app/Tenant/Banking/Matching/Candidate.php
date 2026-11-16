@@ -42,9 +42,29 @@ final readonly class Candidate
         public bool $proposalOnly = false,
     ) {}
 
-    /** The same target, by type and id - what deduplication compares. */
+    /**
+     * What this candidate is an answer about, for deduplication.
+     *
+     * A combination is identified by the **set** of documents it names,
+     * not by the first of them - PF-162. Keying it by `matched_id` made
+     * "invoice A" and "invoices A and B together" the same answer, and the
+     * engine kept whichever scored higher: a 2,300 receipt against two
+     * 1,150 invoices lost the combination that explained all of it and
+     * kept the single invoice that explained half, with nothing saying
+     * the other answer had ever been found.
+     *
+     * They are different answers. One settles the line and one leaves a
+     * remainder, and which of those a person wants is theirs to decide.
+     */
     public function target(): string
     {
+        if (\count($this->components) > 1) {
+            $components = $this->components;
+            sort($components);
+
+            return $this->matchedType.':'.implode('+', $components);
+        }
+
         return $this->matchedType.':'.($this->matchedId ?? $this->label);
     }
 

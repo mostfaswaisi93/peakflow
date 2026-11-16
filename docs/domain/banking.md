@@ -320,6 +320,44 @@ Accuracy is accepted out of **decided**, not out of proposed. Dividing by the to
 
 Tolerances are tenant settings with a platform ceiling. "Write off anything under 50" is a policy decision, not a developer's constant. A write-off above tolerance requires `reconciliation.write_off` and is SoD-separated from matching.
 
+## Splits, in both directions
+
+One transfer settling four invoices, and one invoice settled by three transfers. Both are ordinary, and a system that models matching as one link between one line and one document forces the first into a suspense account and the second into a write-off — which ends with the real figures living in a spreadsheet beside the accounting system.
+
+### A split is one operation
+
+Three allocations applied one at a time is three states the system can be found in, two of which are wrong — and the second can fail on its own, because the invoice it names was settled from another screen while somebody was filling in the form. So the allocations are validated as a set and written in one transaction: either the line is split the way somebody intended, or nothing happened and the refusal names the allocation that could not be made.
+
+### The sum of what a line settles is the line
+
+The document side was guarded from the start — a match larger than what a document still has outstanding is refused. The line side was not, and that is the more expensive hole: a 10,000 receipt split 6,000 / 6,000 across two invoices has each allocation fitting its own document perfectly. Nothing refuses it, both invoices read as paid, and the only symptom is a reconciliation that will not balance by 4,000.
+
+It is enforced by a **trigger**, not only by the service. A split is several rows and a service is one code path; an import, a correction script or a future bulk tool reaches `matches` without passing it, and the invariant is not "the service is careful".
+
+The service refuses it too, with both figures and a sentence. That is not redundancy — a person splitting a line wrongly should be told what they did, and a PostgreSQL exception reaching them is a defect in everything but the data. The checks assert the *wording*, so a service check removed in future fails even though the database still holds the line.
+
+### The remainder is the point, not a leftover
+
+A 10,000 receipt against a 4,000 invoice leaves 6,000 that is **not explained**. It shows on the line, it keeps the line on the unreconciled list, and — the part that is easy to miss — the **engine re-proposes against it**. An engine still looking for documents that add to 10,000 finds nothing, and subset-sum spends its budget searching for a combination that cannot exist because part of the line is already spoken for.
+
+On the document side the same figure arrives by a different route: outstanding is recomputed from the matches applied, so a part-settled invoice shows what is left without anything updating it. `appliedTo` lists the lines that contributed, because "where did the other 4,000 come from" is the first thing anybody asks about a part-paid invoice.
+
+A line with nothing left says so in those words. "The engine found nothing" and "there is nothing left to find" are different facts and only the second is good news.
+
+### Accepting one proposal does not reject the others
+
+It did, and that was right while a match settled a whole line. On a part-applied line the remaining proposals are **superseded**, not rejected: they answered "what is this 10,000", the question is now "what is the remaining 6,000", and marking them rejected charges six passes with being wrong about a question nobody asked them — which the accuracy report then believes.
+
+### A combination is identified by its documents
+
+Deduplication keyed a candidate by `matched_id`, so "invoice A" and "invoices A and B together" were the same answer and the engine kept whichever scored higher. A 2,300 receipt against two 1,150 invoices lost the combination that explained the whole line and kept the single invoice that explained half, with nothing saying the other answer had been found. A candidate with components is keyed by the **set**.
+
+### Unsplitting is a reversal
+
+Every match the split made is reversed, each stamped with who and why; the rows stay. "It was split four ways and somebody undid it" is a question an auditor asks, and a table that deletes cannot answer it. Afterwards the line is unexplained in full and can be split again — which matters, because the moment somebody needs to rematch a line is the moment after they found the first attempt wrong.
+
+The reason is checked **before** the first match is touched. Reversing one match refuses an empty reason too, so without that the first would be written and the second would refuse: a half-undone split, which is the state the operation exists to make impossible.
+
 ## Suspense
 
 An unmatched transaction posts to the `suspense` control account, so the bank account reconciles **even while the item is unexplained**. Suspense ages, appears on a dashboard, and is reported by bucket and entity.
