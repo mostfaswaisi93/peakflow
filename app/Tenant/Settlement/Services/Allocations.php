@@ -54,6 +54,7 @@ final class Allocations
         private readonly AuditTrail $audit,
         private readonly Poster $poster,
         private readonly Reverser $reverser,
+        private readonly \App\Tenant\Banking\Services\Differences $differences,
     ) {}
 
     /**
@@ -389,6 +390,105 @@ final class Allocations
         return $atPayment->amount->minus($atDocument->amount);
     }
 
+    /**
+     * Close a document whose last unit is a rounding difference - PF-171.
+     *
+     * A customer pays 999.99 against 1,000.00. The penny is not a debt
+     * anybody is going to chase and not a discount anybody granted: two
+     * correct figures differ by the smallest unit the currency expresses,
+     * usually because one side rounded a tax line the other way.
+     *
+     * ## The receivable is closed and the difference is named
+     *
+     * Not quietly shrunk. A receivable reduced to make it agree with a
+     * payment is a figure that no longer traces to the invoice behind it,
+     * and the penny nobody posted is the one that makes a control account
+     * disagree with its subledger by an amount too small to investigate
+     * and too persistent to go away.
+     *
+     * So it is a posting of its own, to `rounding_difference`, through
+     * PF-164's classification - which is where the tolerance, the
+     * platform ceiling and the report already live. Above the tolerance
+     * this refuses, and the refusal says what it is: not a rounding
+     * difference, and a question for whoever classifies them.
+     *
+     * @return array<string, mixed>
+     *
+     * @throws PaymentRefused
+     */
+    public function closeRounding(
+        string $documentType,
+        string $documentId,
+        string $entityId,
+        string $userId,
+        ?string $partyId = null,
+        ?Carbon $on = null,
+    ): array {
+        $entity = Entity::query()->findOrFail($entityId);
+        $currency = (string) $entity->functional_currency;
+
+        $open = $this->openBalance($documentType, $documentId, $currency);
+
+        if (! $open->isPositive()) {
+            throw PaymentRefused::because(
+                'This document has nothing left on it, so there is no rounding difference to '.
+                'close. Closing one anyway would post a figure against a document that is already '.
+                'settled.',
+            );
+        }
+
+        /*
+         | Through PF-164, not around it.
+         |
+         | The tolerance, the platform ceiling that bounds it, the
+         | approver above it and the report by type all exist there
+         | already. A second rounding path in this module would be a
+         | second tolerance to keep in step, and the one that drifts is
+         | always the one nobody reads.
+         */
+        return $this->differences->record(
+            \App\Tenant\Banking\Enums\DifferenceType::Rounding,
+            $open,
+            [
+                'entity_id' => $entityId,
+                'subject_type' => $documentType,
+                'subject_id' => $documentId,
+                'counter_account_id' => $this->receivableAccount($entityId, $documentType),
+                'party_id' => $partyId,
+                'arose_on' => ($on ?? Carbon::now())->toDateString(),
+            ],
+            $userId,
+            sprintf(
+                'The last %s of %s, closed as a rounding difference when the payment settled the '.
+                'rest of it.',
+                (string) $open->toPresentation(),
+                $documentType,
+            ),
+        );
+    }
+
+    private function receivableAccount(string $entityId, string $documentType): string
+    {
+        $role = \in_array($documentType, ['bill', 'supplier_credit'], true)
+            ? \App\Tenant\Ledger\Enums\ControlRole::AccountsPayable
+            : \App\Tenant\Ledger\Enums\ControlRole::AccountsReceivable;
+
+        $accountId = \App\Tenant\Ledger\Models\AccountRole::query()
+            ->where('entity_id', $entityId)
+            ->where('role', $role->value)
+            ->value('account_id');
+
+        if ($accountId === null) {
+            throw PaymentRefused::because(sprintf(
+                'This entity has no account carrying the "%s" role, so a rounding difference has '.
+                'nowhere to relieve.',
+                $role->value,
+            ));
+        }
+
+        return (string) $accountId;
+    }
+
     /** What is left of a payment to allocate. */
     public function unallocated(string $paymentId): Money
     {
@@ -434,6 +534,12 @@ final class Allocations
                          WHERE a.document_type = 'invoice'
                            AND a.document_id = i.id
                            AND a.reversed_at IS NULL
+                       ), 0)
+                     - coalesce((
+                         SELECT sum(d.amount)
+                         FROM reconciliation_differences d
+                         WHERE d.subject_type = ?
+                           AND d.subject_id = ?
                        ), 0) AS open_balance
                 FROM invoices i
                 WHERE i.id = ?
@@ -446,12 +552,28 @@ final class Allocations
                          WHERE a.document_type = 'bill'
                            AND a.document_id = b.id
                            AND a.reversed_at IS NULL
+                       ), 0)
+                     - coalesce((
+                         SELECT sum(d.amount)
+                         FROM reconciliation_differences d
+                         WHERE d.subject_type = ?
+                           AND d.subject_id = ?
                        ), 0) AS open_balance
                 FROM bills b
                 WHERE b.id = ?
             SQL;
 
-        $row = DB::connection('tenant')->selectOne($sql, [$documentId]);
+        /*
+         | Less what a difference already relieved - PF-171.
+         |
+         | A rounding unit, a written-off shortfall, tax withheld at
+         | source: each posts against the document and relieves the
+         | control account. A subledger that did not subtract them would
+         | say a penny was still owed on an invoice the ledger reports as
+         | settled - which is the divergence this phase exists to prevent,
+         | arriving by a route nobody was watching.
+         */
+        $row = DB::connection('tenant')->selectOne($sql, [$documentType, $documentId, $documentId]);
 
         return Money::of((string) ($row->open_balance ?? '0'), $currency);
     }

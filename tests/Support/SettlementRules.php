@@ -108,6 +108,13 @@ final class SettlementRules
                 'a refund needs a reason' => fn (): array => $this->refundNeedsAReason(),
                 'a credit shows as a credit, not netted away' => fn (): array => $this->creditIsVisible(),
 
+                // ---- Rounding differences - PF-171 ---------------------
+                'the last unit is posted, not shrunk away' => fn (): array => $this->roundingIsPosted(),
+                'the receivable is closed by the posting' => fn (): array => $this->roundingClosesTheDocument(),
+                'above tolerance it is not a rounding difference' => fn (): array => $this->roundingAboveTolerance(),
+                'closing a settled document is refused' => fn (): array => $this->roundingOnNothing(),
+                'the allocation guard knows what a difference relieved' => fn (): array => $this->guardKnowsAboutDifferences(),
+
                 // ---- Realized FX - PF-170 ------------------------------
                 'the worked three-currency example posts to the cent' => fn (): array => $this->threeCurrencies(),
                 'a partial settlement realizes a proportional share' => fn (): array => $this->proportionalRealization(),
@@ -1226,6 +1233,268 @@ final class SettlementRules
         $this->receipt($amount, $partyId);
 
         return $partyId;
+    }
+
+    // ---- Rounding differences ---------------------------------------------
+
+    /** @return list<string> */
+    private function roundingIsPosted(): array
+    {
+        $invoice = $this->issue();
+        $gross = BigDecimal::of((string) $invoice->gross_amount);
+        $short = (string) $gross->minus('0.0100');
+
+        $payment = $this->receipt($short, (string) $invoice->party_id);
+
+        app(Allocations::class)->allocate(
+            (string) $payment['id'],
+            'invoice',
+            (string) $invoice->getKey(),
+            Money::of($short, 'SAR'),
+            $this->actorId(),
+            on: $this->date->copy(),
+        );
+
+        $result = app(Allocations::class)->closeRounding(
+            'invoice',
+            (string) $invoice->getKey(),
+            $this->entityId,
+            $this->actorId(),
+            (string) $invoice->party_id,
+            $this->date->copy(),
+        );
+
+        $lines = DB::connection('tenant')->table('journal_lines')
+            ->where('journal_entry_id', (string) $result['journal_entry_id'])
+            ->get();
+
+        $failures = [];
+
+        /*
+         | Its own journal line, which is the whole point.
+         |
+         | A receivable reduced to agree with a payment is a figure that
+         | no longer traces to the invoice behind it, and the penny
+         | nobody posted is the one that makes a control account disagree
+         | with its subledger by an amount too small to investigate and
+         | too persistent to go away.
+         */
+        $onRounding = $lines->firstWhere('account_id', $this->accountFor(ControlRole::RoundingDifference));
+
+        if ($onRounding === null) {
+            return ['the last unit never reached the rounding difference account, so it was absorbed somewhere unnamed'];
+        }
+
+        if (! BigDecimal::of((string) $onRounding->functional_amount)->isEqualTo('0.0100')) {
+            $failures[] = sprintf(
+                'the rounding line is %s rather than the 0.01 that was short',
+                (string) $onRounding->functional_amount,
+            );
+        }
+
+        $onReceivable = $lines->firstWhere('account_id', $this->accountFor(ControlRole::AccountsReceivable));
+
+        if ($onReceivable === null) {
+            $failures[] = 'the receivable was not relieved by the rounding posting';
+        } elseif ($onReceivable->party_id === null) {
+            $failures[] = 'the receivable line carries no party, so the control moved and the customer balance did not';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function roundingClosesTheDocument(): array
+    {
+        $invoice = $this->issue();
+        $gross = BigDecimal::of((string) $invoice->gross_amount);
+        $short = (string) $gross->minus('0.0100');
+
+        $payment = $this->receipt($short, (string) $invoice->party_id);
+
+        app(Allocations::class)->allocate(
+            (string) $payment['id'],
+            'invoice',
+            (string) $invoice->getKey(),
+            Money::of($short, 'SAR'),
+            $this->actorId(),
+            on: $this->date->copy(),
+        );
+
+        app(Allocations::class)->closeRounding(
+            'invoice',
+            (string) $invoice->getKey(),
+            $this->entityId,
+            $this->actorId(),
+            (string) $invoice->party_id,
+            $this->date->copy(),
+        );
+
+        $open = app(Allocations::class)->openBalance('invoice', (string) $invoice->getKey(), 'SAR');
+
+        return $open->isZero()
+            ? []
+            : [sprintf(
+                'the invoice still shows %s open after the rounding difference was posted, so the '.
+                'document is not closed and will be chased for a penny',
+                (string) $open->amount,
+            )];
+    }
+
+    /** @return list<string> */
+    private function roundingAboveTolerance(): array
+    {
+        $invoice = $this->issue();
+        $gross = BigDecimal::of((string) $invoice->gross_amount);
+
+        /*
+         | Forty short, not a penny.
+         |
+         | Above the tolerance this is not a rounding difference at all -
+         | it is a short payment, a charge or something withheld, and
+         | which of those it is belongs to classification. Absorbing it
+         | into rounding would be the quiet write-off the whole tolerance
+         | exists to prevent.
+         */
+        $short = (string) $gross->minus('40.0000');
+        $payment = $this->receipt($short, (string) $invoice->party_id);
+
+        app(Allocations::class)->allocate(
+            (string) $payment['id'],
+            'invoice',
+            (string) $invoice->getKey(),
+            Money::of($short, 'SAR'),
+            $this->actorId(),
+            on: $this->date->copy(),
+        );
+
+        $refusal = $this->refusal(fn () => app(Allocations::class)->closeRounding(
+            'invoice',
+            (string) $invoice->getKey(),
+            $this->entityId,
+            $this->actorId(),
+            (string) $invoice->party_id,
+            $this->date->copy(),
+        ));
+
+        if ($refusal === null) {
+            return ['forty riyals was absorbed as a rounding difference, which is the quiet write-off the tolerance exists to prevent'];
+        }
+
+        /*
+         | The service's refusal, not the table's.
+         |
+         | The constraint refuses an unapproved write-off above tolerance
+         | too, which is why it is there. A person settling an invoice
+         | should be told the figure their entity accepts and that this
+         | is a decision somebody has to make, not handed a constraint
+         | name.
+         */
+        return str_contains($refusal, 'accepts without approval')
+            ? []
+            : [sprintf('the refusal came from the table rather than from recording the difference: %s', $refusal)];
+    }
+
+    /** @return list<string> */
+    private function roundingOnNothing(): array
+    {
+        $invoice = $this->issue();
+        $payment = $this->receipt((string) $invoice->gross_amount, (string) $invoice->party_id);
+
+        app(Allocations::class)->allocate(
+            (string) $payment['id'],
+            'invoice',
+            (string) $invoice->getKey(),
+            Money::of((string) $invoice->gross_amount, 'SAR'),
+            $this->actorId(),
+            on: $this->date->copy(),
+        );
+
+        $refusal = $this->refusal(fn () => app(Allocations::class)->closeRounding(
+            'invoice',
+            (string) $invoice->getKey(),
+            $this->entityId,
+            $this->actorId(),
+            (string) $invoice->party_id,
+            $this->date->copy(),
+        ));
+
+        if ($refusal === null) {
+            return ['a rounding difference was posted against a document that was already settled'];
+        }
+
+        /*
+         | Refused by closing, not by recording.
+         |
+         | A zero difference is refused downstream too, which is why that
+         | guard exists - but "this document has nothing left on it"
+         | tells somebody they are looking at the wrong invoice, and
+         | "there is no difference to record" tells them nothing they can
+         | act on.
+         */
+        return str_contains($refusal, 'nothing left on it')
+            ? []
+            : [sprintf('the refusal came from recording the difference rather than from closing: %s', $refusal)];
+    }
+
+    /** @return list<string> */
+    private function guardKnowsAboutDifferences(): array
+    {
+        $invoice = $this->issue();
+        $gross = (string) $invoice->gross_amount;
+
+        /*
+         | Forty written off, then the full gross allocated.
+         |
+         | The ledger relieved the receivable by forty, so only the rest
+         | is still owed. A guard that computed the open balance from
+         | gross and allocations alone would let this through - taking
+         | the document below zero by the one route the guard exists to
+         | refuse.
+         */
+        app(\App\Tenant\Banking\Services\Differences::class)->record(
+            \App\Tenant\Banking\Enums\DifferenceType::ShortPayment,
+            Money::of('40.0000', 'SAR'),
+            [
+                'entity_id' => $this->entityId,
+                'subject_type' => 'invoice',
+                'subject_id' => (string) $invoice->getKey(),
+                'counter_account_id' => $this->accountFor(ControlRole::AccountsReceivable),
+                'party_id' => (string) $invoice->party_id,
+                'arose_on' => $this->date->toDateString(),
+            ],
+            $this->actorId(),
+            'the customer disputes the delivery charge and will not pay it',
+            approvedBy: $this->actorId(),
+        );
+
+        $open = app(Allocations::class)->openBalance('invoice', (string) $invoice->getKey(), 'SAR');
+
+        $failures = [];
+
+        if (! $open->amount->isEqualTo(BigDecimal::of($gross)->minus('40.0000'))) {
+            $failures[] = sprintf(
+                'the invoice shows %s open after forty was written off against it',
+                (string) $open->amount,
+            );
+        }
+
+        $payment = $this->receipt($gross, (string) $invoice->party_id);
+
+        $refusal = $this->refusal(fn () => app(Allocations::class)->allocate(
+            (string) $payment['id'],
+            'invoice',
+            (string) $invoice->getKey(),
+            Money::of($gross, 'SAR'),
+            $this->actorId(),
+            on: $this->date->copy(),
+        ));
+
+        if ($refusal === null) {
+            $failures[] = 'a document part-relieved by a write-off absorbed an allocation for its full gross, taking it below zero';
+        }
+
+        return $failures;
     }
 
     // ---- Realized FX ------------------------------------------------------

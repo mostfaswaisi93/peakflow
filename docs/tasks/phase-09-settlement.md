@@ -53,10 +53,10 @@ This phase also contains the single highest-consequence control in the product: 
 ### PF-171 · Rounding differences
 `Settlement` · **3 pts** · depends: PF-168 · standards: — · `type:posting`
 
-- [ ] A payment of 999.99 against 1,000.00 posts the 0.01 to `rounding_difference` as **its own journal line**
-- [ ] It does not quietly shrink the receivable - the receivable is closed and the difference is named
-- [ ] Tolerance is a per-entity setting with a platform-enforced maximum
-- [ ] Above tolerance it is not a rounding difference and the flow routes to classification instead
+- [x] A payment of 999.99 against 1,000.00 posts the 0.01 to `rounding_difference` as **its own journal line**
+- [x] It does not quietly shrink the receivable - the receivable is closed and the difference is named
+- [x] Tolerance is a per-entity setting with a platform-enforced maximum
+- [x] Above tolerance it is not a rounding difference and the flow routes to classification instead
 
 ### PF-172 · Write-offs
 `Settlement` · **5 pts** · depends: PF-168, PF-033 · standards: IFRS 9 · `risk:high` `type:posting` `type:security`

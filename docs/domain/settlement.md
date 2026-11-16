@@ -114,3 +114,21 @@ A partial settlement realizes a share of the difference, not the document's whol
 ### The worked example is committed
 
 `tests/Fixtures/settlement/three-currency.json` holds three cases — the books' own currency (realizes nothing, and posts no third line), a euro invoice where the rate rose, and a dollar invoice where it fell and only half is settled — with the expected postings **written out by hand**. A fixture whose expected figures are computed by the code under test proves only that the code agrees with itself.
+
+## Rounding differences
+
+A customer pays 999.99 against 1,000.00. The penny is not a debt anybody is going to chase and not a discount anybody granted: two correct figures differ by the smallest unit the currency expresses, usually because one side rounded a tax line the other way.
+
+**The receivable is closed and the difference is named.** Not quietly shrunk — a receivable reduced to make it agree with a payment is a figure that no longer traces to the invoice behind it, and the penny nobody posted is the one that makes a control account disagree with its subledger by an amount too small to investigate and too persistent to go away.
+
+It runs through PF-164's classification rather than having a path of its own. The tolerance, the platform ceiling that bounds it, the approver above it and the report by type all live there already; a second rounding path here would be a second tolerance to keep in step, and the one that drifts is always the one nobody reads.
+
+**Above the tolerance it is not a rounding difference.** It is a short payment, a charge, or something withheld, and which of those is a question for classification. Absorbing it into rounding is the quiet write-off the tolerance exists to prevent.
+
+### A difference relieves its document
+
+This closed a real divergence. A difference posts against a document and relieves the control account — and the subledger did not know, because a document's open balance was gross, less credit notes, less **allocations**, and a difference is none of those. So the ledger said an invoice was settled and the customer ledger said a penny was still owed.
+
+It was found by a check asserting the document **closes**, not one asserting the posting happened — the difference between checking the consequence and checking the act.
+
+The allocation guard had the same hole: a document part-relieved by a write-off could still absorb an allocation for its full gross, reaching the over-application the guard exists to refuse by a route it was not watching. Both now subtract what a difference already relieved.
