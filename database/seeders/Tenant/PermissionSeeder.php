@@ -108,6 +108,7 @@ final class PermissionSeeder extends Seeder
             ['bank.import', 'banking', 'استيراد كشف حساب', 'Import a bank statement', false, false],
             ['bank.reconcile', 'banking', 'إجراء تسوية بنكية', 'Reconcile a bank account', false, false],
             ['reconciliation.write_off', 'banking', 'إعدام فرق تسوية', 'Write off a reconciliation difference', true, false],
+            ['suspense.sign_off', 'banking', 'اعتماد رصيد الحساب المعلّق', 'Sign off an unexplained suspense balance at a period close', true, true],
 
             // Parties and catalog
             ['party.manage', 'parties', 'إدارة العملاء والموردين', 'Manage customers and suppliers', false, false],

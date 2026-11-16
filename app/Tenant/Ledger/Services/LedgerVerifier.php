@@ -34,7 +34,10 @@ use Illuminate\Support\Facades\DB;
  */
 final class LedgerVerifier
 {
-    public function __construct(private readonly AuditChain $chain) {}
+    public function __construct(
+        private readonly AuditChain $chain,
+        private readonly \App\Support\Verification\LedgerChecks $registered = new \App\Support\Verification\LedgerChecks(),
+    ) {}
 
     /**
      * @return Collection<int, LedgerFinding>
@@ -52,7 +55,32 @@ final class LedgerVerifier
             ...$this->entriesWhoseSubstanceChanged($entityId),
             ...$this->postedEntriesWithNoFingerprint($entityId),
             ...$this->theAuditChain(),
+            /*
+             | And whatever other modules assert about the ledger - PF-163.
+             |
+             | Through a registry in `Support`, so the verifier does not
+             | import the banking service to ask whether suspense is
+             | traceable. The ledger depends on nothing but `Tenancy`, and
+             | the first module reached from here directly would carry the
+             | rest in behind it.
+             */
+            ...$this->fromRegisteredChecks($entityId),
         ]);
+    }
+
+    /**
+     * Findings contributed by other modules.
+     *
+     * @return list<LedgerFinding>
+     */
+    private function fromRegisteredChecks(?string $entityId): array
+    {
+        return array_map(
+            static fn (array $finding): LedgerFinding => $finding['severity'] === 'warning'
+                ? LedgerFinding::warning($finding['kind'], $finding['detail'], $finding['consequence'])
+                : LedgerFinding::critical($finding['kind'], $finding['detail'], $finding['consequence']),
+            $this->registered->findings($entityId),
+        );
     }
 
     /**

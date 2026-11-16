@@ -41,6 +41,7 @@ final class LedgerServiceProvider extends ServiceProvider
          | modules through the interface in `Support`.
          */
         $this->app->singleton(\App\Support\Closing\ClosingChecks::class);
+        $this->app->singleton(\App\Support\Verification\LedgerChecks::class);
 
         /*
          | The chart templates, read from disk once per process.

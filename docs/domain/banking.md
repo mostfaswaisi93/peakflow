@@ -360,9 +360,53 @@ The reason is checked **before** the first match is touched. Reversing one match
 
 ## Suspense
 
-An unmatched transaction posts to the `suspense` control account, so the bank account reconciles **even while the item is unexplained**. Suspense ages, appears on a dashboard, and is reported by bucket and entity.
+### Why an unexplained item is posted rather than left
 
-**An entity cannot close a period with a non-zero suspense balance** unless a controller signs it off with a reason — recorded, reported, and asserted by `ledger:verify`. Clearing suspense is a reclassification posting, never an edit of the original.
+The instinct is to leave it alone until somebody works out what it is, and that instinct costs a reconciliation a month. A line the bank has and the ledger does not is an **unrecorded bank item**: the bank account does not agree with the bank, every statement after it carries the same difference, and somebody re-derives the same conclusion about the same item each time.
+
+Parking posts the movement to the bank's GL account — the bank really did move that money — and puts the uncertainty in a control account named for exactly that. The item is not less unexplained. It is unexplained **in one place**, where it can be aged, reported, and where a period close refuses to walk past it.
+
+It is not a write-off and must never be used as one. The money is still somebody's; a difference somebody has decided to absorb is PF-164, with its own rule and its own permission. The two look identical on a bank reconciliation and are opposite in accounting terms: "we do not know yet" against "we have decided".
+
+### Age is the bank's date, not ours
+
+How long the money has been sitting unexplained is what somebody means by "that one is four months old". Measuring from when we parked it would reset every time an item is re-parked — and re-parking is exactly what happens when part of an item turns out to be explainable, so the oldest and worst items would report as the newest the moment anybody made progress on them.
+
+Buckets are 0–30, 31–60, 61–90 and 90+, and they are **not configurable**: a suspense report whose buckets differ between two entities cannot be added up, and seeing one organisation's unexplained money in one table is the whole value of it.
+
+### Clearing is a reclassification, never an edit
+
+The parked entry stays exactly as posted. That costs two entries where one would do, and it buys the only thing suspense is for: that on the 14th nobody knew what this was, and the ledger still says so after somebody found out. An auditor asking how long an item was unexplained has no answer in a ledger that rewrites its own history.
+
+Part of an item can be cleared. The rest stays parked and keeps its age.
+
+### Two totals, because there are two questions
+
+`total` is how much unexplained money there is — a magnitude. 450 in and 120 out is 570 of unexplained money and somebody has to look at both. `signed` is what the control account should hold, because netting is what a balance does.
+
+Conflating them was a real defect: a receipt credits suspense and a payment debits it, so comparing the magnitude against the account reported every entity with movements both ways as broken. A check that only ever parked receipts would never have shown it.
+
+### Every riyal traces to a bank line
+
+`ledger:verify` asserts it. Suspense holding 17,400 while the parked items account for 12,900 means money somebody posted there by hand — a manual journal, a correction, an import that did not know where else to put something — and it is money no list accounts for.
+
+That is how a suspense balance stops being a list of items and becomes a number. A number cannot be aged, assigned or cleared, because clearing an item means knowing what it was. It sits for years, and every close either steps over it or stops on it.
+
+> The assertion reaches `ledger:verify` through a registry in `Support`, the same shape as the closing checks. The ledger depends on nothing but `Tenancy`, and a verifier importing the banking service to ask this would reverse the dependency the layering exists to protect.
+
+### The close, and the one way past it
+
+**A period does not close with a non-zero suspense balance.** Not a warning — a warning is advice, and this is read, understood and dismissed by the person closing. Anything in suspense could be a sale, and a sale in suspense is revenue missing from the accounts and output tax missing from the return; closing freezes that, and the correction becomes a prior-period adjustment.
+
+The escape is a **controller's sign-off**: a name against a figure and a sentence of at least forty characters, kept as a record. Sometimes an item genuinely cannot be resolved by the close — a customer's bank will not say who sent a transfer — and the alternative is leaving the period open, which stops reporting and invites backdated postings. The point is not to prevent the close; it is that nobody closes over unexplained money **silently**.
+
+The sign-off is **for the figure it was given against**, not for the period. If more lands in suspense before the close, the figures stop agreeing and the close is refused again — a flag would let a decision made about four hundred carry a close over forty thousand, because the thing that changed was not the flag.
+
+### And the person who signs is not the person who reconciled
+
+`suspense.sign_off` conflicts with `bank.reconcile` over the period. Whoever matched the lines decided which ones could not be explained; letting them also sign off that the leftovers are acceptable makes the control a formality performed by the person it exists to check — and an unexplained credit is the easiest place in an accounting system to hide a receipt somebody took.
+
+Overridable, unlike the payment pair. A finance function of one has nobody else to sign, and refusing the override would leave them unable to close a period at all: periods left open, backdated postings, and a worse outcome than a recorded override.
 
 ## Reconciliation as a document
 

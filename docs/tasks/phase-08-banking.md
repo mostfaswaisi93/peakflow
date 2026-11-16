@@ -202,11 +202,11 @@ One credit against a combination of open invoices, which is how most customers a
 
 Unmatched lines land somewhere explicit rather than nowhere.
 
-- [ ] An unmatched transaction posts to the `suspense` control account, so the bank account reconciles even while the item is unexplained
-- [ ] Suspense **ages**, appears on a dashboard, and is reported by age bucket and by entity
-- [ ] **An entity cannot close a period with a non-zero suspense balance** unless a controller signs it off with a reason, which is recorded and reported
-- [ ] Clearing suspense is a reclassification posting, never an edit of the original
-- [ ] Included as an assertion in `ledger:verify`
+- [x] An unmatched transaction posts to the `suspense` control account, so the bank account reconciles even while the item is unexplained
+- [x] Suspense **ages**, appears on a dashboard, and is reported by age bucket and by entity
+- [x] **An entity cannot close a period with a non-zero suspense balance** unless a controller signs it off with a reason, which is recorded and reported
+- [x] Clearing suspense is a reclassification posting, never an edit of the original
+- [x] Included as an assertion in `ledger:verify`
 
 ### PF-164 · Difference classification
 `Banking` · **5 pts** · depends: PF-163 · standards: — · `risk:high` `type:posting`

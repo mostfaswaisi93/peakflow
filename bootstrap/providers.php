@@ -1,6 +1,7 @@
 <?php
 
 use App\Providers\AppServiceProvider;
+use App\Providers\BankingServiceProvider;
 use App\Providers\LedgerServiceProvider;
 use App\Providers\PurchasingServiceProvider;
 use App\Providers\QueueTenancyServiceProvider;
@@ -16,4 +17,5 @@ return [
     TaxServiceProvider::class,
     SalesServiceProvider::class,
     PurchasingServiceProvider::class,
+    BankingServiceProvider::class,
 ];

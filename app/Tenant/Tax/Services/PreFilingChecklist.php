@@ -99,12 +99,21 @@ final class PreFilingChecklist
             return PreFilingFinding::clear('the suspense balance', 'no suspense account is assigned');
         }
 
-        $balance = DB::connection('tenant')->table('journal_lines')
-            ->where('entity_id', $entityId)
-            ->where('account_id', $accountId)
-            ->sum('functional_amount');
+        /*
+         | Summed in SQL and read as a string.
+         |
+         | A query-builder aggregate comes back through a numeric cast on
+         | some drivers, and a suspense balance that has been through a
+         | float is a figure somebody is about to be told to defend.
+         */
+        $row = DB::connection('tenant')->selectOne(<<<'SQL'
+            SELECT coalesce(sum(functional_amount), 0)::text AS balance
+            FROM journal_lines
+            WHERE entity_id = ?
+              AND account_id = ?
+        SQL, [$entityId, (string) $accountId]);
 
-        $money = Money::of((string) ($balance ?? '0'), $currency);
+        $money = Money::of((string) ($row->balance ?? '0'), $currency);
 
         if ($money->isZero()) {
             return PreFilingFinding::clear('the suspense balance', 'nothing is in suspense');

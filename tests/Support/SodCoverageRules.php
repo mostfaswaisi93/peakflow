@@ -249,6 +249,33 @@ final class SodCoverageRules
                     $actions[] = $action;
                 }
             }
+
+            /*
+             | And the one indirection that is allowed: a plain ternary.
+             |
+             | `action: $automatically ? 'match.applied_automatically' :
+             | 'match.accepted'` writes both of those and a scan looking
+             | only for a literal after `action:` sees neither - so the
+             | duty mapping to them failed this check while the control it
+             | belongs to worked perfectly.
+             |
+             | Both literals still have to be ON the call, which is what
+             | this check is really asserting: that a mapped action is a
+             | string some service demonstrably passes, not one somebody
+             | believed it passed. Anything looser - a variable assigned
+             | earlier, a constant, a match expression - is deliberately
+             | not recognised, because at that point the scan would be
+             | guessing and a typo would come back.
+             */
+            if (preg_match_all(
+                "/action:\s*\\\$[a-zA-Z_][a-zA-Z0-9_]*\s*\?\s*'([a-z0-9_.]+)'\s*:\s*'([a-z0-9_.]+)'/",
+                $source,
+                $ternaries,
+            ) >= 1) {
+                foreach ([...$ternaries[1], ...$ternaries[2]] as $action) {
+                    $actions[] = $action;
+                }
+            }
         }
 
         return array_values(array_unique($actions));

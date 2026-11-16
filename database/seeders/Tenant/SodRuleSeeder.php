@@ -87,6 +87,15 @@ final class SodRuleSeeder extends Seeder
                 false,
             ],
             [
+                'reconcile_then_sign_off',
+                'bank.reconcile',
+                'suspense.sign_off',
+                'period',
+                'من يطابق الحركات البنكية هو من قرّر ما الذي تعذّر تفسيره؛ فلا يجوز أن يكون هو من يعتمد بقاءه معلّقاً.',
+                'Whoever matched the bank lines decided which ones could not be explained. If the same person signs off that the leftovers are acceptable, the control is a formality performed by the person it exists to check - and an unexplained credit is the easiest place in an accounting system to hide a receipt somebody took. Overridable, unlike the payment pair: a finance function of one has nobody else to sign, and refusing the override would leave them unable to close a period at all - which means periods left open, backdated postings and a worse outcome than a recorded override.',
+                true,
+            ],
+            [
                 'post_then_close',
                 'journal.post',
                 'period.close',

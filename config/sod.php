@@ -46,6 +46,34 @@ return [
         'tax_return.file' => ['return.filed'],
 
         /*
+         | Reconciling, which is several acts and not one - PF-163.
+         |
+         | Every one of them decides what remains unexplained at the end:
+         | accepting a proposal, letting an automatic one stand, splitting
+         | a line, parking the rest in suspense. The SoD pair that matters
+         | is "whoever decided what could not be explained must not be the
+         | one who signs off that it is acceptable", and that only fires if
+         | the duty recognises all of those as reconciling.
+         |
+         | `match.applied_automatically` is included deliberately. The
+         | engine applied it, but a person ran the matching and let it
+         | stand, and "the engine did it" is exactly the defence the
+         | control exists to not accept.
+         */
+        'bank.reconcile' => [
+            'match.accepted',
+            'match.applied_automatically',
+            'match.rejected',
+            'match.reversed',
+            'match.split',
+            'match.unsplit',
+            'suspense.parked',
+            'suspense.cleared',
+        ],
+
+        'suspense.sign_off' => ['suspense.signed_off'],
+
+        /*
          | Posting, through the paths that record one.
          |
          | A posting made BY a document is attributed to that document's own
@@ -165,8 +193,7 @@ return [
     'declared_gaps' => [
         'payment.prepare' => 'Phase 09 - the payment run',
         'payment.release' => 'Phase 09 - the payment run',
-        'bank.reconcile' => 'Phase 08 - bank reconciliation',
-        'reconciliation.write_off' => 'Phase 08 - bank reconciliation',
+        'reconciliation.write_off' => 'PF-164 - difference classification, where a write-off becomes an act with a posting rule behind it',
 
         /*
          | Built, and not recorded.
