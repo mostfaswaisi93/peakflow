@@ -252,6 +252,7 @@ if ($only === 'all' || $only === 'purchasing') {
     $suites['Procurement'] = $suite(static fn (): array => (new Tests\Support\ProcurementRules())->all());
     $suites['Supplier credits and aging'] = $suite(static fn (): array => (new Tests\Support\SupplierCreditRules())->all());
     $suites['Requisitions'] = $suite(static fn (): array => (new Tests\Support\RequisitionRules())->all());
+    $suites['Expense claims'] = $suite(static fn (): array => (new Tests\Support\ExpenseClaimRules())->all());
 }
 
 if ($only === 'all' || $only === 'sod') {
@@ -280,6 +281,7 @@ if ($only === 'all' || $only === 'config') {
 
 if ($only === 'all' || $only === 'roles') {
     $suites['Database roles'] = $suite(static fn (): array => (new Tests\Support\DatabaseRoleRules())->all());
+    $suites['Control roles'] = $suite(static fn (): array => (new Tests\Support\ControlRoleRules())->all());
 }
 
 if ($only === 'all' || $only === 'canonical') {

@@ -78,13 +78,25 @@ return new class extends Migration
             $table->decimal('receipt_required_above', 21, 4)->default(0);
 
             /*
-             | Whether the category permits recovering input tax at all.
+             | How much of the input tax this category may recover, as a
+             | percentage. Zero means none.
              |
-             | Separate from whether a receipt is attached, because they
-             | fail differently: no receipt is no evidence, and client
-             | entertainment is no entitlement however good the evidence.
+             | ONE column, deliberately. The obvious design is a boolean
+             | `tax_recoverable` beside the percentage, and it carries no
+             | information the percentage does not: "not recoverable" is
+             | zero per cent. The pair needs a CHECK to stop them
+             | disagreeing, and a pair kept consistent by a constraint is a
+             | pair somebody will eventually read only one half of.
+             |
+             | Measured: with both columns, a bite that removed the service's
+             | boolean check changed nothing, because the percentage was
+             | already zero. Two columns answering one question also means
+             | two places a check can pass while the other is wrong.
+             |
+             | Partial recovery - entertainment at 50% in several
+             | jurisdictions - is the reason it is a percentage rather than
+             | a flag in the first place.
              */
-            $table->boolean('tax_recoverable')->default(true);
             $table->decimal('recoverable_percent', 9, 6)->default(100);
 
             $table->foreignUlid('expense_account_id')->nullable()->constrained('accounts')->restrictOnDelete();
@@ -221,17 +233,6 @@ return new class extends Migration
                 ADD CONSTRAINT expense_policies_recoverable_percent_is_a_percentage
                     CHECK (recoverable_percent >= 0 AND recoverable_percent <= 100),
 
-                /*
-                 | A category that recovers no tax recovers none of it.
-                 |
-                 | Both columns exist because partial recovery is real, and
-                 | the pair "not recoverable, 50%" is two answers to one
-                 | question - which is the state somebody finds while
-                 | explaining a return to an authority.
-                 */
-                ADD CONSTRAINT expense_policies_recovery_is_consistent
-                    CHECK (tax_recoverable OR recoverable_percent = 0),
-
                 ADD CONSTRAINT expense_policies_window_is_ordered
                     CHECK (effective_to IS NULL OR effective_to >= effective_from);
 
@@ -308,20 +309,66 @@ return new class extends Migration
                         recoverable_percent = 0
                         OR (receipt_attachment_id IS NOT NULL
                             AND length(btrim(coalesce(tax_decision, ''))) > 5)
-                    ),
-
-                /*
-                 | A policy exception is explained by a person.
-                 |
-                 | A flag with no text is a line somebody approved without
-                 | knowing what was wrong with it, and the approver is the
-                 | person the policy exists to inform.
-                 */
-                ADD CONSTRAINT expense_claim_lines_exception_is_explained
-                    CHECK (
-                        policy_exception IS NULL
-                        OR length(btrim(coalesce(policy_explanation, ''))) > 5
                     );
+        SQL);
+
+        /*
+         | A policy exception is explained before the claim leaves draft.
+         |
+         | Not at insert. The flag is raised by the system - the line is over
+         | a ceiling, or no policy covers the category - and the explanation
+         | comes from the claimant afterwards, so a column-level CHECK would
+         | refuse the very line it is trying to annotate.
+         |
+         | The moment that matters is submission: a flag with no text is a
+         | line somebody approves without knowing what was wrong with it, and
+         | the approver is the person the policy exists to inform. So the
+         | guarantee is a trigger on the claim's status, which is also the
+         | only place it can be expressed - the condition spans the claim and
+         | its lines.
+         */
+        DB::unprepared(<<<'SQL'
+            CREATE OR REPLACE FUNCTION peakflow_refuse_an_unexplained_breach()
+            RETURNS TRIGGER
+            LANGUAGE plpgsql
+            AS $$
+            DECLARE
+                offending RECORD;
+            BEGIN
+                IF NEW.status = OLD.status OR OLD.status <> 'draft' THEN
+                    RETURN NEW;
+                END IF;
+
+                IF NEW.status IN ('cancelled', 'rejected') THEN
+                    RETURN NEW;
+                END IF;
+
+                SELECT line_no, category, policy_exception
+                INTO offending
+                FROM expense_claim_lines
+                WHERE expense_claim_id = NEW.id
+                  AND policy_exception IS NOT NULL
+                  AND length(btrim(coalesce(policy_explanation, ''))) <= 5
+                ORDER BY line_no
+                LIMIT 1;
+
+                IF offending IS NOT NULL THEN
+                    RAISE EXCEPTION
+                        'Line % breaches the % policy (%) and carries no explanation. The approver is '
+                        'the person the policy exists to inform, and a flag with no text is a line '
+                        'somebody approves without knowing what is wrong with it.',
+                        offending.line_no, offending.category, offending.policy_exception
+                        USING ERRCODE = 'restrict_violation';
+                END IF;
+
+                RETURN NEW;
+            END;
+            $$;
+
+            CREATE TRIGGER expense_claims_breaches_are_explained_before_submission
+                BEFORE UPDATE ON expense_claims
+                FOR EACH ROW
+                EXECUTE FUNCTION peakflow_refuse_an_unexplained_breach();
         SQL);
 
         DB::unprepared(<<<'SQL'
@@ -329,6 +376,8 @@ return new class extends Migration
                 'The payable is to the EMPLOYEE, in a control account of its own - an employee is not a supplier - PF-143.';
             COMMENT ON CONSTRAINT expense_claim_lines_recovery_needs_a_receipt ON expense_claim_lines IS
                 'Input tax claimed on an employee word is a return whose input box cannot be supported.';
+            COMMENT ON FUNCTION peakflow_refuse_an_unexplained_breach() IS
+                'The flag is raised at entry by the system and explained afterwards by a person, so the moment that matters is submission - PF-143.';
             COMMENT ON COLUMN expense_claim_lines.rate IS
                 'FROZEN from the policy on the date incurred. A claim re-derived at today rate pays the wrong amount.';
         SQL);
@@ -340,6 +389,11 @@ return new class extends Migration
 
     public function down(): void
     {
+        DB::unprepared(<<<'SQL'
+            DROP TRIGGER IF EXISTS expense_claims_breaches_are_explained_before_submission ON expense_claims;
+            DROP FUNCTION IF EXISTS peakflow_refuse_an_unexplained_breach();
+        SQL);
+
         Schema::dropIfExists('expense_claim_lines');
         Schema::dropIfExists('expense_claims');
         Schema::dropIfExists('expense_policies');

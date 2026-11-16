@@ -1,6 +1,6 @@
 {
   "key": "saudi-arabia",
-  "version": 2,
+  "version": 3,
   "name_ar": "دليل حسابات للمملكة العربية السعودية",
   "name_en": "Saudi Arabia chart of accounts",
   "countries": [
@@ -290,6 +290,17 @@
       "role": "goods_received_not_invoiced",
       "monetary": true,
       "note": "PF-132: a liability for things that have arrived and whose bill has not. What makes a period-end cutoff honest, and a balance that does not clear is a receipt nobody was ever billed for."
+    },
+    {
+      "code": "2.1.11",
+      "parent": "2.1",
+      "type": "liability",
+      "name_ar": "مستحقات للعاملين",
+      "name_en": "Employee payables",
+      "postable": true,
+      "role": "employee_payable",
+      "monetary": true,
+      "note": "PF-143: what the business owes its own people. An employee is not a supplier - the balance is reported differently, it is frequently settled through payroll, and an aging report that mixed the two would show a colleague's taxi fare beside a supplier on thirty-day terms."
     },
     {
       "code": "2.2",

@@ -1,0 +1,35 @@
+{
+  "_why": "A chart that changed and did not say so is a chart two entities disagree about. ChartTemplateRules hashes each shipped file and refuses a change whose version did not move: the last entry here must match the file on disk, and no two entries of one chart may share a version. Adding an account means adding a line here, which is where somebody notices whether they bumped the version.",
+  "charts": {
+    "ifrs-generic": [
+      {
+        "version": 2,
+        "sha256": "eca2f441362c52f5849810fa5f9c60c800e9f774a9967d99f40ddd3990cfdc3d"
+      },
+      {
+        "version": 3,
+        "sha256": "0b423d09bbb39cc31fa32cac4c1623ee47e70312898e412dbb9b2dc4105f891b"
+      }
+    ],
+    "jordan": [
+      {
+        "version": 2,
+        "sha256": "6c2577edd2ea727a6e511648c02642b7438c16cd603650b1791c0be424d3e786"
+      },
+      {
+        "version": 3,
+        "sha256": "740736b882a2179d17e1ccb8e7debf0d85668c2da0862208f67be307fb69f2c1"
+      }
+    ],
+    "saudi-arabia": [
+      {
+        "version": 2,
+        "sha256": "7d1bb5d7fa283da46df38f6c260222297e261de69b90551dd0b73ee3597401de"
+      },
+      {
+        "version": 3,
+        "sha256": "03705aa13c1d0bb8c3d07dc2246ac005a06aacd68434352875cf0b260e665f03"
+      }
+    ]
+  }
+}

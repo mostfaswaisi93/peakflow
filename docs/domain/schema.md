@@ -127,7 +127,8 @@ The authoritative description of every table. **A schema change updates this fil
 | `three_way_match_exceptions` | A mismatch, with its figures | `expected`, `actual` and `tolerance` as columns so the queue sorts by how wrong each row is; `detail` is required and over ten characters, because "on hold" makes somebody open three documents; unique per `(bill_line, kind)` so a re-run does not duplicate an answered row |
 | `approval_rules`, `approval_chains`, `approval_decisions` | The workflow | An edit after approval **returns the document to the start of the chain** |
 | `approval_delegations` | Date-bounded | A delegate cannot receive an approval SoD forbids them |
-| `expense_claims`, `expense_claim_lines` | Employee claims | Post to `employee_payable`, a distinct control account |
+| `expense_policies` | What a category of expense may be | A rate, a ceiling or both; dated, because rates change; `tax_recoverable` and `recoverable_percent` kept consistent by CHECK |
+| `expense_claims`, `expense_claim_lines` | Employee claims | Post to `employee_payable`, a distinct control account; the claimant is a **user**, not a party; recovery needs a receipt **and** a stated reason (CHECK); the rate is frozen from the policy on the date incurred; a trigger refuses submission while a policy breach is unexplained |
 | `inbox_items` | Email and Peppol intake, before they are bills | Sender allowlisting; unknown senders quarantined |
 
 ### Banking

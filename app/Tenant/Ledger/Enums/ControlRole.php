@@ -65,6 +65,22 @@ enum ControlRole: string
      */
     case GoodsReceivedNotInvoiced = 'goods_received_not_invoiced';
 
+    /**
+     * Owed to an employee, not to a supplier - PF-143.
+     *
+     * An employee is not a supplier. The balance is reported differently in
+     * most frameworks, it is frequently settled through payroll rather than
+     * through the payment run, and an aging report that mixed the two would
+     * show a colleague's taxi fare beside a supplier whose terms are thirty
+     * days.
+     *
+     * It also matters for the fraud this module is about: "who do we owe
+     * money to" with employees mixed into it is a list nobody reads closely,
+     * and the expense claim is the cheapest place in a business to take money
+     * out of it. Separating the control account separates the two questions.
+     */
+    case EmployeePayable = 'employee_payable';
+
     case BadDebt = 'bad_debt';
     case EclProvision = 'ecl_provision';
 
@@ -93,10 +109,51 @@ enum ControlRole: string
     {
         return match ($this) {
             self::AccountsReceivable, self::Bank, self::PaymentsInTransit,
-            self::InterEntity, self::WithholdingReceivable => AccountType::Asset,
+            self::InterEntity, self::WithholdingReceivable,
+
+            /*
+             | Suspense is a balance-sheet account, not a cost.
+             |
+             | An unmatched bank receipt sits in it as a BALANCE until
+             | somebody identifies it. Typing it as an expense would put
+             | every unidentified item straight into the income statement,
+             | so a month with a large unmatched receipt would report a loss
+             | that disappears when the receipt is identified.
+             |
+             | Measured: this said `Expense` - grouped with FX and rounding,
+             | which are costs - while all three shipped charts type the
+             | account as an asset. Nothing called this method, so the
+             | disagreement sat there until `ControlRoleRules` compared the
+             | two.
+             */
+            self::Suspense,
+
+            /*
+             | And an expected-credit-loss provision is a CONTRA-asset.
+             |
+             | IFRS 9's loss allowance reduces the carrying amount of the
+             | financial asset it is held against, so it is presented as a
+             | deduction from receivables rather than as a liability of its
+             | own: the business does not owe the allowance to anybody.
+             |
+             | Measured the same way: this said `Liability` and the charts
+             | type it as an asset with a credit balance, which is what a
+             | contra-asset is.
+             */
+            self::EclProvision => AccountType::Asset,
 
             self::AccountsPayable, self::VatOutput, self::DeferredRevenue,
-            self::EclProvision, self::WithholdingPayable => AccountType::Liability,
+            self::WithholdingPayable,
+            /*
+             | Both of these are liabilities for something already incurred.
+             |
+             | Measured: `goods_received_not_invoiced` was added in PF-132
+             | and NOT listed here, and a match with no `default` throws on
+             | a case it does not name. Nothing called this method, so
+             | nothing noticed - which is why `ControlRoleRules` now walks
+             | every case of this enum through every method on it.
+             */
+            self::GoodsReceivedNotInvoiced, self::EmployeePayable => AccountType::Liability,
 
             self::RetainedEarnings => AccountType::Equity,
 
@@ -105,7 +162,7 @@ enum ControlRole: string
             self::VatInput => AccountType::Asset,
 
             self::FxGainLoss, self::FxRevaluation, self::RoundingDifference,
-            self::Suspense, self::BadDebt => AccountType::Expense,
+            self::BadDebt => AccountType::Expense,
         };
     }
 

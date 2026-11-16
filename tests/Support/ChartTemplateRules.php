@@ -63,6 +63,7 @@ final class ChartTemplateRules
             'every shipped template loads and is coherent' => $this->shippedTemplatesLoad(),
             'an incoherent template is refused at load' => $this->incoherenceIsRefused(),
             'a template that does not nest its codes still nests its tree' => $this->pathsNestWithoutNestedCodes(),
+            'a chart that changed says so in its version' => $this->versionsMoveWithContents(),
         ];
 
         $tenant = $this->tenant();
@@ -93,6 +94,135 @@ final class ChartTemplateRules
     }
 
     /** @return list<string> */
+    /**
+     * A chart that changed has a version that moved.
+     *
+     * ## Why a manifest and not a convention
+     *
+     * `ChartTemplateDefinition` refuses a template with no version, with the
+     * reasoning that "a chart that changed and did not say so is a chart two
+     * entities disagree about" - an entity provisioned last month and one
+     * provisioned today both record `version: 2` while holding different
+     * accounts, and nothing afterwards can tell them apart.
+     *
+     * But nothing checked that the version moved **when** the chart changed.
+     *
+     * Measured: the goods-received-not-invoiced account was added to all
+     * three shipped charts for PF-132 and every one of them stayed at
+     * version 2. The chart suite passed, because every check it had was
+     * about whether a template is coherent rather than whether it is the
+     * same template it was yesterday.
+     *
+     * So `database/chart-versions.json` records the hash of each version,
+     * and this asserts two things: the file on disk is the last entry, and
+     * no two entries of one chart share a version. The second is what forces
+     * the bump - keeping the version and changing the content means adding
+     * an entry that collides with the one before it.
+     *
+     * Adding an account therefore means adding a line to the manifest, which
+     * is the moment somebody notices whether they bumped the version.
+     *
+     * @return list<string>
+     */
+    public function versionsMoveWithContents(): array
+    {
+        $directory = dirname(__DIR__, 2).'/database/charts';
+
+        /*
+         | The manifest sits OUTSIDE the template directory.
+         |
+         | `ChartTemplateLibrary` loads every `*.json` in that directory as a
+         | template, so a manifest beside them is refused at load for having
+         | no `key` - which breaks provisioning rather than the check that
+         | wanted it. Measured: that is exactly what happened on the first
+         | attempt.
+         */
+        $manifestPath = dirname(__DIR__, 2).'/database/chart-versions.json';
+
+        if (! is_file($manifestPath)) {
+            return ['`database/chart-versions.json` is missing, so a chart can change without saying so'];
+        }
+
+        $manifest = json_decode((string) file_get_contents($manifestPath), true, 512, JSON_THROW_ON_ERROR);
+        $recorded = $manifest['charts'] ?? [];
+        $violations = [];
+
+        foreach (glob($directory.'/*.json') ?: [] as $file) {
+            $contents = (string) file_get_contents($file);
+            $hash = hash('sha256', $contents);
+            $decoded = json_decode($contents, true, 512, JSON_THROW_ON_ERROR);
+            $key = (string) ($decoded['key'] ?? basename($file, '.json'));
+            $version = (int) ($decoded['version'] ?? 0);
+
+            $history = $recorded[$key] ?? null;
+
+            if ($history === null || $history === []) {
+                $violations[] = sprintf(
+                    'the %s chart has no history in chart-versions.json, so nothing can tell whether it '.
+                    'changed since it was last released',
+                    $key,
+                );
+
+                continue;
+            }
+
+            $last = $history[count($history) - 1];
+
+            if ((string) $last['sha256'] !== $hash) {
+                $violations[] = sprintf(
+                    'the %s chart on disk does not match the last entry in chart-versions.json. It changed '.
+                    'without saying so: an entity provisioned before the change and one provisioned '.
+                    'after both record version %d while holding different accounts, and nothing '.
+                    'afterwards can tell them apart. Add an entry with the new version and hash',
+                    $key,
+                    $version,
+                );
+            }
+
+            if ((int) $last['version'] !== $version) {
+                $violations[] = sprintf(
+                    'the %s chart says version %d and the last manifest entry says %d',
+                    $key,
+                    $version,
+                    (int) $last['version'],
+                );
+            }
+
+            $versions = array_map(static fn (array $entry): int => (int) $entry['version'], $history);
+
+            if (count($versions) !== count(array_unique($versions))) {
+                $violations[] = sprintf(
+                    'the %s chart has two manifest entries sharing a version. The contents changed and '.
+                    'the version did not, which is the thing this check exists to refuse',
+                    $key,
+                );
+            }
+
+            foreach ($history as $index => $entry) {
+                if ($index > 0 && (int) $entry['version'] <= (int) $history[$index - 1]['version']) {
+                    $violations[] = sprintf(
+                        'the %s chart\'s manifest is not in ascending version order',
+                        $key,
+                    );
+
+                    break;
+                }
+            }
+        }
+
+        foreach (array_keys($recorded) as $key) {
+            if (! is_file($directory.'/'.$key.'.json')) {
+                $violations[] = sprintf(
+                    'the manifest records the %s chart and no such file ships, so the manifest and '.
+                    'the library disagree about what exists',
+                    (string) $key,
+                );
+            }
+        }
+
+        return $violations;
+    }
+
     public function shippedTemplatesLoad(): array
     {
         $violations = [];

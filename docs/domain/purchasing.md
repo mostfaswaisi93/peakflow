@@ -355,12 +355,47 @@ The approval engine is shared: bills, requisitions and expense claims route thro
 
 ---
 
+## Expense claims
+
+The payable is to the **employee**, in `employee_payable` rather than `accounts_payable`:
+
+```
+Dr  the line's expense account              each line's net, plus its non-recoverable tax
+Dr  vat_input @ the jurisdiction            the recoverable tax
+Cr  employee_payable                        the gross owed to the claimant
+```
+
+An employee is not a supplier. The balance is reported differently in most frameworks, it is frequently settled through payroll rather than through the payment run, and an aging report that mixed the two would show a colleague's taxi fare beside a supplier whose terms are thirty days. It matters for fraud too: "who do we owe money to" with employees mixed into it is a list nobody reads closely, and an expense claim is the cheapest place in a business to take money out of it.
+
+The claimant is a **user**, not a party, and the posting carries no party id. Modelling an employee as a supplier puts a colleague in the list every party-scoped control reads — the supplier bank-detail rule included, which is the highest-value fraud in the product.
+
+### Input tax needs three things, and they fail differently
+
+| Condition | What is missing without it |
+|-----------|----------------------------|
+| A receipt | evidence — the authority asks for the receipt, not for the spreadsheet |
+| A category that permits recovery | entitlement, however good the evidence (client entertainment) |
+| A policy in force on the day | a decision — "nobody decided" reads as "do not claim" on a tax return |
+
+The decision and its reason are stored on the line, and a CHECK constraint refuses recovery without both a receipt and a stated reason. "Why was this claimed" has to be answerable a year later, when the policy has changed and the return has been filed; re-deriving it would answer with today's policy, which is not the question.
+
+Non-recoverable tax rides with the line's own expense. Tax sitting in the input account that will never be claimed ties to no box on any form, and the difference is found during an audit by somebody who did not put it there.
+
+### Rates are frozen, breaches are flagged
+
+A mileage rate changes annually, so the rate in force on `incurred_on` is copied onto the line with the policy it came from. A claim re-derived at today's rate pays the wrong amount and cannot be reconciled to what was approved.
+
+A line over its ceiling is **flagged with the figures, not refused** — a hotel over the ceiling because the conference hotel was the only one left is a real claim, and refusing it sends somebody to a spreadsheet and an email. But an unexplained breach cannot be submitted: a trigger on the claim's status refuses it, because the condition spans the claim and its lines and because the flag is raised by the system at entry while the explanation comes from a person afterwards.
+
+---
+
 ## What is not built yet
 
 | Gap | Why |
 |-----|-----|
 | Orders sent as a PDF, or by Peppol | The PDF toolchain (Gotenberg, Ghostscript, veraPDF) is not installable in this environment; Peppol transport needs the AS4 access point and SMP lookup of PF-121 and PF-122. The order document is a UBL `Order`, a different document type from the invoice the Exchange plane serializes today |
-| Email and Peppol intake, document extraction, expense claims | PF-140 to PF-143 |
+| Email and Peppol intake, document extraction | PF-140 to PF-142 |
+| Reimbursing a claim through a payment run | The claim's balance sits in a control account a payment run can read; the run itself is Phase 09 |
 | A bill in a foreign currency booking at its tax point's rate | The columns exist; the rate service call site arrives with PF-138 |
 | The receive-then-approve segregation-of-duties pair | Whoever confirms a delivery should not approve the bill for it, and the fictitious-receipt fraud is to confirm a delivery that never came and approve the invoice for it. But the two duties sit on different objects linked by an order, and the engine's scopes are the same document, the same counterparty or the same period. Closing it means a **chain** scope that expands a bill into the receipts behind it, which is a change to PF-033 rather than to this module |
 

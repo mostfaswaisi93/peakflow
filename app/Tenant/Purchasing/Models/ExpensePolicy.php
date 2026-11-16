@@ -8,8 +8,8 @@ use App\Support\Database\TenantModel;
 use App\Support\Money\Money;
 use App\Tenant\Tenancy\Concerns\BelongsToEntity;
 use Brick\Math\BigDecimal;
+use Carbon\CarbonInterface;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\CarbonInterface;
 
 /**
  * What a category of expense is allowed to be - PF-143.
@@ -32,7 +32,6 @@ use Illuminate\Support\CarbonInterface;
  * @property string|null $rate
  * @property string|null $ceiling_per_line
  * @property string $receipt_required_above
- * @property bool $tax_recoverable
  * @property string $recoverable_percent
  */
 final class ExpensePolicy extends TenantModel
@@ -44,14 +43,13 @@ final class ExpensePolicy extends TenantModel
     protected $fillable = [
         'entity_id', 'category', 'currency', 'rate', 'rate_unit',
         'ceiling_per_line', 'ceiling_per_claim', 'receipt_required_above',
-        'tax_recoverable', 'recoverable_percent', 'expense_account_id',
+        'recoverable_percent', 'expense_account_id',
         'effective_from', 'effective_to', 'active', 'note',
     ];
 
     protected $casts = [
         'effective_from' => 'immutable_date',
         'effective_to' => 'immutable_date',
-        'tax_recoverable' => 'boolean',
         'active' => 'boolean',
     ];
 
@@ -118,7 +116,17 @@ final class ExpensePolicy extends TenantModel
                 : sprintf('up to %s per line', (string) $this->ceiling_per_line);
         }
 
-        if (! $this->tax_recoverable) {
+        /*
+         | Zero per cent IS "no entitlement".
+         |
+         | There is deliberately no `recoversTax()` helper: it read as a
+         | control and was not one - the decision is made in
+         | `ExpenseClaims::taxDecision()` from the percentage itself, and a
+         | method that merely restates "is it zero" is a second place a
+         | check can bite without changing any behaviour. Measured: biting
+         | such a helper left the suite green.
+         */
+        if (BigDecimal::of((string) $this->recoverable_percent)->isZero()) {
             $pieces[] = $locale === 'ar' ? 'ضريبة غير قابلة للخصم' : 'tax not recoverable';
         }
 

@@ -108,6 +108,22 @@ return [
          */
         'bill.create' => ['bill.entered'],
         'bill.approve' => ['approval.approved'],
+
+        /*
+         | Expense claims - PF-143.
+         |
+         | `claim_then_approve` is object-scoped: nobody approves their own
+         | claim. The approval engine refuses the requester directly, which
+         | covers the ordinary case, and this pair catches the same conflict
+         | arriving by another door - somebody who entered the claim for a
+         | colleague and then approves it.
+         |
+         | `expense_claim.submitted` is recorded by `ExpenseClaims::enter()`
+         | and `expense_claim.approved` by `recordApproval()`, so both were
+         | declared gaps until those two methods existed.
+         */
+        'expense_claim.submit' => ['expense_claim.submitted'],
+        'expense_claim.approve' => ['expense_claim.approved'],
     ],
 
     /*
@@ -151,8 +167,6 @@ return [
         'payment.release' => 'Phase 09 - the payment run',
         'bank.reconcile' => 'Phase 08 - bank reconciliation',
         'reconciliation.write_off' => 'Phase 08 - bank reconciliation',
-        'expense_claim.submit' => 'Phase 07 - expense claims',
-        'expense_claim.approve' => 'Phase 07 - expense claims',
 
         /*
          | Built, and not recorded.
