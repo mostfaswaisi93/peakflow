@@ -31,6 +31,27 @@ final class BillRefused extends \RuntimeException
         );
     }
 
+    /**
+     * A bill whose three-way match has unanswered exceptions - PF-135.
+     *
+     * The discrepancies are named in the message rather than counted,
+     * because "3 match exceptions" sends somebody to a queue while "billed
+     * 120 units, received 100" tells them what to do. The person who posts
+     * is frequently not the person who can answer, and the message is what
+     * they will forward.
+     *
+     * @param  list<string>  $details
+     */
+    public static function openMatchExceptions(array $details): self
+    {
+        return new self(sprintf(
+            "This bill does not match its order and receipt, so it cannot be posted:\n- %s\n".
+            'Each of these needs an answer that is kept with the bill. A match exception cleared by '.
+            'posting through it is a control that exists only on paper.',
+            implode("\n- ", $details),
+        ));
+    }
+
     public static function duplicate(string $number, string $supplier, string $existing): self
     {
         return new self(sprintf(

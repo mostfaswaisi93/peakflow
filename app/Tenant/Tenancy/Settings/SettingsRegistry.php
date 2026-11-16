@@ -260,6 +260,51 @@ final class SettingsRegistry
                 descriptionEn: 'Count uninvoiced orders towards credit exposure.',
             ),
 
+            // ---- Purchasing --------------------------------------------------
+
+            /*
+             | Whether a bill without an order is an exception - PF-135.
+             |
+             | Not every purchase goes through an order: a utility bill, a
+             | bank charge and a tax assessment do not, and a business that
+             | required one for all of them would spend its day raising
+             | orders after the fact. A business with a procurement policy,
+             | though, wants to know about the bill that bypassed it - that
+             | is the bill nobody negotiated a price for.
+             |
+             | So it is a decision rather than a constant, defaulting to off,
+             | because the cost of being wrong in that direction is a queue
+             | somebody has to clear and the cost in the other is a question
+             | nobody asked.
+             */
+            new SettingDefinition(
+                key: 'purchasing.require_order',
+                type: 'bool',
+                scope: 'entity',
+                default: false,
+                descriptionAr: 'اعتبار فاتورة المورّد بلا أمر شراء حالة استثناء تحتاج مراجعة.',
+                descriptionEn: 'Treat a supplier bill with no purchase order as an exception to review.',
+            ),
+
+            /*
+             | Whether a receipt posts a goods-received-not-invoiced accrual
+             | - PF-132.
+             |
+             | A business that bills within days of receiving does not need
+             | it, and the entries are noise in their ledger. One that closes
+             | a period between the two cannot do without it: the expense
+             | would land in the wrong month and the balance sheet would omit
+             | a liability that exists.
+             */
+            new SettingDefinition(
+                key: 'purchasing.accrue_receipts',
+                type: 'bool',
+                scope: 'entity',
+                default: false,
+                descriptionAr: 'ترحيل استحقاق «أصناف مستلمة ولم تُفتَّر» عند تسجيل الاستلام.',
+                descriptionEn: 'Post a goods-received-not-invoiced accrual when a receipt is recorded.',
+            ),
+
             // ---- Bank reconciliation ---------------------------------------
 
             /*

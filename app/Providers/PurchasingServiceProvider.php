@@ -6,6 +6,7 @@ namespace App\Providers;
 
 use App\Tenant\Ledger\Posting\PostingRuleRegistry;
 use App\Tenant\Purchasing\Posting\Rules\BillPostedRule;
+use App\Tenant\Purchasing\Posting\Rules\GoodsReceivedRule;
 use Illuminate\Support\ServiceProvider;
 
 /**
@@ -22,6 +23,9 @@ final class PurchasingServiceProvider extends ServiceProvider
 {
     public function boot(): void
     {
-        $this->app->make(PostingRuleRegistry::class)->register(new BillPostedRule());
+        $registry = $this->app->make(PostingRuleRegistry::class);
+
+        $registry->register(new BillPostedRule());
+        $registry->register(new GoodsReceivedRule());
     }
 }

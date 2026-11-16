@@ -532,12 +532,25 @@ final class BalanceProperty
          | A control account refuses a line with no posting rule, which is a
          | different invariant and would make every case here fail for the
          | wrong reason.
+         |
+         | Asked of `account_roles` rather than listed by code. Measured:
+         | this was a hard-coded list of seventeen codes, and adding a
+         | goods-received-not-invoiced account to the charts for PF-132 broke
+         | both properties at once - the generator picked the new control
+         | account and the trigger refused every entry, so a check about
+         | balance started reporting a failure about posting rules. A list
+         | of codes is a list the next chart change invalidates, and the
+         | property it protects is "has a role", which the database can
+         | answer.
          */
         $this->accountIds = Account::query()
             ->where('entity_id', $this->entityId)
             ->where('postable', true)
-            ->whereNotIn('code', ['1.1.1.2', '1.1.1.3', '1.1.2.1', '1.1.2.2', '1.1.3', '1.1.4', '1.1.5',
-                '1.1.6', '2.1.1', '2.1.2', '2.1.3', '2.1.7', '3.2', '5.3', '5.4', '5.5', '5.6'])
+            ->whereNotExists(static function ($query): void {
+                $query->selectRaw('1')
+                    ->from('account_roles')
+                    ->whereColumn('account_roles.account_id', 'accounts.id');
+            })
             ->pluck('id')
             ->map(static fn (mixed $id): string => (string) $id)
             ->all();

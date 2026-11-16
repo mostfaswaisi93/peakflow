@@ -37,6 +37,7 @@ final class BillLine extends TenantModel
         'unit_code', 'quantity', 'unit_price', 'net_amount',
         'expense_account_id', 'tax_code_id', 'tax_category', 'tax_rate', 'tax_amount',
         'recoverable_percent', 'reverse_charge',
+        'purchase_order_line_id', 'goods_receipt_line_id',
         'dimension_1', 'dimension_2', 'dimension_3', 'dimension_4',
     ];
 
@@ -49,6 +50,26 @@ final class BillLine extends TenantModel
     public function bill(): BelongsTo
     {
         return $this->belongsTo(Bill::class);
+    }
+
+    /**
+     * What this line was matched against - PF-135.
+     *
+     * Kept after the match, so "was this bill ever checked against
+     * anything" has an answer six months later, and the answer is not
+     * "somebody says so".
+     *
+     * @return BelongsTo<PurchaseOrderLine, $this>
+     */
+    public function orderLine(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseOrderLine::class, 'purchase_order_line_id');
+    }
+
+    /** @return BelongsTo<GoodsReceiptLine, $this> */
+    public function receiptLine(): BelongsTo
+    {
+        return $this->belongsTo(GoodsReceiptLine::class, 'goods_receipt_line_id');
     }
 
     public function net(string $currency): Money

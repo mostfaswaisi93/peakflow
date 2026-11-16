@@ -53,6 +53,7 @@ final class Bill extends TenantModel
         'payment_term_id', 'terms_snapshot', 'supplier_snapshot', 'tax_decision_snapshot',
         'profile', 'note', 'created_by', 'approved_at', 'approved_by',
         'posted_at', 'journal_entry_id', 'source',
+        'match_status', 'matched_at',
     ];
 
     protected $casts = [
@@ -62,6 +63,7 @@ final class Bill extends TenantModel
         'fx_rate_date' => 'immutable_date',
         'approved_at' => 'immutable_datetime',
         'posted_at' => 'immutable_datetime',
+        'matched_at' => 'immutable_datetime',
         'terms_snapshot' => 'array',
         'supplier_snapshot' => 'array',
         'tax_decision_snapshot' => 'array',

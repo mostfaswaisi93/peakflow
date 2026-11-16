@@ -116,10 +116,12 @@ The authoritative description of every table. **A schema change updates this fil
 | Table | Holds | Notable constraints |
 |-------|-------|---------------------|
 | `purchase_requisitions` | Internal requests | Optional per entity |
-| `purchase_orders`, `purchase_order_lines` | Commitments | Received and billed tracked per line |
-| `goods_receipts`, `goods_receipt_lines` | What arrived | Optional accrual posting |
+| `purchase_orders`, `purchase_order_lines` | Commitments | `quantity_received` and `quantity_billed` are **per line**; a closed order must carry a reason over five characters; **no posting anywhere** - an order is a promise, and a commitment in the ledger is a liability nobody owes |
+| `goods_receipts`, `goods_receipt_lines` | What arrived | One row per order line per receipt; a rejection must carry a reason; `journal_entry_id` and `reversal_entry_id` hold the optional GRNI accrual and its release, so an accrual that never cleared is a receipt nobody was billed for |
 | `bills`, `bill_lines`, `bill_tax_breakdown` | Supplier invoices | **`(entity_id, party_id, supplier_document_number)` unique** — the hard half of duplicate detection |
-| `bill_matches` | What a bill matched against | Makes the three-way match auditable afterwards |
+| `bill_lines.purchase_order_line_id`, `bill_lines.goods_receipt_line_id` | What a bill line matched against | On the **line**, not a `bill_matches` table: one bill routinely spans several orders, and a bill-level link could not say which line came from which |
+| `supplier_match_tolerances` | How much difference is not worth a person's attention | Per supplier **and** line type; absolute and percentage, the larger applying; **a CHECK constraint caps both at 10%** - a 50% tolerance is the match turned off |
+| `three_way_match_exceptions` | A mismatch, with its figures | `expected`, `actual` and `tolerance` as columns so the queue sorts by how wrong each row is; `detail` is required and over ten characters, because "on hold" makes somebody open three documents; unique per `(bill_line, kind)` so a re-run does not duplicate an answered row |
 | `approval_rules`, `approval_chains`, `approval_decisions` | The workflow | An edit after approval **returns the document to the start of the chain** |
 | `approval_delegations` | Date-bounded | A delegate cannot receive an approval SoD forbids them |
 | `expense_claims`, `expense_claim_lines` | Employee claims | Post to `employee_payable`, a distinct control account |

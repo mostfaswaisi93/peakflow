@@ -12,6 +12,7 @@ use App\Tenant\Purchasing\Exceptions\BillRefused;
 use App\Tenant\Purchasing\Models\Bill;
 use App\Tenant\Purchasing\Models\BillLine;
 use App\Tenant\Purchasing\Models\BillTaxBreakdownRow;
+use App\Tenant\Purchasing\Models\ThreeWayMatchException;
 use App\Tenant\Purchasing\Posting\Rules\BillPostedRule;
 use App\Tenant\Tax\Enums\TaxCategory;
 use App\Tenant\Tenancy\Models\Entity;
@@ -53,6 +54,7 @@ final class Bills
         private readonly Poster $poster,
         private readonly DueDateCalculator $dueDates,
         private readonly DuplicateBillDetector $duplicates,
+        private readonly ThreeWayMatch $match,
         private readonly AuditTrail $audit,
     ) {}
 
@@ -161,6 +163,17 @@ final class Bills
              */
             $this->duplicates->examine($bill, 'entry');
 
+            /*
+             | And the three-way match, at entry - PF-135.
+             |
+             | Not to consume the order lines: that happens at posting. This
+             | run exists to tell the person typing what is wrong while they
+             | still have the supplier's document in front of them, which is
+             | the only moment at which "billed 120, received 100" is cheap
+             | to resolve.
+             */
+            $this->match->match($bill->refresh());
+
             $this->audit->record(
                 category: 'purchasing',
                 action: 'bill.entered',
@@ -202,7 +215,57 @@ final class Bills
             throw BillRefused::unacknowledgedDuplicates($unanswered->count());
         }
 
+        /*
+         | The match, re-run at posting, and OUTSIDE the transaction.
+         |
+         | Re-run rather than trusting the entry-time result, because the
+         | order, the receipt and the bill can all have moved since: a
+         | receipt reversed, another bill posted against the same line, the
+         | order closed. A match that was clean last week is not evidence
+         | that it is clean now.
+         |
+         | Outside the transaction because a refusal has to LEAVE something
+         | behind. The exceptions this run writes are the queue somebody
+         | works tomorrow, and raising them inside the transaction that the
+         | refusal rolls back would hand the caller a message and keep no
+         | record of it - the one failure mode an exception queue cannot
+         | have.
+         */
+        $mismatches = $this->match->match($bill);
+
+        if ($mismatches !== []) {
+            throw BillRefused::openMatchExceptions(array_map(
+                static fn (ThreeWayMatchException $e): string => (string) $e->detail,
+                $mismatches,
+            ));
+        }
+
         return DB::connection('tenant')->transaction(function () use ($bill, $entity, $userId): Bill {
+            /*
+             | And the run that consumes, inside the transaction.
+             |
+             | Advancing each order line's `quantity_billed` has to succeed
+             | or fail with the posting. Outside it, a posting that then
+             | failed - a closed period, an unbalanced entry - would leave
+             | the order lines consumed against a bill that never posted,
+             | and the next bill for those goods would match against a
+             | quantity already spoken for.
+             |
+             | It is the same comparison a second time, which costs a few
+             | queries and buys the two guarantees above. A mismatch here is
+             | a race rather than a discrepancy - somebody posted against
+             | the same line between the two runs - and it refuses, which is
+             | the right answer to a race.
+             */
+            $raced = $this->match->match($bill, consume: true);
+
+            if ($raced !== []) {
+                throw BillRefused::openMatchExceptions(array_map(
+                    static fn (ThreeWayMatchException $e): string => (string) $e->detail,
+                    $raced,
+                ));
+            }
+
             $event = $this->event($bill);
 
             $entry = $this->poster->post(
@@ -226,6 +289,18 @@ final class Bills
                 'journal_entry_id' => (string) $entry->getKey(),
             ]);
 
+            /*
+             | And the accrual the receipt raised is released - PF-132.
+             |
+             | On this bill's posting date, because the accrual belongs to
+             | the month the goods arrived in and its release belongs to the
+             | month the invoice arrived. Only receipts now fully billed: a
+             | receipt of a hundred against which sixty have been invoiced
+             | still has forty units of goods accrued, and releasing the
+             | whole entry would understate a liability that exists.
+             */
+            $released = $this->match->releaseAccruals($bill);
+
             $this->audit->record(
                 category: 'purchasing',
                 action: 'bill.posted',
@@ -234,6 +309,7 @@ final class Bills
                 subjectLabel: (string) $bill->supplier_document_number,
                 after: [
                     'journal_entry_id' => (string) $entry->getKey(),
+                    'accruals_released' => $released,
                     'gross' => (string) $bill->gross_amount,
                     'recoverable_tax' => (string) $bill->recoverable_tax_amount,
                     'non_recoverable_tax' => (string) $bill->non_recoverable_tax_amount,
@@ -433,6 +509,15 @@ final class Bills
                 'tax_amount' => (string) ($line['tax_amount'] ?? '0'),
                 'recoverable_percent' => (string) ($line['recoverable_percent'] ?? '100'),
                 'reverse_charge' => (bool) ($line['reverse_charge'] ?? false),
+                /*
+                 | What this line claims to be against - PF-135.
+                 |
+                 | On the line rather than the bill, because one bill
+                 | routinely spans several orders and a bill-level pointer
+                 | could not say which line came from which.
+                 */
+                'purchase_order_line_id' => $line['purchase_order_line_id'] ?? null,
+                'goods_receipt_line_id' => $line['goods_receipt_line_id'] ?? null,
                 'dimension_1' => $line['dimension_1'] ?? null,
                 'dimension_2' => $line['dimension_2'] ?? null,
                 'dimension_3' => $line['dimension_3'] ?? null,

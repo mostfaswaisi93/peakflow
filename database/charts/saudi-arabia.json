@@ -281,6 +281,17 @@
       "monetary": true
     },
     {
+      "code": "2.1.10",
+      "parent": "2.1",
+      "type": "liability",
+      "name_ar": "بضاعة مستلمة غير مفوترة",
+      "name_en": "Goods received not invoiced",
+      "postable": true,
+      "role": "goods_received_not_invoiced",
+      "monetary": true,
+      "note": "PF-132: a liability for things that have arrived and whose bill has not. What makes a period-end cutoff honest, and a balance that does not clear is a receipt nobody was ever billed for."
+    },
+    {
       "code": "2.2",
       "parent": "2",
       "type": "liability",

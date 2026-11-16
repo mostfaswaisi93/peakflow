@@ -49,6 +49,22 @@ enum ControlRole: string
      */
     case WithholdingPayable = 'withholding_payable';
 
+    /**
+     * Goods received and not yet invoiced - PF-132.
+     *
+     * A liability for things that have arrived and whose bill has not. It is
+     * what makes a period-end cutoff honest: the goods are on the shelf and
+     * in the expense, and the supplier's invoice is in the post.
+     *
+     * A control account rather than an accrual journal somebody remembers to
+     * post, because the thing that has to be reconcilable is "what have we
+     * received and not been billed for" - and that is a balance, not a note.
+     * The bill that matches a receipt reverses it, so a balance that does not
+     * clear is a receipt nobody was ever billed for, which is exactly what an
+     * aged accrual report is looking for.
+     */
+    case GoodsReceivedNotInvoiced = 'goods_received_not_invoiced';
+
     case BadDebt = 'bad_debt';
     case EclProvision = 'ecl_provision';
 
