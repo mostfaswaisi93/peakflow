@@ -68,11 +68,18 @@ The expensive failure here is paying the same invoice twice, and the dangerous o
 ### PF-136 · The approval engine
 `Purchasing` · **8 pts** · depends: PF-133, PF-033 · standards: SOC 2 · `risk:high` `type:security`
 
-- [ ] Rules on amount, account, dimension, supplier and document type, evaluated into an ordered chain of approvers
-- [ ] Sequential and parallel steps; a quorum where a policy requires two of three
-- [ ] SoD enforced: a user cannot approve a bill they created (`PF-033`), and the refusal names who can
-- [ ] An approval records the exact document state it approved - a bill edited after approval **returns to the start of the chain**, and this is the hole that matters
-- [ ] Every decision is audited with actor, time, rule and comment
+- [x] Rules on amount, account, dimension, supplier and document type, evaluated into an ordered chain of approvers. Every condition is nullable and an absent one matches everything, so a rule with none is "every document" - which is what a small tenant's single rule looks like and should not need four fields set to express
+- [x] The chain is **compiled once and written down**, not re-evaluated per decision. A rule changed halfway through would move the goalposts under the people already in it, and nobody could answer "who was supposed to approve this" about a document from last month. A check changes a rule mid-chain and requires the approver who was assigned to still be able to act
+- [x] Sequential and parallel steps; a quorum where a policy requires two of three. Steps sharing a `sequence` open together and the chain advances only when all of them are satisfied - a chain that could express only "all" or "any" would make the business pick the wrong one
+- [x] And a quorum of two cannot be met by **one person pressing approve twice**, which is the obvious way to clear a step alone. The unique index on `(step, user)` is the guarantee; the refusal is the message
+- [x] SoD enforced: a user cannot approve a bill they created (`PF-033`), and the refusal **names who can** - "you cannot do this" sends somebody to ask around, and on a purchase the person they ask is frequently the one who created it. Enforced twice: the requester is refused directly, and the SoD engine catches the person who created the bill through another route
+- [x] An approval records the exact document state it approved - a bill edited after approval **returns to the start of the chain**, and this is the hole that matters. Approved at 1,000, changed to 100,000, paid: every system that stores approval as a boolean has it, and it is invisible because the document looks approved and is. The request carries a canonical hash of the document when the chain started, each decision records what its approver saw, and a stale request is marked stale rather than updated - rewriting its fingerprint would make the earlier decisions look like decisions about the new version
+- [x] To the **start**, not to the step it was on: the earlier approvers also approved something else
+- [x] And the fingerprint covers what an approver was deciding about - the supplier, the amounts, the dates and the lines - not every column. A chain that restarted when somebody added an internal note would make approval a thing people work around, and what they stop doing is writing notes. A check adds one and requires the chain to survive
+- [x] Through the RFC 8785 canonicalizer rather than `json_encode`, so a document whose columns come back in a different order hashes the same. Without that a chain would go stale on a document nobody touched, which is worse than not checking at all
+- [x] Every decision is audited with actor, time, rule and comment, and a rejection needs a reason - an approval may be silent, because the chain is the reason, and a rejection that is not returns the document to somebody with no idea what to change
+- [x] Found on the way: the audit actions were passed through a shared helper, so `SodCoverageRules` could not find them and reported the `bill.approve` duty as unmapped. It was right to: the check greps for `action: '...'` because a typo in that string disables a control silently, which is the one failure mode a control must not have. The two actions are now literals at their call sites, and `bill.create` and `bill.approve` are no longer declared gaps
+- [x] An overdue step is reported for escalation, which PF-137 routes
 
 ### PF-137 · Delegation and continuity
 `Purchasing` · **3 pts** · depends: PF-136 · standards: —

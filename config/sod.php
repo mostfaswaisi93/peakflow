@@ -96,6 +96,18 @@ return [
             'supplier.bank_details.update',
             'supplier.bank_details.verified',
         ],
+
+        /*
+         | The payable side - PF-133, PF-136.
+         |
+         | `bill_create_then_approve` is object-scoped: nobody approves a
+         | bill they entered. Entering one is recorded as `bill.entered` by
+         | `Bills::enter()`, and approving one as `approval.approved` by the
+         | approval engine - and until both existed this rule matched
+         | nothing, which the coverage check reported as a declared gap.
+         */
+        'bill.create' => ['bill.entered'],
+        'bill.approve' => ['approval.approved'],
     ],
 
     /*
@@ -137,8 +149,6 @@ return [
     'declared_gaps' => [
         'payment.prepare' => 'Phase 09 - the payment run',
         'payment.release' => 'Phase 09 - the payment run',
-        'bill.create' => 'Phase 07 - purchase bills',
-        'bill.approve' => 'Phase 07 - purchase bills',
         'bank.reconcile' => 'Phase 08 - bank reconciliation',
         'reconciliation.write_off' => 'Phase 08 - bank reconciliation',
         'expense_claim.submit' => 'Phase 07 - expense claims',

@@ -248,6 +248,7 @@ if ($only === 'all' || $only === 'exchange') {
 
 if ($only === 'all' || $only === 'purchasing') {
     $suites['Bills'] = $suite(static fn (): array => (new Tests\Support\BillRules())->all());
+    $suites['Approvals'] = $suite(static fn (): array => (new Tests\Support\ApprovalRules())->all());
 }
 
 if ($only === 'all' || $only === 'sod') {
