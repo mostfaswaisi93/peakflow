@@ -153,6 +153,31 @@ A **disabled** profile is still resolvable, though. A document issued last year 
 
 ---
 
+## The archive
+
+Most jurisdictions require the original electronic document retained, readable and **unaltered**, for five to eleven years. "Readable" is the easy half.
+
+**A re-rendered document is not an archive copy.** Five years from now the font has changed, the template has changed, a rounding policy has changed, and the hash the recipient holds matches nothing. The only copy that can be reconciled against theirs is the one that was sent, so the bytes are stored and the row carries their hash.
+
+| | |
+|---|---|
+| One artefact per `(subject, kind)` | A retried job archiving the same bytes is fine; two different sets would be two candidates for "what was sent", and the recipient holds one of them |
+| WORM | A trigger refuses a delete before the retention date, any change to the bytes, the path or the kind, and a retention date moved earlier — the delete rule is only as good as the date it reads |
+| Object-lock | Declared, not applied: it is a bucket setting that cannot be enabled after the bucket exists, so production refuses to run without it. An archive an operator with credentials can delete is not a WORM archive whatever the application refuses |
+| Retention expires | The rule is a period, not immortality. A system that could never delete would hold every tenant's documents forever |
+
+### The manifest hashes the list
+
+Each artefact's own hash proves its bytes. An artefact deleted from storage **and** from the table together would leave every remaining hash correct — only a hash over the ordered list notices that something is gone. A sealed manifest is immutable and a period cannot be sealed twice: one that can be resealed always matches whatever is in the archive now, which proves nothing about what was there.
+
+### A backup nobody has restored is a hope
+
+`archive:drill` restores a random sample, re-hashes it and records the outcome — passing or failing. The sample is random, so a drill that passed last month does not mean it checked the same artefacts, and every run is recorded so "when did we last prove the archive restores" has an answer that is not somebody's recollection.
+
+### Retention beats a deletion request, and the product says so
+
+The notice names the date, the basis and whose obligation it is, in both languages. Deleting on request and saying nothing is the worst of the three options available: the tenant believes the document is gone, the authority believes it is retained, and nobody finds out until one of them asks.
+
 ## What is not built yet, and why
 
 | | |

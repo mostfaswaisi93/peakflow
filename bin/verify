@@ -232,6 +232,10 @@ if ($only === 'all' || $only === 'attachments') {
     $suites['Attachments'] = $suite(static fn (): array => (new Tests\Support\AttachmentRules())->all());
 }
 
+if ($only === 'all' || $only === 'archive') {
+    $suites['The archive'] = $suite(static fn (): array => (new Tests\Support\ArchiveRules())->all());
+}
+
 if ($only === 'all' || $only === 'exchange') {
     $suites['The semantic model'] = $suite(static fn (): array => (new Tests\Support\ExchangeRules())->all());
     $suites['The model from a document'] = $suite(static fn (): array => (new Tests\Support\SemanticModelRules())->all());
@@ -291,7 +295,7 @@ if ($only === 'all' || $only === 'examples') {
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | errors | repo | ops | tax | charts | sales | exchange | attachments | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | errors | repo | ops | tax | charts | sales | exchange | attachments | archive | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public\n");
     exit(2);
 }
 

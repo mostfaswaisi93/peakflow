@@ -295,6 +295,29 @@ final class ProductionConfiguration
             );
         }
 
+        /*
+         | Object-lock on the archive bucket - PF-129.
+         |
+         | The database refuses a delete before the retention date, which is
+         | the half that can be enforced here. The other half is the bucket:
+         | an archive an operator with credentials can delete is not a WORM
+         | archive, whatever the application refuses - and object-lock cannot
+         | be turned on after a bucket exists, so a deployment that did not
+         | do it has to be told while it still can.
+         */
+        if ($get('archive.object_lock') !== true) {
+            $problems[] = 'archive.object_lock is off, so the archive bucket has no WORM retention. '.
+                'The database refuses a delete before the retention date; a bucket without object-lock '.
+                'lets anybody with credentials remove the bytes anyway, and object-lock cannot be '.
+                'enabled after the bucket exists.';
+        }
+
+        if ($get('archive.disk') === $get('attachments.disk')) {
+            $problems[] = 'the archive and attachments share a disk. They have different retention and '.
+                'different deletion rules: an attachment goes when its document does, and an archived '.
+                'artefact cannot go for years whatever anybody asks.';
+        }
+
         return $problems;
     }
 

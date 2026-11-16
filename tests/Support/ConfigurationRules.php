@@ -410,6 +410,9 @@ final class ConfigurationRules
             'attachments.scanner' => 'clamav',
             'attachments.origin' => 'https://files.peakflow.example',
             'attachments.url_ttl_seconds' => 300,
+            // PF-129: a WORM bucket, and not the attachments one.
+            'archive.object_lock' => true,
+            'archive.disk' => 'archive',
         ];
     }
 
@@ -475,6 +478,8 @@ final class ConfigurationRules
             // PF-073: a developer has no ClamAV daemon and no second host.
             'attachments.scanner',
             'attachments.origin',
+            // PF-129: a developer has no object-locked bucket.
+            'archive.object_lock',
         ];
 
         foreach ($found as $problem) {

@@ -46,7 +46,8 @@ use Throwable;
  */
 trait IssuesInvoices
 {
-    protected ?Connection $connection = null;
+    use RunsInSavepoints;
+
 
     protected string $entityId = '';
 
@@ -167,19 +168,6 @@ trait IssuesInvoices
             $this->decision,
             $this->terms,
         );
-    }
-
-    protected function savepoint(): string
-    {
-        $name = 'inv_'.bin2hex(random_bytes(4));
-        $this->connection?->statement('SAVEPOINT '.$name);
-
-        return $name;
-    }
-
-    protected function rollbackTo(string $savepoint): void
-    {
-        $this->connection?->statement('ROLLBACK TO SAVEPOINT '.$savepoint);
     }
 
     /**
@@ -365,29 +353,13 @@ trait IssuesInvoices
      * @param  array<string, callable(): list<string>>  $rules
      * @return array<string, list<string>>
      */
-    protected function runEachInASavepoint(array $rules): array
+    protected function refreshFixtures(): void
     {
-        $results = [];
-
-        foreach ($rules as $name => $rule) {
-            $savepoint = $this->savepoint();
-
-            try {
-                // The fixture models are re-read, because the savepoint that
-                // rolled back the previous rule did not roll back PHP.
-                $this->party = $this->party?->fresh();
-                $this->period = $this->period?->fresh();
-                $this->fixtureEntity = $this->fixtureEntity?->fresh();
-
-                $results[$name] = $rule();
-            } catch (Throwable $e) {
-                $results[$name] = ['the check could not run: '.$e->getMessage()];
-            } finally {
-                $this->rollbackTo($savepoint);
-            }
-        }
-
-        return $results;
+        // The savepoint that rolled back the previous rule did not roll back
+        // PHP, so a model loaded before it still holds the row as it was.
+        $this->party = $this->party?->fresh();
+        $this->period = $this->period?->fresh();
+        $this->fixtureEntity = $this->fixtureEntity?->fresh();
     }
 
     /** The number the next document in the invoice series would take. */

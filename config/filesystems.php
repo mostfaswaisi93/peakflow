@@ -56,6 +56,23 @@ return [
             'report' => false,
         ],
 
+        /*
+         | The archive - PF-129.
+         |
+         | Separate from attachments: the two have different retention and
+         | different deletion rules. In production this is a bucket with
+         | object-lock in compliance mode, which is the half of WORM that
+         | survives somebody with credentials to the bucket.
+         */
+        'archive' => [
+            'driver' => env('ARCHIVE_DRIVER', 'local'),
+            'root' => storage_path('app/archive'),
+            'visibility' => 'private',
+            'serve' => false,
+            'throw' => true,
+            'report' => false,
+        ],
+
         'public' => [
             'driver' => 'local',
             'root' => storage_path('app/public'),
