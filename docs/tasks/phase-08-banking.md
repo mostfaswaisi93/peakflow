@@ -63,50 +63,62 @@ People re-download overlapping statement files constantly.
 
 The target format and the richest one.
 
-- [ ] Booked and pending entries, entry details, batch entries with their underlying transactions
-- [ ] Structured remittance (`RmtInf/Strd`) with referenced document numbers and amounts, which is what makes pass 4 possible
-- [ ] Bank transaction codes retained as `domain/family/sub-family`
-- [ ] Reversal indicators, charges, and FX instructed amounts handled rather than dropped
-- [ ] XXE and entity expansion disabled explicitly; a malformed file fails safely with a line reference
-- [ ] Fixtures from at least four real-bank shapes, because the standard permits more variation than its name suggests
+- [x] Booked and pending entries, entry details, and batch entries with their underlying transactions. A payment run of fifty supplier payments arrives as **one** debit: the bank took one amount, so the entry is the movement and the entry is what must sum into the closing balance, while the fifty references inside `NtryDtls/TxDtls` are what the matcher needs. A reader that took only the entry makes a payment run permanently unmatchable; one that took only the transactions imports fifty movements the bank never made. So the entry is the bank transaction and its `TxDtls` become `bank_transaction_details`, which nothing sums into any balance
+- [x] A **pending** entry is reported, marked provisional and kept out of the arithmetic, because `PDNG` on a CAMT.053 is ordinary and is not in the closing balance. Counting it makes a perfectly correct file disagree with its own stated movement, and the import is then refused for a reason that is not the file's fault - which reads as a parser bug
+- [x] Structured remittance (`RmtInf/Strd`) with referenced document numbers, their types, their due and remitted amounts, and the creditor reference with its scheme. The highest-quality signal a payer can supply and the one most readers drop, because reading it takes more than a single element
+- [x] Bank transaction codes retained as `domain/family/sub-family`, **and** the bank's own proprietary code beside them - which is all several domestic banks send
+- [x] Reversal indicators, charges (a stated total or several `Rcrd` amounts summed) and FX instructed amounts with their currency and rate, all kept rather than dropped
+- [x] XXE and entity expansion disabled explicitly, through the same `SafeXmlReader` the e-invoicing side uses: no network, no external entities, and any DOCTYPE **refused outright** - "billion laughs" is a DOCTYPE with no external reference at all, so entity limits do not stop it and refusing the declaration does. A malformed file fails with the parser's line and column, and says the position is where the parser gave up rather than where the problem is
+- [x] Fixtures from four genuinely different bank shapes: the textbook `.08`; an older `.02` with `PRCD` instead of `OPBD`, `DtTm` dates, a domestic account number, proprietary-only codes, no `FrToDt` and an **overdrawn** closing balance; a batch entry with a refund running against it, a reversal and an FX payment; and a prefixed namespace with the currency only on a balance, remittance split across several `Ustrd` elements, charges as separate records and an entry with no details at all
+- [x] **The two sign rules, which are the whole correctness of this.** `CdtDbtInd` gives the real direction of the booked amount, always - `RvslInd` says only that this booking reverses an earlier one and does **not** mean the sign should be flipped. Flipping it is the obvious reading, it is wrong, and it turns a reversed credit into a double debit while every figure stays plausible. And a balance has a direction too: `DBIT` on a current account is an overdraft, which a reader ignoring `Bal/CdtDbtInd` reports as money in the bank
+- [x] **And the counterparty depends on the direction.** On a credit it is the debtor; on a debit, the creditor. A reader that always took `Cdtr` is right on half the lines and silently wrong on the rest, where the "counterparty" of every incoming payment comes out as us
 
 ### PF-151 · Intraday reports
 `Banking` · **3 pts** · depends: PF-150 · standards: ISO 20022 CAMT.052, CAMT.054
 
-- [ ] CAMT.052 account report and CAMT.054 debit/credit notification
-- [ ] Intraday data feeds the cash position but **does not post** and does not reconcile - it is provisional, and treating it as final double-counts when the CAMT.053 arrives
-- [ ] Provisional entries are visibly marked and are superseded by the booked statement
+- [x] CAMT.052 account report and CAMT.054 debit/credit notification, read by the same reader as the CAMT.053 - they differ in their root element and in which balances they are obliged to carry, and are the same `Ntry` structure below that. Three readers would be three copies of the entry parsing, and the copy that gets a fix is the one somebody was looking at
+- [x] Intraday data feeds the cash position but **does not post** and does not reconcile. `BankBalances::statement()` takes the last **booked** statement and `intradayPosition()` is a separate method that states its basis - returning both from one call with a flag would guarantee the wrong one gets read
+- [x] Provisional entries are marked on the row and superseded by the booked statement rather than sitting beside it
+- [x] **Found while checking this:** continuity counted interim reports. A CAMT.052 imported between two CAMT.053s became the previous statement in the chain, so the next real statement - whose opening is the last *booked* closing - could never be imported. The chain is now the booked statements only, which is what continuity was always about
+- [x] **And:** an interim report states no balances at all (MT942 has no `:60F:`/`:62F:` and a CAMT.052 need not carry them either). Rather than invent a figure, the parser reports them absent and the importer opens and closes the statement where the account's booked position already stands - so its booked movement is zero, which is exactly what an interim report moves
 
 ### PF-152 · MT940 and MT942
 `Banking` · **5 pts** · depends: PF-149 · standards: SWIFT MT940 / MT942
 
-- [ ] Legacy, still ubiquitous, and lossy
-- [ ] `:61:` statement lines and `:86:` information parsed, with **per-bank `:86:` sub-field handling** because that field is semi-structured free text and its layout is bank-specific
-- [ ] An unparseable `:86:` is retained verbatim rather than dropped, so a human can still read it
-- [ ] Documented explicitly as a degraded path: matching confidence from MT940 is structurally lower than from CAMT.053, and the UI says so
+- [x] Legacy, still ubiquitous, and lossy. No structured remittance, no end-to-end id, no ISO transaction code and no counterparty account in any dependable place
+- [x] `:61:` statement lines parsed to SWIFT's own grammar - value date, the entry date that carries no year, the `C`/`D`/`RC`/`RD` mark, the comma decimal, the transaction type and the references either side of the `//`. `NONREF` is read as "the bank gave none" rather than stored as a reference that every such line appears to carry
+- [x] `:86:` with **per-bank sub-field handling**, as configuration rather than code: the German numbered `?20?` form, SWIFT's tagged `/EREF/` form, and a profile map in `banking.mt940.profiles` because the numbers mean different things at different banks
+- [x] An unparseable `:86:` is retained verbatim rather than dropped. Dropping it is the easy choice and the worst one - it is the only place a reference appears in this format, so a dropped one leaves the line unmatchable and unreadable at once
+- [x] Documented explicitly as a degraded path in [`banking.md`](../domain/banking.md) and recorded as `fidelity: low` in `banking.formats`, so matching confidence from MT940 is structurally lower rather than incidentally lower. Where a bank offers both, the import takes the CAMT
+- [x] **Found while checking this:** MT940 and MT942 recognised each other, so an interim report could be sniffed as a booked statement - which posts it and double-counts every line when the real statement arrives. They are told apart by their balances: an MT940 states `:60F:`/`:62F:` and an MT942 carries `:34F:` instead, which is also the only place its currency appears
 
 ### PF-153 · OFX
 `Banking` · **3 pts** · depends: PF-149 · standards: OFX 2.x
 
-- [ ] OFX and QFX for retail and North American banks
-- [ ] Both SGML-era and XML-era variants, since real files are still both
-- [ ] Transaction type mapped to the ISO 20022 code space so downstream routing has one vocabulary
+- [x] OFX and QFX for retail and North American banks
+- [x] Both SGML-era and XML-era variants, since real files are still both. Rather than two readers, the SGML form is **closed into XML** first - every unclosed value tag gets its closing tag - and the result goes through the same safe parser, so the XXE and DOCTYPE guards apply to both
+- [x] Transaction type mapped to the ISO 20022 code space so downstream routing has one vocabulary. Deliberately coarse: OFX says `DEBIT` where CAMT would say which kind of debit, and inventing a sub-family to fill the gap would state more than the file does - which is how a routing rule comes to fire on a code no bank ever sent. The original type is kept beside it, so a rule can still be written against it
+- [x] **Found while checking this:** the first `FITID` was being used as the statement number. It is a *transaction* id, and using it labels the statement "FIT-0001" on every screen - which reads as the bank's own numbering and is not. OFX has no statement number, so the statement falls back to our own sequence
 
 ### PF-154 · CSV import
 `Banking` · **5 pts** · depends: PF-149 · standards: — · `type:a11y`
 
-- [ ] Per-bank column mapping saved as a reusable, shareable template
-- [ ] Date-format, decimal-separator, thousands-separator and sign-convention detection, each overridable - a European CSV with `1.234,56` and a debit column is the normal case, not the edge case
-- [ ] A **preview of the first rows as they will be interpreted**, before anything is imported
-- [ ] Encoding detection, and a clear failure for a file that is not what it claims to be
-- [ ] Keyboard-operable mapping UI with a clear error summary
+- [x] Per-bank column mapping saved as a reusable, shareable template (`csv_import_templates`), with the dialect stored beside the columns. A bank's export does not change month to month, and making somebody map twelve columns every month guarantees that one month two of them go the wrong way round - an import that is plausible rather than broken, because the value date in the booking date column shifts a reconciliation by two days and nothing says so. The header row it was built against is stored too, so a bank that adds a column can be detected rather than silently shifting every index after it
+- [x] Date-format, decimal-separator, thousands-separator, sign-convention and delimiter detection, each overridable. The delimiter is chosen by **consistency** rather than frequency - a remittance full of commas makes the comma the most frequent character in a semicolon-delimited file. The separators are decided across every amount in the file at once, by which reading leaves no value contradicting another, because one value settles nothing: `1.234` is ambiguous and `1.234,56` is not
+- [x] Three sign conventions, because all three are common: one signed column, separate debit and credit columns, and an unsigned column with a direction column beside it. The second is the one that quietly halves a statement - a reader expecting one amount column finds the debit column empty on credit rows and imports zero - and a row with **both** filled is refused, because the usual cause is a running-balance column mapped as one of them
+- [x] A **preview of the first rows as they will be interpreted**, paired with the raw cells they came from. That pairing is the point: "01.05.2026 → 2026-05-01" is checkable at a glance and "1.000,00 → 1000.0000" is the line where somebody spots that their thousands are being read as decimals. A preview of the raw file proves only that the file was uploaded. The detector also states its **evidence** for each setting, because "detected" with nothing behind it is what somebody clicks past
+- [x] Where both readings of a decimal separator survive the whole file, it is **reported as ambiguous** rather than guessed at - a wrong answer there is off by a factor of a thousand with every row still looking right. Dates that read equally well day-first and month-first are reported the same way
+- [x] Encoding detection with a byte-order mark, UTF-8 and Windows-1252, and a row that will not read **stops the import** rather than being skipped: importing the rest leaves the month short by those rows with nothing saying which, and the difference surfaces weeks later as a reconciliation that does not tie. Every unreadable row is reported together, with its number and its contents, so one pass through the file fixes all of them
+- [x] **Found while checking this:** dates were being collected as numeric values and poisoning the separator inference - `01.05.2026` has a two-digit middle group, which rules out the comma as a decimal separator, so one date column made every German file read as English. And a `.xlsx` renamed `.csv` was reported as "a date range with no transactions in it", because Windows-1252 is single-byte and accepts any byte sequence; it is now recognised as a ZIP container and says to export CSV from the bank instead
+- [ ] Keyboard-operable mapping UI with a clear error summary. The service side is complete - detection, evidence, preview and refusals - and the screen that presents it is the remaining work
 
 ### PF-155 · Transaction codes and strategy routing
 `Banking` · **3 pts** · depends: PF-150 · standards: ISO 20022 External Code Sets
 
-- [ ] Codes retained and used to pick the default matching strategy: `PMNT/ICDT/ESCT` outgoing credit transfers match against payment runs, `PMNT/RCDT` incoming against receivables, `PMNT/MDOP` fees against the rule engine
-- [ ] The code-to-strategy map is data, so a bank using an unusual code is configuration and not a code change
-- [ ] An unmapped code falls through to the generic passes rather than failing
+- [x] Codes retained and used to pick the default matching strategy: `PMNT/ICDT/ESCT` outgoing credit transfers against payment runs, `PMNT/RCDT` incoming against receivables, `PMNT/MDOP` fees against the rule engine. The bank's own code is the cheapest signal there is about what a line **is**, and reading it first removes a whole class of error - a bank charge run through the document passes occasionally produces a confident wrong match on amount alone, a 50 charge against a 50 invoice, which survives review because the figures agree
+- [x] **Most specific wins.** `PMNT/RCDT/ESCT` is tried, then `PMNT/RCDT`, then `PMNT` - which is the whole reason the sub-family is stored. `PMNT/RCDT/RRTN` is a *returned* incoming payment, not a new receipt, and routing it as one applies a bounced payment to a different invoice
+- [x] The code-to-strategy map is data, so a bank using `PMNT/MCOP` where its neighbour uses `PMNT/MDOP` is configuration rather than a release that arrives a month after the problem. The checks assert that every strategy a code names has a pass list, and that every pass named is one the engine declares - a typo in a pass name is a pass that never runs, and the only sign of it is a slightly worse match rate
+- [x] An unmapped code falls through to the generic passes rather than failing: an unfamiliar code is a transaction like any other, and refusing it would make a whole bank unusable because of a code set nobody here has seen. The routing also explains itself in a sentence naming the code, so a bank sending its charges with the wrong code is a configuration fix rather than a reported matching bug
 
 ### PF-156 · Matching passes 1 and 2
 `Banking` · **8 pts** · depends: PF-155, PF-174 · standards: — · `risk:high`

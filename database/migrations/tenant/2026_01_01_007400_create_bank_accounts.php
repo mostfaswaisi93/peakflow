@@ -420,12 +420,29 @@ return new class extends Migration
                 previous RECORD;
                 account  RECORD;
             BEGIN
+                /*
+                 | An interim report is not part of the booked chain.
+                 |
+                 | CAMT.052, CAMT.054 and MT942 are provisional: they carry the same
+                 | movements the booked statement will carry, and they are not in any
+                 | closing balance. So they neither establish a baseline nor have to
+                 | agree with one - a chain that included them would refuse the next
+                 | real statement, whose opening balance is the last BOOKED closing.
+                 |
+                 | Found while proving PF-151: a CAMT.052 imported between two CAMT.053s
+                 | made the second one impossible to import.
+                 */
+                IF NEW.source_format IN ('camt052', 'camt054', 'mt942') THEN
+                    RETURN NEW;
+                END IF;
+
                 SELECT closing_balance, sequence, period_to
                 INTO previous
                 FROM bank_statements
                 WHERE bank_account_id = NEW.bank_account_id
                   AND sequence < NEW.sequence
                   AND status <> 'superseded'
+                  AND source_format NOT IN ('camt052', 'camt054', 'mt942')
                   AND id <> NEW.id
                 ORDER BY sequence DESC
                 LIMIT 1;

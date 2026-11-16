@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<?OFX OFXHEADER="200" VERSION="220" SECURITY="NONE" OLDFILEUID="NONE" NEWFILEUID="NONE"?>
+<OFX>
+  <BANKMSGSRSV1>
+    <STMTTRNRS>
+      <TRNUID>2</TRNUID>
+      <STMTRS>
+        <CURDEF>USD</CURDEF>
+        <BANKACCTFROM>
+          <BANKID>021000021</BANKID>
+          <ACCTID>123456789</ACCTID>
+          <ACCTTYPE>CHECKING</ACCTTYPE>
+        </BANKACCTFROM>
+        <BANKTRANLIST>
+          <DTSTART>20260511</DTSTART>
+          <DTEND>20260520</DTEND>
+          <STMTTRN>
+            <TRNTYPE>XFER</TRNTYPE>
+            <DTPOSTED>20260512</DTPOSTED>
+            <TRNAMT>-2000.00</TRNAMT>
+            <FITID>FIT-0101</FITID>
+            <NAME>Transfer to savings</NAME>
+          </STMTTRN>
+          <STMTTRN>
+            <TRNTYPE>INT</TRNTYPE>
+            <DTPOSTED>20260520</DTPOSTED>
+            <TRNAMT>3.25</TRNAMT>
+            <FITID>FIT-0102</FITID>
+            <MEMO>Interest paid</MEMO>
+          </STMTTRN>
+        </BANKTRANLIST>
+        <LEDGERBAL>
+          <BALAMT>48490.75</BALAMT>
+          <DTASOF>20260520</DTASOF>
+        </LEDGERBAL>
+      </STMTRS>
+    </STMTTRNRS>
+  </BANKMSGSRSV1>
+</OFX>

@@ -326,11 +326,30 @@ final class BankBalances
      */
     public function unrecordedBankItems(BankAccount $account, ?Carbon $asOf = null): Money
     {
-        $day = ($asOf ?? Carbon::now())->copy()->endOfDay();
+        /*
+         | Bounded by the BASELINE statement, not by the date asked for.
+         |
+         | The statement balance is the closing balance of the last booked
+         | statement, at its period end. An item the bank booked after that
+         | period is in neither that balance nor our ledger, so it belongs
+         | on neither side of the identity - counting it makes the
+         | reconciliation disagree by exactly that item.
+         |
+         | It bites as soon as a second statement is imported whose period
+         | runs past the date being reported on, which is every month-end
+         | report run before the month is over. Found end to end: three
+         | statements imported, ledger 50,000, statement 51,500, and 11,200
+         | reported as unexplained when nothing was.
+         */
+        $baseline = $this->lastStatement($account, $asOf, bookedOnly: true);
+
+        $upTo = $baseline === null
+            ? Carbon::parse($account->opening_date->toDateString())
+            : Carbon::parse($baseline->period_to->toDateString());
 
         $sum = BankTransaction::query()
             ->where('bank_account_id', (string) $account->getKey())
-            ->where('booking_date', '<=', $day->toDateString())
+            ->where('booking_date', '<=', $upTo->toDateString())
             /*
              | Provisional lines are excluded.
              |

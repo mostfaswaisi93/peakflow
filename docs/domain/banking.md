@@ -92,6 +92,83 @@ An IBAN whose country disagrees with the institution's is **refused**, not warne
 | OFX / QFX | OFX 2.x | Medium | Both SGML-era and XML-era variants exist in the wild |
 | CSV | — | Variable | Per-bank mapping saved as a reusable template |
 
+A named format is **verified against the content** before anything is parsed. Somebody picks "CAMT.053" from a list and uploads an MT940 because the two live in the same folder and the names mean nothing to them. Reading an MT940 as CAMT produces no rows; reading a CAMT.052 as a CAMT.053 produces rows that look right and are provisional — and that second one is the dangerous case, so the refusal says what the file actually is.
+
+Sniffing is by shape, never by extension: a bank that serves CAMT.053 as `statement.txt` is ordinary, and an extension is whatever the browser put there. CSV is never sniffed, only chosen — anything is a CSV if you squint, and a sniffer that guessed CSV would swallow every file no other reader claimed and produce nonsense rows instead of a refusal.
+
+**And the file names its own account.** Importing one account's statement into another is a mistake somebody makes within a week of having two accounts, and it produces a reconciliation that can never be completed: the balances are a third party's, the lines are a third party's, and nothing about the result says so. The check costs a string comparison. Where a file identifies no account — a CSV never does — the report says the account *was not checked*, because "no mismatch" and "nothing was checked" are not the same assurance.
+
+### What varies between banks, and what it costs to ignore
+
+"ISO 20022" sounds like it settles the question. It does not, and the four shipped CAMT fixtures are four genuinely different banks.
+
+| Varies | What a reader that assumed one way does |
+|--------|------------------------------------------|
+| Namespace and version, `.02` to `.08`, any prefix | Refuses every bank whose prefix is not ours — every expression uses `local-name()` |
+| Opening balance as `OPBD`, `PRCD` or `ITBD` | Refuses two banks in four; they are the same figure under different names |
+| `FrToDt` absent | Refuses a file whose period is only in its entries — it is derived instead |
+| `BkTxCd/Prtry` with no ISO domain | Loses the only code most domestic banks send |
+| `Ntry` with no `NtryDtls` at all | Loses every fee line, which is how most banks send one |
+| `Acct/Ccy` absent | Refuses a file whose currency is on the balance amounts |
+| Several `Ustrd` elements | Keeps a third of the remittance, and the invoice numbers are usually in the part dropped |
+
+### The two sign rules, which are the whole correctness of this
+
+**`CdtDbtInd` gives the real direction of the booked amount, always.** `RvslInd` says only that this booking reverses an earlier one; it does **not** mean the sign should be flipped. Flipping it is the obvious reading, it is wrong, and it turns a reversed credit into a double debit — with every figure still plausible. The same applies to MT940's `RC`/`RD` marks.
+
+**A balance has a direction too.** `Bal/CdtDbtInd` of `DBIT` on a current account is an overdraft, and a reader that ignored it reports an overdrawn account as having money in it.
+
+A third, smaller one: **the counterparty depends on the direction.** On a credit it is the debtor; on a debit, the creditor. A reader that always takes `Cdtr` is right on half the lines and silently wrong on the rest, where the "counterparty" of every incoming payment comes out as us.
+
+### A batch entry is one movement and many things to match
+
+A payment run of fifty supplier payments arrives as **one** debit. The bank took one amount on one day, so the entry is the movement and the entry is what has to sum into the closing balance. But nothing in that entry matches a document: the fifty references, beneficiaries and amounts are inside `NtryDtls/TxDtls`.
+
+A reader that took only the entry would make a payment run permanently unmatchable. One that took only the transactions would import fifty movements the bank never made, and the statement would never tie.
+
+So the entry is the bank transaction, and its `TxDtls` become `bank_transaction_details` rows — which **nothing sums into any balance**. That is the point. A detail may also run against its entry: a refund inside an outgoing run is a credit among debits, and its own `CdtDbtInd` says so.
+
+### A pending entry is not in the closing balance
+
+`PDNG` on a CAMT.053 is ordinary — a card authorisation that has not settled. Importing it as a booked line makes the file disagree with its own stated movement by that amount, and the import is then refused for a reason that is not the file's fault, which reads as a parser bug. Pending lines are imported, marked provisional, and left out of the arithmetic.
+
+### An interim report states no balances, and that is not a defect
+
+MT942 carries no `:60F:`/`:62F:` at all, and a CAMT.052 need not either. The parser reports them absent rather than inventing a figure; the importer opens and closes the statement where the account's booked position already stands, so its booked movement is zero — which is exactly what an interim report moves.
+
+Interim reports are also **outside the continuity chain**. They carry the same movements the booked statement will carry and are in no closing balance, so a chain that included one would refuse the next real statement — whose opening balance is the last *booked* closing.
+
+### MT940 is a degraded path and says so
+
+No structured remittance, no end-to-end id, no ISO transaction code, no dependable counterparty account. Everything a matcher wants is in `:86:`, which is semi-structured free text whose layout is **bank-specific** — and the standard does not say what goes in it. Three layouts are common and none is universal: the German numbered `?20?` sub-fields, SWIFT's tagged `/EREF/` segments, and plain prose. The numbers mean different things at different banks, which is why the profiles are configuration.
+
+Where none of the three fits, the text is kept **exactly as it arrived**. Dropping it is the easy choice and the worst one: `:86:` is the only place a reference appears in this format, so a dropped one leaves the line unmatchable and unreadable at once.
+
+### A CSV is detected, previewed, then imported
+
+Nothing the detector decides is applied without somebody seeing the rows **as they will be interpreted**, beside the raw cells they came from. `1.234` is a thousand in Frankfurt and one in London, and a detector that guessed silently imports a year off by a factor of a thousand with every row looking plausible.
+
+- The **delimiter** is chosen by consistency, not frequency: a remittance full of commas makes the comma the most frequent character in a semicolon-delimited file.
+- The **separators** are decided across every amount in the file at once, because one value settles nothing. Where both readings survive, it is reported as ambiguous rather than guessed at.
+- Three **sign conventions** are all common: one signed column, separate debit and credit columns, an unsigned column with a direction beside it. The second quietly halves a statement when a reader expects one amount column, and a row with both filled is refused — the usual cause is a running-balance column mapped as one of them.
+- A row that will not read **stops the import**. Skipping it leaves the month short with nothing saying which rows, and the difference surfaces weeks later as a reconciliation that does not tie.
+
+The mapping and the dialect are saved together as a template, because a bank's export does not change month to month and re-mapping twelve columns every month guarantees that one month two go the wrong way round.
+
+### The code picks the strategy
+
+The bank's own transaction code is the cheapest signal there is about what a line **is**, and the map from code to matching strategy is data rather than code — a bank using `PMNT/MCOP` where its neighbour uses `PMNT/MDOP` is configuration, not a release.
+
+| Code | Strategy | Why |
+|------|----------|-----|
+| `PMNT/ICDT/*` | payment run | Ours going out, so it matches a released batch |
+| `PMNT/RCDT/*` | receivables | A customer paying us |
+| `PMNT/RCDT/RRTN` | reversal | A *returned* payment, not a new receipt — matching it against open invoices applies a bounced payment to a different invoice |
+| `PMNT/MDOP/*`, `ACMT` | rule engine | Fees and interest have no document and never will |
+| anything unmapped | generic | Every document pass in order: slower, no less correct |
+
+Most specific wins, which is the whole reason the sub-family is stored.
+
 ### Rules that each exist because of a failure mode
 
 **Continuity.** Every import asserts its opening balance equals the previous statement's closing balance for that account. A mismatch **stops the import and reports the gap** rather than importing a hole — the alternative is a reconciliation that can never be completed and nobody knows why.

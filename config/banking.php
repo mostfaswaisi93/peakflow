@@ -37,6 +37,41 @@ return [
 
     /*
     |---------------------------------------------------------------------------
+    | MT940 `:86:` layouts
+    |---------------------------------------------------------------------------
+    |
+    | `:86:` is semi-structured free text and the standard does not say what
+    | goes in it, so its layout is BANK-SPECIFIC. The numbered sub-fields
+    | mean different things at different banks: 20-29 for remittance and
+    | 32-33 for the name is the common case and not the only one.
+    |
+    | A profile that does not fit falls back to keeping the text verbatim,
+    | which is always better than dropping it: `:86:` is the only place a
+    | reference appears in this format.
+    |
+    */
+
+    'mt940' => [
+        'profiles' => [
+            'generic' => [
+                'remittance' => ['20', '21', '22', '23', '24', '25', '26', '27', '28', '29'],
+                'name' => ['32', '33'],
+                'account' => ['31'],
+            ],
+
+            // Several German banks put the counterparty's sort code in 30
+            // and its account in 31, and start remittance at 21 because 20
+            // carries a posting text.
+            'de_numbered' => [
+                'remittance' => ['21', '22', '23', '24', '25', '26', '27', '28', '29'],
+                'name' => ['32', '33'],
+                'account' => ['31'],
+            ],
+        ],
+    ],
+
+    /*
+    |---------------------------------------------------------------------------
     | Statement continuity
     |---------------------------------------------------------------------------
     |
@@ -53,6 +88,90 @@ return [
     'continuity' => [
         'enforce' => true,
         'allow_first_statement' => true,
+    ],
+
+    /*
+    |---------------------------------------------------------------------------
+    | Transaction codes, and the strategy each one picks
+    |---------------------------------------------------------------------------
+    |
+    | ISO 20022 External Code Sets, as `domain/family/sub-family`. The code
+    | the bank sent is the cheapest signal there is about what a line IS, and
+    | using it means the engine does not try to match a bank charge against
+    | open invoices.
+    |
+    | This is DATA, not code, for one reason: a bank using an unusual code is
+    | configuration. The alternative is a release every time somebody's bank
+    | sends `PMNT/MCOP` where its neighbour sends `PMNT/MDOP`.
+    |
+    | Most specific wins: `PMNT/RCDT/ESCT` beats `PMNT/RCDT`, which beats
+    | `PMNT`. An unmapped code falls through to the generic passes rather
+    | than failing - a code nobody has seen is a transaction like any other,
+    | and refusing it would make an unfamiliar bank unusable.
+    |
+    */
+
+    'routing' => [
+        'strategies' => [
+            // Outgoing credit transfers: ours, so they match a payment run.
+            'PMNT/ICDT' => 'payment_run',
+            'PMNT/ICDT/ESCT' => 'payment_run',
+            'PMNT/ICDT/XBCT' => 'payment_run',
+            'PMNT/ICDT/DMCT' => 'payment_run',
+
+            // Incoming: a customer paying us, so receivables.
+            'PMNT/RCDT' => 'receivables',
+            'PMNT/RCDT/ESCT' => 'receivables',
+            'PMNT/RCDT/XBCT' => 'receivables',
+
+            // A returned incoming payment is not a new receipt; it reverses
+            // one, and matching it against open invoices would apply a
+            // bounced payment to a different invoice.
+            'PMNT/RCDT/RRTN' => 'reversal',
+            'PMNT/ICDT/RRTN' => 'reversal',
+
+            // Direct debits: ours collecting, so receivables; theirs
+            // collecting from us, so payables.
+            'PMNT/RDDT' => 'receivables',
+            'PMNT/IDDT' => 'payables',
+
+            // Fees, charges and interest have no document and never will.
+            // Sending them to the document passes wastes the passes and
+            // produces the occasional confident wrong match on amount.
+            'PMNT/MDOP' => 'rule_engine',
+            'PMNT/MDOP/CHRG' => 'rule_engine',
+            'PMNT/MDOP/INTR' => 'rule_engine',
+            'PMNT/MCOP' => 'rule_engine',
+            'ACMT' => 'rule_engine',
+
+            // Cheques and cards.
+            'PMNT/ICHQ' => 'payables',
+            'PMNT/RCHQ' => 'receivables',
+            'PMNT/CCRD' => 'rule_engine',
+            'PMNT/DCRD' => 'rule_engine',
+
+            // Securities and FX are not document traffic.
+            'SECU' => 'rule_engine',
+            'FORX' => 'rule_engine',
+        ],
+
+        // What a line with no code, or a code nobody has mapped, gets.
+        'fallback' => 'generic',
+
+        /*
+         | Which passes each strategy runs, in order.
+         |
+         | `generic` is every document pass, which is what an unmapped code
+         | falls through to: slower and no less correct.
+         */
+        'passes' => [
+            'payment_run' => ['exact_reference', 'payment_run', 'rule_engine'],
+            'receivables' => ['exact_reference', 'structured_remittance', 'amount_party_window', 'subset_sum', 'rule_engine', 'fuzzy_party'],
+            'payables' => ['exact_reference', 'structured_remittance', 'amount_party_window', 'rule_engine'],
+            'reversal' => ['exact_reference', 'reversal', 'rule_engine'],
+            'rule_engine' => ['rule_engine'],
+            'generic' => ['exact_reference', 'payment_run', 'structured_remittance', 'amount_party_window', 'subset_sum', 'rule_engine', 'fuzzy_party'],
+        ],
     ],
 
     /*

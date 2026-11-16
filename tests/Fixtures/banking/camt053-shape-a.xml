@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Shape A: the textbook CAMT.053.001.08.
+
+  OPBD/CLBD balances, FrToDt present, one TxDtls per entry, ISO transaction
+  codes with domain, family and sub-family, structured remittance with a
+  referenced document. The shape every implementation is tested against and
+  the one roughly one bank in four actually sends.
+-->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08">
+  <BkToCstmrStmt>
+    <GrpHdr>
+      <MsgId>RJHI-20260501-0001</MsgId>
+      <CreDtTm>2026-05-11T02:15:00+03:00</CreDtTm>
+    </GrpHdr>
+    <Stmt>
+      <Id>2026-05-A</Id>
+      <LglSeqNb>41</LglSeqNb>
+      <CreDtTm>2026-05-11T02:15:00+03:00</CreDtTm>
+      <Acct>
+        <Id>
+          <IBAN>SA0380000000608010167519</IBAN>
+        </Id>
+        <Ccy>SAR</Ccy>
+        <Svcr>
+          <FinInstnId>
+            <BICFI>RJHISARI</BICFI>
+          </FinInstnId>
+        </Svcr>
+      </Acct>
+      <FrToDt>
+        <FrDtTm>2026-05-01T00:00:00+03:00</FrDtTm>
+        <ToDtTm>2026-05-10T23:59:59+03:00</ToDtTm>
+      </FrToDt>
+
+      <Bal>
+        <Tp><CdOrPrtry><Cd>OPBD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="SAR">50000.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-05-01</Dt></Dt>
+      </Bal>
+      <Bal>
+        <Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="SAR">51500.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-05-10</Dt></Dt>
+      </Bal>
+
+      <!-- An incoming payment with a structured remittance. -->
+      <Ntry>
+        <NtryRef>E-0001</NtryRef>
+        <Amt Ccy="SAR">1000.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-05-03</Dt></BookgDt>
+        <ValDt><Dt>2026-05-03</Dt></ValDt>
+        <AcctSvcrRef>BR-ALPHA-001</AcctSvcrRef>
+        <BkTxCd>
+          <Domn>
+            <Cd>PMNT</Cd>
+            <Fmly>
+              <Cd>RCDT</Cd>
+              <SubFmlyCd>ESCT</SubFmlyCd>
+            </Fmly>
+          </Domn>
+          <Prtry><Cd>RJ-INC-01</Cd></Prtry>
+        </BkTxCd>
+        <NtryDtls>
+          <TxDtls>
+            <Refs>
+              <EndToEndId>E2E-INV-1001</EndToEndId>
+            </Refs>
+            <Amt Ccy="SAR">1000.00</Amt>
+            <CdtDbtInd>CRDT</CdtDbtInd>
+            <RltdPties>
+              <Dbtr><Nm>Gulf Retail LLC</Nm></Dbtr>
+              <DbtrAcct><Id><IBAN>SA4420000001234567891234</IBAN></Id></DbtrAcct>
+            </RltdPties>
+            <RltdAgts>
+              <DbtrAgt><FinInstnId><BICFI>NCBKSAJE</BICFI></FinInstnId></DbtrAgt>
+            </RltdAgts>
+            <RmtInf>
+              <Ustrd>Payment for INV-1001</Ustrd>
+              <Strd>
+                <RfrdDocInf>
+                  <Tp><CdOrPrtry><Cd>CINV</Cd></CdOrPrtry></Tp>
+                  <Nb>INV-1001</Nb>
+                </RfrdDocInf>
+                <RfrdDocAmt>
+                  <DuePyblAmt Ccy="SAR">1000.00</DuePyblAmt>
+                </RfrdDocAmt>
+                <CdtrRefInf>
+                  <Tp><CdOrPrtry><Cd>SCOR</Cd></CdOrPrtry></Tp>
+                  <Ref>RF18INV1001</Ref>
+                </CdtrRefInf>
+              </Strd>
+            </RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+
+      <!-- Two identical credits on one day: a customer paying twice. -->
+      <Ntry>
+        <Amt Ccy="SAR">500.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-05-04</Dt></BookgDt>
+        <ValDt><Dt>2026-05-04</Dt></ValDt>
+        <NtryDtls>
+          <TxDtls>
+            <Amt Ccy="SAR">500.00</Amt>
+            <RltdPties><Dbtr><Nm>Gulf Retail LLC</Nm></Dbtr></RltdPties>
+            <RmtInf><Ustrd>INV-1002</Ustrd></RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+      <Ntry>
+        <Amt Ccy="SAR">500.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-05-04</Dt></BookgDt>
+        <ValDt><Dt>2026-05-04</Dt></ValDt>
+        <NtryDtls>
+          <TxDtls>
+            <Amt Ccy="SAR">500.00</Amt>
+            <RltdPties><Dbtr><Nm>Gulf Retail LLC</Nm></Dbtr></RltdPties>
+            <RmtInf><Ustrd>INV-1002</Ustrd></RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+
+      <!-- An outgoing utility payment, with a charge. -->
+      <Ntry>
+        <Amt Ccy="SAR">500.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-05-05</Dt></BookgDt>
+        <ValDt><Dt>2026-05-05</Dt></ValDt>
+        <AcctSvcrRef>BR-ALPHA-002</AcctSvcrRef>
+        <BkTxCd>
+          <Domn>
+            <Cd>PMNT</Cd>
+            <Fmly>
+              <Cd>ICDT</Cd>
+              <SubFmlyCd>ESCT</SubFmlyCd>
+            </Fmly>
+          </Domn>
+        </BkTxCd>
+        <Chrgs>
+          <TtlChrgsAndTaxAmt Ccy="SAR">2.50</TtlChrgsAndTaxAmt>
+        </Chrgs>
+        <NtryDtls>
+          <TxDtls>
+            <Amt Ccy="SAR">500.00</Amt>
+            <CdtDbtInd>DBIT</CdtDbtInd>
+            <RltdPties>
+              <Cdtr><Nm>Riyadh Utilities</Nm></Cdtr>
+              <CdtrAcct><Id><Othr><Id>UTIL-99001</Id></Othr></Id></CdtrAcct>
+            </RltdPties>
+            <RmtInf><Ustrd>Electricity, April</Ustrd></RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+
+      <!-- Pending: real, and not in the closing balance. -->
+      <Ntry>
+        <Amt Ccy="SAR">9999.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts><Cd>PDNG</Cd></Sts>
+        <BookgDt><Dt>2026-05-10</Dt></BookgDt>
+        <ValDt><Dt>2026-05-11</Dt></ValDt>
+        <AddtlNtryInf>Card authorisation, not yet settled</AddtlNtryInf>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>

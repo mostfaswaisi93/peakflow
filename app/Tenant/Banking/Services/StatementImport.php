@@ -8,8 +8,12 @@ use App\Support\Audit\AuditTrail;
 use App\Support\Database\DatabaseRefusal;
 use App\Support\Money\Money;
 use App\Tenant\Banking\Exceptions\ImportRefused;
+use App\Tenant\Banking\Exceptions\StatementUnreadable;
 use App\Tenant\Banking\Models\BankAccount;
 use App\Tenant\Banking\Models\BankStatement;
+use App\Tenant\Banking\Parsers\ParsedStatement;
+use App\Tenant\Banking\Parsers\StatementParsers;
+use Brick\Math\BigDecimal;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -68,7 +72,10 @@ use Illuminate\Support\Str;
  */
 final class StatementImport
 {
-    public function __construct(private readonly AuditTrail $audit) {}
+    public function __construct(
+        private readonly AuditTrail $audit,
+        private readonly StatementParsers $parsers = new StatementParsers(),
+    ) {}
 
     /**
      * Import a statement and its lines.
@@ -93,6 +100,7 @@ final class StatementImport
         ?string $userId = null,
         ?BankStatement $replaces = null,
         ?string $supersessionReason = null,
+        bool $provisionalLinesMove = false,
     ): array {
         $format = $this->assertTheFormatIsKnown($sourceFormat);
         $currency = (string) $account->currency;
@@ -138,7 +146,7 @@ final class StatementImport
             }
         }
 
-        $this->assertTheLinesAddUp($lines, $openingBalance, $closingBalance, $currency);
+        $this->assertTheLinesAddUp($lines, $openingBalance, $closingBalance, $currency, $provisionalLinesMove);
 
         return DB::connection('tenant')->transaction(function () use (
             $account, $format, $periodFrom, $periodTo, $openingBalance, $closingBalance,
@@ -262,6 +270,314 @@ final class StatementImport
                 'skipped_detail' => $skipped,
             ];
         });
+    }
+
+    /**
+     * Import a statement file, in whatever format it is in - PF-150 to PF-154.
+     *
+     * ## The file names its own account, and that is checked
+     *
+     * Importing Al Rajhi's file into the SAB account is a mistake somebody
+     * makes within a week of having two accounts, and it produces a
+     * reconciliation that can never be completed: the balances are a third
+     * party's, the lines are a third party's, and nothing about the result
+     * says so. The check costs a string comparison.
+     *
+     * Where the file identifies no account - a CSV never does - there is
+     * nothing to compare and the import proceeds. That is stated in the
+     * report rather than left silent, because "no mismatch" and "nothing was
+     * checked" are not the same assurance.
+     *
+     * @param  array<string, mixed>  $options
+     * @return array<string, mixed>
+     *
+     * @throws ImportRefused|StatementUnreadable
+     */
+    public function importFile(
+        BankAccount $account,
+        string $content,
+        ?string $format = null,
+        ?string $fileName = null,
+        ?string $userId = null,
+        ?BankStatement $replaces = null,
+        ?string $supersessionReason = null,
+    ): array {
+        $statements = $this->parsers->parse($content, $format);
+        $parsed = $this->theOneFor($account, $statements);
+
+        return $this->importParsed(
+            account: $account,
+            parsed: $parsed,
+            content: $content,
+            fileName: $fileName,
+            userId: $userId,
+            replaces: $replaces,
+            supersessionReason: $supersessionReason,
+            checked: $parsed->identification() !== null,
+        );
+    }
+
+    /**
+     * Import an already-parsed statement.
+     *
+     * Separate from {@see importFile()} because a CSV is read through a
+     * column mapping rather than by a reader that recognises it, and both
+     * paths end here.
+     *
+     * @return array<string, mixed>
+     *
+     * @throws ImportRefused
+     */
+    public function importParsed(
+        BankAccount $account,
+        ParsedStatement $parsed,
+        ?string $content = null,
+        ?string $fileName = null,
+        ?string $userId = null,
+        ?BankStatement $replaces = null,
+        ?string $supersessionReason = null,
+        bool $checked = true,
+    ): array {
+        $currency = (string) $account->currency;
+
+        if ($parsed->statesItsCurrency() && strtoupper($parsed->currency) !== strtoupper($currency)) {
+            throw ImportRefused::because(sprintf(
+                'This statement is in %s and the account is in %s. A statement in another currency '.
+                'is either the wrong file or the wrong account, and importing it would put every '.
+                'line into the account at face value - which is not a conversion, it is the same '.
+                'number with a different meaning.',
+                strtoupper($parsed->currency),
+                strtoupper($currency),
+            ));
+        }
+
+        [$opening, $closing] = $this->balancesFor($account, $parsed);
+
+        /*
+         | A zero line moves nothing, so it is not a transaction.
+         |
+         | Banks book these as advice. Refusing the whole file over one
+         | would be absurd and dropping it silently would be the kind of
+         | quiet loss this module exists to avoid, so it is skipped and
+         | reported exactly like a duplicate.
+         */
+        $lines = [];
+        $skippedZero = [];
+
+        foreach ($parsed->lines as $index => $line) {
+            $array = $line->toArray();
+
+            if (BigDecimal::of((string) $array['amount'])->isZero()) {
+                $skippedZero[] = [
+                    'sequence' => $index + 1,
+                    'booking_date' => $line->bookingDate->toDateString(),
+                    'amount' => (string) $array['amount'],
+                    'bank_reference' => $line->bankReference,
+                    'why' => 'The bank booked this as an advice line of zero. It moves no money, so '
+                        .'it is not stored as a transaction.',
+                ];
+
+                continue;
+            }
+
+            $lines[] = $array;
+        }
+
+        $report = $this->import(
+            account: $account,
+            sourceFormat: $parsed->sourceFormat,
+            periodFrom: $parsed->periodFrom->copy(),
+            periodTo: $parsed->periodTo->copy(),
+            openingBalance: $opening,
+            closingBalance: $closing,
+            lines: $lines,
+            statementNumber: $parsed->statementNumber,
+            fileName: $fileName,
+            contentHash: $content === null ? null : hash('sha256', $content),
+            userId: $userId,
+            replaces: $replaces,
+            supersessionReason: $supersessionReason,
+            provisionalLinesMove: ! $this->reconciles($parsed->sourceFormat),
+        );
+
+        $report['skipped'] = (int) $report['skipped'] + \count($skippedZero);
+        $report['skipped_detail'] = [...(array) $report['skipped_detail'], ...$skippedZero];
+        $report['account_identification'] = $parsed->identification();
+        $report['account_was_checked'] = $checked;
+        $report['pending'] = \count($parsed->pendingLines());
+        $report['balances_were_stated'] = $parsed->statesItsBalances();
+
+        return $report;
+    }
+
+    /**
+     * The statement in this file that is for this account.
+     *
+     * @param  list<ParsedStatement>  $statements
+     *
+     * @throws ImportRefused
+     */
+    private function theOneFor(BankAccount $account, array $statements): ParsedStatement
+    {
+        $iban = (string) ($account->iban() ?? '') ?: null;
+        $other = $account->domesticIdentifier() ?? $account->accountNumber();
+
+        foreach ($statements as $statement) {
+            if ($statement->identifies($iban, $other)) {
+                return $statement;
+            }
+        }
+
+        $found = array_filter(array_map(
+            static fn (ParsedStatement $statement): ?string => $statement->identification(),
+            $statements,
+        ));
+
+        throw ImportRefused::because(sprintf(
+            'This file is for %s and you are importing it into %s. Importing a statement into the '.
+            'wrong account produces a reconciliation that can never be completed: the balances are '.
+            'another account\'s, the lines are another account\'s, and nothing about the result '.
+            'says so.',
+            $found === []
+                ? 'an account it does not name'
+                : implode(' and ', array_unique($found)),
+            $account->shortIdentifier(),
+        ));
+    }
+
+    /**
+     * The balances to record, filling in what an interim file does not state.
+     *
+     * An MT942 carries no balance tags at all and a CSV has none by nature.
+     * Rather than invent a figure, the statement opens and closes where the
+     * account's booked position already stands: its booked movement is zero,
+     * which is exactly what an interim report moves.
+     *
+     * For a CSV - which is booked - the opening is the account's position
+     * and the closing is that plus the file's own lines. Not stated by the
+     * file and not pretended to be: `balances_were_stated` says so in the
+     * report, and what still has to hold is continuity against the previous
+     * statement, which is what catches a CSV missing its last page.
+     *
+     * @return array{0: string, 1: string}
+     */
+    private function balancesFor(BankAccount $account, ParsedStatement $parsed): array
+    {
+        if ($parsed->statesItsBalances()) {
+            return [(string) $parsed->openingBalance, (string) $parsed->closingBalance];
+        }
+
+        $currency = (string) $account->currency;
+        $previous = $account->lastStatement();
+        $opening = $previous === null
+            ? Money::of((string) $account->opening_balance, $currency)
+            : Money::of((string) $previous->closing_balance, $currency);
+
+        /*
+         | An interim report's position includes its provisional lines.
+         |
+         | An MT942 says "since the last statement, these movements
+         | happened", so the position it implies is the last booked closing
+         | plus all of them. Summing only its booked lines - of which it has
+         | none - would make every interim report balance-neutral, and the
+         | cash position it exists to feed would just be the booked balance.
+         */
+        $counted = $this->reconciles($parsed->sourceFormat)
+            ? $parsed->bookedLines()
+            : $parsed->lines;
+
+        $moved = Money::zero($currency);
+
+        foreach ($counted as $line) {
+            $moved = $moved->plus(Money::of($line->amount, $currency));
+        }
+
+        return [(string) $opening->amount, (string) $opening->plus($moved)->amount];
+    }
+
+    /**
+     * Whether a format's statements are final.
+     *
+     * Read from `banking.formats` rather than listed here, because a second
+     * list is the one that stops matching the first - at which point an
+     * interim format quietly becomes a booked one.
+     */
+    private function reconciles(string $format): bool
+    {
+        return (bool) (config('banking.formats.'.$format.'.reconciles') ?? true);
+    }
+
+    /**
+     * What the bank said was inside a batch entry.
+     *
+     * @param  array<string, mixed>  $line
+     */
+    private function writeDetails(
+        BankAccount $account,
+        string $transactionId,
+        Carbon $bookingDate,
+        array $line,
+        string $currency,
+    ): void {
+        $details = (array) ($line['details'] ?? []);
+
+        if ($details === []) {
+            return;
+        }
+
+        $stamp = now()->toDateTimeString();
+        $rows = [];
+        $sequence = 0;
+
+        foreach ($details as $detail) {
+            $detail = (array) $detail;
+            $amount = (string) ($detail['amount'] ?? '0');
+
+            /*
+             | A zero detail is kept out, for the same reason as a zero line.
+             |
+             | The parser records it because the bank sent it; the table
+             | holds movements, and nothing sums these into a balance - so a
+             | zero row would be a row that means nothing and reads as one
+             | that does.
+             */
+            if (BigDecimal::of($amount)->isZero()) {
+                continue;
+            }
+
+            $sequence++;
+
+            $rows[] = [
+                'id' => (string) Str::ulid(),
+                'entity_id' => (string) $account->entity_id,
+                'bank_transaction_id' => $transactionId,
+                'booking_date' => $bookingDate->toDateString(),
+                'sequence' => $sequence,
+                'is_batch' => (bool) ($line['is_batch'] ?? false),
+                'amount' => $amount,
+                'currency' => strtoupper((string) ($detail['currency'] ?? $currency)),
+                'counterparty_name' => $detail['counterparty_name'] ?? null,
+                'counterparty_account' => $detail['counterparty_account'] ?? null,
+                'counterparty_bic' => $detail['counterparty_bic'] ?? null,
+                'remittance_unstructured' => $detail['remittance_unstructured'] ?? null,
+                'remittance_structured' => isset($detail['remittance_structured'])
+                    ? json_encode($detail['remittance_structured'], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)
+                    : null,
+                'end_to_end_id' => $detail['end_to_end_id'] ?? null,
+                'mandate_id' => $detail['mandate_id'] ?? null,
+                'instruction_id' => $detail['instruction_id'] ?? null,
+                'instructed_amount' => $detail['instructed_amount'] ?? null,
+                'instructed_currency' => $detail['instructed_currency'] ?? null,
+                'exchange_rate' => $detail['exchange_rate'] ?? null,
+                'charges_amount' => $detail['charges_amount'] ?? null,
+                'created_at' => $stamp,
+                'updated_at' => $stamp,
+            ];
+        }
+
+        if ($rows !== []) {
+            DB::connection('tenant')->table('bank_transaction_details')->insert($rows);
+        }
     }
 
     /**
@@ -433,8 +749,21 @@ final class StatementImport
     ): ?array {
         $bookingDate = Carbon::parse((string) ($line['booking_date'] ?? $line['value_date']));
         $valueDate = Carbon::parse((string) ($line['value_date'] ?? $line['booking_date']));
-        $provisional = (config('banking.formats.'.$statement->source_format.'.posts') ?? true) === false;
+
+        /*
+         | Provisional by the line OR by the format.
+         |
+         | A CAMT.053 is booked and may still carry a `PDNG` entry, which is
+         | not in its closing balance. Taking only the format's answer would
+         | import that entry as booked and the file would then disagree with
+         | its own stated movement - at which point the import is refused for
+         | a reason that is not the file's fault.
+         */
+        $provisional = ((config('banking.formats.'.$statement->source_format.'.posts') ?? true) === false)
+            || (bool) ($line['is_pending'] ?? false);
+
         $stamp = now()->toDateTimeString();
+        $id = (string) Str::ulid();
 
         /*
          | `on conflict do nothing`, not a caught exception.
@@ -447,7 +776,7 @@ final class StatementImport
          | which is 1 or 0 and is the whole answer.
          */
         $inserted = DB::connection('tenant')->table('bank_transactions')->insertOrIgnore([[
-            'id' => (string) Str::ulid(),
+            'id' => $id,
             'entity_id' => (string) $account->entity_id,
             'bank_account_id' => (string) $account->getKey(),
             'bank_statement_id' => (string) $statement->getKey(),
@@ -487,6 +816,8 @@ final class StatementImport
         ]]);
 
         if ($inserted === 1) {
+            $this->writeDetails($account, $id, $bookingDate, $line, $currency);
+
             return null;
         }
 
@@ -537,11 +868,33 @@ final class StatementImport
         string $opening,
         string $closing,
         string $currency,
+        bool $provisionalLinesMove = false,
     ): void {
         $movement = Money::of($closing, $currency)->minus(Money::of($opening, $currency));
         $sum = Money::zero($currency);
+        $booked = 0;
+        $pending = 0;
 
         foreach ($lines as $line) {
+            /*
+             | Pending lines are not in the closing balance.
+             |
+             | A CAMT.053 carrying a card authorisation that has not settled
+             | is ordinary, and counting it here would refuse a file that is
+             | perfectly correct - which reads as a parser bug and is not.
+             |
+             | An INTERIM report is the other way round: every one of its
+             | lines is provisional, and the intraday balance it states
+             | includes them. Leaving them out there would refuse a CAMT.052
+             | that is perfectly correct, for the mirror-image reason.
+             */
+            if (! $provisionalLinesMove && (bool) ($line['is_pending'] ?? false)) {
+                $pending++;
+
+                continue;
+            }
+
+            $booked++;
             $sum = $sum->plus(Money::of((string) $line['amount'], $currency));
         }
 
@@ -550,17 +903,25 @@ final class StatementImport
         }
 
         throw ImportRefused::because(sprintf(
-            'The statement moves from %s to %s - a movement of %s - and its %d lines add up to %s. '.
-            'The difference is %s. A file whose lines do not account for its own movement is a '.
-            'parse that lost something: a batch entry read as one line, a page the parser stopped '.
-            'at, or a reversal dropped. Importing it anyway produces an account that can never be '.
-            'reconciled, and the missing line is far harder to find a month from now.',
+            'The statement moves from %s to %s - a movement of %s - and its %d booked lines add up '.
+            'to %s. The difference is %s.%s A file whose lines do not account for its own movement '.
+            'is a parse that lost something: a batch entry read as one line, a page the parser '.
+            'stopped at, or a reversal dropped. Importing it anyway produces an account that can '.
+            'never be reconciled, and the missing line is far harder to find a month from now.',
             $opening,
             $closing,
             (string) $movement->amount,
-            \count($lines),
+            $booked,
             (string) $sum->amount,
             (string) $movement->minus($sum)->amount,
+            $pending === 0
+                ? ''
+                : sprintf(
+                    ' %d pending line%s were left out of the sum, which is correct: a pending entry '.
+                    'is not in the closing balance.',
+                    $pending,
+                    $pending === 1 ? '' : 's',
+                ),
         ));
     }
 

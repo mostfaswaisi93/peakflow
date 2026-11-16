@@ -1,0 +1,4 @@
+Date,Description,Amount,Balance
+2026-05-01,"Payment for INV-1001, thanks",1000.00,51000.00
+2026-05-04,INV-1002,500.00,51500.00
+2026-05-05,"Electricity, April",-500.00,51000.00

@@ -296,7 +296,7 @@ final class StatementRules
             }
         }
 
-        if (! str_contains($refusal, '3 lines')) {
+        if (! str_contains($refusal, '3 booked lines')) {
             $failures[] = 'the refusal does not say how many lines it counted';
         }
 

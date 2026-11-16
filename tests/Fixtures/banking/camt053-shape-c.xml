@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Shape C: a payment run, a reversal and an FX payment.
+
+  The batch entry is the one that breaks naive readers. Fifty supplier
+  payments arrive as ONE debit: the bank took one amount, so the entry is the
+  movement and the entry is what must sum into the closing balance. The four
+  TxDtls under Btch carry the references and beneficiaries that make matching
+  possible, and one of them is a refund running the other way.
+
+  The reversal is the second trap. RvslInd says this booking reverses an
+  earlier one; CdtDbtInd still gives the direction that actually happened.
+  Flipping the sign on a reversal turns a reversed credit into a double debit.
+-->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08">
+  <BkToCstmrStmt>
+    <GrpHdr>
+      <MsgId>ANB-20260520</MsgId>
+      <CreDtTm>2026-05-21T01:00:00+03:00</CreDtTm>
+    </GrpHdr>
+    <Stmt>
+      <Id>2026-05-C</Id>
+      <LglSeqNb>12</LglSeqNb>
+      <Acct>
+        <Id><IBAN>SA0380000000608010167519</IBAN></Id>
+        <Ccy>SAR</Ccy>
+      </Acct>
+      <FrToDt>
+        <FrDtTm>2026-05-11T00:00:00+03:00</FrDtTm>
+        <ToDtTm>2026-05-20T23:59:59+03:00</ToDtTm>
+      </FrToDt>
+
+      <Bal>
+        <Tp><CdOrPrtry><Cd>OPBD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="SAR">51500.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+      </Bal>
+      <Bal>
+        <Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="SAR">40300.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+      </Bal>
+
+      <!--
+        A payment run: one debit of 8,000 made of four underlying
+        transactions, one of which is a refund coming back the other way.
+        3000 + 2500 + 3000 - 500 = 8000.
+      -->
+      <Ntry>
+        <Amt Ccy="SAR">8000.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-05-12</Dt></BookgDt>
+        <ValDt><Dt>2026-05-12</Dt></ValDt>
+        <AcctSvcrRef>ANB-BATCH-5512</AcctSvcrRef>
+        <BkTxCd>
+          <Domn>
+            <Cd>PMNT</Cd>
+            <Fmly><Cd>ICDT</Cd><SubFmlyCd>ESCT</SubFmlyCd></Fmly>
+          </Domn>
+        </BkTxCd>
+        <AddtlNtryInf>Supplier payment run 2026-05-12</AddtlNtryInf>
+        <NtryDtls>
+          <Btch>
+            <NbOfTxs>4</NbOfTxs>
+            <TtlAmt Ccy="SAR">8000.00</TtlAmt>
+            <CdtDbtInd>DBIT</CdtDbtInd>
+          </Btch>
+          <TxDtls>
+            <Refs><EndToEndId>RUN-5512-01</EndToEndId></Refs>
+            <Amt Ccy="SAR">3000.00</Amt>
+            <RltdPties><Cdtr><Nm>Gulf Components Trading Co.</Nm></Cdtr>
+              <CdtrAcct><Id><IBAN>SA4420000001234567891234</IBAN></Id></CdtrAcct>
+            </RltdPties>
+            <RmtInf><Ustrd>GC-4471</Ustrd></RmtInf>
+          </TxDtls>
+          <TxDtls>
+            <Refs><EndToEndId>RUN-5512-02</EndToEndId></Refs>
+            <Amt Ccy="SAR">2500.00</Amt>
+            <RltdPties><Cdtr><Nm>Najd Logistics</Nm></Cdtr></RltdPties>
+            <RmtInf><Ustrd>NL-8890</Ustrd></RmtInf>
+          </TxDtls>
+          <TxDtls>
+            <Refs><EndToEndId>RUN-5512-03</EndToEndId></Refs>
+            <Amt Ccy="SAR">3000.00</Amt>
+            <RltdPties><Cdtr><Nm>Al Faisal Steel</Nm></Cdtr></RltdPties>
+            <RmtInf><Ustrd>AF-1203</Ustrd></RmtInf>
+          </TxDtls>
+          <!-- A refund inside an outgoing run: a credit among debits. -->
+          <TxDtls>
+            <Refs><EndToEndId>RUN-5512-04R</EndToEndId></Refs>
+            <Amt Ccy="SAR">500.00</Amt>
+            <CdtDbtInd>CRDT</CdtDbtInd>
+            <RltdPties><Dbtr><Nm>Najd Logistics</Nm></Dbtr></RltdPties>
+            <RmtInf><Ustrd>Overpayment returned, NL-8890</Ustrd></RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+
+      <!--
+        A reversal. The original was a 1,200 credit that bounced, so the
+        booking that actually happened is a 1,200 DEBIT and the indicator
+        says so. The sign must NOT be flipped again.
+      -->
+      <Ntry>
+        <Amt Ccy="SAR">1200.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <RvslInd>true</RvslInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-05-14</Dt></BookgDt>
+        <ValDt><Dt>2026-05-14</Dt></ValDt>
+        <AcctSvcrRef>ANB-RVSL-9001</AcctSvcrRef>
+        <BkTxCd>
+          <Domn><Cd>PMNT</Cd><Fmly><Cd>RCDT</Cd><SubFmlyCd>RRTN</SubFmlyCd></Fmly></Domn>
+        </BkTxCd>
+        <NtryDtls>
+          <TxDtls>
+            <Amt Ccy="SAR">1200.00</Amt>
+            <CdtDbtInd>DBIT</CdtDbtInd>
+            <RltdPties><Cdtr><Nm>Coastal Trading</Nm></Cdtr></RltdPties>
+            <RmtInf><Ustrd>Returned: insufficient funds, INV-1010</Ustrd></RmtInf>
+            <RtrInf>
+              <OrgnlBkTxCd><Prtry><Cd>ANB-TX-8844</Cd></Prtry></OrgnlBkTxCd>
+            </RtrInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+
+      <!-- An FX payment: booked in SAR, instructed in EUR. -->
+      <Ntry>
+        <Amt Ccy="SAR">2000.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-05-18</Dt></BookgDt>
+        <ValDt><Dt>2026-05-19</Dt></ValDt>
+        <AcctSvcrRef>ANB-FX-3310</AcctSvcrRef>
+        <BkTxCd>
+          <Domn><Cd>PMNT</Cd><Fmly><Cd>ICDT</Cd><SubFmlyCd>XBCT</SubFmlyCd></Fmly></Domn>
+        </BkTxCd>
+        <NtryDtls>
+          <TxDtls>
+            <Refs><EndToEndId>FX-3310</EndToEndId></Refs>
+            <Amt Ccy="SAR">2000.00</Amt>
+            <AmtDtls>
+              <InstdAmt><Amt Ccy="EUR">500.00</Amt></InstdAmt>
+              <TxAmt>
+                <Amt Ccy="SAR">2000.00</Amt>
+                <CcyXchg>
+                  <SrcCcy>EUR</SrcCcy>
+                  <TrgtCcy>SAR</TrgtCcy>
+                  <XchgRate>4.000000</XchgRate>
+                </CcyXchg>
+              </TxAmt>
+            </AmtDtls>
+            <RltdPties><Cdtr><Nm>Hansa Werkzeuge GmbH</Nm></Cdtr>
+              <CdtrAcct><Id><IBAN>DE89370400440532013000</IBAN></Id></CdtrAcct>
+            </RltdPties>
+            <RmtInf><Ustrd>HW-2026-66</Ustrd></RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>

@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Shape B: an older bank, and an overdrawn account.
+
+  camt.053.001.02 rather than .08. PRCD instead of OPBD - the same figure
+  under the name several banks actually send. No FrToDt at all, so the period
+  has to come from the entries. Dates as DtTm. A domestic account number
+  rather than an IBAN. Proprietary transaction codes only, with no ISO
+  domain. And a closing balance of DBIT: the account is overdrawn, which a
+  reader that ignored Bal/CdtDbtInd would report as money in the bank.
+-->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02">
+  <BkToCstmrStmt>
+    <GrpHdr>
+      <MsgId>SAB-0099</MsgId>
+      <CreDtTm>2026-05-11T06:00:00Z</CreDtTm>
+    </GrpHdr>
+    <Stmt>
+      <Id>STMT-0099</Id>
+      <ElctrncSeqNb>99</ElctrncSeqNb>
+      <Acct>
+        <Id>
+          <Othr>
+            <Id>0108-123456-001</Id>
+          </Othr>
+        </Id>
+        <Ccy>SAR</Ccy>
+      </Acct>
+
+      <Bal>
+        <Tp><CdOrPrtry><Cd>PRCD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="SAR">1200.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-05-01</Dt></Dt>
+      </Bal>
+      <Bal>
+        <Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="SAR">300.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Dt><Dt>2026-05-06</Dt></Dt>
+      </Bal>
+
+      <Ntry>
+        <Amt Ccy="SAR">2000.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+        <BookgDt><DtTm>2026-05-02T09:14:00Z</DtTm></BookgDt>
+        <ValDt><DtTm>2026-05-02T09:14:00Z</DtTm></ValDt>
+        <AcctSvcrRef>SAB-TX-7781</AcctSvcrRef>
+        <BkTxCd>
+          <Prtry><Cd>TRF-OUT</Cd></Prtry>
+        </BkTxCd>
+        <NtryDtls>
+          <TxDtls>
+            <Amt Ccy="SAR">2000.00</Amt>
+            <RltdPties>
+              <Cdtr><Nm>Gulf Components Trading Co.</Nm></Cdtr>
+            </RltdPties>
+            <RmtInf><Ustrd>GC-4471</Ustrd></RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+
+      <Ntry>
+        <Amt Ccy="SAR">500.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+        <BookgDt><DtTm>2026-05-06T11:02:00Z</DtTm></BookgDt>
+        <ValDt><DtTm>2026-05-06T11:02:00Z</DtTm></ValDt>
+        <BkTxCd>
+          <Prtry><Cd>INT-CR</Cd></Prtry>
+        </BkTxCd>
+        <AddtlNtryInf>Interest credited</AddtlNtryInf>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>

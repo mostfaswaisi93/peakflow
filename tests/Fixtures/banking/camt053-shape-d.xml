@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Shape D: a prefixed namespace, and everything optional left out.
+
+  The prefix is ns2 rather than a default namespace, which is what breaks a
+  reader whose XPath was written against the prefixes we happen to emit.
+  There is no Acct/Ccy, so the currency has to come off a balance amount.
+  Remittance arrives as several Ustrd elements that are one sentence between
+  them. Charges arrive as individual Rcrd amounts with no total. And the
+  entry has no NtryDtls at all, which is how most banks send a fee.
+-->
+<ns2:Document xmlns:ns2="urn:iso:std:iso:20022:tech:xsd:camt.053.001.04">
+  <ns2:BkToCstmrStmt>
+    <ns2:GrpHdr>
+      <ns2:MsgId>ALINMA-55</ns2:MsgId>
+      <ns2:CreDtTm>2026-05-26T00:30:00+03:00</ns2:CreDtTm>
+    </ns2:GrpHdr>
+    <ns2:Stmt>
+      <ns2:Id>ALINMA-2026-05-D</ns2:Id>
+      <ns2:Acct>
+        <ns2:Id><ns2:IBAN>SA0380000000608010167519</ns2:IBAN></ns2:Id>
+      </ns2:Acct>
+      <ns2:FrToDt>
+        <ns2:FrDtTm>2026-05-21T00:00:00+03:00</ns2:FrDtTm>
+        <ns2:ToDtTm>2026-05-25T23:59:59+03:00</ns2:ToDtTm>
+      </ns2:FrToDt>
+
+      <ns2:Bal>
+        <ns2:Tp><ns2:CdOrPrtry><ns2:Cd>OPBD</ns2:Cd></ns2:CdOrPrtry></ns2:Tp>
+        <ns2:Amt Ccy="SAR">40300.00</ns2:Amt>
+        <ns2:CdtDbtInd>CRDT</ns2:CdtDbtInd>
+      </ns2:Bal>
+      <ns2:Bal>
+        <ns2:Tp><ns2:CdOrPrtry><ns2:Cd>CLBD</ns2:Cd></ns2:CdOrPrtry></ns2:Tp>
+        <ns2:Amt Ccy="SAR">40335.00</ns2:Amt>
+        <ns2:CdtDbtInd>CRDT</ns2:CdtDbtInd>
+      </ns2:Bal>
+
+      <!-- A fee: no NtryDtls at all, charges as separate records. -->
+      <ns2:Ntry>
+        <ns2:Amt Ccy="SAR">65.00</ns2:Amt>
+        <ns2:CdtDbtInd>DBIT</ns2:CdtDbtInd>
+        <ns2:Sts><ns2:Cd>BOOK</ns2:Cd></ns2:Sts>
+        <ns2:BookgDt><ns2:Dt>2026-05-22</ns2:Dt></ns2:BookgDt>
+        <ns2:ValDt><ns2:Dt>2026-05-22</ns2:Dt></ns2:ValDt>
+        <ns2:AcctSvcrRef>ALINMA-FEE-2201</ns2:AcctSvcrRef>
+        <ns2:BkTxCd>
+          <ns2:Domn>
+            <ns2:Cd>PMNT</ns2:Cd>
+            <ns2:Fmly><ns2:Cd>MDOP</ns2:Cd><ns2:SubFmlyCd>CHRG</ns2:SubFmlyCd></ns2:Fmly>
+          </ns2:Domn>
+        </ns2:BkTxCd>
+        <ns2:Chrgs>
+          <ns2:Rcrd>
+            <ns2:Amt Ccy="SAR">50.00</ns2:Amt>
+            <ns2:Tp><ns2:Prtry><ns2:Id>ACCT-MAINT</ns2:Id></ns2:Prtry></ns2:Tp>
+          </ns2:Rcrd>
+          <ns2:Rcrd>
+            <ns2:Amt Ccy="SAR">15.00</ns2:Amt>
+            <ns2:Tp><ns2:Prtry><ns2:Id>VAT</ns2:Id></ns2:Prtry></ns2:Tp>
+          </ns2:Rcrd>
+        </ns2:Chrgs>
+        <ns2:AddtlNtryInf>Account maintenance fee</ns2:AddtlNtryInf>
+      </ns2:Ntry>
+
+      <!--
+        A zero entry. Banks book these as advice: it moves no money, so it is
+        not a bank transaction, and refusing the whole file over one would be
+        absurd. It is skipped and reported.
+      -->
+      <ns2:Ntry>
+        <ns2:Amt Ccy="SAR">0.00</ns2:Amt>
+        <ns2:CdtDbtInd>CRDT</ns2:CdtDbtInd>
+        <ns2:Sts><ns2:Cd>BOOK</ns2:Cd></ns2:Sts>
+        <ns2:BookgDt><ns2:Dt>2026-05-23</ns2:Dt></ns2:BookgDt>
+        <ns2:ValDt><ns2:Dt>2026-05-23</ns2:Dt></ns2:ValDt>
+        <ns2:AcctSvcrRef>ALINMA-ZERO-01</ns2:AcctSvcrRef>
+        <ns2:AddtlNtryInf>Statement advice, no movement</ns2:AddtlNtryInf>
+      </ns2:Ntry>
+
+      <!-- Remittance split across several Ustrd elements that are one sentence. -->
+      <ns2:Ntry>
+        <ns2:Amt Ccy="SAR">100.00</ns2:Amt>
+        <ns2:CdtDbtInd>CRDT</ns2:CdtDbtInd>
+        <ns2:Sts><ns2:Cd>BOOK</ns2:Cd></ns2:Sts>
+        <ns2:BookgDt><ns2:Dt>2026-05-24</ns2:Dt></ns2:BookgDt>
+        <ns2:ValDt><ns2:Dt>2026-05-24</ns2:Dt></ns2:ValDt>
+        <ns2:AcctSvcrRef>ALINMA-REB-07</ns2:AcctSvcrRef>
+        <ns2:NtryDtls>
+          <ns2:TxDtls>
+            <ns2:Amt Ccy="SAR">100.00</ns2:Amt>
+            <ns2:RltdPties><ns2:Dbtr><ns2:Nm>Coastal Trading</ns2:Nm></ns2:Dbtr></ns2:RltdPties>
+            <ns2:RmtInf>
+              <ns2:Ustrd>Settlement of invoices INV-1021,</ns2:Ustrd>
+              <ns2:Ustrd>INV-1022 and INV-1023 less</ns2:Ustrd>
+              <ns2:Ustrd>agreed rebate</ns2:Ustrd>
+            </ns2:RmtInf>
+          </ns2:TxDtls>
+        </ns2:NtryDtls>
+      </ns2:Ntry>
+    </ns2:Stmt>
+  </ns2:BkToCstmrStmt>
+</ns2:Document>
