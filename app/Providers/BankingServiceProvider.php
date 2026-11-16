@@ -67,6 +67,19 @@ final class BankingServiceProvider extends ServiceProvider
         );
 
         /*
+         | And the conclusion the close rests on - PF-165.
+         |
+         | Every other control in this module protects one fact; this one
+         | protects the conclusion, that the cash figure in the accounts
+         | is the cash the business has. Cash is the one balance an
+         | auditor can confirm independently, which is why it is the
+         | first one they ask about.
+         */
+        $this->app->make(ClosingChecks::class)->register(
+            $this->app->make(\App\Tenant\Banking\Closing\ReconciliationCheck::class),
+        );
+
+        /*
          | And what `ledger:verify` asserts about suspense - PF-163.
          |
          | That the control account's balance is accounted for by parked

@@ -142,13 +142,24 @@ final class BankBalances
     {
         $day = ($asOf ?? Carbon::now())->copy()->endOfDay();
 
-        $sum = DB::connection('tenant')->table('journal_lines as l')
-            ->join('journal_entries as e', 'e.id', '=', 'l.journal_entry_id')
-            ->where('l.account_id', (string) $account->gl_account_id)
-            ->where('e.accounting_date', '<=', $day->toDateString())
-            ->sum('l.amount');
+        /*
+         | Summed in SQL and read as a string.
+         |
+         | A query-builder aggregate comes back through a numeric cast on
+         | some drivers, and this is the figure a reconciliation is judged
+         | against - and, since PF-165, the figure frozen into a document
+         | an auditor re-performs. A balance that has been through a float
+         | is one somebody has to defend.
+         */
+        $row = DB::connection('tenant')->selectOne(<<<'SQL'
+            SELECT coalesce(sum(l.amount), 0)::text AS balance
+            FROM journal_lines l
+            JOIN journal_entries e ON e.id = l.journal_entry_id
+            WHERE l.account_id = ?
+              AND e.accounting_date <= ?::date
+        SQL, [(string) $account->gl_account_id, $day->toDateString()]);
 
-        return Money::of((string) ($sum ?? '0'), (string) $account->currency);
+        return Money::of((string) ($row->balance ?? '0'), (string) $account->currency);
     }
 
     /**

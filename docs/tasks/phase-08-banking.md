@@ -224,8 +224,8 @@ Differences are classified before they are written off.
 
 What an auditor re-performs.
 
-- [ ] A reconciliation has a statement period, a closing balance, the full set of matches, an authorizing user and a timestamp
-- [ ] It produces a reconciliation statement: ledger balance, plus and minus the itemized reconciling items, equals the statement balance - and the arithmetic is asserted, not displayed
-- [ ] **Unreconciling requires a reason**, is permissioned and is audited; the prior reconciliation is retained rather than overwritten
-- [ ] When a user corrects a proposed match, the correction is stored as a **rule candidate** and offered back as a suggested rule - the engine never silently changes its own behaviour
-- [ ] A completed reconciliation is a precondition of the period close checklist
+- [x] A reconciliation has a statement period, a closing balance, the full set of matches, an authorizing user and a timestamp
+- [x] It produces a reconciliation statement: ledger balance, plus and minus the itemized reconciling items, equals the statement balance - and the arithmetic is asserted, not displayed
+- [x] **Unreconciling requires a reason**, is permissioned and is audited; the prior reconciliation is retained rather than overwritten
+- [x] When a user corrects a proposed match, the correction is stored as a **rule candidate** and offered back as a suggested rule - the engine never silently changes its own behaviour
+- [x] A completed reconciliation is a precondition of the period close checklist

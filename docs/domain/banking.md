@@ -458,6 +458,40 @@ Overridable, unlike the payment pair. A finance function of one has nobody else 
 
 ## Reconciliation as a document
 
+### The difference between a document and a screen
+
+A screen answers "does this account reconcile now". A document answers "was it reconciled in May, against what, by whom, and does the arithmetic still hold". Only the second is the question an audit asks.
+
+That distinction shows up in one decision: the figures are **frozen**. The ledger balance, the statement balance and the four reconciling items are stored as they stood. Recomputing them when somebody opens the document would silently restate every past reconciliation the moment a prior-period entry was posted — and a reconciliation that restates itself is not evidence of anything.
+
+### The arithmetic is asserted, not displayed
+
+A reconciliation statement showing `ledger + this − that = statement` without checking it is a page somebody reads past, and the figures all look plausible. The identity holds at the moment of reconciling or the row does not exist — a CHECK constraint on the table, not a condition in a service, because an import or a correction script reaches the table without passing one.
+
+The presentation is checked separately, against the stored figures. A statement whose displayed lines do not add to the balance beside them is the specific failure that makes a reconciliation worthless and the one nobody would notice.
+
+### An account that does not reconcile is not reconciled
+
+If the four items do not account for the difference between ledger and statement, authorising a document would assert an identity that does not hold. The refusal names the unexplained figure, because "it does not reconcile" is not something anybody can act on.
+
+### Undoing keeps the document
+
+With a reason and an author, and the figures exactly as authorised. "It was reconciled and then it was not — what changed" is the question, and a table that overwrites cannot answer it. The statement can then be reconciled again.
+
+One standing reconciliation per statement, enforced by a partial unique index so a withdrawn one does not block its replacement. Two live documents for one statement leaves nothing saying which the close should look at.
+
+### A correction is a suggestion, never a lesson learned silently
+
+When somebody rejects what the engine proposed and matches something else, the correction is stored as a **rule candidate**. The engine does not change its behaviour because a person disagreed with it once — an engine that did would propose something different this month, and the only explanation would be a correction somebody made in March.
+
+The same correction made again increments a count rather than writing a second row: one person correcting one match is an exception, and the same correction four times is a rule nobody has written. Once it has happened enough, it is offered back as a rule for somebody to write **deliberately** — with an author, a version and a test, like every other rule in this module.
+
+### And the close rests on it
+
+A period does not close over an active bank account that has statements in the period and no reconciliation standing for the end of it. Every other control in this phase protects one fact; this protects the conclusion — that the cash figure in the accounts is the cash the business has. Cash is the one balance an auditor can confirm independently, which is why it is the first one they ask about.
+
+An account with no statements in the period is not blocked. Refusing a close over an absence of facts makes the control the thing people route around.
+
 ```
 ledger balance
   + unpresented payments
