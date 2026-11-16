@@ -246,6 +246,10 @@ if ($only === 'all' || $only === 'exchange') {
     $suites['ZATCA'] = $suite(static fn (): array => (new Tests\Support\ZatcaProfileRules())->all());
 }
 
+if ($only === 'all' || $only === 'purchasing') {
+    $suites['Bills'] = $suite(static fn (): array => (new Tests\Support\BillRules())->all());
+}
+
 if ($only === 'all' || $only === 'sod') {
     $suites['Duty coverage'] = $suite(static fn (): array => (new Tests\Support\SodCoverageRules())->all());
 }
@@ -295,7 +299,7 @@ if ($only === 'all' || $only === 'examples') {
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | errors | repo | ops | tax | charts | sales | exchange | attachments | archive | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | errors | repo | ops | tax | charts | sales | exchange | attachments | archive | purchasing | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public\n");
     exit(2);
 }
 

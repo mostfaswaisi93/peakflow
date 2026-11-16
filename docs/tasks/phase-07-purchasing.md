@@ -36,11 +36,17 @@ The expensive failure here is paying the same invoice twice, and the dangerous o
 ### PF-133 · Bills
 `Purchasing` · **5 pts** · depends: PF-082, PF-047 · standards: EN 16931 · `type:posting` `type:schema`
 
-- [ ] Supplier invoice with lines, tax breakdown, the supplier's own document number and date, and the derived due date
-- [ ] Posts accounts payable, input tax, and expense or asset - with the **reverse-charge case posting both input and output tax**, which is the half most systems forget
-- [ ] The supplier's document number and date are theirs, and the posting date is ours; all three are stored and the return uses the tax point
-- [ ] Non-recoverable input tax posts to expense rather than to the input account, keeping the input account reconcilable to the return
-- [ ] A bill in a foreign currency books at the rate on its tax point date
+- [x] Supplier invoice with lines, tax breakdown, the supplier's own document number and date, and the derived due date
+- [x] **Three dates, and they are not interchangeable.** The supplier's document date is theirs and is what their statement says; the tax point is the jurisdiction's and decides which return the input tax falls in; the posting date is ours and decides the period. A bill dated the 28th of March that arrives on the 3rd of April belongs to the supplier's March and our April, and a system with one date gets two of the three wrong. `Bill` deliberately has **no** `date()` accessor: a method that picked one would be read by whoever came next as "the date of the bill"
+- [x] A tax point after the posting date is refused, because it would claim input tax in a return that has not opened. The other direction is normal and is the reason the two dates exist
+- [x] The payment terms are frozen and **counted from the supplier's date**, not ours. "Thirty days" means thirty days from their invoice date, which is what they will chase on - counting from our posting date would quietly extend every bill that arrived late, and the supplier would be right
+- [x] Posts accounts payable, input tax, and expense or asset - per **line**, because one bill routinely carries a repair and a machine and a document-level choice forces the business to split a supplier's invoice for an accounting reason
+- [x] With the **reverse-charge case posting both input and output tax**, which is the half most systems forget. The supplier charges nothing and the recipient accounts for both sides: an output because they owe it, an input because they may claim it. A system that posts only the input side files a return whose input box is right and whose output box understates the liability by exactly that amount - and because the two net to nothing in the accounts, nothing looks wrong until the authority compares the return against the supplier's own declaration
+- [x] And reverse-charge tax is **not part of the payable**. The supplier charged nothing: they are owed the net. A gross that included it would overpay them by the tax and leave the authority's side unpaid
+- [x] Non-recoverable input tax posts to expense rather than to the input account, keeping the input account reconcilable to the return - and to the **line's own** expense account, because the cost of a purchase includes the tax that cannot be recovered and it belongs to the cost centre that bought it. Recovery is a percentage rather than a flag, because partial recovery is the normal case for entertainment, fuel and mixed-use assets
+- [x] The rate group is keyed by category, rate **and** the reverse-charge flag: the same rate under the reverse charge is a different box on the return, and merging the two would make the return's two sides indistinguishable
+- [x] Found on the way: `journal_lines` refuses a tax point with no tax code, which is right - a tax point that cannot be attributed to a code is a figure in a return nobody can trace - so the bill's rate group carries the code, and the posting passes both or neither
+- [ ] A bill in a foreign currency books at the rate on its tax point date - the columns are there and the rate is not yet fetched; PF-068's rate service is wired on the sales side and this call site arrives with PF-138, which needs it for the approval limit test as well
 
 ### PF-134 · Supplier credit notes
 `Purchasing` · **3 pts** · depends: PF-133 · standards: UNCL 1001 (`381`) · `type:posting`
@@ -89,10 +95,15 @@ The expensive failure here is paying the same invoice twice, and the dangerous o
 
 The most common and most expensive AP error.
 
-- [ ] A hard uniqueness constraint on `(supplier, supplier_document_number, entity)`, enforced in the database
-- [ ] A **near-match warning** on same supplier, similar amount within a window, or the same amount and date with a different number - the case a hard constraint cannot catch
-- [ ] The warning shows the suspected duplicate side by side and requires an explicit acknowledgement that is recorded
-- [ ] Detection runs again at payment time, because the duplicate frequently arrives after the first was already approved
+- [x] A hard uniqueness constraint on `(supplier, supplier_document_number, entity)`, enforced in the database. In the database rather than the application because an import, a second worker or a retried job does not go through the form - and the service asks first anyway, so the form can say "that invoice is already recorded" instead of showing somebody a database error
+- [x] On the **normalised** number: `INV-001`, `inv 001` and `INV001` are one document to the supplier, and a constraint on the raw string catches only the lazy half of the problem. Leading zeros are kept, because `INV-001` and `INV-1` are frequently different documents and a false refusal is worse than a warning - the warning asks a person and the refusal does not
+- [x] A **near-match warning** on same supplier, similar amount within a window, or the same amount and date with a different number - the case a hard constraint cannot catch, because sometimes they are genuinely two purchases
+- [x] And the same number against a **different supplier**, which the constraint cannot see at all - numbers are unique per supplier. That is a bill entered against the wrong supplier: it pays the right amount to the wrong account, which is the error that is hardest to get back
+- [x] The warning shows the suspected duplicate side by side and requires an explicit acknowledgement that is recorded. The detail names the figures - "same date 2026-05-18 and the same total SAR 1150.00, under a different number" - because a generic hold tells the reviewer to go and look where naming the figures lets them decide
+- [x] An acknowledgement needs a reason of substance, enforced in the database as well as in the service: "not a duplicate" with nothing behind it is what somebody clicks at four in the afternoon, and whoever defends the payment six months later needs to know what was actually checked
+- [x] An unanswered warning **blocks posting**. Either it is the same invoice, in which case paying it twice is the error this exists to prevent, or it is not, in which case somebody should say so and be answerable for it
+- [x] Detection runs again at payment time, because the duplicate frequently arrives after the first was already approved and by then nobody is looking at the entry screen. Re-examination is idempotent per pair and reason, so an acknowledgement does not have to be given again every time anybody looks
+- [x] An exception queue ordered by value, carrying both numbers, both dates and both statuses, so a reviewer compares the two without opening either
 
 ### PF-140 · Email intake
 `Purchasing` · **5 pts** · depends: PF-073 · standards: — · `type:security`
