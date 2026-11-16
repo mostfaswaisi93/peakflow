@@ -49,6 +49,53 @@ return [
 
     /*
     |---------------------------------------------------------------------------
+    | BT-24, the specification identifier - PF-110
+    |---------------------------------------------------------------------------
+    |
+    | The customization identifier a recipient reads to know which rule set
+    | the document was built against. It is mandatory (BR-01) and it is the
+    | first thing an access point looks at: a Peppol document carrying the
+    | bare EN 16931 identifier is validated against the wrong rule set and
+    | rejected for rules it was never built to satisfy.
+    |
+    | These strings are fixed by their specifications and are not ours to
+    | shorten or tidy. The trailing `:compliant:...` segments look redundant
+    | and are part of the identifier.
+    |
+    */
+
+    'customization' => [
+        'generic' => 'urn:cen.eu:en16931:2017',
+        'peppol' => 'urn:cen.eu:en16931:2017#compliant#urn:fdc:peppol.eu:2017:poacc:billing:3.0',
+        'zatca' => 'urn:cen.eu:en16931:2017#compliant#urn:fdc:zatca.gov.sa:2023:1.0',
+        'facturx' => 'urn:cen.eu:en16931:2017',
+        'eta' => 'urn:eg:eta:1.0',
+        'jofotara' => 'urn:cen.eu:en16931:2017#compliant#urn:fdc:jofotara.gov.jo:1.0',
+    ],
+
+    /*
+    |---------------------------------------------------------------------------
+    | BT-23, the business process - PF-110
+    |---------------------------------------------------------------------------
+    |
+    | What the document is part of, where the profile defines it. Peppol
+    | requires it; EN 16931 on its own does not, and a value invented for
+    | the generic profile would be a term populated for no reason, which the
+    | mapping document forbids.
+    |
+    */
+
+    'business_process' => [
+        'generic' => null,
+        'peppol' => 'urn:fdc:peppol.eu:2017:poacc:billing:01:1.0',
+        'zatca' => null,
+        'facturx' => null,
+        'eta' => null,
+        'jofotara' => null,
+    ],
+
+    /*
+    |---------------------------------------------------------------------------
     | Rounding, per profile - PF-006
     |---------------------------------------------------------------------------
     |

@@ -56,6 +56,7 @@ final class Crediting
     public function __construct(
         private readonly TaxCalculator $calculator,
         private readonly TaxRounding $rounding,
+        private readonly Snapshots $snapshots,
     ) {}
 
     /**
@@ -257,6 +258,32 @@ final class Crediting
     }
 
     /**
+     * The credited document's payment terms, resolved for the credit note.
+     *
+     * Null when the original carried none - a document with no terms cannot
+     * lend any, and inventing "30 days" here would put a date on a credit
+     * note that nobody agreed to.
+     */
+    private function termsFor(Invoice $invoice, Carbon $date, Money $gross): ?array
+    {
+        $snapshot = (array) ($invoice->terms_snapshot ?? []);
+        $termId = $snapshot['payment_term_id'] ?? null;
+
+        if (! \is_string($termId) || $termId === '') {
+            return null;
+        }
+
+        $term = \App\Tenant\Catalog\Models\PaymentTerm::query()->find($termId);
+        $entity = \App\Tenant\Tenancy\Models\Entity::query()->find((string) $invoice->entity_id);
+
+        if ($term === null || $entity === null) {
+            return null;
+        }
+
+        return $this->snapshots->terms($term, $entity, $date, $gross);
+    }
+
+    /**
      * Write the draft, its lines, its breakdown and its reference.
      *
      * @param  list<array{original: InvoiceLine, net: Money, quantity: string, line_no: int, gross?: Money}>  $lines
@@ -302,6 +329,24 @@ final class Crediting
             'payable_amount' => (string) $breakdown->gross()->amount,
             'presentation_exponent' => $invoice->presentation_exponent,
             'profile' => $invoice->profile,
+
+            /*
+             | The credited document's terms, re-frozen on the credit's own
+             | date and amount - PF-097, EN 16931 BR-CO-25.
+             |
+             | Not copied: a partial credit against a 10,000 invoice with
+             | three instalments would otherwise state the invoice's
+             | instalment amounts on a document for 500. Re-resolved from the
+             | same payment term, so the figures are the credit's own.
+             |
+             | And not omitted. BR-CO-25 requires a due date or payment terms
+             | wherever an amount is due, and a credit note's amount is due
+             | in EN 16931 (the type code carries the direction, not the
+             | sign). Measured: the semantic model refused the first credit
+             | note built through this path for exactly that rule, which is
+             | the recipient's own validator finding it one step earlier.
+             */
+            'terms_snapshot' => $this->termsFor($invoice, $date, $breakdown->gross()),
         ]);
 
         foreach ($lines as $line) {

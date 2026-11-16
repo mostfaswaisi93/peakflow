@@ -228,6 +228,11 @@ if ($only === 'all' || $only === 'sales') {
     $suites['Simplified and B2C'] = $suite(static fn (): array => (new Tests\Support\SimplifiedInvoiceRules())->all());
 }
 
+if ($only === 'all' || $only === 'exchange') {
+    $suites['The semantic model'] = $suite(static fn (): array => (new Tests\Support\ExchangeRules())->all());
+    $suites['The model from a document'] = $suite(static fn (): array => (new Tests\Support\SemanticModelRules())->all());
+}
+
 if ($only === 'all' || $only === 'sod') {
     $suites['Duty coverage'] = $suite(static fn (): array => (new Tests\Support\SodCoverageRules())->all());
 }

@@ -6,6 +6,8 @@ The internal semantic invoice model, mapped term by term to EN 16931-1. This fil
 
 **Status** column: ✅ populated · ⚠️ conditional · ⛔ deliberately not populated (with a reason).
 
+The code's side of this agreement is `App\Exchange\Semantics\BusinessTerm` — one enum case per term, carrying its group and its cardinality — and `BusinessGroup`, which carries the nesting. `bin/verify exchange` fails when a term exists on one side and not the other. Cardinality is compared only for rows that name a single term: a row covering `BT-75`–`BT-79` states "0..1 each" and is more readable than five rows, and the registry is where a term's exact cardinality lives.
+
 ---
 
 ## BG — Document level
@@ -31,8 +33,8 @@ The internal semantic invoice model, mapped term by term to EN 16931-1. This fil
 | `BT-18` | Invoiced object identifier | 0..1 | `invoices.object_identifier` with its scheme | ⚠️ |
 | `BT-19` | Buyer accounting reference | 0..1 | Party's accounting reference | ⚠️ |
 | `BT-20` | Payment terms | 0..1 | Rendered from `payment_terms`, in the recipient's language | ⚠️ |
-| `BT-21` | Invoice note subject code | 0..n | Legal-note codes, e.g. the reverse-charge note | ⚠️ |
-| `BT-22` | Invoice note | 0..n | Free-text notes and the mandatory per-jurisdiction legal notes | ⚠️ |
+| `BT-21` | Invoice note subject code | 0..1 in `BG-1` | Legal-note codes, e.g. the reverse-charge note | ⚠️ |
+| `BT-22` | Invoice note | 1..1 in `BG-1` | Free-text notes and the mandatory per-jurisdiction legal notes | ⚠️ |
 | `BT-23` | Business process type | 0..1 | Set by the jurisdiction profile | ⚠️ |
 | `BT-24` | Specification identifier | 1..1 | The profile's customization id (EN 16931, Peppol BIS, ZATCA, …) | ✅ |
 
@@ -51,7 +53,7 @@ The internal semantic invoice model, mapped term by term to EN 16931-1. This fil
 | `BT-28` | Seller trading name | 0..1 | Frozen entity trading name | ⚠️ |
 | `BT-29` | Seller identifier | 0..n | Entity identifiers with their scheme | ⚠️ |
 | `BT-30` | Seller legal registration id | 0..1 | Commercial registration, with scheme | ⚠️ |
-| `BT-31` | Seller VAT identifier | 0..1 | Frozen `tax_registrations` — mandatory when tax is charged (`BR-CO-9`) | ⚠️ |
+| `BT-31` | Seller VAT identifier | 0..1 | Frozen `tax_registrations` — one of `BT-29`/`BT-30`/`BT-31` is required by `BR-CO-26`, and the per-category rules require this one where VAT is charged | ⚠️ |
 | `BT-32` | Seller tax registration id | 0..1 | A second scheme where a jurisdiction has one | ⚠️ |
 | `BT-33` | Seller additional legal information | 0..1 | Capital, legal form, where required | ⚠️ |
 | `BT-34` | Seller electronic address | 0..1 | With its **EAS** scheme code — mandatory for Peppol | ⚠️ |
@@ -78,11 +80,15 @@ The internal semantic invoice model, mapped term by term to EN 16931-1. This fil
 | Term | Name | Card. | Source | Status |
 |------|------|-------|--------|--------|
 | `BT-59`–`BT-61` | Payee name, identifier, legal registration | 0..1 each | Factoring and assignment; omitted when the payee is the seller | ⚠️ |
-| `BT-62`–`BT-69` | Seller tax representative and its address | 0..1 each | Where a jurisdiction requires one | ⚠️ |
+| `BT-62` | Tax representative name | 1..1 in `BG-11` | Where a jurisdiction requires one | ⚠️ |
+| `BT-63` | Tax representative VAT identifier | 1..1 in `BG-11` | `BR-56` — a representative with no VAT number is not one | ⚠️ |
+| `BT-64`–`BT-68` | Tax representative address lines, city, post code, subdivision | 0..1 each | Frozen address | ⚠️ |
+| `BT-69` | Tax representative country code | 1..1 in `BG-12` | `BR-20` | ⚠️ |
 | `BT-70`–`BT-71` | Deliver-to name and location identifier | 0..1 each | Delivery address | ⚠️ |
 | `BT-72` | Actual delivery date | 0..1 | `invoices.delivery_date` — distinct from `BT-2` **and** `BT-7` | ⚠️ |
 | `BT-73`–`BT-74` | Invoicing period start and end | 0..1 each | Service period, which also drives IFRS 15 recognition | ⚠️ |
-| `BT-75`–`BT-80` | Deliver-to address | 0..1 each | Frozen delivery address | ⚠️ |
+| `BT-75`–`BT-79` | Deliver-to address lines, city, post code, subdivision | 0..1 each | Frozen delivery address | ⚠️ |
+| `BT-80` | Deliver-to country code | 1..1 in `BG-15` | `BR-57` — a delivery address without a country is not an address | ⚠️ |
 
 ### BG-16 — Payment instructions
 
@@ -91,17 +97,24 @@ The internal semantic invoice model, mapped term by term to EN 16931-1. This fil
 | `BT-81` | Payment means type code | 1..1 | UNCL 4461 | ✅ |
 | `BT-82` | Payment means text | 0..1 | Human-readable description | ⚠️ |
 | `BT-83` | Remittance information | 0..1 | **The reference matching pass 1 looks for.** Generated, stable, and printed on the PDF | ✅ |
-| `BT-84` | Payment account identifier | 0..1 | Receiving `bank_accounts.iban` | ⚠️ |
+| `BT-84` | Payment account identifier | 1..1 in `BG-17` | Receiving `bank_accounts.iban`; `BR-50` — a credit transfer with no account is not one | ⚠️ |
 | `BT-85` | Payment account name | 0..1 | Account holder | ⚠️ |
 | `BT-86` | Payment service provider id | 0..1 | BIC | ⚠️ |
-| `BT-87`–`BT-89` | Card and mandate terms | 0..1 each | ⛔ No card handling; `BT-89` populated for direct debit | ⚠️ |
+| `BT-87`–`BT-88` | Payment card number and holder | 1..1 / 0..1 in `BG-18` | ⛔ No card data is handled, by design | ⛔ |
+| `BT-89`–`BT-91` | Mandate reference, creditor identifier, debited account | 0..1 each | Populated for direct debit | ⚠️ |
 
 ### BG-20 / BG-21 — Document-level allowances and charges
 
 | Term | Name | Card. | Source | Status |
 |------|------|-------|--------|--------|
-| `BT-92`–`BT-98` | Allowance amount, base, percentage, tax category, rate, reason | 0..n | `invoice_allowances_charges` — **apportioned across rate groups before tax**, with the residual assigned deterministically | ⚠️ |
-| `BT-99`–`BT-105` | Charge equivalents | 0..n | Same mechanism | ⚠️ |
+| `BT-92` | Document level allowance amount | 1..1 in `BG-20` | `invoice_allowances_charges.amount` | ⚠️ |
+| `BT-93`–`BT-94` | Allowance base amount and percentage | 0..1 each | Where the allowance was computed from a percentage | ⚠️ |
+| `BT-95` | Allowance VAT category code | 1..1 in `BG-20` | **Apportioned across rate groups before tax**, residual assigned deterministically | ⚠️ |
+| `BT-96`–`BT-98` | Allowance rate, reason, reason code | 0..1 each | `BR-CO-21` requires a reason or a reason code | ⚠️ |
+| `BT-99` | Document level charge amount | 1..1 in `BG-21` | Same mechanism | ⚠️ |
+| `BT-100`–`BT-101` | Charge base amount and percentage | 0..1 each | Same mechanism | ⚠️ |
+| `BT-102` | Charge VAT category code | 1..1 in `BG-21` | Same mechanism | ⚠️ |
+| `BT-103`–`BT-105` | Charge rate, reason, reason code | 0..1 each | `BR-CO-22` requires a reason or a reason code | ⚠️ |
 
 ### BG-22 — Document totals
 
@@ -128,8 +141,19 @@ The internal semantic invoice model, mapped term by term to EN 16931-1. This fil
 | `BT-117` | VAT category tax amount | 1..1 | Group tax, **rounded once at group level** | ✅ |
 | `BT-118` | VAT category code | 1..1 | UNCL 5305 | ✅ |
 | `BT-119` | VAT category rate | 0..1 | Resolved by **tax point**, so a historical document keeps its rate | ⚠️ |
-| `BT-120` | VAT exemption reason text | 0..1 | Mandatory for `E`, `Z`, `AE`, `K`, `G` per `BR-E-10`, `BR-Z-10`, `BR-AE-10`, `BR-IC-10`, `BR-G-10` | ⚠️ |
+| `BT-120` | VAT exemption reason text | 0..1 | Mandatory for `E`, `AE`, `K`, `G`, `O` per `BR-E-10`, `BR-AE-10`, `BR-IC-10`, `BR-G-10`, `BR-O-10`. **Not** for `Z`: zero-rated is a rate, not an exemption, and there is no `BR-Z-10` | ⚠️ |
 | `BT-121` | VAT exemption reason code | 0..1 | Coded equivalent, where the profile defines a code list | ⚠️ |
+
+### BG-24 — Additional supporting documents
+
+| Term | Name | Card. | Source | Status |
+|------|------|-------|--------|--------|
+| `BT-122` | Supporting document reference | 1..1 in `BG-24` | The attachment's own reference; `BR-52` | ⚠️ |
+| `BT-123` | Supporting document description | 0..1 | What the attachment is | ⚠️ |
+| `BT-124` | External document location | 0..1 | A URL, where the document is hosted rather than embedded | ⚠️ |
+| `BT-125` | Attached document | 0..1 | The bytes, base64, with their MIME type and filename — how Factur-X embeds its XML (PF-125) | ⚠️ |
+
+An attachment is carried rather than linked where the recipient has to keep it: a URL in an archived invoice is a document that disappears when the host does, and the retention period is measured in years.
 
 ## BG-25 — Invoice line
 
@@ -144,7 +168,8 @@ The internal semantic invoice model, mapped term by term to EN 16931-1. This fil
 | `BT-132` | Order line reference | 0..1 | Originating order line | ⚠️ |
 | `BT-133` | Line accounting reference | 0..1 | Dimension values | ⚠️ |
 | `BT-134`–`BT-135` | Line period start and end | 0..1 each | Service period per line | ⚠️ |
-| `BT-136`–`BT-140` | Line allowance amount, base, percentage, reason | 0..n | Line-level allowances | ⚠️ |
+| `BT-136` | Line allowance amount | 1..1 in `BG-27` | Line-level allowances | ⚠️ |
+| `BT-137`–`BT-140` | Line allowance base, percentage, reason, reason code | 0..1 each | `BR-CO-23` requires a reason or a reason code | ⚠️ |
 | `BT-141`–`BT-145` | Line charge equivalents | 0..n | Line-level charges | ⚠️ |
 | `BT-146` | Item net price | 1..1 | `numeric(21,8)` — eight decimals, so per-litre and per-kWh pricing needs no scaling factor | ✅ |
 | `BT-147` | Item price discount | 0..1 | Against `BT-148` | ⚠️ |
@@ -159,7 +184,7 @@ The internal semantic invoice model, mapped term by term to EN 16931-1. This fil
 | `BT-157` | Item standard identifier | 0..1 | GTIN, with scheme | ⚠️ |
 | `BT-158` | Item classification identifier | 0..n | **With its scheme id** — UNSPSC, GPC or UNCL 7143. A bare code is not conformant | ⚠️ |
 | `BT-159` | Item country of origin | 0..1 | ISO 3166-1 | ⚠️ |
-| `BT-160`–`BT-161` | Item attribute name and value | 0..n | Item attributes | ⚠️ |
+| `BT-160`–`BT-161` | Item attribute name and value | 1..1 each in `BG-32` | Item attributes; `BR-54` requires both | ⚠️ |
 
 ## The calculation rules, asserted directly
 
@@ -176,7 +201,9 @@ Each has a dedicated failing-case test, because a calculation rule that is only 
 | `BR-CO-16` | `BT-115` = `BT-112` − `BT-113` + `BT-114` |
 | `BR-CO-17` | `BT-117` = `BT-116` × (`BT-119` ÷ 100), within rounding tolerance |
 | `BR-CO-3` | `BT-7` and `BT-8` are mutually exclusive |
-| `BR-CO-9` | A seller VAT identifier is present when VAT is charged |
+| `BR-CO-9` | A VAT identifier begins with the ISO 3166-1 alpha-2 code of its issuing country |
+| `BR-CO-26` | The seller carries an identifier, a legal registration or a VAT number, so the buyer can match it automatically |
+| `BR-53` | A VAT accounting currency (`BT-6`) brings the VAT amount in it (`BT-111`) |
 
 ## Terms deliberately not populated
 

@@ -11,18 +11,28 @@ The mistake it exists to avoid is building for one country's XML. PeakFlow holds
 ### PF-110 · The semantic invoice model
 `Exchange` · **8 pts** · depends: PF-091 · standards: EN 16931-1 · `risk:high` `type:compliance`
 
-- [ ] A syntax-independent representation addressed by EN 16931 business terms and groups
-- [ ] Every term the application populates is named by its `BT`/`BG` identifier in the code, so a mapping question has one answer
-- [ ] Cardinality and conditionality enforced in the model, not in each serializer - a term that is mandatory when another is present is expressed once
-- [ ] The model is built from the stored document, never from a draft, so what is serialized is what was issued
-- [ ] A term with no `BT` number and no business reason cannot be added - enforced by review and recorded in the mapping document
+- [x] A syntax-independent representation addressed by EN 16931 business terms and groups: `App\Exchange\Semantics\BusinessTerm` (BT-1 to BT-161, with the standard's real gaps - there is no BT-4, and a registry that invented one to close the sequence would be a registry nobody could check against the standard) and `BusinessGroup` (BG-1 to BG-32, each declaring the group it nests in)
+- [x] Every term the application populates is named by its `BT`/`BG` identifier in the code, so a mapping question has one answer. The serializers reference enum cases, never element paths
+- [x] Cardinality and conditionality enforced in the model, not in each serializer - a term that is mandatory in UBL and forgotten in CII is a document that validates in one syntax and not the other, where the recipient sees a rejection, the supplier sees a document that looked fine, and the engineer looks in the wrong serializer because the last failure was in the other one
+- [x] The cardinality is a property of the **group**, which is why the model is a tree and not a flat map of BT values. `BT-84` is mandatory - inside `BG-17`, a credit transfer, which is itself optional: flattened to "the IBAN is optional" the rule that a credit transfer without an account identifier is not a credit transfer disappears, and that is the rule the recipient's validator enforces
+- [x] A missing mandatory term reports the rule a recipient's own validator would quote - `BR-09` for a missing seller country, not "a required field is empty" - so one defect reads as one defect wherever it is reported
+- [x] A term set on the wrong group **throws** rather than failing validation: nobody entered the delivery address into the payment instructions, the mapping code put it there, and the person who can fix it is reading a stack trace rather than an invoice
+- [x] Identifiers carry their scheme beside the value rather than inside it, because `0088` and `9930` are both electronic addresses and mean different registries, and `BR-62`/`BR-65` reject a bare one
+- [x] The model is built from the stored document, never from a draft, so what is serialized is what was issued. A draft is refused by name: it has no number, no frozen supplier and no hash, and the document produced would look issuable and not be
+- [x] Built from the **frozen snapshots**, so a customer renamed in March does not change January's XML - the recipient has archived the January copy and the two would no longer hash the same. A check renames the party after issue and requires the old name
+- [x] Amounts are emitted at the currency's own exponent, not at the stored `numeric(21,4)`: `BR-DEC-*` rejects an amount with more decimals than the currency has, and a 3-decimal dinar and a 0-decimal yen share one column by design
+- [x] A term with no `BT` number and no business reason cannot be added - the registry is checked against BT-1..BT-161 and against the mapping document in both directions, so an invented term fails the build
+- [x] Found on the way: the first credit note built through this path was refused by `BR-CO-25` - an amount was due and the document stated neither a due date nor payment terms, because `Crediting` carried no terms snapshot at all. The recipient's own validator would have found it; the model found it one step earlier. A credit note now inherits the credited document's payment terms, **re-resolved** on its own date and amount rather than copied, because a partial credit against a three-instalment invoice would otherwise state the invoice's instalment figures
 
 ### PF-111 · The mapping document and its tests
 `Exchange` · **5 pts** · depends: PF-110 · standards: EN 16931-1 · `type:compliance`
 
-- [ ] [`../standards/en16931-mapping.md`](../standards/en16931-mapping.md) maps every business term to its internal source, stating mandatory, conditional (and on what) or deliberately unpopulated
-- [ ] A test asserts the document and the code agree: every term the code emits appears in the mapping, and every mapped term is emitted
-- [ ] Deliberate omissions are listed **with a reason**, so an omission is a decision rather than a gap
+- [x] [`../standards/en16931-mapping.md`](../standards/en16931-mapping.md) maps every business term to its internal source, stating mandatory, conditional (and on what) or deliberately unpopulated
+- [x] A check asserts the document and the code agree: every term in the registry appears in the document, and every term in the document exists in the registry. Cardinality is compared for every row that names a single term; a row covering `BT-75`–`BT-79` states "0..1 each" and is more readable than five rows, and the registry is where a term's exact cardinality lives
+- [x] Deliberate omissions are listed **with a reason**, so an omission is a decision rather than a gap - and the check counts a term in the omissions table as documented, because an omission with a reason is documentation
+- [x] Found on the way, by running it: `BG-24` (the supporting documents, `BT-122` to `BT-125`) was absent from the document entirely - four terms the registry held and the mapping never mentioned
+- [x] Found on the way: three cardinalities in the document were the **group's** rather than the term's. `BT-22` is `1..1` inside `BG-1`, which is `0..n`; the document said `0..n`, which reads as "a note may be omitted" and is the opposite of the rule. `BT-84` said `0..1` where `BR-50` makes it mandatory inside a credit transfer
+- [x] Found on the way: two rule descriptions were wrong. `BR-CO-9` is the ISO country-prefix rule, not "a seller VAT identifier is present when VAT is charged" - that is `BR-CO-26` and the per-category rules. And `BR-Z-10` does not exist: zero-rated is a rate, not an exemption, and the reason is required for `E`, `AE`, `K`, `G` and `O`. A mapping document that has drifted is worse than none, because it is consulted and it is wrong
 
 ### PF-112 · The UBL 2.1 serializer
 `Exchange` · **8 pts** · depends: PF-110 · standards: OASIS UBL 2.1, ISO/IEC 19845 · `risk:high` `type:compliance`
@@ -58,9 +68,13 @@ The mistake it exists to avoid is building for one country's XML. PeakFlow holds
 ### PF-116 · EN 16931 semantic validation
 `Exchange` · **5 pts** · depends: PF-115 · standards: EN 16931-1 · `risk:high` `type:compliance`
 
-- [ ] Stage 3 runs the EN 16931 rule set: the `BR-*` content rules and the `BR-CO-*` calculation rules
-- [ ] `BR-CO-10` (line net sum), `BR-CO-13` (document net), `BR-CO-14` (tax total equals breakdown sum), `BR-CO-15` (gross), `BR-CO-16` (amount due) each have a dedicated failing-case test
-- [ ] A rule that the application's own validation should have caught earlier is reported as an internal error, not as a customer-facing validation message - reaching stage 3 with a calculation error is a bug in `Tax`
+- [ ] Stage 3 runs the EN 16931 rule set: the `BR-*` content rules and the `BR-CO-*` calculation rules — **blocked on PF-115**, which cannot vendor the official Schematron without fetching it
+- [x] `BR-CO-10` (line net sum), `BR-CO-13` (document net), `BR-CO-14` (tax total equals breakdown sum), `BR-CO-15` (gross), `BR-CO-16` (amount due) each have a dedicated failing-case test - and so do `BR-CO-11`, `BR-CO-12` and `BR-CO-17`. Asserted directly in PHP on `BigDecimal`, never on floats: `0.1 + 0.2 !== 0.3` in binary floating point, and a tax total compared that way fails on a document that is correct
+- [x] The rules are tampered with in the **model**, never in the stored document: the database refuses to change an issued invoice, and asking it to permit what it exists to prevent would be testing the wrong thing
+- [x] `BR-CO-17` carries EN 16931's stated tolerance of 0.02 and no more, because implementations round the rate, the base or the product and all three are defensible - but 0.02 is where defensible stops
+- [x] A rule that the application's own validation should have caught earlier is reported as an internal error, not as a customer-facing validation message - reaching stage 3 with a calculation error is a bug in `Tax`. The document was built from stored figures the ledger has already posted: if `BT-110` disagrees with the breakdown then the document and the journal entry disagree, and asking the customer to correct it is asking them to fix our arithmetic
+- [x] The conditional rules whose EN 16931 wording is certain are implemented and each has a failing case: `BR-CO-3`, `BR-CO-9`, `BR-CO-19` to `BR-CO-26`, `BR-53`, `BR-62` to `BR-65`, and the exemption-reason rules for `E`, `AE`, `K`, `G` and `O`
+- [ ] The per-category calculation rules (`BR-S-08`, `BR-Z-08`, …) and the rate rules - deliberately **not** implemented from a guess at their numbers, because a rule that fires with an identifier the recipient's validator does not use sends whoever looks it up to a different rule. They arrive with the vendored rule set
 
 ### PF-117 · Business-term-addressed errors
 `Exchange` · **3 pts** · depends: PF-116 · standards: EN 16931-1, RFC 9457
