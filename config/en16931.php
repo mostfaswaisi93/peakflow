@@ -321,6 +321,18 @@ return [
             'en' => 'The seller must be identifiable by an identifier, a legal registration or a VAT number.',
             'ar' => 'يجب أن يكون البائع قابلاً للتعريف برقم تعريف أو سجل قانوني أو رقم ضريبي.',
         ],
+        'EN16931-SERIALIZATION' => [
+            'en' => 'The document could not be converted into its transmission syntax.',
+            'ar' => 'لم يتمكن النظام من تحويل المستند إلى صيغة الإرسال.',
+        ],
+        'EN16931-WELLFORMED' => [
+            'en' => 'The produced document is not well-formed XML.',
+            'ar' => 'المستند المُنتَج ليس XML صحيح البنية.',
+        ],
+        'EN16931-SCHEMA' => [
+            'en' => 'The produced document does not match the schema of its syntax.',
+            'ar' => 'المستند المُنتَج لا يطابق مخطط صيغته.',
+        ],
         'EN16931-CARDINALITY' => [
             'en' => 'A business term or group appears a number of times EN 16931 does not permit.',
             'ar' => 'ظهر مصطلح أو مجموعة أعمال بعدد مرات لا يسمح به EN 16931.',

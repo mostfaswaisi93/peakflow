@@ -23,6 +23,7 @@ Start with the [root README](../README.md) for the whole system in one pass. Com
 |----------|---------|
 | [`domain/general-ledger.md`](domain/general-ledger.md) | Accounts, journals, every posting rule written as debits and credits, periods and the close |
 | [`domain/invoicing.md`](domain/invoicing.md) | The document lifecycle, gapless numbering, the hash chain, recognition, dunning |
+| [`domain/e-invoicing.md`](domain/e-invoicing.md) | One semantic model and two syntaxes: EN 16931 business terms, UBL and CII, the four validation stages, jurisdiction profiles |
 | [`domain/banking.md`](domain/banking.md) | Statement formats, the matching engine pass by pass, payment initiation |
 | [`domain/tax-engine.md`](domain/tax-engine.md) | Tax point, place of supply, reverse charge, withholding, returns |
 | [`domain/place-of-supply.md`](domain/place-of-supply.md) | Which jurisdiction's tax applies: the rule book, its precedence, the blocs, and why the fallback refuses |

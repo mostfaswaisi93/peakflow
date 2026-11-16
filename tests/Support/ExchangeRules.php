@@ -416,7 +416,19 @@ final class ExchangeRules
         $emitted = [];
 
         foreach ($this->exchangeSources() as $file) {
-            preg_match_all("/'(BR-[A-Z0-9-]+)'/", (string) file_get_contents($file), $matches);
+            /*
+             | `BR-*` and our own `EN16931-*` identifiers.
+             |
+             | The second group covers the failures that are not EN 16931
+             | rules - a serializer that threw, bytes that do not parse, a
+             | schema mismatch - and they need an explanation for the same
+             | reason: a message a reader cannot act on is not a message.
+             */
+            preg_match_all(
+                "/'((?:BR|EN16931)-[A-Z0-9-]+)'/",
+                (string) file_get_contents($file),
+                $matches,
+            );
 
             foreach ($matches[1] ?? [] as $rule) {
                 $emitted[$rule] = true;
@@ -448,9 +460,6 @@ final class ExchangeRules
         }
 
         foreach (array_keys($table) as $rule) {
-            if ($rule === 'EN16931-CARDINALITY') {
-                continue;
-            }
 
             if (! isset($emitted[(string) $rule])) {
                 $violations[] = sprintf(

@@ -233,6 +233,7 @@ if ($only === 'all' || $only === 'exchange') {
     $suites['The model from a document'] = $suite(static fn (): array => (new Tests\Support\SemanticModelRules())->all());
     $suites['UBL 2.1'] = $suite(static fn (): array => (new Tests\Support\UblSerializerRules())->all());
     $suites['CII D16B'] = $suite(static fn (): array => (new Tests\Support\CiiSerializerRules())->all());
+    $suites['Profiles and the pipeline'] = $suite(static fn (): array => (new Tests\Support\ProfilePipelineRules())->all());
 }
 
 if ($only === 'all' || $only === 'sod') {

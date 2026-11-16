@@ -63,9 +63,13 @@ The mistake it exists to avoid is building for one country's XML. PeakFlow holds
 ### PF-114 · XSD validation
 `Exchange` · **3 pts** · depends: PF-112 · standards: XML Schema 1.0 · `type:compliance`
 
-- [ ] Schema validation as stage 2 of the pipeline, against vendored UBL 2.1 and CII schemas
-- [ ] **XXE, external entity resolution and entity expansion are disabled explicitly** on every reader, not assumed off
-- [ ] A schema failure reports the element and the rule, mapped back to a business term where possible
+- [ ] Schema validation as stage 2 of the pipeline, against vendored UBL 2.1 and CII schemas — the **stage exists and is wired**; the schemas are fetched artefacts and this environment has no route to them. `ValidationPipeline::schemaFor()` looks for `resources/schemas/<syntax>/maindoc.xsd` on disk, so vendoring them is the only thing needed to turn the stage on: no code change, no flag, and no possibility of the schemas being present and unused
+- [x] And the stage **reports that it could not run**, with the reason, rather than silently passing. A schema stage that quietly does nothing is a pipeline calling a document valid when nobody has checked its syntax, and the first person to find out is the recipient
+- [x] What the stage does do today is real: it parses the produced bytes through the hardened reader, so a serializer that emitted malformed XML, or a document carrying a DOCTYPE, fails here
+- [x] **XXE, external entity resolution and entity expansion are disabled explicitly** on every reader, not assumed off. `LIBXML_NOENT` reads as "no entities" and in libxml means *substitute* entities, so passing it is what turns `<!ENTITY x SYSTEM "file:///etc/passwd">` into a file read; it is not passed, and the external entity loader is replaced with one that returns nothing while the reader runs
+- [x] Any **DOCTYPE at all** is refused, which is the defence that matters: entity expansion needs no external reference, so refusing the network does not stop it. Ten nested entities expand to a gigabyte from a few hundred bytes and the parser is doing exactly what the specification says - libxml's limit is a tuning parameter somebody can raise, and a document with no DOCTYPE cannot do it at all. Both attacks have a dedicated failing-case check
+- [x] A parse failure reports the parser's own message with the **line and column**, because "the document could not be parsed" is not something the sender of a 4,000-line invoice can act on
+- [ ] A schema failure reports the element and the rule, mapped back to a business term where possible — the element and the rule are reported from libxml's own message; the mapping back to a business term needs the schemas to produce a failure to map
 
 ### PF-115 · Schematron compilation and vendoring
 `Exchange` · **5 pts** · depends: PF-114 · standards: ISO/IEC 19757-3 · `risk:high` `type:compliance`
@@ -89,24 +93,35 @@ The mistake it exists to avoid is building for one country's XML. PeakFlow holds
 ### PF-117 · Business-term-addressed errors
 `Exchange` · **3 pts** · depends: PF-116 · standards: EN 16931-1, RFC 9457
 
-- [ ] Every validation failure is reported as `BT-112`, not as `/Invoice/cac:LegalMonetaryTotal/cbc:TaxInclusiveAmount`. Users do not read XPath
-- [ ] A message carries the rule identifier, the business term, the offending value and a bilingual explanation
-- [ ] The API surfaces them in the RFC 9457 `errors` array keyed by business term
-- [ ] A translation table from rule identifier to bilingual explanation, tested for completeness against the vendored rule sets
+- [x] Every validation failure is reported as `BT-112`, not as `/Invoice/cac:LegalMonetaryTotal/cbc:TaxInclusiveAmount`. Users do not read XPath - and it is the same string whether the failure came from UBL, from CII or from the model itself, which is the other reason: a message that quotes the syntax tells the reader which serializer ran, and that is not information they can use
+- [x] The syntax path is **kept**, for the engineer who has to fix a serializer. It is just not what the user is shown
+- [x] A message carries the rule identifier, the business term, the offending value and a bilingual explanation - and the rule identifier is the standard's own, so one defect reads as one defect whether we report it or the recipient's access point does
+- [x] The API surfaces them in the RFC 9457 `errors` array keyed by business term, with `type`, `title`, `status`, `detail` and `instance`, and the stage that failed
+- [x] The report separates what is **ours to fix** from what the supplier can act on. A calculation failure never reaches a customer-facing list: the document was built from stored figures the ledger has already posted, so a disagreement is our defect
+- [x] A translation table from rule identifier to bilingual explanation in `config/en16931.php`, and a check greps the `Exchange` sources for every identifier the code can emit and fails the build when one has no entry - in both languages
+- [x] And in the other direction: an explanation for a rule nothing implements fails the build too, because it reads as coverage that is not there
+- [ ] Tested for completeness against the **vendored rule sets** - which needs PF-115 to vendor them. Completeness against the implemented rules is checked today, and the difference is recorded rather than claimed
 
 ### PF-118 · The jurisdiction profile interface
 `Exchange` · **5 pts** · depends: PF-116 · standards: — · `risk:high`
 
-- [ ] `JurisdictionProfile` declaring: permitted document types, numbering rules, tax rule set, rounding policy, serializer, ordered validator chain, transport, sealing policy, archive policy, QR policy
-- [ ] A registry gated by `config/jurisdictions.php`; a disabled profile cannot be selected by a tenant
-- [ ] An entity declares the profiles it operates under, and a document's profile is **frozen on it at issue**
-- [ ] Adding a country is a new profile class plus fixtures, and never a change to `Sales` - proven by Deptrac and by a test that counts the diff surface of adding a profile
+- [x] `JurisdictionProfile` declaring: permitted document types, numbering rules, tax rule set, rounding policy, serializer, ordered validator chain, transport, sealing policy, archive policy, QR policy
+- [x] And **clearance is not reporting**. A cleared document is the authority's copy - the one with legal effect and the one that must be delivered and archived - where a reported document is delivered first and reported within a window. The interface makes a profile say which, because conflating them produces a system that delivers a document the authority has not seen, and that is the common failure in this area
+- [x] A registry gated by `config/jurisdictions.php`; a disabled profile cannot be selected by a tenant, and a key that is enabled with no implementation **fails the build** - otherwise a tenant selects it and the first they know is a rejection on a real invoice
+- [x] But a disabled profile is still **resolvable**. A document issued last year under a profile since turned off still has to serialize, still has to validate and still has to be reprintable: a registry that refused one would make those documents unreadable the day it was disabled
+- [x] An entity declares the profiles it operates under, and a document's profile is **frozen on it at issue** - `ProfileRegistry::forDocument()` reads the frozen value, so a tenant who moved to Peppol in March does not have January's documents reserialized under Peppol's rules
+- [x] Adding a country is a new profile class plus fixtures, and never a change to `Sales` - proven by Deptrac and by a check that reads the profile directory and refuses any reference to `Sales`, `Ledger`, `Tax` or `Parties`, or any database access. A profile that needs something the document does not carry means the document is missing something, not that the profile may reach into the issuer
+- [x] A validator chain naming a stage nothing implements is **refused by name**, because a profile that declares validation it does not get is worse than one that declares none
+- [x] And stage 4 runs even when a chain forgets to name it: a profile with rules in `check()` and no `cius` in its chain would otherwise silently not enforce them, which is the quietest possible compliance failure
 
 ### PF-119 · The generic EN 16931 profile
 `Exchange` · **3 pts** · depends: PF-118 · standards: EN 16931-1 · `type:compliance`
 
-- [ ] The baseline every other profile specializes: UBL 2.1, stages 1-3, file or email delivery, no sealing, no transport
-- [ ] Usable end to end with no third-party credentials, which is what makes the rest testable
+- [x] The baseline every other profile specializes: UBL 2.1, stages 1-3, file delivery, no sealing, no transport
+- [x] Usable end to end with no third-party credentials, which is what makes the rest testable. No access point, no participant identifier, no onboarding, no signing key - a fresh clone can issue, validate, serialize and write a document to a file
+- [x] It is a **real implementation**, not the absence of one. A system whose "no profile" path is a different code path from its profile path has two behaviours to maintain, and the one nobody uses in production is the one every test runs against
+- [x] It adds **no rules of its own**. EN 16931 is the rule set; a CIUS is what a jurisdiction adds, and inventing a restriction at the baseline would mean rejecting documents the standard permits - which is the opposite of a baseline
+- [x] It populates no term it has no reason to: `BT-23` is absent because EN 16931 defines no business process, and a value invented for the baseline would be a term populated for nothing - which the mapping document forbids and the agreement check would catch
 
 ### PF-120 · Peppol BIS Billing 3.0
 `Exchange` · **8 pts** · depends: PF-119 · standards: Peppol BIS Billing 3.0 · `type:compliance`
