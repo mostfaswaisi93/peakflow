@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Platform\Http\Controllers\OpsLoginController;
 use App\Platform\Http\Controllers\OpsSettingsController;
 use App\Platform\Http\Controllers\OpsTenantController;
+use App\Tenant\Banking\Http\Controllers\StatementImportController;
 use App\Tenant\Identity\Http\Controllers\EntitySwitchController;
 use App\Http\Controllers\LoginController;
 use App\Http\Controllers\AttachmentDownloadController;
@@ -166,6 +167,36 @@ Route::middleware(['tenant.session', 'auth'])->group(static function (): void {
 
 Route::middleware(['tenant.session', 'auth', 'entity.scope'])->group(static function (): void {
     Route::view('/overview', 'app.home')->name('overview');
+
+    /*
+    | Importing a statement - PF-154.
+    |
+    | Three steps, because the middle one is the whole point: nothing is
+    | written until somebody has seen the rows as they will be interpreted.
+    | A CSV's decimal separator cannot be settled from the file alone -
+    | `1.234` is a thousand in Frankfurt and one in London - and a detector
+    | that guessed silently imports a year off by a factor of a thousand
+    | with every row looking plausible.
+    |
+    | `preview` and `remap` write nothing and say so in their handlers;
+    | `store` checks `bank.import`, because it is the step that does.
+    */
+    Route::prefix('banking/accounts/{account}')->name('banking.import.')->group(static function (): void {
+        Route::get('/import', [StatementImportController::class, 'create'])->name('create');
+        Route::post('/import/preview', [StatementImportController::class, 'preview'])->name('preview');
+        Route::post('/import/remap', [StatementImportController::class, 'remap'])->name('remap');
+
+        /*
+        | The permission is on the route, not only in the handler.
+        |
+        | Both, in fact - but stating it here is what makes it visible
+        | in a route listing, and what stops a second handler being
+        | added to this group without one.
+        */
+        Route::post('/import', [StatementImportController::class, 'store'])
+            ->middleware('can:bank.import')
+            ->name('store');
+    });
 });
 
 /*

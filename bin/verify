@@ -265,6 +265,7 @@ if ($only === 'all' || $only === 'banking') {
     $suites['Bank accounts and the three balances'] = $suite(static fn (): array => (new Tests\Support\BankAccountRules())->all());
     $suites['Statements, and what an import refuses'] = $suite(static fn (): array => (new Tests\Support\StatementRules())->all());
     $suites['Reading what a bank sends'] = $suite(static fn (): array => (new Tests\Support\StatementParserRules())->all());
+    $suites['The import screen'] = $suite(static fn (): array => (new Tests\Support\BankingScreenRules())->all());
 }
 
 if ($only === 'all' || $only === 'sod') {
