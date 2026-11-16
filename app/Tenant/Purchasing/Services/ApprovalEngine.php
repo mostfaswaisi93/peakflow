@@ -52,6 +52,7 @@ final class ApprovalEngine
     public function __construct(
         private readonly AuditTrail $audit,
         private readonly SegregatesDuties $duties,
+        private readonly Delegations $delegations,
     ) {}
 
     /**
@@ -169,6 +170,14 @@ final class ApprovalEngine
     /**
      * Record a decision.
      *
+     * `$userRoles` is the roles the action is taken **under**. For a
+     * delegated act those are the delegator's: a delegate borrows the
+     * authority of the person they are covering for, and the delegation is
+     * what permits the borrowing. The engine checks the delegation exists
+     * before it honours them, and the decision records both people.
+     *
+     * @param  list<string>|null  $userRoles
+     *
      * @throws ApprovalRefused
      */
     public function decide(
@@ -205,29 +214,73 @@ final class ApprovalEngine
             throw ApprovalRefused::rejectionNeedsAReason();
         }
 
-        $actor = $onBehalfOf ?? $userId;
+        /*
+         | Two people, named separately - PF-137.
+         |
+         | `$userId` pressed the button. `$onBehalfOf` is whose step it is.
+         | The decision records both: writing only the absent person's id
+         | would be a forged approval - the record would say somebody
+         | approved a document they never saw, and the only way to discover
+         | it is to notice they were on holiday that week.
+         */
+        $delegation = null;
 
-        $this->assertTheyMayDecide($request, $actor, $userRoles);
+        if ($onBehalfOf !== null && $onBehalfOf !== $userId) {
+            $delegation = $this->delegations->permitting(
+                (string) $request->entity_id,
+                $userId,
+                $onBehalfOf,
+                null,
+                'bill.approve',
+            );
 
-        $step = $this->stepFor($request, $actor, $userRoles);
+            if ($delegation === null) {
+                throw ApprovalRefused::noDelegation($onBehalfOf);
+            }
+        }
+
+        /*
+         | Segregation of duties is asked about the person ACTING.
+         |
+         | The obvious way to launder a conflict is to delegate to whoever
+         | created the document, so the question is about the actor rather
+         | than about the delegator - the conflict is caught where it
+         | arrives rather than where it was arranged.
+         */
+        $this->assertTheyMayDecide($request, $userId, $userRoles);
+
+        $whoseStep = $onBehalfOf ?? $userId;
+        $step = $this->stepFor($request, $whoseStep, $userRoles);
 
         if ($step === null) {
             throw ApprovalRefused::notTheirStep($this->whoCanDecide($request));
         }
 
+        /*
+         | The limit, on the CONVERTED amount - PF-138.
+         |
+         | A limit of 10,000 in the entity's own currency cannot be dodged
+         | by invoicing in a weak one. The rate is on the request, recorded
+         | when the chain started, because "why did this need a director" is
+         | answered by the rate on the day.
+         */
+        if ($decision === 'approved') {
+            $this->assertWithinTheirLimit($request, $whoseStep, $userRoles, $step, $delegation);
+        }
+
         return DB::connection('tenant')->transaction(function () use (
-            $request, $step, $userId, $actor, $decision, $comment, $now, $onBehalfOf,
+            $request, $step, $userId, $decision, $comment, $now, $onBehalfOf,
         ): ApprovalRequest {
             try {
                 ApprovalDecision::create([
                     'entity_id' => (string) $request->entity_id,
                     'approval_request_id' => (string) $request->getKey(),
                     'approval_step_id' => (string) $step->getKey(),
-                    'user_id' => $actor,
+                    'user_id' => $userId,
                     'decision' => $decision,
                     'comment' => $comment,
                     'fingerprint' => $now,
-                    'on_behalf_of' => $onBehalfOf === null ? null : $userId,
+                    'on_behalf_of' => $onBehalfOf === $userId ? null : $onBehalfOf,
                     'decided_at' => now(),
                 ]);
             } catch (\Illuminate\Database\UniqueConstraintViolationException) {
@@ -266,7 +319,7 @@ final class ApprovalEngine
                     subjectType: (string) $request->subject_type,
                     subjectId: (string) $request->subject_id,
                     subjectLabel: sprintf('step %d', (int) $step->sequence),
-                    after: $this->decisionPayload($request, $step, $actor, $onBehalfOf),
+                    after: $this->decisionPayload($request, $step, $userId, $onBehalfOf),
                     reason: $comment,
                     entityId: (string) $request->entity_id,
                 );
@@ -287,7 +340,7 @@ final class ApprovalEngine
                 subjectType: (string) $request->subject_type,
                 subjectId: (string) $request->subject_id,
                 subjectLabel: sprintf('step %d', (int) $step->sequence),
-                after: $this->decisionPayload($request, $step, $actor, $onBehalfOf),
+                after: $this->decisionPayload($request, $step, $userId, $onBehalfOf),
                 reason: $comment,
                 entityId: (string) $request->entity_id,
             );
@@ -598,6 +651,66 @@ final class ApprovalEngine
             subjectId: (string) $request->subject_id,
             subjectLabel: sprintf('%s %s', (string) $request->currency, (string) $request->amount),
         );
+    }
+
+    /**
+     * The approver's own limit, the step's cap, and the delegation's.
+     *
+     * The lowest of the three binds. A delegation that carried the
+     * delegator's limit would make delegation a way to borrow authority.
+     *
+     * @param  list<string>|null  $userRoles
+     *
+     * @throws ApprovalRefused
+     */
+    private function assertWithinTheirLimit(
+        ApprovalRequest $request,
+        string $userId,
+        ?array $userRoles,
+        ApprovalStep $step,
+        ?\App\Tenant\Purchasing\Models\ApprovalDelegation $delegation,
+    ): void {
+        $amount = (string) ($request->functional_amount ?? $request->amount);
+
+        $limit = $this->delegations->limitFor(
+            (string) $request->entity_id,
+            $userId,
+            $userRoles ?? [],
+            /*
+             | As of the date the CHAIN started, not today.
+             |
+             | A limit change is not retroactive: the limit that applied is
+             | the one in force when the chain started, and reading today's
+             | would change the answer to "was this within their authority"
+             | for every approval already given.
+             */
+            \Illuminate\Support\Carbon::parse($request->requested_at->toDateTimeString()),
+        );
+
+        $caps = array_values(array_filter([
+            $limit,
+            $step->limit_amount === null ? null : (string) $step->limit_amount,
+            $delegation?->limit_amount === null ? null : (string) $delegation->limit_amount,
+        ]));
+
+        if ($caps === []) {
+            return;
+        }
+
+        $lowest = null;
+
+        foreach ($caps as $cap) {
+            $value = \Brick\Math\BigDecimal::of($cap);
+            $lowest = $lowest === null || $value->isLessThan($lowest) ? $value : $lowest;
+        }
+
+        if (\Brick\Math\BigDecimal::of($amount)->abs()->isGreaterThan($lowest)) {
+            throw ApprovalRefused::overTheirLimit(
+                $amount,
+                (string) $lowest,
+                (string) ($request->functional_amount === null ? $request->currency : 'the functional currency'),
+            );
+        }
     }
 
     private function markStale(ApprovalRequest $request, string $why): void

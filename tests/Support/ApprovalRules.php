@@ -84,6 +84,17 @@ final class ApprovalRules
                 'the chain survives a rule being changed under it' => fn (): array => $this->chainIsARecord(),
                 'an overdue step is reported for escalation' => fn (): array => $this->escalation(),
                 'every decision reaches the audit trail' => fn (): array => $this->audited(),
+                'a delegate acts and the record says so' => fn (): array => $this->delegation(),
+                'a delegation to oneself is refused' => fn (): array => $this->selfDelegation(),
+                'overlapping delegations are refused' => fn (): array => $this->overlappingDelegation(),
+                'a delegation outside its window does not apply' => fn (): array => $this->delegationWindow(),
+                'a revoked delegation does not apply' => fn (): array => $this->revokedDelegation(),
+                'the delegations in force are reportable' => fn (): array => $this->standingReport(),
+                'a limit is tested on the converted amount' => fn (): array => $this->limitOnConverted(),
+                'a user\'s own limit beats a role\'s' => fn (): array => $this->ownLimitWins(),
+                'the lower of a limit and a delegation\'s cap binds' => fn (): array => $this->delegationCap(),
+                'a limit change is not retroactive' => fn (): array => $this->limitIsNotRetroactive(),
+                'the rate used for the limit test is recorded' => fn (): array => $this->rateIsRecorded(),
             ]);
         } finally {
             $this->connection->rollBack();
@@ -600,6 +611,495 @@ final class ApprovalRules
 
         if (trim((string) $record->reason) === '') {
             $violations[] = 'the approver\'s comment is not recorded';
+        }
+
+        return $violations;
+    }
+
+    /** @return list<string> */
+    private function delegation(): array
+    {
+        $violations = [];
+        $this->rule('ALL', ['manager' => 1], priority: 10);
+
+        /*
+         | The step is the manager's, and the manager is away.
+         |
+         | A substitution would write the manager's id on the decision -
+         | a forged approval, discoverable only by noticing they were on
+         | holiday. The delegate acts and both are recorded.
+         */
+        $deputy = (string) Str::ulid();
+
+        app(\App\Tenant\Purchasing\Services\Delegations::class)->delegate(
+            entityId: $this->entityId,
+            fromUserId: $this->manager,
+            toUserId: $deputy,
+            /*
+             | Around the real clock, not the fixture's date.
+             |
+             | A delegation is about who may act TODAY, and the fixture
+             | dates its documents in May while the clock is in November.
+             | Measured: a May window was correctly reported as expired -
+             | `permitting()` asks about today and the window had closed
+             | months ago.
+             */
+            startsOn: \Illuminate\Support\Carbon::now()->subDay(),
+            endsOn: \Illuminate\Support\Carbon::now()->addWeek(),
+            reason: 'The approvals manager is on leave for the week of the 18th.',
+            duty: 'bill.approve',
+            createdBy: $this->director,
+        );
+
+        $bill = $this->enterBill();
+        $request = $this->request($bill);
+        $engine = app(ApprovalEngine::class);
+
+        /*
+         | Under the MANAGER's roles.
+         |
+         | A delegate borrows the authority of the person they cover for -
+         | that is what a delegation is - and the engine checks the
+         | delegation exists before it honours them. Measured: passing the
+         | deputy's own (empty) roles failed with "this step is not yours to
+         | clear", which is correct and is not what the check is about.
+         */
+        $request = $engine->decide(
+            $request,
+            $deputy,
+            'approved',
+            $engine->fieldsOf($bill),
+            null,
+            ['manager'],
+            $this->manager,
+        );
+
+        if (! $request->isApproved()) {
+            return [sprintf('the delegate could not act: %s', (string) $request->status)];
+        }
+
+        $decision = $request->decisions()->first();
+
+        /*
+         | `user_id` is who pressed the button; `on_behalf_of` is whose step
+         | it was. Written the other way round, the record would say the
+         | manager approved a document they never saw - and the only way to
+         | discover that is to notice they were on holiday that week.
+         */
+        if ((string) $decision->user_id !== $deputy) {
+            $violations[] = 'the decision does not name the person who actually acted';
+        }
+
+        if ((string) $decision->on_behalf_of !== $this->manager) {
+            $violations[] = 'the decision does not record whose step it was, so a substitution would be '.
+                'indistinguishable from the manager approving it themselves';
+        }
+
+        return $violations;
+    }
+
+    /** @return list<string> */
+    private function selfDelegation(): array
+    {
+        try {
+            app(\App\Tenant\Purchasing\Services\Delegations::class)->delegate(
+                entityId: $this->entityId,
+                fromUserId: $this->manager,
+                toUserId: $this->manager,
+                startsOn: $this->date->copy(),
+                endsOn: $this->date->copy()->addWeek(),
+                reason: 'Covering my own approvals while I am here.',
+            );
+        } catch (ApprovalRefused $e) {
+            return str_contains($e->getMessage(), 'laundered')
+                ? []
+                : ['the refusal does not say why it matters: '.$e->getMessage()];
+        }
+
+        return ['somebody delegated to themselves. It looks harmless and it is the shape in which a '.
+            'segregation-of-duties conflict is laundered'];
+    }
+
+    /** @return list<string> */
+    private function overlappingDelegation(): array
+    {
+        $deputy = (string) Str::ulid();
+        $delegations = app(\App\Tenant\Purchasing\Services\Delegations::class);
+
+        $delegations->delegate(
+            entityId: $this->entityId,
+            fromUserId: $this->manager,
+            toUserId: $deputy,
+            startsOn: \Illuminate\Support\Carbon::now(),
+            endsOn: \Illuminate\Support\Carbon::now()->addWeek(),
+            reason: 'Away for the week of the 18th, the deputy covers.',
+        );
+
+        try {
+            $delegations->delegate(
+                entityId: $this->entityId,
+                fromUserId: $this->manager,
+                toUserId: $deputy,
+                startsOn: \Illuminate\Support\Carbon::now()->addDays(3),
+                endsOn: \Illuminate\Support\Carbon::now()->addDays(10),
+                reason: 'Extending the cover by a few more days.',
+            );
+        } catch (ApprovalRefused $e) {
+            return str_contains($e->getMessage(), 'two answers')
+                ? []
+                : ['the refusal does not say why overlapping is a problem: '.$e->getMessage()];
+        }
+
+        return ['two overlapping delegations between the same two people were accepted. They are two '.
+            'answers to "may they act today", and the code would read whichever came back first'];
+    }
+
+    /** @return list<string> */
+    private function delegationWindow(): array
+    {
+        $this->rule('ALL', ['manager' => 1], priority: 10);
+        $deputy = (string) Str::ulid();
+
+        app(\App\Tenant\Purchasing\Services\Delegations::class)->delegate(
+            entityId: $this->entityId,
+            fromUserId: $this->manager,
+            toUserId: $deputy,
+            // Last month, and over.
+            startsOn: \Illuminate\Support\Carbon::now()->subMonth(),
+            endsOn: \Illuminate\Support\Carbon::now()->subMonth()->addWeek(),
+            reason: 'Covered the approvals during the April shutdown.',
+        );
+
+        $bill = $this->enterBill();
+        $request = $this->request($bill);
+        $engine = app(ApprovalEngine::class);
+
+        /*
+         | Under the manager's roles, so the only thing that can refuse is
+         | the delegation.
+         |
+         | Measured: with empty roles this check passed for the wrong
+         | reason - the step did not match - and a bite that removed the
+         | delegation requirement entirely left it green.
+         */
+        try {
+            $engine->decide($request, $deputy, 'approved', $engine->fieldsOf($bill), null, ['manager'], $this->manager);
+        } catch (ApprovalRefused $e) {
+            return str_contains($e->getMessage(), 'no delegation')
+                ? []
+                : ['the refusal is about something else: '.$e->getMessage()];
+        }
+
+        return ['a delegation that ended last month was still honoured. A delegation with no effective '.
+            'window is a standing substitution nobody revisits'];
+    }
+
+    /** @return list<string> */
+    private function revokedDelegation(): array
+    {
+        $this->rule('ALL', ['manager' => 1], priority: 10);
+        $deputy = (string) Str::ulid();
+        $delegations = app(\App\Tenant\Purchasing\Services\Delegations::class);
+
+        $delegation = $delegations->delegate(
+            entityId: $this->entityId,
+            fromUserId: $this->manager,
+            toUserId: $deputy,
+            startsOn: \Illuminate\Support\Carbon::now()->subDay(),
+            endsOn: \Illuminate\Support\Carbon::now()->addWeek(),
+            reason: 'Away for the week, the deputy covers approvals.',
+        );
+
+        $delegations->revoke($delegation, $this->director, 'Returned early from leave.');
+
+        $bill = $this->enterBill();
+        $request = $this->request($bill);
+        $engine = app(ApprovalEngine::class);
+
+        try {
+            $engine->decide($request, $deputy, 'approved', $engine->fieldsOf($bill), null, ['manager'], $this->manager);
+        } catch (ApprovalRefused $e) {
+            return str_contains($e->getMessage(), 'no delegation')
+                ? []
+                : ['the refusal is about something else: '.$e->getMessage()];
+        }
+
+        return ['a revoked delegation still let somebody act'];
+    }
+
+    /** @return list<string> */
+    private function standingReport(): array
+    {
+        $violations = [];
+        $delegations = app(\App\Tenant\Purchasing\Services\Delegations::class);
+        $deputy = (string) Str::ulid();
+
+        $delegations->delegate(
+            entityId: $this->entityId,
+            fromUserId: $this->manager,
+            toUserId: $deputy,
+            startsOn: \Illuminate\Support\Carbon::now()->subDay(),
+            endsOn: \Illuminate\Support\Carbon::now()->addWeek(),
+            reason: 'Away for the week of the 18th, the deputy covers.',
+        );
+
+        $inForce = $delegations->inForce($this->entityId, \Illuminate\Support\Carbon::now());
+
+        if ($inForce === []) {
+            return ['the standing report shows nothing while a delegation is in force. The compliance '.
+                'pack needs the list, and a delegation nobody can see is one nobody revisits'];
+        }
+
+        if (trim((string) ($inForce[0]['reason'] ?? '')) === '') {
+            $violations[] = 'the report does not carry the reason, which is the part an auditor reads';
+        }
+
+        $later = $delegations->inForce($this->entityId, \Illuminate\Support\Carbon::now()->addMonth());
+
+        if ($later !== []) {
+            $violations[] = 'a delegation that has expired still appears in force';
+        }
+
+        return $violations;
+    }
+
+    /** @return list<string> */
+    private function limitOnConverted(): array
+    {
+        $violations = [];
+        $this->rule('ALL', ['manager' => 1], priority: 10);
+
+        app(\App\Tenant\Purchasing\Services\Delegations::class)->setLimit(
+            entityId: $this->entityId,
+            amount: '1000.0000',
+            currency: 'SAR',
+            effectiveFrom: $this->date->copy()->subYear(),
+            role: 'manager',
+            createdBy: $this->director,
+        );
+
+        /*
+         | A bill of 10,000 in a weak currency, worth 1,150 converted.
+         |
+         | A limit tested on the document's own figure would be dodged by
+         | invoicing in a currency with a small unit - which is the whole
+         | reason PF-138 exists.
+         */
+        $bill = $this->enterBill();
+        $engine = app(ApprovalEngine::class);
+
+        $request = $engine->request(
+            entityId: $this->entityId,
+            subjectType: 'bill',
+            subjectId: (string) $bill->getKey(),
+            currency: 'JPY',
+            amount: '150000.0000',
+            fingerprintFields: $engine->fieldsOf($bill),
+            requestedBy: $this->requester,
+            functionalAmount: '4200.0000',
+            fxRate: '0.028000000000',
+            fxRateDate: $this->date->toDateString(),
+        );
+
+        try {
+            $engine->decide($request, $this->manager, 'approved', $engine->fieldsOf($bill), null, ['manager']);
+            $violations[] = 'a bill worth 4,200 converted was approved under a 1,000 limit. A limit '.
+                'tested on the document\'s own figure is dodged by invoicing in a weak currency';
+        } catch (ApprovalRefused $e) {
+            if (! str_contains($e->getMessage(), 'converted')) {
+                $violations[] = 'the refusal does not say the test is on the converted amount: '.$e->getMessage();
+            }
+        }
+
+        return $violations;
+    }
+
+    /** @return list<string> */
+    private function ownLimitWins(): array
+    {
+        $delegations = app(\App\Tenant\Purchasing\Services\Delegations::class);
+
+        $delegations->setLimit(
+            entityId: $this->entityId,
+            amount: '1000.0000',
+            currency: 'SAR',
+            effectiveFrom: $this->date->copy()->subYear(),
+            role: 'manager',
+        );
+
+        $delegations->setLimit(
+            entityId: $this->entityId,
+            amount: '50000.0000',
+            currency: 'SAR',
+            effectiveFrom: $this->date->copy()->subMonth(),
+            userId: $this->manager,
+        );
+
+        $limit = $delegations->limitFor($this->entityId, $this->manager, ['manager'], $this->date->copy());
+
+        return $limit === '50000.0000'
+            ? []
+            : [sprintf(
+                'the limit resolved to %s. An individual arrangement is deliberate and a role\'s is a '.
+                'default, so the user\'s own beats the role\'s',
+                (string) $limit,
+            )];
+    }
+
+    /** @return list<string> */
+    private function delegationCap(): array
+    {
+        $violations = [];
+        $this->rule('ALL', ['manager' => 1], priority: 10);
+        $delegations = app(\App\Tenant\Purchasing\Services\Delegations::class);
+        $deputy = (string) Str::ulid();
+
+        $delegations->setLimit(
+            entityId: $this->entityId,
+            amount: '100000.0000',
+            currency: 'SAR',
+            effectiveFrom: $this->date->copy()->subYear(),
+            userId: $this->manager,
+        );
+
+        /*
+         | "You may approve for me, up to 500."
+         |
+         | A delegation that carried the delegator's limit would make
+         | delegation a way to borrow authority.
+         */
+        $delegations->delegate(
+            entityId: $this->entityId,
+            fromUserId: $this->manager,
+            toUserId: $deputy,
+            startsOn: \Illuminate\Support\Carbon::now()->subDay(),
+            endsOn: \Illuminate\Support\Carbon::now()->addWeek(),
+            reason: 'Away for the week; the deputy may clear small items only.',
+            limitAmount: '500.0000',
+        );
+
+        $bill = $this->enterBill();
+        $request = $this->request($bill);
+        $engine = app(ApprovalEngine::class);
+
+        try {
+            $engine->decide($request, $deputy, 'approved', $engine->fieldsOf($bill), null, ['manager'], $this->manager);
+            $violations[] = 'a 1,150 bill was cleared under a 500 delegation cap, so delegating became '.
+                'a way to borrow the delegator\'s authority';
+        } catch (ApprovalRefused $e) {
+            if (! str_contains($e->getMessage(), '500')) {
+                $violations[] = 'the refusal does not name the cap that bound: '.$e->getMessage();
+            }
+        }
+
+        return $violations;
+    }
+
+    /** @return list<string> */
+    private function limitIsNotRetroactive(): array
+    {
+        $violations = [];
+        $this->rule('ALL', ['manager' => 1], priority: 10);
+        $delegations = app(\App\Tenant\Purchasing\Services\Delegations::class);
+
+        $delegations->setLimit(
+            entityId: $this->entityId,
+            amount: '100000.0000',
+            currency: 'SAR',
+            effectiveFrom: $this->date->copy()->subYear(),
+            role: 'manager',
+        );
+
+        $bill = $this->enterBill();
+        $request = $this->request($bill);
+
+        /*
+         | The limit is cut to 10 AFTER the chain started.
+         |
+         | The limit that applied is the one in force when the chain
+         | started: reading today's would change the answer to "was this
+         | within their authority" for every approval already given.
+         */
+        /*
+         | Effective from a month from NOW, not from the fixture's date.
+         |
+         | The fixture dates documents in May and the clock is in November,
+         | so "the fixture date plus a day" is already in the past and the
+         | new limit would legitimately be in force. The chain's own
+         | `requested_at` is the real now, which is what the limit test reads.
+         */
+        $delegations->setLimit(
+            entityId: $this->entityId,
+            amount: '10.0000',
+            currency: 'SAR',
+            effectiveFrom: \Illuminate\Support\Carbon::now()->addMonth(),
+            role: 'manager',
+            reason: 'Tightened after a review.',
+        );
+
+        $engine = app(ApprovalEngine::class);
+
+        try {
+            $request = $engine->decide($request, $this->manager, 'approved', $engine->fieldsOf($bill), null, ['manager']);
+
+            if (! $request->isApproved()) {
+                $violations[] = 'the approval did not complete: '.(string) $request->status;
+            }
+        } catch (ApprovalRefused $e) {
+            $violations[] = 'a limit cut after the chain started was applied to it retroactively: '.$e->getMessage();
+        }
+
+        $previous = DB::connection('tenant')->table('approval_limits')
+            ->where('entity_id', $this->entityId)
+            ->where('role', 'manager')
+            ->whereNotNull('effective_to')
+            ->count();
+
+        if ($previous === 0) {
+            $violations[] = 'the previous limit was replaced rather than closed, so "what was their '.
+                'limit in March" has no answer - which is the question an auditor asks about a March '.
+                'approval';
+        }
+
+        return $violations;
+    }
+
+    /** @return list<string> */
+    private function rateIsRecorded(): array
+    {
+        $bill = $this->enterBill();
+        $engine = app(ApprovalEngine::class);
+        $this->rule('ALL', ['manager' => 1], priority: 10);
+
+        $request = $engine->request(
+            entityId: $this->entityId,
+            subjectType: 'bill',
+            subjectId: (string) $bill->getKey(),
+            currency: 'EUR',
+            amount: '1000.0000',
+            fingerprintFields: $engine->fieldsOf($bill),
+            requestedBy: $this->requester,
+            functionalAmount: '4100.0000',
+            fxRate: '4.100000000000',
+            fxRateDate: $this->date->toDateString(),
+        );
+
+        $violations = [];
+
+        if ((string) $request->fx_rate !== '4.100000000000') {
+            $violations[] = sprintf(
+                'the rate on the request is %s. "Why did this need a director" is answered by the rate '.
+                'on the day, not by today\'s',
+                (string) $request->fx_rate,
+            );
+        }
+
+        if ($request->fx_rate_date?->toDateString() !== $this->date->toDateString()) {
+            $violations[] = 'the rate date was not recorded';
+        }
+
+        if ((string) $request->functional_amount !== '4100.0000') {
+            $violations[] = 'the converted amount was not recorded';
         }
 
         return $violations;

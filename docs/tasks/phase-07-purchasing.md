@@ -84,18 +84,23 @@ The expensive failure here is paying the same invoice twice, and the dangerous o
 ### PF-137 · Delegation and continuity
 `Purchasing` · **3 pts** · depends: PF-136 · standards: —
 
-- [ ] Delegation for a date range, with the delegate recorded on the approval rather than silently substituted
-- [ ] Out-of-office reassignment, and an escalation path when a step ages past a threshold
-- [ ] A delegate cannot receive an approval that SoD forbids them, which is the obvious way to launder a conflict
-- [ ] A standing report of delegations in force, for the compliance pack
+- [x] Delegation for a date range, with the delegate **recorded on the approval** rather than silently substituted. The naive implementation writes the absent person's id on the decision, which is a forged approval: the record says somebody approved a document they never saw, and the only way to discover it is to notice they were on holiday that week. The decision carries both - who pressed the button, and whose step it was
+- [x] A window with an end on it, because a delegation with none is a standing substitution nobody revisits: it outlives the holiday, the role and sometimes the employment. A delegation that has expired or been revoked is refused by name
+- [x] And overlapping delegations between the same two people are refused by an exclusion constraint. Two of them are two answers to "may they act today", and the code would read whichever came back first
+- [x] A delegate **cannot receive an approval that SoD forbids them**, which is the obvious way to launder a conflict. The SoD engine is asked about the person *acting* rather than about the delegator, so the conflict is caught where it arrives rather than where it was arranged - and the database refuses a delegation to oneself, which is the same trick from the other direction
+- [x] A delegation may carry a **lower cap** than the delegator's own limit - "you may approve for me, up to 5,000" - and the lower of the two binds. Taking the delegator's would make delegation a way to borrow authority
+- [x] An escalation path when a step ages past a threshold: `escalate_after_hours` on the step, and `overdue()` reports every open step past its window. A document waiting on somebody on holiday is one nobody is looking at
+- [x] A standing report of delegations in force, for the compliance pack, carrying the reason - which is the part an auditor reads
+- [x] Found on the way: two of these checks passed for the wrong reason. The deputy acted with empty roles, so the step did not match and the refusal came from "this step is not yours" rather than from the delegation - and a bite that removed the delegation requirement altogether left both green. A delegate acts under the **delegator's** roles, which is what a delegation is, and the checks now say so
 
 ### PF-138 · Approval limits across currencies
 `Purchasing` · **3 pts** · depends: PF-136, PF-068 · standards: IAS 21
 
-- [ ] Limits per entity, per role and per user, denominated in the entity's functional currency
-- [ ] A foreign-currency bill is converted **at the approval date** for the limit test, so a limit cannot be dodged by invoicing in a weak currency
-- [ ] The rate used for the limit test is recorded on the approval
-- [ ] A limit change is permissioned, audited, and never retroactive
+- [x] Limits per entity, per role and per user, denominated in the entity's functional currency. A user's own beats a role's - an individual arrangement is deliberate and a role's is a default - and where several roles apply the **highest** wins, because a person holding two roles has the authority of both and taking the lower would make granting somebody an extra role reduce what they can do
+- [x] A foreign-currency bill is converted **at the approval date** for the limit test, so a limit cannot be dodged by invoicing in a weak currency. A check approves a 150,000 JPY bill worth 4,200 against a 1,000 limit and requires the refusal
+- [x] The rate used for the limit test is recorded on the approval, with its date, because "why did this need a director" is answered by the rate on the day the chain started and not by today's
+- [x] A limit change is permissioned, audited, and **never retroactive**. The limit that applied is the one in force when the chain started, so a change is a new row with its own window and the previous one is *closed* rather than replaced - "what was their limit in March" is the question an auditor asks about a March approval, and a row that was overwritten has no answer
+- [x] The lowest of the three caps binds: the approver's own limit, the step's, and the delegation's
 
 ### PF-139 · Duplicate bill detection
 `Purchasing` · **5 pts** · depends: PF-133 · standards: — · `risk:high`

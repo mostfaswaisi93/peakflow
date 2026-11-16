@@ -83,6 +83,15 @@ final class ApprovalRefused extends \RuntimeException
         );
     }
 
+    public static function noDelegation(string $forUser): self
+    {
+        return new self(sprintf(
+            'You hold no delegation from %s, so you cannot act for them. A delegation has a window with '.
+            'an end on it, and one with no window is a standing substitution nobody revisits.',
+            $forUser,
+        ));
+    }
+
     public static function overTheirLimit(string $amount, string $limit, string $currency): self
     {
         return new self(sprintf(
