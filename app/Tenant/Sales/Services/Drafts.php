@@ -65,7 +65,7 @@ final class Drafts
                 'note' => $source->note,
             ]);
 
-            foreach ($source->lines()->orderBy('line_no')->get() as $line) {
+            foreach ($source->lines()->get() as $line) {
                 $copy = $line->replicate(['invoice_id', 'id', 'created_at', 'updated_at']);
                 $copy->invoice_id = (string) $draft->getKey();
                 $copy->tax_point = $date->toDateString();

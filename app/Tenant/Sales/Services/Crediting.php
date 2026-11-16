@@ -68,7 +68,7 @@ final class Crediting
     {
         $selections = [];
 
-        foreach ($invoice->lines()->orderBy('line_no')->get() as $line) {
+        foreach ($invoice->lines()->get() as $line) {
             $selections[] = [
                 'line_id' => (string) $line->getKey(),
                 'net' => (string) $line->net_amount,
@@ -182,7 +182,7 @@ final class Crediting
         }
 
         $date ??= Carbon::now();
-        $originals = $invoice->lines()->orderBy('line_no')->get();
+        $originals = $invoice->lines()->get();
         $weights = [];
 
         foreach ($originals as $line) {

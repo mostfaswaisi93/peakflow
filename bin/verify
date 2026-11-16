@@ -44,6 +44,7 @@ declare(strict_types=1);
  |   php bin/verify tax        tax categories, and rates that are effective-dated
  |   php bin/verify charts     the chart templates, and the charts they produce
  |   php bin/verify sales      the invoice: what a draft refuses, and what issuing guarantees
+ |   php bin/verify banking    bank accounts, the three balances, and what an import refuses
  |   php bin/verify property   the balanced-entry invariant over generated entries
  |   php bin/verify group      inter-entity postings across a four-entity group
  |   php bin/verify manual     manual journal entry: validation, templates, import
@@ -260,6 +261,11 @@ if ($only === 'all' || $only === 'purchasing') {
     $suites['Expense claims'] = $suite(static fn (): array => (new Tests\Support\ExpenseClaimRules())->all());
 }
 
+if ($only === 'all' || $only === 'banking') {
+    $suites['Bank accounts and the three balances'] = $suite(static fn (): array => (new Tests\Support\BankAccountRules())->all());
+    $suites['Statements, and what an import refuses'] = $suite(static fn (): array => (new Tests\Support\StatementRules())->all());
+}
+
 if ($only === 'all' || $only === 'sod') {
     $suites['Duty coverage'] = $suite(static fn (): array => (new Tests\Support\SodCoverageRules())->all());
 }
@@ -310,7 +316,7 @@ if ($only === 'all' || $only === 'examples') {
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | errors | repo | ops | tax | charts | sales | exchange | attachments | archive | inbound | purchasing | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | errors | repo | ops | tax | charts | sales | exchange | attachments | archive | inbound | purchasing | banking | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public\n");
     exit(2);
 }
 

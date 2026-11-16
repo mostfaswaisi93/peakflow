@@ -48,6 +48,22 @@ php artisan test                  # unit, arch, feature
 
 > **Run the full Pint pass, not `--dirty`.** `--dirty` only inspects files you changed, which is convenient locally and hides drift.
 
+### An ordered relation is `reorder()`ed, never given a second order
+
+Seventeen relations here impose their own order on purpose — a document's lines come back in line order, a fiscal year's periods in ordinal order — so the caller does not have to remember. The trap is the caller who wants the other end:
+
+```php
+$account->statements()->orderByDesc('sequence')->first()   // WRONG
+```
+
+compiles to `ORDER BY sequence ASC, sequence DESC`. The first clause wins, so `first()` returns the **oldest** row while reading as though it asked for the newest. Nothing errors, nothing logs, and the value is of the right type and shape.
+
+It was found in PF-146's reconciliation: the service asked for the latest statement, got the first one, and every reconciliation after the second import measured against the account's opening statement for ever. The figures were plausible, internally consistent and wrong.
+
+Use `reorder('sequence', 'desc')`, or query the model directly — which is what the fix did, because a `reorder()` is one word away from being forgotten by the next caller. `ArchitectureRules::orderedRelationsAreReordered()` enforces this and `@arch-allow` opts a line out.
+
+A **redundant** order — the same column, the same direction as the relation's — is also refused. It is harmless today and is exactly the line somebody later edits into a contradictory one.
+
 ### A PHPStan baseline entry needs a reviewer and a task
 
 There is no `baseline.neon` and `phpstan.neon` deliberately includes none, so

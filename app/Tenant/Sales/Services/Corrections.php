@@ -117,7 +117,7 @@ final class Corrections
 
         $date ??= Carbon::now();
         $currency = (string) $invoice->currency;
-        $template = $invoice->lines()->orderBy('line_no')->first();
+        $template = $invoice->lines()->first();
 
         if ($template === null) {
             throw CorrectionRefused::anInvoiceWithNoLines((string) $invoice->number);
@@ -176,7 +176,7 @@ final class Corrections
 
         $date ??= Carbon::now();
         $currency = (string) $invoice->currency;
-        $template = $invoice->lines()->orderBy('line_no')->first();
+        $template = $invoice->lines()->first();
 
         if ($template === null) {
             throw CorrectionRefused::anInvoiceWithNoLines((string) $invoice->number);

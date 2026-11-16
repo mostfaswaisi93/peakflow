@@ -54,6 +54,7 @@ final class ArchitectureRules
             'a subtree is read as a range, never as a LIKE' => $this->subtreesAreReadAsRanges(),
             'a suite that posts ends with the global proof' => $this->postingSuitesProveTheLedger(),
             'a bank account is read only through the disclosure service' => $this->bankReadsAreAudited(),
+            'an ordered relation is reordered, never re-ordered' => $this->orderedRelationsAreReordered(),
         ];
     }
 
@@ -1650,6 +1651,158 @@ final class ArchitectureRules
         }
 
         return $violations;
+    }
+
+
+    /**
+     * An ordered relation is `reorder()`ed, never given a second order.
+     *
+     * ## The rule
+     *
+     * **A relation method that imposes its own order must be `reorder()`ed
+     * by any caller that wants a different one.** Appending `orderBy()` to
+     * it adds a second clause rather than replacing the first.
+     *
+     * ## Why this one is worth a rule
+     *
+     * Because it fails silently and plausibly. Seventeen relations here
+     * impose an order on purpose - a document's lines come back in line
+     * order, a fiscal year's periods in ordinal order - and that is good:
+     * the caller should not have to remember. The trap is the caller who
+     * wants the other end:
+     *
+     *     $account->statements()->orderByDesc('sequence')->first()
+     *
+     * compiles to `ORDER BY sequence ASC, sequence DESC`. The first clause
+     * wins, and `first()` returns the OLDEST row while reading as though it
+     * asked for the newest. Nothing errors, nothing logs, and the value is
+     * of the right type and shape.
+     *
+     * Found in PF-146's own reconciliation: `BankBalances` asked for the
+     * latest statement, got the first one, and every reconciliation after
+     * the second import measured against the account's opening statement
+     * for ever. The figures were plausible, internally consistent, and
+     * wrong.
+     *
+     * `reorder('sequence', 'desc')` is the correct spelling. Not going
+     * through the relation at all is also fine, and is what the fix did -
+     * a `reorder()` is one word away from being forgotten by the next
+     * caller.
+     *
+     * @return list<string>
+     */
+    public function orderedRelationsAreReordered(): array
+    {
+        $ordered = $this->relationsThatImposeAnOrder();
+
+        if ($ordered === []) {
+            return ['no ordered relation was found at all, so this rule is checking nothing'];
+        }
+
+        $violations = [];
+        $orderings = ['->orderBy(', '->orderByDesc(', '->latest(', '->oldest('];
+
+        foreach ([...$this->phpFiles('app'), ...$this->phpFiles('tests')] as $file) {
+            $original = (string) file_get_contents($file);
+            $source = $this->withoutComments($original);
+
+            foreach ($ordered as $relation => $declaringModels) {
+                $needle = '->'.$relation.'()';
+                $offset = 0;
+
+                while (($at = strpos($source, $needle, $offset)) !== false) {
+                    $offset = $at + \strlen($needle);
+
+                    /*
+                     | The chain, as far as the statement's end.
+                     |
+                     | The ordering call is rarely adjacent: the real case
+                     | had two `where()`s and a line break between the
+                     | relation and the `orderByDesc`.
+                     */
+                    $terminator = strpos($source, ';', $at);
+                    $chain = substr($source, $at, ($terminator === false ? \strlen($source) : $terminator) - $at);
+
+                    // The declaration itself, not a call site.
+                    if (str_contains($chain, 'hasMany(') || str_contains($chain, 'hasOne(')) {
+                        continue;
+                    }
+
+                    if (str_contains($chain, '->reorder(')) {
+                        continue;
+                    }
+
+                    $found = null;
+
+                    foreach ($orderings as $ordering) {
+                        if (str_contains($chain, $ordering)) {
+                            $found = $ordering;
+
+                            break;
+                        }
+                    }
+
+                    if ($found === null || $this->lineIsAnnotated($original, $at)) {
+                        continue;
+                    }
+
+                    $violations[] = sprintf(
+                        '%s:%d orders the result of %s(), which %s already orders. The clauses are '.
+                        'appended, not replaced, so the first one wins and the query quietly returns '.
+                        'the opposite end of the set - use reorder() or query the model directly, or '.
+                        'annotate the line',
+                        $this->relative($file),
+                        $this->lineOf($original, $at),
+                        $relation,
+                        implode(' and ', $declaringModels),
+                    );
+                }
+            }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * Relation methods that impose their own order.
+     *
+     * @return array<string, list<string>>  relation name => the models declaring it
+     */
+    private function relationsThatImposeAnOrder(): array
+    {
+        $ordered = [];
+
+        foreach ($this->phpFiles('app') as $file) {
+            $source = $this->withoutComments((string) file_get_contents($file));
+
+            if (! str_contains($source, 'orderBy')) {
+                continue;
+            }
+
+            $pattern = '/function\s+(\w+)\s*\([^)]*\)[^{;]*\{\s*'.
+                       'return\s+\$this->(?:hasMany|hasOne)\([^;]*?->orderBy/s';
+
+            if (preg_match_all($pattern, $source, $matches) === 0) {
+                continue;
+            }
+
+            foreach ($matches[1] as $relation) {
+                /*
+                 | Several models declare `lines()`, and each orders it.
+                 |
+                 | Collected rather than overwritten so the message names
+                 | every model it could be - the call site reads
+                 | `$invoice->lines()`, and being told that SalesOrder
+                 | orders `lines()` sends somebody to the wrong file.
+                 */
+                $ordered[$relation] = array_values(array_unique([
+                    ...($ordered[$relation] ?? []),
+                    $this->relative($file),
+                ]));
+            }
+        }
+
+        return $ordered;
     }
 
     private function lineIsAnnotated(string $source, int $offset): bool

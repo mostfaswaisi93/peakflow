@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tenant\Purchasing\Services;
 
 use App\Support\Audit\AuditTrail;
+use App\Support\Database\DatabaseRefusal;
 use App\Support\Money\Money;
 use App\Support\Money\RoundingPolicy;
 use App\Support\Money\Scale;
@@ -494,7 +495,7 @@ final class SupplierCredits
         } catch (QueryException $e) {
             if (str_contains($e->getMessage(), 'bill_credit_allocations')
                 || str_contains($e->getMessage(), 'restrict_violation')) {
-                throw BillRefused::because($this->readable($e->getMessage()));
+                throw BillRefused::because(DatabaseRefusal::sentence($e->getMessage()));
             }
 
             throw $e;
@@ -757,7 +758,7 @@ final class SupplierCredits
                 creditReference: $reference,
             );
         } catch (QueryException $e) {
-            throw BillRefused::because($this->readable($e->getMessage()));
+            throw BillRefused::because(DatabaseRefusal::sentence($e->getMessage()));
         }
 
         $this->audit->record(
@@ -778,15 +779,5 @@ final class SupplierCredits
         );
 
         return $creditNote->refresh();
-    }
-
-    /** The database's own sentence, without the SQLSTATE wrapping. */
-    private function readable(string $message): string
-    {
-        if (preg_match('/ERROR:\s+(.+?)(\s+\(SQL:|$)/s', $message, $matches) === 1) {
-            return trim($matches[1]);
-        }
-
-        return $message;
     }
 }

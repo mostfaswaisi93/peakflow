@@ -140,10 +140,10 @@ The authoritative description of every table. **A schema change updates this fil
 
 | Table | Holds | Notable constraints |
 |-------|-------|---------------------|
-| `bank_accounts` | Real accounts | IBAN and BIC validated in the constructor; **1:1 immutable link to a GL account** with the `bank` role; exactly one entity; opening balance immutable once a statement exists |
-| `bank_statements` | Numbered, continuous | **Opening balance must equal the previous statement's closing balance**; a mismatch stops the import; never deleted, only superseded |
-| `bank_transactions` | The bank's assertions | **Immutable**; booking date **and** value date both stored; ISO 20022 transaction code retained; idempotency key on `(account, bank_reference)` or a content hash; partitioned monthly; `DELETE` revoked |
-| `bank_transaction_enrichment` | What we think it is | **Separate nullable columns**, never by rewriting the imported value |
+| `bank_accounts` | Real accounts | IBAN and BIC validated before storage; **1:1 immutable link to a postable GL account in the `bank` subtree** - the role itself or any account beneath it, because `account_roles` permits one role per entity and an entity may hold several bank accounts; a header cannot be mirrored; exactly one entity (a single non-null column, so sharing is inexpressible); opening balance immutable once a statement exists; identifiers column-encrypted with the tail in the clear; `DELETE` revoked |
+| `bank_statements` | Numbered, continuous | Our `sequence` **and** the bank's `statement_number`, because banks number inconsistently; **opening balance must equal the previous statement's closing balance**, asserted by trigger, and a mismatch stops the import naming both balances and the gap; the lines must sum to the stated movement; never deleted, only superseded, with the supersession attributed and reasoned; `DELETE` revoked |
+| `bank_transactions` | The bank's assertions | **Immutable** on every imported column, `is_provisional` and `superseded_by_id` aside; booking date **and** value date both stored; the ISO 20022 four-level code and the bank's proprietary one; `identity_key` a **generated** column - `ref:` from the bank's reference, else a SHA-256 including the line's sequence in its statement; unique on `(account, identity_key, booking_date)`; partitioned monthly; `DELETE` revoked on the parent **and every partition** |
+| `bank_transaction_enrichment` | What we think it is | **A separate table**, never by rewriting the imported value; a party attributed here must name how it was decided |
 | `matching_rules` | Tenant-authored, versioned | First-match-wins; a past match explainable by the rule as it was |
 | `match_proposals` | With confidence and a readable reason | Nothing below the threshold is hidden |
 | `matches` | Applied links, including splits both directions | Applied atomically; individually reversible |
@@ -218,5 +218,8 @@ SELECT next_number FROM number_series
 
 -- The application cannot delete posted history, whatever the ORM does.
 REVOKE DELETE ON journal_entries, journal_lines, bank_transactions,
-                 audit_log, invoices FROM peakflow_app;
+                 bank_statements, bank_accounts, audit_log, invoices
+            FROM peakflow_app;
 ```
+
+A table opts in with a `peakflow:no-delete` (or `peakflow:append-only`) comment and the provisioner does the revoking, which is also what applies it to **every partition**. PostgreSQL checks privileges on the relation a statement names, so revoking on a partitioned parent alone leaves each partition's own grant in place — `DELETE FROM bank_transactions_2026_05` would be permitted. A hand-rolled `REVOKE` in a migration got exactly that wrong, and the only sign of it was a privilege query.
