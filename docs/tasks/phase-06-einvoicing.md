@@ -37,18 +37,28 @@ The mistake it exists to avoid is building for one country's XML. PeakFlow holds
 ### PF-112 · The UBL 2.1 serializer
 `Exchange` · **8 pts** · depends: PF-110 · standards: OASIS UBL 2.1, ISO/IEC 19845 · `risk:high` `type:compliance`
 
-- [ ] Invoice and CreditNote documents, namespace-correct, with the EN 16931 customization and profile identifiers
-- [ ] Element ordering per the schema sequence - UBL is order-sensitive and a validator will say so unhelpfully
-- [ ] Code lists emitted with their `listID`, and identifiers with their `schemeID`
-- [ ] Amounts carry `currencyID`; the tax breakdown emits one `TaxSubtotal` per rate group
-- [ ] Canonicalized output is deterministic and stable, so the archive hash does not move
+- [x] Invoice and CreditNote documents, namespace-correct, with the EN 16931 customization and profile identifiers. They are **different documents**, not one document with a different type code: separate root elements, separate line elements (`cac:InvoiceLine` against `cac:CreditNoteLine`), separate quantity elements (`cbc:InvoicedQuantity` against `cbc:CreditedQuantity`) and a different element order. A debit note (383) and a corrected invoice (384) are `Invoice` documents - the correction is in the type code and the preceding reference
+- [x] Element ordering per the schema sequence - UBL is order-sensitive and a validator will say so unhelpfully, naming the element it did not expect rather than the one out of place. The sequences are **data**, in `UblSequences`, so they can be read against the schema by a person and diffed when a profile adds a term
+- [x] And the order is not left to the control flow of whichever method emitted the element: the writer sorts children into the declared sequence, and an element with no declared position is an **error** rather than something appended at the end - a name the sequence does not know is either a typo or a term somebody added without deciding where it goes
+- [x] The `CreditNote` sequence puts `cbc:TaxPointDate` **before** its type code and its note, where the `Invoice` puts it after both. That difference is what makes a shared "emit a document" method wrong, and a check asserts both orders and exercises the credit-note one on a document that carries a tax point
+- [x] Code lists emitted with their `listID`, and identifiers with their `schemeID`: `S` is a tax category in UNCL 5305 and something else in other lists, and a code without its list is a string the recipient has to guess at
+- [x] Amounts carry `currencyID`; quantities carry `unitCode`; the tax breakdown emits one `TaxSubtotal` per rate group, and a check requires the subtotals to sum to `cbc:TaxAmount` - `BR-CO-14`
+- [x] Canonicalized output is deterministic and stable, so the archive hash does not move: the same model serializes byte-identically, the canonical hash is stable, and it survives a parse-and-reserialize round trip - which is what every access point does to a document in transit
+- [x] Text goes in through a text node, not `createElement`'s second argument, which does not escape: `&` and `<` in a customer's legal name would otherwise produce a document that is not well-formed, and the recipient sees a parse error on an invoice nobody can read
+- [x] Found on the way, by reading the output: the first document carried `<cbc:CompanyID>SA:VAT:310000000000003</cbc:CompanyID>` - the snapshot's internal qualified reference, which appears on no document anywhere. Every check passed, `BR-CO-9` included, because the string does begin with `SA`. A check now asserts the shape and not only the rule, and `PartyTaxRegistration::qualified()` says in its docblock that it is not a document value
+- [x] Found on the way: a bite that collapsed the serializer to **one** `TaxSubtotal` left every check green, because the fixture's document had exactly one rate group. One per group is the entire reason tax is grouped, so the fixture now produces a standard-rated and a zero-rated line
+- [x] Found on the way: removing the writer's sort changed nothing, because both serializers happen to build their children in schema order. That makes the sort defence against code written later, and defence nothing exercises is defence nobody notices the loss of - so a check builds a document with its children deliberately reversed
+- [x] Found on the way, in `Sales`: `InvoiceValidator` read `$line->invoice?->taxBreakdown()` to check a zero-rated line's exemption reason. Lazy loading is disabled, so that line **threw** instead of validating - and it had never run, because every fixture until now was standard-rated. The first zero-rated invoice to reach the validator would have failed with "attempted to lazy load" rather than with a finding
 
 ### PF-113 · The CII D16B serializer
 `Exchange` · **5 pts** · depends: PF-112 · standards: UN/CEFACT CII D16B · `type:compliance`
 
-- [ ] `CrossIndustryInvoice` from the same semantic model, sharing nothing with the UBL serializer but the model
-- [ ] Both syntaxes validated against the same semantic test corpus, proving the model is genuinely syntax-independent
-- [ ] A test asserts a document serialized to both and parsed back yields the same semantic model
+- [x] `CrossIndustryInvoice` from the same semantic model, sharing nothing with the UBL serializer but the model - no helper, no base class, no shared "emit a party" method, and a check reads both files to require it. If one syntax could be produced from the other, the model would not be what makes them independent and this phase would prove nothing
+- [x] The differences are real and not cosmetic: there is **no credit note document** in CII (one root, type code 381); the **tax point** is document-level in UBL and sits inside each `ram:ApplicableTradeTax` here; **dates** are `20260518` inside a `udt:DateTimeString format="102"`; a **boolean** is a `udt:Indicator` element; a **line** is split into agreement, delivery and settlement; the note's **subject code** is its own element where UBL folds it into the text as `#code#text`; the tax registration's scheme is `VA` rather than a nested `cac:TaxScheme`
+- [x] Both syntaxes validated against the same semantic test corpus, proving the model is genuinely syntax-independent
+- [x] A check asserts a document serialized to both and read back yields the same semantic model - through **two independently written path tables**, one per syntax, held in the tests rather than the application. If the serializers were generated from those tables the check would be asserting that one table equals itself
+- [x] And the round trip cannot quietly shrink: a term the model populates with no path in either table is reported as a gap, and the check refuses to pass if fewer than fifteen terms were actually read back out
+- [x] Found on the way: `ram:TaxPointDate` is a `udt:DateType`, whose child is a `udt:DateString` - not a `DateTimeString`, and not the element's own text. The first version emitted the ISO date as text, which is a third wrong answer, and the behavioural check caught what PF-114's schema validation would have
 
 ### PF-114 · XSD validation
 `Exchange` · **3 pts** · depends: PF-112 · standards: XML Schema 1.0 · `type:compliance`

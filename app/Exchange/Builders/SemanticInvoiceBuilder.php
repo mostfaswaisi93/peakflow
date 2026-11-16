@@ -181,7 +181,7 @@ final class SemanticInvoiceBuilder
         $registration = (array) ($snapshot['registration'] ?? []);
 
         if (($registration['scheme'] ?? null) === 'VAT') {
-            $seller->set(BT::SellerVatIdentifier, $registration['qualified'] ?? $registration['identifier'] ?? null);
+            $seller->set(BT::SellerVatIdentifier, $this->vatIdentifier($registration));
         } elseif (($registration['identifier'] ?? null) !== null) {
             $seller->set(BT::SellerTaxRegistrationIdentifier, $registration['identifier']);
         }
@@ -212,7 +212,7 @@ final class SemanticInvoiceBuilder
         $registration = (array) ($snapshot['registration'] ?? []);
 
         if (($registration['scheme'] ?? null) === 'VAT') {
-            $buyer->set(BT::BuyerVatIdentifier, $registration['qualified'] ?? $registration['identifier'] ?? null);
+            $buyer->set(BT::BuyerVatIdentifier, $this->vatIdentifier($registration));
         }
 
         /*
@@ -557,6 +557,41 @@ final class SemanticInvoiceBuilder
         }
 
         return $notes;
+    }
+
+    /**
+     * A VAT identifier in the form EN 16931 asks for - BT-31, BT-48, BR-CO-9.
+     *
+     * ## What was wrong before, measured
+     *
+     * The snapshot carries a `qualified` field, `SA:VAT:310000000000003`,
+     * and the first version of this builder emitted it. It is an internal
+     * reference - jurisdiction, scheme and number, so two registrations
+     * under different schemes can be told apart - and it appears on no
+     * document anywhere. A recipient reading
+     * `<cbc:CompanyID>SA:VAT:310000000000003</cbc:CompanyID>` rejects it,
+     * and `BR-CO-9` passed because the string does begin with `SA`.
+     *
+     * The rule is that the identifier carries the ISO 3166-1 alpha-2 code of
+     * its issuing country, so the country of issue can be identified: an EU
+     * number usually already does (`DE123456789`) and a Saudi one does not,
+     * so the prefix is added only when it is absent.
+     */
+    private function vatIdentifier(array $registration): ?string
+    {
+        $identifier = trim((string) ($registration['identifier'] ?? ''));
+
+        if ($identifier === '') {
+            return null;
+        }
+
+        $country = strtoupper(trim((string) ($registration['jurisdiction'] ?? '')));
+
+        if ($country === '' || str_starts_with(strtoupper($identifier), $country)) {
+            return $identifier;
+        }
+
+        return $country.$identifier;
     }
 
     /** An amount at the currency's own exponent - EN 16931 BR-DEC-*. */

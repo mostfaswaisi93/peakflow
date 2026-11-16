@@ -56,6 +56,8 @@ trait IssuesInvoices
 
     protected string $taxCodeId = '';
 
+    protected string $zeroRatedTaxCodeId = '';
+
     protected string $revenueAccountId = '';
 
     protected ?Period $period = null;
@@ -256,6 +258,32 @@ trait IssuesInvoices
             reportingBoxes: ['sa' => ['output' => 'standard_sales']],
         )->getKey();
 
+        /*
+         | A second rate, so a document can have more than one rate group.
+         |
+         | Measured: with only a standard-rated code in the fixture, a bite
+         | that collapsed the UBL serializer to one `cac:TaxSubtotal` was
+         | invisible - the count was right because there was only ever one
+         | group. "One subtotal per rate group" is the whole reason tax is
+         | grouped, and a fixture that cannot produce two groups cannot
+         | check it.
+         */
+        $this->zeroRatedTaxCodeId = (string) app(TaxCodes::class)->introduce(
+            entityId: $this->entityId,
+            code: 'SA-Z-0',
+            category: TaxCategory::ZeroRated,
+            jurisdiction: 'SA',
+            rate: '0.000000',
+            from: CarbonImmutable::parse('2020-07-01'),
+            labelAr: 'معفاة بنسبة صفر',
+            labelEn: 'Zero rated',
+            source: 'a fixture',
+            reportingBoxes: ['sa' => ['output' => 'zero_rated_sales']],
+            exemptionReasonCode: 'VATEX-SA-EDU',
+            exemptionReasonAr: 'توريد خاضع لنسبة الصفر وفقاً للائحة التنفيذية',
+            exemptionReasonEn: 'Zero rated under the Implementing Regulations',
+        )->getKey();
+
         $this->revenueAccountId = (string) Account::query()
             ->where('entity_id', $this->entityId)
             ->where('type', 'revenue')
@@ -264,6 +292,63 @@ trait IssuesInvoices
             ->value('id');
 
         $this->terms = PaymentTerm::query()->where('active', true)->first();
+    }
+
+    /**
+     * A draft with two rate groups - standard and zero rated.
+     *
+     * The document a single-rate fixture cannot produce, and the one that
+     * exercises the design tax grouping exists for: `BR-CO-14` is the rule
+     * that per-line tax does not add up to the document total, and it can
+     * only be broken by a document with more than one group.
+     */
+    protected function draftWithTwoRateGroups(): Invoice
+    {
+        $invoice = $this->draft();
+
+        $zeroNet = '400.0000';
+
+        InvoiceLine::create([
+            'entity_id' => $this->entityId,
+            'invoice_id' => (string) $invoice->getKey(),
+            'line_no' => 2,
+            'description' => 'Export of advisory services',
+            'unit_code' => 'C62',
+            'quantity' => '1.00000000',
+            'unit_price' => $zeroNet,
+            'net_amount' => $zeroNet,
+            'revenue_account_id' => $this->revenueAccountId,
+            'tax_code_id' => $this->zeroRatedTaxCodeId,
+            'tax_category' => 'Z',
+            'tax_rate' => '0.000000',
+            'tax_point' => $this->date->toDateString(),
+            'place_of_supply' => 'SA',
+            'place_of_supply_rule' => 'domestic',
+        ]);
+
+        InvoiceTaxBreakdownRow::create([
+            'entity_id' => $this->entityId,
+            'invoice_id' => (string) $invoice->getKey(),
+            'category' => 'Z',
+            'rate' => '0.000000',
+            'taxable_amount' => $zeroNet,
+            'tax_amount' => '0.0000',
+            'exemption_reason_code' => 'VATEX-SA-EDU',
+            'exemption_reason_text' => 'Zero rated under the Implementing Regulations',
+            'report_box' => 'zero_rated_sales',
+        ]);
+
+        $net = (string) BigDecimal::of('1000.0000')->plus($zeroNet)->toScale(4);
+        $gross = (string) BigDecimal::of($net)->plus('150.0000')->toScale(4);
+
+        $invoice->update([
+            'net_amount' => $net,
+            'tax_amount' => '150.0000',
+            'gross_amount' => $gross,
+            'payable_amount' => $gross,
+        ]);
+
+        return $invoice->refresh();
     }
 
     /**

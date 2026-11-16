@@ -172,7 +172,20 @@ final class InvoiceValidator
         $category = $line->tax_category;
 
         if ($category->requiresExemptionReason() && $category !== TaxCategory::Standard) {
-            $breakdown = $line->invoice?->taxBreakdown()
+            /*
+             | From the invoice the caller already holds, not back up the
+             | relation.
+             |
+             | `$line->invoice` is a lazy load, and lazy loading is disabled:
+             | this line threw instead of validating. It had never run,
+             | because every fixture until now was standard-rated and this
+             | branch is only reached by a category that needs an exemption
+             | reason - so the first zero-rated invoice to reach the
+             | validator would have failed with "attempted to lazy load",
+             | not with a finding. Found by a serializer check that needed a
+             | document with two rate groups.
+             */
+            $breakdown = $invoice->taxBreakdown()
                 ->where('category', $category->value)
                 ->whereNotNull('exemption_reason_code')
                 ->exists();

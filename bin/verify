@@ -231,6 +231,8 @@ if ($only === 'all' || $only === 'sales') {
 if ($only === 'all' || $only === 'exchange') {
     $suites['The semantic model'] = $suite(static fn (): array => (new Tests\Support\ExchangeRules())->all());
     $suites['The model from a document'] = $suite(static fn (): array => (new Tests\Support\SemanticModelRules())->all());
+    $suites['UBL 2.1'] = $suite(static fn (): array => (new Tests\Support\UblSerializerRules())->all());
+    $suites['CII D16B'] = $suite(static fn (): array => (new Tests\Support\CiiSerializerRules())->all());
 }
 
 if ($only === 'all' || $only === 'sod') {

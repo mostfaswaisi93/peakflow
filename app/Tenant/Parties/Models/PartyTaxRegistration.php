@@ -55,7 +55,16 @@ final class PartyTaxRegistration extends TenantModel
         return $this->belongsTo(Party::class, 'party_id');
     }
 
-    /** `SA` + `TIN` + `310000000000003`, as it appears on a document. */
+    /**
+     * The internal, fully qualified reference: `SA:TIN:310000000000003`.
+     *
+     * Jurisdiction, scheme and number, so two registrations under different
+     * schemes in the same country can be told apart. It is NOT what appears
+     * on a document: EN 16931's BT-31 is the identifier with its ISO country
+     * prefix and no scheme, and a recipient reading this triple rejects the
+     * invoice. `SemanticInvoiceBuilder::vatIdentifier()` is what a document
+     * carries, and an `Exchange` check requires no colon to reach one.
+     */
     public function qualified(): string
     {
         return sprintf('%s:%s:%s', $this->jurisdiction, $this->scheme, $this->identifier);
