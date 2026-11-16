@@ -211,13 +211,42 @@ return [
         // wrong invoice confidently.
         'min_reference_match_length' => 5,
 
+        /*
+         | The passes that are not worth running once something certain has
+         | been found.
+         |
+         | Not a shortcut for its own sake: a subset-sum search against four
+         | hundred open invoices is bounded precisely because it is
+         | expensive, and running it after pass 1 already read the invoice
+         | number off the remittance field spends that budget on a worse
+         | answer to a question already answered.
+         |
+         | Skipping is RECORDED on the result, never silent - "no fuzzy
+         | proposal" and "fuzzy was not run" are different facts, and only
+         | the second has an explanation.
+         */
+        'expensive_passes' => ['subset_sum', 'fuzzy_party'],
+
+        // Two candidates within this of each other are a choice, not a
+        // ranking. Surfaced rather than resolved - PF-157.
+        'ambiguity_margin' => 0.05,
+
         // Subset-sum is bounded, because the naive implementation hangs on a
         // customer with 400 open items.
         'subset_sum' => [
             'candidate_cap' => (int) env('BANKING_SUBSET_SUM_CANDIDATE_CAP', 24),
             'time_budget_ms' => (int) env('BANKING_SUBSET_SUM_TIME_BUDGET_MS', 500),
             'tie_break' => 'oldest_first',
-            'auto_apply_above_candidates' => false,
+
+            // A combination of eleven invoices adding to a round figure is
+            // arithmetic, not evidence, and searching for one costs more
+            // than it is worth: the combinations at size 6 over 24
+            // documents are already 134,596.
+            'max_combination_size' => (int) env('BANKING_SUBSET_SUM_MAX_SIZE', 6),
+
+            // Above this many documents the combination is proposed and a
+            // human confirms, whatever it scores.
+            'auto_apply_max_size' => (int) env('BANKING_SUBSET_SUM_AUTO_APPLY_MAX_SIZE', 3),
         ],
 
         'date_window_days' => 5,

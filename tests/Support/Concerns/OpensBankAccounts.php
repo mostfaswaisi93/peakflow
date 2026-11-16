@@ -365,6 +365,74 @@ trait OpensBankAccounts
     }
 
     /**
+     * Import one statement of arbitrary lines, balanced by construction.
+     *
+     * The matching checks need transactions rather than statements, and
+     * computing a closing balance by hand in every one of them would make
+     * each check about arithmetic it is not testing.
+     *
+     * @param  list<array<string, mixed>>  $lines
+     * @return array<string, mixed>
+     */
+    protected function importLines(array $lines, ?string $hash = null): array
+    {
+        $from = $this->openingDate();
+        $opening = $this->bank()->lastStatement()?->closing_balance
+            ?? (string) $this->bank()->opening_balance;
+
+        $movement = \Brick\Math\BigDecimal::zero();
+
+        foreach ($lines as $line) {
+            $movement = $movement->plus((string) $line['amount']);
+        }
+
+        $previous = $this->bank()->lastStatement();
+        $start = $previous === null
+            ? $from->copy()
+            : Carbon::parse($previous->period_to->toDateString())->addDay();
+
+        return app(StatementImport::class)->import(
+            account: $this->bank(),
+            sourceFormat: 'camt053',
+            periodFrom: $start,
+            periodTo: $start->copy()->addDays(6),
+            openingBalance: (string) $opening,
+            closingBalance: (string) \Brick\Math\BigDecimal::of((string) $opening)->plus($movement)->toScale(4),
+            lines: $lines,
+            statementNumber: 'MATCH-'.Str::upper(Str::random(4)),
+            contentHash: $hash ?? hash('sha256', (string) Str::ulid()),
+            userId: $this->actorId(),
+        );
+    }
+
+    /**
+     * One credit line, with whatever the check needs on it.
+     *
+     * @param  array<string, mixed>  $overrides
+     * @return array<string, mixed>
+     */
+    protected function line(string $amount, array $overrides = []): array
+    {
+        $day = $this->openingDate()->addDays(2)->toDateString();
+
+        return [
+            'booking_date' => $day,
+            'value_date' => $day,
+            'amount' => $amount,
+            'counterparty_name' => 'Gulf Retail LLC',
+            ...$overrides,
+        ];
+    }
+
+    protected function transactionBy(string $reference): \App\Tenant\Banking\Models\BankTransaction
+    {
+        return \App\Tenant\Banking\Models\BankTransaction::query()
+            ->where('bank_account_id', (string) $this->bank()->getKey())
+            ->where('bank_reference', $reference)
+            ->firstOrFail();
+    }
+
+    /**
      * A second GL account a bank account may mirror.
      *
      * A postable sub-account UNDER the chart's bank account, with no role of

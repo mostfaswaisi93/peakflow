@@ -44,7 +44,7 @@ declare(strict_types=1);
  |   php bin/verify tax        tax categories, and rates that are effective-dated
  |   php bin/verify charts     the chart templates, and the charts they produce
  |   php bin/verify sales      the invoice: what a draft refuses, and what issuing guarantees
- |   php bin/verify banking    bank accounts, three balances, statements, and what a bank sends
+ |   php bin/verify banking    bank accounts, balances, statements, what a bank sends, and matching
  |   php bin/verify property   the balanced-entry invariant over generated entries
  |   php bin/verify group      inter-entity postings across a four-entity group
  |   php bin/verify manual     manual journal entry: validation, templates, import
@@ -266,6 +266,7 @@ if ($only === 'all' || $only === 'banking') {
     $suites['Statements, and what an import refuses'] = $suite(static fn (): array => (new Tests\Support\StatementRules())->all());
     $suites['Reading what a bank sends'] = $suite(static fn (): array => (new Tests\Support\StatementParserRules())->all());
     $suites['The import screen'] = $suite(static fn (): array => (new Tests\Support\BankingScreenRules())->all());
+    $suites['The matching engine'] = $suite(static fn (): array => (new Tests\Support\MatchingRules())->all());
 }
 
 if ($only === 'all' || $only === 'sod') {

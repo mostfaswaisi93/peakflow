@@ -213,9 +213,55 @@ Seven passes, cheapest and most certain first. Each proposes with a **confidence
 | 6 | Rule-based | Tenant rules on counterparty, code, amount range, pattern | Fees, interest, standing charges, payroll, transfers |
 | 7 | Fuzzy party | Normalized name distance | Messy retail payers — **proposal only, never auto-applied** |
 
+### A pass proposes; the engine decides
+
+No pass writes anything, judges whether its own score is good enough, or stops the ones after it. That belongs to the engine, which is the only place that can see all the candidates at once — and seeing them at once is what makes ambiguity detectable. A pass that applied its own best answer could never be told that two of them agree and that is the problem.
+
+Passes run cheapest and most certain first, and once a candidate reaches the auto-apply threshold the **expensive** ones are skipped: a subset-sum search is bounded precisely because it is costly, and running it after pass 1 read the invoice number off the remittance field spends that budget on a worse answer to a question already answered.
+
+The skip is **recorded on the result**. "No fuzzy proposal" and "fuzzy was not run" are different facts, and only the second has an explanation — somebody asking why a payer was not recognised deserves the second answer rather than silence.
+
+Every pass is accounted for: it is in `ran`, or it is in `skipped` with a reason. There are three reasons a pass is skipped — the transaction routes to a strategy that does not use it, something already scored above the threshold and the pass is expensive, or the pass looked and does not apply — and the third is the common one, so it is the one whose absence is hardest to notice. The check that guards this compares the whole set against `ran ∪ skipped` rather than asserting that *something* was skipped, because the first two reasons alone keep that weaker assertion true while the third has gone silent.
+
+### The scoring model, in one place
+
+| Pass | Base | Why there |
+|---|---|---|
+| Rule engine | 0.95 | A human wrote the rule and said what it means. The engine is not guessing; it is doing what it was told |
+| Structured remittance | 0.90 | The payer put the number in a field that exists for it, with its amount beside it |
+| Exact reference | 0.80 | The reference is there, in free text — which the payer typed and their bank may have mangled |
+| Payment run | 0.75 | Ours going out, matched against a batch we released |
+| Amount + party + window | 0.60 | Circumstantial. Right far more often than not, never evidence on its own |
+| Subset-sum | 0.55 | Arithmetic, not evidence. A combination that adds up is a combination that adds up |
+| Fuzzy party | 0.40 | A guess about **who**, with nothing about **what** |
+
+Every pass moves from its base by **named factors**, and the factors reach the proposal. A confidence of 0.87 is a number nobody can argue with; the factors are what let somebody say "it scored that high because the amount matched exactly, and an exact amount means less than you think when the customer pays round numbers" — which is the conversation that improves the engine. They are also what makes the model reproducible: a model documented in prose drifts from the code within two changes, and one that emits its own working cannot. The checks assert the factors add up to the score.
+
+The fuzzy ceiling is not a threshold. It sits **below any value a tenant can set**, so no configuration anywhere makes that pass apply by itself.
+
 ### Reference extraction
 
-Banks mangle references: truncation, case folding, inserted spaces, stripped punctuation, concatenation with other text. Extraction tolerates all of it — **without matching on a substring so short it is coincidental**. A three-character match against a six-digit invoice number is noise, and treating it as a signal is how an engine applies a payment to the wrong invoice confidently.
+Banks mangle references: truncation, case folding, inserted spaces, stripped punctuation, concatenation with other text. Comparison is therefore on a normalised form — upper case, letters and digits only — so `INV-1001`, `inv 1001`, `Inv.1001`, `/REMI/INV-1001 THANKS` and the same reference inside a hand-typed sentence are all found.
+
+That makes everything more findable, **including things that are not there**: `1001` appears in an account number, a date and half the amounts on a statement. Three rules stop it.
+
+1. **A minimum length.** A three-character match against a six-digit invoice number is noise, and treating it as a signal is how an engine applies a payment to the wrong invoice confidently.
+2. **The whole reference, or nothing.** A match on the first five characters would match every invoice issued the same month.
+3. **A digit boundary.** `INV1001` must not match inside `INV10010` — the next invoice in the series. Normalising removes the punctuation that would have separated them, so without this every invoice matches its own successor for the first ten of them.
+
+It reports more than a boolean: whether the reference stood alone or was found inside a sentence, and how much of the field it accounted for. A remittance that is nothing but the reference is a payer answering the question; the same characters inside forty words are much weaker evidence, because the sentence may be about a different invoice entirely.
+
+### Outstanding is recomputed, never read off a column
+
+Gross, less credit notes, less every applied match. A stored `paid_amount` is a second place the truth lives: it drifts the first time a match is reversed, a credit note cancelled, or two transactions matched to one invoice in the same second — and the symptom is an invoice that reports itself settled while the customer is still being chased, or one that keeps accepting payments after it is paid.
+
+It is also what makes reversal clean: the document comes back by itself, with no second write to get wrong.
+
+### Ambiguity is a property of the set
+
+Two candidates within the margin of each other **pointing at different documents** are a choice, not a ranking. Neither is applied, both are shown, and both carry the flag — so a proposal that was ambiguous when made still reads as ambiguous after the others are decided.
+
+Two passes agreeing about one document is agreement, and deduplication has already collapsed it. Two open documents owed exactly the same amount — a monthly retainer, a standing charge, two identical orders — are both proposed and both penalised for the other existing.
 
 ### Subset-sum, bounded
 
@@ -235,9 +281,31 @@ One credit against several open invoices is how most customers actually pay, and
 
 ### Learning without drifting
 
-When a user corrects a proposed match, the correction is stored as a **rule candidate** and offered back as a suggested rule. A confirmed fuzzy-party match stores the counterparty identifier against the party, so the same payer matches **exactly** next time.
+When a user accepts or corrects a match, the counterparty's **account number** is stored against the party. The next transfer from that payer is identified exactly, on an identifier, with no name comparison at all — and the one after that, and every one after that.
 
-> The engine learns by accumulating identifiers and by proposing rules a human approves. It **never silently changes its own behaviour**, because an engine whose thresholds move on their own cannot be audited.
+> The engine learns by accumulating identifiers and by proposing rules a human approves. It **never silently changes its own behaviour**, because an engine whose thresholds move on their own cannot be audited: nobody can say why last month's matches were made at a bar this month's would not clear, and the only way to investigate a bad match is to reconstruct a threshold that has since moved again.
+
+Two constraints on that, both load-bearing:
+
+**It never learns from its own automatic match.** An identifier taken from an unreviewed guess is the engine teaching itself, and two confident mistakes later nobody can say where the belief came from. Identifiers come from a person confirming.
+
+**A name is never an identifier.** `normalised_name` is stored — the fuzzy pass ranks on it, and knowing which names have been seen is useful — but identity comes from an account number or a BIC, things a payer cannot have by coincidence. Two companies called "Gulf Trading" is not a hypothetical. A BIC counts only when exactly one party has it: for a small supplier at a small bank that is informative, and for anybody at a large one it would make every payer there the same party.
+
+### A rule is tested before it is saved, and versioned after
+
+A rule is a standing instruction. Written too broadly it does not fail — it quietly claims every receipt in the account from the day it is saved, and the first sign is a month that will not reconcile.
+
+So the tester answers "which of the transactions you already have would this have matched" **before** anything is stored, and returns the transactions rather than a count: "this matches 412 transactions" is a number somebody argues with, and the first twenty of them with their amounts and counterparties is a rule somebody rewrites. It flags the dangerous case by name — a transaction the rule would have claimed that turned out to be a document matched to something else, which is how a rule written for fees comes to swallow receipts.
+
+Rules are **versioned**, never updated in place. An edit writes a new row with the same key and the next version; the old one is marked superseded; a proposal points at the exact text that produced it. A rule edited next March must not change what it says about a match it made today.
+
+### The accuracy report is derived, not counted
+
+Per pass: proposed, accepted, corrected, rejected. Two ways to get that — a counter incremented on each decision, or the decision recorded on the proposal and the report derived.
+
+A counter is cheaper and drifts: the first time a match is reversed, a migration backfills, or two tabs decide the same proposal. A drifting accuracy report is worse than none, because a degrading pass is exactly what it exists to show and a wrong number hides it.
+
+Accuracy is accepted out of **decided**, not out of proposed. Dividing by the total would make a new pass look terrible on its first day and a stale one look excellent. A reversal counts as **corrected**, not as never-decided — counting it as undecided hides the outcome the report is for.
 
 ## Differences, classified before they are written off
 

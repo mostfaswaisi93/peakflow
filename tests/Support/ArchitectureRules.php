@@ -394,9 +394,23 @@ final class ArchitectureRules
                 }
             }
 
-            // An Eloquent cast to float.
+            /*
+             | An Eloquent cast to float.
+             |
+             | Annotatable like the other two branches. It was not, and the
+             | inconsistency only shows up to somebody holding a legitimate
+             | case: a confidence score, a percentage, a ratio - none of
+             | them money, all of them caught here with no way out but
+             | deleting the cast. Two branches of one rule behaving
+             | differently is how a guardrail comes to be worked around
+             | rather than used.
+             */
             if (preg_match_all('/=>\s*[\'"](?:float|real|double)[\'"]/', $source, $m, PREG_OFFSET_CAPTURE)) {
                 foreach ($m[0] as [, $offset]) {
+                    if ($this->lineIsAnnotated($original, $offset)) {
+                        continue;
+                    }
+
                     $violations[] = sprintf('%s:%d casts an attribute to float', $relative, $this->lineAt($source, $offset));
                 }
             }

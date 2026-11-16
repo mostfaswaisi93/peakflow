@@ -127,54 +127,67 @@ The target format and the richest one.
 
 Cheapest and most certain first.
 
-- [ ] Pass 1, exact reference: a payment reference, invoice number or end-to-end id found in the remittance field, matched against open documents
-- [ ] Pass 2, payment-run match: an outgoing amount equal to a released batch's total, or to a line within it
-- [ ] Reference extraction tolerates the mangling banks apply - truncation, case folding, inserted spaces, stripped punctuation - without matching on a substring so short it is coincidental
-- [ ] Each proposal carries a confidence score and a **human-readable reason**
-- [ ] A matched document's remaining balance is recomputed, never assumed
+- [x] Pass 1, exact reference: a payment reference, invoice number or end-to-end id found in the remittance field, the end-to-end id, the bank's reference or the counterparty name, matched against open documents. The strongest field wins where the same reference appears in two - the end-to-end id is the more deliberate place
+- [ ] Pass 2, payment-run match: an outgoing amount equal to a released batch's total, or to a line within it. **Blocked on PF-174** (Phase 09), which is what a payment run is - the routing already sends outgoing credit transfers to this pass, and the pass is the only part missing
+- [x] Reference extraction tolerates the mangling banks apply, because comparison is on a normalised form - upper case, letters and digits only, so `INV-1001`, `inv 1001`, `Inv.1001`, `/REMI/INV-1001 THANKS` and the same reference inside a hand-typed sentence are all found. Three rules stop that making everything findable including things that are not there: a **minimum length** (a three-character match against a six-digit invoice number is noise), the **whole** reference or nothing, and a **digit boundary** - `INV1001` must not match inside `INV10010`, which is the next invoice in the series and which normalising would otherwise have made indistinguishable
+- [x] Each proposal carries a confidence score and a human-readable reason, **and its factors**. The score alone is a number nobody can argue with; the factors are what let somebody say "it scored that high because the amount matched exactly, and an exact amount means less than you think when the customer pays round numbers". They are also what makes the model reproducible - a model documented in prose drifts from the code within two changes, and one that emits its own working cannot
+- [x] A matched document's remaining balance is **recomputed**: gross, less credit notes, less every applied match. A stored `paid_amount` is a second place the truth lives - it drifts the first time a match is reversed or a credit note cancelled, and the symptom is an invoice that reports itself settled while the customer is still being chased
+- [x] A part payment proposes **the part**, not the whole. The reference says which document and nothing about whether this payment settles it: a transfer quoting an invoice for a third of its value is an instalment, and proposing it as a settlement closes an invoice two thirds unpaid. An amount *larger* than the outstanding is penalised further, because that is either an overpayment or the reference belonging to a different document
 
 ### PF-157 · Matching passes 3 and 4
 `Banking` · **5 pts** · depends: PF-156 · standards: ISO 20022 `RmtInf/Strd`
 
-- [ ] Pass 3: exact amount plus party plus a date window, where the party is identifiable from the counterparty account
-- [ ] Pass 4: structured remittance referenced documents, which is the highest-quality signal when a payer supplies it
-- [ ] A partial amount against a single open document proposes a partial allocation rather than being discarded
-- [ ] Ambiguity - two equally good candidates - is surfaced as a choice, never resolved silently
+- [x] Pass 3: exact amount plus party plus a date window, where the party is **identified** from the counterparty account rather than guessed at from the name. A name match is pass 7's job and scores as such; letting it feed this pass would smuggle a guess into a figure that reads as circumstantial-but-solid. A transaction whose payer cannot be identified still runs through the pass on amount alone, and scores much lower for it - an amount that matches one open invoice among forty is a coincidence waiting to happen
+- [x] Pass 4: structured remittance referenced documents, with their types, their due and remitted amounts and the creditor reference. It starts highest of the document passes because the payer put the number in a field that exists for it: nothing else a bank line carries is this deliberate. A referenced document that is **not open** is reported rather than ignored - that is usually a duplicate payment, a reference copied from a previous transfer, or a document closed early, and silently falling through to the amount passes loses all three
+- [x] A partial amount against a single open document proposes a partial allocation rather than being discarded
+- [x] Ambiguity is surfaced as a choice, never resolved silently. Two candidates within `ambiguity_margin` of each other **pointing at different documents** is a question the engine cannot answer: neither is applied, both are shown, and both carry the flag - so a proposal that was ambiguous when made still reads as ambiguous after the others are decided. Two passes agreeing about one document is agreement, not ambiguity, and deduplication has already collapsed it
+- [x] Two open documents owed exactly the same amount - a monthly retainer, a standing charge, two identical orders - are **both** proposed and both penalised for the other existing. Picking one is a guess the engine would be presenting as an answer
 
 ### PF-158 · Subset-sum matching
 `Banking` · **8 pts** · depends: PF-157 · standards: — · `risk:high`
 
 One credit against a combination of open invoices, which is how most customers actually pay.
 
-- [ ] Bounded search with an explicit candidate cap and a time budget, so a customer with 400 open invoices cannot hang the engine
-- [ ] Deterministic tie-breaking, oldest first, and the chosen combination is shown in full before it is applied
-- [ ] Tolerance for a small difference, classified by `PF-164` rather than absorbed
-- [ ] Never auto-applied above a configured candidate count - beyond that it proposes and a human confirms
-- [ ] A test with a pathological input asserts the time budget is respected
+- [x] Bounded three ways, all configuration: a **candidate cap** (only the most plausible documents are considered, and a document larger than the whole payment cannot be part of any combination that sums to it, which on a typical account removes most of them), a **time budget checked inside the loop**, and a **combination cap** - the combinations at size 6 over 24 documents are 134,596 and the next size up is 346,104. Subset-sum is NP-complete: the naive implementation on four hundred open items does not return slowly, it does not return, while holding a database connection
+- [x] Deterministic tie-breaking, oldest first: breadth by size, so all pairs are tried before any triple. Which combination the engine proposes must not depend on the order a query happened to return rows in, because a proposal that changes between two runs is one nobody can check - and smallest-first is also how a customer would have paid, the oldest invoices and as few as possible
+- [x] The chosen combination is **shown in full** - every document number, in the reason - before it is applied. A total agreeing is not the same as these being the documents the payer meant, and "two invoices add up" is not something anybody can check
+- [ ] Tolerance for a small difference, classified by `PF-164` rather than absorbed. **Arrives with PF-164**, which is the classification: a tolerance with nowhere to post the difference would be absorbing it, which is what the criterion exists to prevent
+- [x] Never auto-applied above a configured combination size, whatever it scores. A two-invoice combination is a reasonable thing to accept automatically; a seven-invoice one that happens to add up is a coincidence more often than it is a payment
+- [x] A pathological input - twenty-four open invoices and **no** combination that sums to the payment, so the search cannot stop early - asserts the budget is respected. That is the worst case, and it is the one that does not return without a budget checked inside the loop
+- [x] It does not run at all when a single open document already settles the amount exactly. A combination adding to the same figure is a worse answer to a question already answered, and the search is bounded precisely because it is expensive
 
 ### PF-159 · The rule engine
 `Banking` · **5 pts** · depends: PF-157 · standards: —
 
-- [ ] Tenant-authored rules on counterparty, transaction code, amount range, remittance pattern and account, producing a GL account plus dimensions
-- [ ] Ordered with first-match-wins, and a rule tester that shows which historical transactions a rule would have matched **before** it is saved
-- [ ] Handles the recurring non-document traffic: bank fees, interest, standing charges, payroll, inter-account transfers
-- [ ] Rules are per entity, auditable, and versioned so a past match can be explained by the rule as it was
+- [x] Tenant-authored rules on direction, counterparty name or account, transaction code (ISO or the bank's own), amount range, remittance pattern and bank account, producing a GL account, a party and dimensions. A rule that tests **nothing** is refused by the schema - it would match everything, which is never what somebody meant and is how a rule written for bank charges comes to claim every receipt in the account. A rule that **produces** nothing is refused too: it has moved the work rather than done it
+- [x] Patterns are substrings with `*`, not regular expressions. A tenant writing a rule is not writing code, and a malformed expression from a form field is either an error they cannot act on or a catastrophic backtrack on somebody else's statement
+- [x] First-match-wins, ordered by an explicit **priority** rather than by creation date - a rule added later is routinely meant to run first, and "move it up" has to be possible without recreating everything below it
+- [x] A rule tester that runs **before** anything is saved, against the transactions already imported, and returns the matched transactions rather than a count. "This matches 412 transactions" is a number somebody argues with; the first twenty of them, with their amounts and counterparties, is a rule somebody rewrites. It flags the dangerous case specifically: a transaction the rule would have claimed that turned out to be a document matched to something else, which is how a rule written for fees comes to swallow receipts
+- [x] And when the window reaches nothing it says **how many transactions are outside it**. "No transactions to test against" reads as "you have no data", and somebody concludes the rule cannot be tested; if four hundred sit a year outside the window, the answer is to widen it
+- [x] Handles the recurring non-document traffic - fees, interest, standing charges, payroll, transfers - which is the only pass that can: none of it has an invoice and none ever will, so every document pass fails on it and without rules it lands in suspense every month, for ever, in the same amounts
+- [x] Rules are per entity, audited, and **versioned**: an edit writes a new row with the same key and the next version and supersedes the old one, so a proposal points at the exact text that produced it. A rule edited next March must not change what it says about a match it made today, and a proposal pointing at a mutable row would do exactly that
 
 ### PF-160 · Fuzzy party matching
 `Banking` · **3 pts** · depends: PF-157 · standards: —
 
-- [ ] Normalized name distance on the counterparty: case, punctuation, legal-form suffixes, Arabic diacritics and alef variants, and Latin transliteration differences
-- [ ] **Proposal only, never auto-applied** at any confidence
-- [ ] A confirmed proposal stores the counterparty identifier against the party, so the same payer matches exactly next time - the engine learns by accumulating identifiers, not by lowering its threshold
+- [x] Normalised name distance: case, punctuation, legal-form suffixes, Arabic diacritics and the alef, ya and ta-marbuta variants. أ إ آ ا are one letter typed four ways, and a comparison that kept them apart calls the same company two payers depending on which keyboard the clerk used - that is the single biggest improvement to Arabic name comparison and the one most implementations skip. Word overlap first, because company names differ by whole words far more often than by letters, with character distance breaking ties
+- [x] **Found while checking this:** dots inside an acronym were being turned into spaces, so `L.L.C.` became three one-letter words that matched no suffix and "Gulf Retail L.L.C." stopped matching "Gulf Retail LLC". The same for `ذ.م.م` and `ش.م.م`, which is how every Gulf register writes them
+- [x] **Proposal only, never auto-applied** at any confidence - capped below any threshold a tenant can set, not merely configured low. The pass answers **who** and never **what**: applying it alone would settle a document nobody identified, against a party whose name merely resembled one
+- [x] Several parties sharing a name are flagged and penalised, the same way two documents at one amount are. A group with a trading company and a holding company registered alike is ordinary, and with three of them no one is the answer
+- [x] A confirmed proposal stores the counterparty's **account number** against the party, so the next transfer from that payer is identified exactly with no name comparison at all. The engine learns by accumulating identifiers, never by lowering a threshold - a threshold that moves on its own cannot be audited, and nobody can say why last month's matches were made at a bar this month's would not clear
+- [x] And it never learns from its **own** automatic match. An identifier learned from an unreviewed guess is the engine teaching itself, and two confident mistakes later nobody can say where the belief came from
 
 ### PF-161 · Confidence and thresholds
 `Banking` · **5 pts** · depends: PF-160 · standards: — · `risk:high`
 
-- [ ] A documented scoring model per pass, with the factors that raise and lower a score
-- [ ] An auto-apply threshold per tenant, with a platform-enforced ceiling
-- [ ] Everything auto-applied is **auditable and individually reversible**, and appears on a review list for a configurable window
-- [ ] Nothing below the threshold is hidden - low-confidence proposals are shown as suggestions, because a hidden proposal is worse than a wrong one
-- [ ] A per-pass accuracy report: proposed, accepted, corrected, rejected
+- [x] A documented scoring model per pass, in one class rather than as `0.85` literals scattered through six of them. Every pass starts from a documented base and moves by **named** factors, and the factors reach the proposal - so a score can always be taken apart, and the checks assert they add up to it. A score with factors that do not account for it is a score with decoration
+- [x] The bases are ordered by how much is actually known: a rule somebody wrote (0.95) above a structured remittance (0.90) above a reference in free text (0.80) above an amount agreeing (0.60) above arithmetic that adds up (0.55) above a name that resembles one (0.40). "Cheapest and most certain first" is a claim about the order of the passes *and* their scores, and a pass running first while scoring lowest would be a contradiction nobody notices until they read two files at once
+- [x] An auto-apply threshold per tenant under a **platform-enforced ceiling**. A tenant may lower it freely - caution is theirs to choose - and cannot raise past the ceiling, because a tenant setting it to 0.5 would be auto-applying circumstantial matches across their whole ledger and the first they would hear of it is a reconciliation that will not tie
+- [x] Everything auto-applied is marked as such on the match, so the review list is a filter rather than a reconstruction, and each is **individually reversible**: a match applied to the wrong document is corrected by reversing that one match, not by unreconciling a month. The reversal keeps the original row, because "this was matched to invoice 4471 and somebody changed it" is a question a deleted row cannot answer - and the document's outstanding figure comes back by itself, since it is recomputed from the applied matches
+- [x] Nothing below the threshold is hidden. Every candidate is stored and shown, down to the weakest: a hidden proposal is worse than a wrong one, because a wrong one gets corrected and teaches the engine something while a hidden one leaves somebody matching by hand with the answer sitting in a table nobody renders
+- [x] A per-pass accuracy report - proposed, accepted, corrected, rejected - **derived from the proposals** rather than counted. A counter is cheaper and drifts: the first time a match is reversed, or two tabs decide the same proposal, and a drifting accuracy report is worse than none because a degrading pass is exactly what it exists to show. Accuracy is accepted out of **decided**, not out of proposed, or a new pass looks terrible on its first day and a stale one looks excellent
+- [x] A reversal counts as **corrected**, not as never-decided. Counting it as undecided hides exactly the outcome the report exists to show
+- [x] The engine records which passes it **skipped** and why. "No fuzzy proposal" and "fuzzy was not run" are different facts, and only the second has an explanation - somebody asking why a payer was not recognised deserves it rather than silence
 
 ### PF-162 · Splits
 `Banking` · **5 pts** · depends: PF-158 · standards: —
