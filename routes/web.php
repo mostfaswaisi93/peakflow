@@ -7,6 +7,7 @@ use App\Platform\Http\Controllers\OpsSettingsController;
 use App\Platform\Http\Controllers\OpsTenantController;
 use App\Tenant\Identity\Http\Controllers\EntitySwitchController;
 use App\Http\Controllers\LoginController;
+use App\Http\Controllers\AttachmentDownloadController;
 use App\Http\Controllers\PublicQuoteController;
 use Illuminate\Support\Facades\Route;
 
@@ -96,6 +97,24 @@ Route::middleware(['signed', 'throttle:30,1', 'tenant.path'])
         Route::post('/accept', [PublicQuoteController::class, 'accept'])->name('accept');
         Route::post('/decline', [PublicQuoteController::class, 'decline'])->name('decline');
     });
+
+/*
+| The attachment download - PF-073.
+|
+| `signed` first, for the same reason as the public quote: the signature
+| covers the path and the query, so a visitor who edits either gets a 403
+| before a tenant is resolved and cannot probe which slugs exist by watching
+| which ones take longer.
+|
+| It is served from its own origin where one is configured, so a stored file
+| cannot execute against the application's origin and reach a session cookie.
+| There is no permission check: the signature is the authorization, and a
+| permission check would need a cookie on the download origin - which is the
+| thing a separate origin exists to avoid.
+*/
+Route::middleware(['signed', 'throttle:60,1', 'tenant.path'])
+    ->get('d/{tenant}/{entity}/{attachment}', AttachmentDownloadController::class)
+    ->name('attachments.download');
 
 Route::get('/health', static fn () => response()->json([
     'application' => config('app.name'),

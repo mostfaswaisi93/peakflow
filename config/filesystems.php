@@ -38,6 +38,24 @@ return [
             'report' => false,
         ],
 
+        /*
+         | Attachments - PF-073.
+         |
+         | Its own disk, never the public one: the objects are tax documents
+         | and the public disk is served directly by the web server with no
+         | signature and no expiry. `visibility` is private and `serve` is
+         | false, so nothing reaches a browser except through the signed
+         | download route.
+         */
+        'attachments' => [
+            'driver' => env('ATTACHMENTS_DRIVER', 'local'),
+            'root' => storage_path('app/attachments'),
+            'visibility' => 'private',
+            'serve' => false,
+            'throw' => true,
+            'report' => false,
+        ],
+
         'public' => [
             'driver' => 'local',
             'root' => storage_path('app/public'),

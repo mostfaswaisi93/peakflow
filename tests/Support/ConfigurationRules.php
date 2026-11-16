@@ -406,6 +406,10 @@ final class ConfigurationRules
             'tenancy.migrate.require_online_safety_declaration' => true,
             'exchange.webhooks.refuse_private_ranges' => true,
             'exchange.webhooks.follow_redirects' => false,
+            // PF-073: a real scanner, its own origin, and a short link.
+            'attachments.scanner' => 'clamav',
+            'attachments.origin' => 'https://files.peakflow.example',
+            'attachments.url_ttl_seconds' => 300,
         ];
     }
 
@@ -468,6 +472,9 @@ final class ConfigurationRules
             'EXCHANGE_DRIVER',
             'PDF_DRIVER',
             'APP_URL',
+            // PF-073: a developer has no ClamAV daemon and no second host.
+            'attachments.scanner',
+            'attachments.origin',
         ];
 
         foreach ($found as $problem) {

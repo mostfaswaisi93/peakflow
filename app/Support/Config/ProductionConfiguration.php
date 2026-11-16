@@ -256,6 +256,45 @@ final class ProductionConfiguration
                 'check: the first request goes to a public host and the redirect goes wherever it likes.';
         }
 
+        /*
+         | The attachment scanner - PF-073.
+         |
+         | `unavailable` stores a file and leaves it unreadable, which is the
+         | right behaviour on a developer's machine and a broken product in
+         | production: nobody can open a bank statement they attached. The
+         | deployment needs a scanner, and the absence of one is a
+         | configuration problem rather than a feature.
+         */
+        if ($get('attachments.scanner') === 'unavailable') {
+            $problems[] = 'attachments.scanner is "unavailable", so every uploaded file is stored '.
+                'unscanned and therefore unreadable. Attachments are bank statements and contracts, '.
+                'and a product where nobody can open one is not working.';
+        }
+
+        /*
+         | The download origin.
+         |
+         | Empty means a tenant's uploaded file is served from the
+         | application's own host. A stored HTML or SVG file then executes
+         | against that origin, where the session cookie is - and
+         | `Content-Disposition` and `nosniff` have each been bypassed
+         | somewhere, which is why the origin is the layer that matters.
+         */
+        if (trim((string) $get('attachments.origin', '')) === '') {
+            $problems[] = 'attachments.origin is empty, so uploaded files are served from the '.
+                'application\'s own origin. A stored HTML or SVG file then runs where the session '.
+                'cookie is.';
+        }
+
+        if ((int) $get('attachments.url_ttl_seconds', 300) > 3600) {
+            $problems[] = sprintf(
+                'attachments.url_ttl_seconds is %d. A download link ends up in a browser history, a '.
+                'chat message and a support ticket, and the file stays readable from all three until '.
+                'it expires.',
+                (int) $get('attachments.url_ttl_seconds', 300),
+            );
+        }
+
         return $problems;
     }
 

@@ -23,6 +23,24 @@ final class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         /*
+         | The virus scanner - PF-073.
+         |
+         | Bound by configuration, and there is deliberately no driver that
+         | accepts everything: `unavailable` returns `failed`, which the read
+         | path refuses, so a machine with no scanner can exercise the whole
+         | upload path and still cannot serve a file nobody has looked at.
+         */
+        $this->app->bind(\App\Support\Attachments\VirusScanner::class, static function (): \App\Support\Attachments\VirusScanner {
+            return match ((string) config('attachments.scanner', 'unavailable')) {
+                'clamav' => new \App\Support\Attachments\ClamAvScanner(
+                    (string) config('attachments.clamav.binary', 'clamdscan'),
+                    (int) config('attachments.clamav.timeout_seconds', 60),
+                ),
+                default => new \App\Support\Attachments\UnavailableScanner(),
+            };
+        });
+
+        /*
          | The audit trail, resolved by its Support contract.
          |
          | Every module writes to the audit log, and the implementation lives
