@@ -68,6 +68,12 @@ final class PeppolProfile implements JurisdictionProfile
         return ['380', '381', '384', '389'];
     }
 
+    /** Unchanged: Peppol uses EN 16931's own code list. */
+    public function documentTypeCode(string $code): string
+    {
+        return $code;
+    }
+
     public function specificationIdentifier(): string
     {
         return (string) config(

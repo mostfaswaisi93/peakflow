@@ -235,6 +235,7 @@ if ($only === 'all' || $only === 'exchange') {
     $suites['CII D16B'] = $suite(static fn (): array => (new Tests\Support\CiiSerializerRules())->all());
     $suites['Profiles and the pipeline'] = $suite(static fn (): array => (new Tests\Support\ProfilePipelineRules())->all());
     $suites['Peppol BIS Billing 3.0'] = $suite(static fn (): array => (new Tests\Support\PeppolProfileRules())->all());
+    $suites['ZATCA'] = $suite(static fn (): array => (new Tests\Support\ZatcaProfileRules())->all());
 }
 
 if ($only === 'all' || $only === 'sod') {

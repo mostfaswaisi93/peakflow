@@ -71,7 +71,27 @@ final class UblSerializer implements DocumentSerializer
 
     public function serialize(SemanticInvoice $invoice): string
     {
-        $isCreditNote = \in_array($invoice->documentTypeCode, self::CREDIT_NOTE_TYPES, true);
+        return $this->render($this->tree($invoice), $invoice);
+    }
+
+    /**
+     * The element tree, before it is rendered - PF-123.
+     *
+     * Exposed because a national regime adds elements EN 16931 has no term
+     * for: ZATCA's previous-invoice hash, its invoice counter and its QR
+     * payload are `cac:AdditionalDocumentReference` entries that no business
+     * term describes. A profile that needs them composes this tree and adds
+     * to it.
+     *
+     * Composition, not inheritance. A `ZatcaSerializer extends UblSerializer`
+     * would make the national variant able to change anything, and the first
+     * country to override `parties()` would quietly have its own serializer
+     * with a shared name - which is the thing the whole phase is arranged to
+     * avoid. Adding to a tree can only add.
+     */
+    public function tree(SemanticInvoice $invoice): E
+    {
+        $isCreditNote = $this->isCreditNote($invoice);
         $root = E::of($isCreditNote ? 'CreditNote' : 'Invoice');
 
         $this->header($root, $invoice, $isCreditNote);
@@ -83,10 +103,21 @@ final class UblSerializer implements DocumentSerializer
         $this->monetaryTotals($root, $invoice);
         $this->lines($root, $invoice, $isCreditNote);
 
+        return $root;
+    }
+
+    /** Render a tree this serializer built, with the right namespaces. */
+    public function render(E $root, SemanticInvoice $invoice): string
+    {
         return (new XmlWriter(UblSequences::all()))->render(
             $root,
-            $isCreditNote ? self::NAMESPACES_CREDIT_NOTE : self::NAMESPACES_INVOICE,
+            $this->isCreditNote($invoice) ? self::NAMESPACES_CREDIT_NOTE : self::NAMESPACES_INVOICE,
         );
+    }
+
+    public function isCreditNote(SemanticInvoice $invoice): bool
+    {
+        return \in_array($invoice->documentTypeCode, self::CREDIT_NOTE_TYPES, true);
     }
 
     private function header(E $root, SemanticInvoice $invoice, bool $isCreditNote): void

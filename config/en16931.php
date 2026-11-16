@@ -402,6 +402,46 @@ return [
             'ar' => 'يجب أن تكون وحدة كمية أساس السعر هي وحدة الكمية المفوترة.',
         ],
 
+        /*
+         | The Saudi regime - PF-123.
+         */
+        'ZATCA-DOCUMENT-TYPE' => [
+            'en' => 'The Saudi tax invoice is UNCL 1001 388; 380 is a commercial invoice.',
+            'ar' => 'الفاتورة الضريبية السعودية هي 388 وفق UNCL 1001، و380 فاتورة تجارية.',
+        ],
+        'ZATCA-ICV-MISSING' => [
+            'en' => 'The document carries no invoice counter value.',
+            'ar' => 'لا يحمل المستند رقم العدّاد التسلسلي للفاتورة.',
+        ],
+        'ZATCA-PIH-MISSING' => [
+            'en' => 'The document carries no previous invoice hash, so it is not part of a chain.',
+            'ar' => 'لا يحمل المستند بصمة الفاتورة السابقة، فهو خارج السلسلة.',
+        ],
+        'ZATCA-ARABIC-SELLER-NAME' => [
+            'en' => 'The seller name must be in Arabic.',
+            'ar' => 'يجب أن يكون اسم البائع بالعربية.',
+        ],
+        'ZATCA-ARABIC-ITEM-NAME' => [
+            'en' => 'What was supplied must be described in Arabic.',
+            'ar' => 'يجب وصف ما تم توريده بالعربية.',
+        ],
+        'ZATCA-STANDARD-BUYER-VAT' => [
+            'en' => 'A standard invoice must state the buyer\'s VAT registration.',
+            'ar' => 'يجب أن تذكر الفاتورة القياسية رقم التسجيل الضريبي للمشتري.',
+        ],
+        'ZATCA-QR-TOO-LONG' => [
+            'en' => 'A QR value is longer than the TLV length byte can describe.',
+            'ar' => 'إحدى قيم رمز الاستجابة أطول مما تسمح به بايت الطول في TLV.',
+        ],
+        'ZATCA-QR-INCOMPLETE' => [
+            'en' => 'The QR payload is missing a required value.',
+            'ar' => 'ينقص رمز الاستجابة السريعة قيمة مطلوبة.',
+        ],
+        'ZATCA-SAR-TAX-AMOUNT' => [
+            'en' => 'A document in another currency must state its tax amount in riyals.',
+            'ar' => 'يجب أن يذكر المستند بعملة أخرى مبلغ الضريبة بالريال.',
+        ],
+
         'EN16931-SERIALIZATION' => [
             'en' => 'The document could not be converted into its transmission syntax.',
             'ar' => 'لم يتمكن النظام من تحويل المستند إلى صيغة الإرسال.',

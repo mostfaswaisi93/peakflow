@@ -69,6 +69,16 @@ class GenericProfile implements JurisdictionProfile
         return ['380', '381', '383', '384'];
     }
 
+    /**
+     * The code as it is.
+     *
+     * EN 16931's own code list, which is what "generic" means.
+     */
+    public function documentTypeCode(string $code): string
+    {
+        return $code;
+    }
+
     public function specificationIdentifier(): string
     {
         return (string) config('jurisdictions.customization.generic', 'urn:cen.eu:en16931:2017');

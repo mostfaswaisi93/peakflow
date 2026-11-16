@@ -37,7 +37,11 @@ return [
                              // off, because the AS4 transport and the SMP lookup are
                              // PF-122 and PF-121: a tenant selecting it today would
                              // produce documents that validate and cannot be sent.
-        'zatca' => false,    // Needs onboarding and a production CSID.
+        'zatca' => false,    // BUILT: the UBL subset, the PIH chain, the TLV QR, the
+                             // Arabic requirement and the two flows. Still off, because
+                             // the cryptographic stamp and the clearance API are
+                             // PF-124: a document that validates and cannot be cleared
+                             // is worse than one not yet issued.
         'facturx' => false,  // Needs the PDF/A-3 pipeline (PF-102).
         'eta' => false,      // Egypt. Needs ETA credentials.
         'jofotara' => false, // Jordan. Three-decimal JOD.

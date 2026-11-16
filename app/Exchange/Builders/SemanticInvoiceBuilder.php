@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Exchange\Builders;
 
+use App\Exchange\Profiles\ProfileRegistry;
 use App\Exchange\Semantics\BusinessGroup as BG;
 use App\Exchange\Semantics\BusinessTerm as BT;
 use App\Exchange\Semantics\SemanticInvoice;
@@ -66,14 +67,38 @@ final class SemanticInvoiceBuilder
         $this->vatBreakdown($root, $invoice);
         $this->lines($root, $invoice);
 
-        return SemanticInvoice::build($root, $profile, (string) $invoice->document_type->value);
+        $model = SemanticInvoice::build($root, $profile, (string) $invoice->document_type->value);
+
+        /*
+         | The values a national regime needs and EN 16931 does not model.
+         |
+         | Read from the stored row like everything else, and only the keys
+         | `SemanticInvoice::jurisdictionKeys()` declares - which is what
+         | keeps this from becoming the bag that ends the model.
+         */
+        return $model
+            ->withJurisdictionData('chain.previous_hash', $invoice->previous_hash)
+            ->withJurisdictionData('chain.index', $invoice->chain_index)
+            ->withJurisdictionData('document.uuid', (string) $invoice->getKey())
+            ->withJurisdictionData('document.issued_at', $invoice->issued_at?->toIso8601String())
+            ->withJurisdictionData('document.simplified', $invoice->simplified === true ? '1' : null);
     }
 
     private function documentLevel(SemanticNode $root, Invoice $invoice, string $profile): void
     {
         $root->set(BT::InvoiceNumber, $invoice->number)
             ->set(BT::IssueDate, $invoice->issue_date?->toDateString())
-            ->set(BT::InvoiceTypeCode, $invoice->document_type->value)
+            /*
+             | BT-3 as the PROFILE names it.
+             |
+             | The internal type is 380 and the Saudi regime's tax invoice is
+             | 388. Asking the profile means the document says what its
+             | recipient's code list says, and a tenant under two profiles
+             | issues one invoice that reads correctly to both.
+             */
+            ->set(BT::InvoiceTypeCode, app(ProfileRegistry::class)
+                ->forDocument($profile)
+                ->documentTypeCode((string) $invoice->document_type->value))
             ->set(BT::InvoiceCurrencyCode, $invoice->currency);
 
         /*

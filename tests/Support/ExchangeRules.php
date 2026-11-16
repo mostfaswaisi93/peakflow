@@ -41,6 +41,7 @@ final class ExchangeRules
             'a group nested in the wrong parent is refused' => $this->badNestingIsRefused(),
             'cardinality reports the rule a recipient would quote' => $this->cardinalityNamesTheRule(),
             'every rule the code can emit has a bilingual explanation' => $this->everyRuleIsExplained(),
+            'every jurisdiction key the builder sets is declared' => $this->jurisdictionKeysAreDeclared(),
         ];
     }
 
@@ -425,7 +426,7 @@ final class ExchangeRules
              | reason: a message a reader cannot act on is not a message.
              */
             preg_match_all(
-                "/'((?:BR|EN16931|PEPPOL)-[A-Z0-9-]+)'/",
+                "/'((?:BR|EN16931|PEPPOL|ZATCA)-[A-Z0-9-]+)'/",
                 (string) file_get_contents($file),
                 $matches,
             );
@@ -466,6 +467,63 @@ final class ExchangeRules
                     '%s is explained and nothing can report it. An explanation for a rule the code does '.
                     'not implement reads as coverage that is not there',
                     $rule,
+                );
+            }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * The jurisdiction extension set is closed.
+     *
+     * EN 16931 has no business term for a hash chain, so ZATCA's
+     * previous-invoice hash cannot be a `BT`. An open extension map would be
+     * the easy answer and the end of the model: within a year every profile
+     * would be reading values nobody had reviewed and the mapping document
+     * would describe half the document.
+     *
+     * So every key the builder populates has to be declared with a reason,
+     * and a declared key nothing populates is reported too - it reads as a
+     * capability that is not there.
+     *
+     * @return list<string>
+     */
+    private function jurisdictionKeysAreDeclared(): array
+    {
+        $violations = [];
+        $declared = \App\Exchange\Semantics\SemanticInvoice::jurisdictionKeys();
+
+        $builder = (string) file_get_contents(app_path('Exchange/Builders/SemanticInvoiceBuilder.php'));
+        preg_match_all("/withJurisdictionData\(\s*'([^']+)'/", $builder, $matches);
+        $used = array_unique($matches[1] ?? []);
+
+        if ($used === []) {
+            return ['the builder populates no jurisdiction data, so this check is inert'];
+        }
+
+        foreach ($used as $key) {
+            if (! isset($declared[$key])) {
+                $violations[] = sprintf('the builder sets "%s" and it is not declared', $key);
+
+                continue;
+            }
+
+            if (\strlen(trim($declared[$key])) < 40) {
+                $violations[] = sprintf(
+                    '"%s" is declared with no real reason. A key with no stated reason is a key nobody '.
+                    'can argue with later',
+                    $key,
+                );
+            }
+        }
+
+        foreach (array_keys($declared) as $key) {
+            if (! \in_array($key, $used, true)) {
+                $violations[] = sprintf(
+                    '"%s" is declared and nothing populates it, which reads as a capability that is '.
+                    'not there',
+                    $key,
                 );
             }
         }

@@ -72,6 +72,33 @@ final class Element
         return $this->children;
     }
 
+    /**
+     * Swap one child for another, in place.
+     *
+     * For a national extension that has to add an attribute to an element
+     * the shared serializer already emitted - ZATCA's transaction type on
+     * the invoice type code. An `Element` is otherwise immutable, which is
+     * what lets the same tree be rendered twice and give the same bytes, so
+     * the replacement is a list operation rather than a mutation of the
+     * child.
+     */
+    public function replace(self $existing, self $replacement): self
+    {
+        foreach ($this->children as $index => $child) {
+            if ($child === $existing) {
+                $this->children[$index] = $replacement;
+
+                return $this;
+            }
+        }
+
+        throw new \LogicException(sprintf(
+            '<%s> is not a child of <%s>, so there is nothing to replace.',
+            $existing->name,
+            $this->name,
+        ));
+    }
+
     public function isEmpty(): bool
     {
         return $this->text === null && $this->children === [] && $this->attributes === [];

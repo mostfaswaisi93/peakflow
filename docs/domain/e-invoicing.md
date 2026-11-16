@@ -95,6 +95,37 @@ A profile declares the permitted document types, the specification identifier, t
 
 **Adding a country is a new profile class plus fixtures, and never a change to `Sales`.** Deptrac proves `Sales` cannot see `Exchange`; a check reads the profile directory to require that no profile reaches into `Sales`, `Ledger`, `Tax` or `Parties`, or touches the database. If a profile needs something the document does not carry, the thing is added to the document and frozen at issue — otherwise the second country's requirements appear as conditionals in the issuer, and by the fourth there is no issuer any more.
 
+### ZATCA, as a national extension
+
+Peppol is a CIUS and adds no elements. ZATCA adds `cbc:UUID`, a transaction type on the type code, and three `cac:AdditionalDocumentReference` entries — the invoice counter, the previous invoice hash and the QR payload — none of which EN 16931 has a business term for, because the standard models no hash chain and no QR code. So ZATCA has a serializer and Peppol does not, and the interface supports both.
+
+The serializer **composes** the UBL element tree and adds to it. `extends UblSerializer` would let a national variant change anything, and the first country to override how parties are emitted would quietly have its own serializer under a shared name. A check asserts the ZATCA document carries every value the plain UBL one does: an extension that changed a total would be two documents for one invoice, both well-formed, disagreeing about what is owed.
+
+Values EN 16931 does not model travel in a **closed** set of jurisdiction keys, each declared with a reason. An open extension map would be the easy answer and the end of the model: within a year every profile would read values nobody had reviewed, and the mapping document would describe half the document.
+
+#### The QR code
+
+Tag, length, value; concatenated; base64. A fixed binary format because a phone with no network has to read it — an inspector scans the code on a printed receipt and sees the seller, the registration, the time, the total and the tax without asking anything of anybody.
+
+| Tag | Value |
+|-----|-------|
+| 1 | Seller name |
+| 2 | Seller VAT registration number, **without** its country prefix |
+| 3 | Invoice timestamp |
+| 4 | Total including VAT |
+| 5 | VAT total |
+| 6–9 | The XML hash, the stamp's signature and keys — omitted until a document is sealed |
+
+The tag numbers matter more than their names: a reader written to the specification looks for tag 4 and expects the gross total. Tags are emitted in tag order whatever order they were given, an absent tag is absent rather than empty (tag 7 with no bytes tells a reader the signature is there and is nothing), and a value that does not fit the one-byte length is refused rather than truncated — an Arabic trading name is two or three bytes per character, and half a seller's name is worse than a build that failed.
+
+#### Two chains, one of them translated
+
+The previous-invoice hash is PeakFlow's own chain (PF-096) rendered the way the regime asks: base64 of the hex digest. The genesis differs — PeakFlow starts at sixty-four zeros, the regime names base64 of `sha256("0")` — so the profile substitutes. Emitting ours would produce a first document rejected for a hash correctly computed over the wrong convention.
+
+#### Arabic is not a translation
+
+The regime requires the invoice *in* Arabic. A document whose seller name and item descriptions are English with an Arabic version elsewhere is an English invoice with an appendix, and the authority reads the field. Two fields are enforced because their requirement is not in doubt; the authoritative list is in the regime's data dictionary, which is a vendored artefact — and a rule that rejects a conformant document is worse than one that does not run.
+
 ### Clearance is not reporting
 
 | | |

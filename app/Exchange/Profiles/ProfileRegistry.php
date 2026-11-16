@@ -30,6 +30,7 @@ final class ProfileRegistry
     private const PROFILES = [
         'generic' => GenericProfile::class,
         'peppol' => Peppol\PeppolProfile::class,
+        'zatca' => Zatca\ZatcaProfile::class,
     ];
 
     /**

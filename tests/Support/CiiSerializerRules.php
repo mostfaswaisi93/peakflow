@@ -463,14 +463,39 @@ final class CiiSerializerRules
                 'proves nothing';
         }
 
+        /*
+         | Over the CODE, not the comments.
+         |
+         | Measured: the moment the UBL serializer's documentation explained
+         | why `ZatcaSerializer extends UblSerializer` would be wrong, this
+         | check failed - reading the explanation as the thing it forbids.
+         | A grep over a PHP file finds prose, and prose about a rule is not
+         | a breach of it.
+         */
         foreach ([$ubl, $cii] as $source) {
-            if (preg_match('/\bextends\s+[A-Za-z]/', $source) === 1) {
+            if (preg_match('/\bextends\s+[A-Za-z]/', $this->codeOnly($source)) === 1) {
                 $violations[] = 'a serializer extends a class. A shared base class is the shape in which '.
                     'one syntax quietly becomes the other\'s dialect';
             }
         }
 
         return $violations;
+    }
+
+    /** A source file with its comments and docblocks removed. */
+    private function codeOnly(string $source): string
+    {
+        $code = '';
+
+        foreach (token_get_all($source) as $token) {
+            if (\is_array($token) && \in_array($token[0], [\T_COMMENT, \T_DOC_COMMENT], true)) {
+                continue;
+            }
+
+            $code .= \is_array($token) ? $token[1] : $token;
+        }
+
+        return $code;
     }
 
     private function credit(): Invoice

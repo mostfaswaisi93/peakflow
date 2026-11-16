@@ -51,6 +51,21 @@ interface JurisdictionProfile
      */
     public function permittedDocumentTypes(): array;
 
+    /**
+     * The code this regime uses for a document EN 16931 calls `$code`.
+     *
+     * Almost always the same code. ZATCA is the exception that makes this a
+     * method: its tax invoice is UNCL 1001 **388** where every other regime
+     * uses 380, which is a commercial invoice.
+     *
+     * The mapping is here rather than in `Sales` because the internal
+     * document type is one fact and a regime's name for it is another: a
+     * tenant operating under two profiles issues one document and it is a
+     * 380 to one recipient and a 388 to the other. It takes a string rather
+     * than the sales enum because a profile may not see `Sales` - PF-118.
+     */
+    public function documentTypeCode(string $code): string;
+
     /** `BT-24`, the customization identifier a recipient reads to pick a rule set. */
     public function specificationIdentifier(): string;
 
