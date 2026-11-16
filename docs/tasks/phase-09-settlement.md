@@ -11,27 +11,27 @@ This phase also contains the single highest-consequence control in the product: 
 ### PF-166 · Payments
 `Settlement` · **5 pts** · depends: PF-146, PF-047 · standards: UNCL 4461 · `type:schema` `type:posting`
 
-- [ ] Receipts and disbursements, each with a method coded per UNCL 4461, a bank or cash account, a value date, a currency and an amount
-- [ ] Posts against the bank or cash control account and a clearing position, never directly against a party balance - the party balance is a consequence of allocation
-- [ ] A payment in a currency other than the account's is refused rather than silently converted
-- [ ] Immutable once posted; corrected by reversal
+- [x] Receipts and disbursements, each with a method coded per UNCL 4461, a bank or cash account, a value date, a currency and an amount
+- [x] Posts against the bank or cash control account and a clearing position, never directly against a party balance - the party balance is a consequence of allocation
+- [x] A payment in a currency other than the account's is refused rather than silently converted
+- [x] Immutable once posted; corrected by reversal
 
 ### PF-167 · Unapplied cash
 `Settlement` · **3 pts** · depends: PF-166 · standards: — · `type:posting`
 
-- [ ] Cash received with no allocation is a **liability** in `unapplied_cash`, and that is correct rather than an error state
-- [ ] Unapplied cash ages and is reported, because old unapplied cash usually means a misidentified payer
-- [ ] It appears on the customer's statement, so the customer can tell you what it was for
-- [ ] Clearing it is an allocation, never an adjustment
+- [x] Cash received with no allocation is a **liability** in `unapplied_cash`, and that is correct rather than an error state
+- [x] Unapplied cash ages and is reported, because old unapplied cash usually means a misidentified payer
+- [x] It appears on the customer's statement, so the customer can tell you what it was for
+- [x] Clearing it is an allocation, never an adjustment
 
 ### PF-168 · Allocations
 `Settlement` · **8 pts** · depends: PF-167 · standards: — · `risk:high` `type:posting`
 
-- [ ] Partial, across many documents, in either direction
-- [ ] An allocation cannot exceed either the payment's unallocated amount or the document's open balance - enforced in the database, because this is the invariant that keeps AR equal to its control account
-- [ ] Reversal is a new posting, not a delete, and re-allocation afterwards is normal
-- [ ] Automatic allocation strategies - oldest first, by reference, by explicit instruction - each inspectable and overridable
-- [ ] A property-based test: for any sequence of allocations and reversals, the document's open balance and the control account agree
+- [x] Partial, across many documents, in either direction
+- [x] An allocation cannot exceed either the payment's unallocated amount or the document's open balance - enforced in the database, because this is the invariant that keeps AR equal to its control account
+- [x] Reversal is a new posting, not a delete, and re-allocation afterwards is normal
+- [x] Automatic allocation strategies - oldest first, by reference, by explicit instruction - each inspectable and overridable
+- [x] A property-based test: for any sequence of allocations and reversals, the document's open balance and the control account agree
 
 ### PF-169 · Over-payment, credits and refunds
 `Settlement` · **5 pts** · depends: PF-168 · standards: — · `type:posting`

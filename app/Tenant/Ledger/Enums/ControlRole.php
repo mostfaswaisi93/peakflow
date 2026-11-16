@@ -84,6 +84,22 @@ enum ControlRole: string
     case BadDebt = 'bad_debt';
 
     /**
+     * Cash received that no document has claimed yet - PF-167.
+     *
+     * A **liability**, and that is the whole point of naming it. Money a
+     * customer sent that nothing has been allocated against is money we
+     * are holding for them, not revenue and not a reduction of what they
+     * owe. Typing it as anything else makes an unallocated receipt look
+     * like performance.
+     *
+     * It is also why a payment never posts against a party balance
+     * directly: the balance is a consequence of allocation, and a receipt
+     * that moved it before anybody said which invoice it was for would be
+     * a balance nobody can take apart.
+     */
+    case UnappliedCash = 'unapplied_cash';
+
+    /**
      * What the bank charged us, found on the statement - PF-164.
      *
      * An expense, and its own account rather than a line in administrative
@@ -164,7 +180,8 @@ enum ControlRole: string
              | nothing noticed - which is why `ControlRoleRules` now walks
              | every case of this enum through every method on it.
              */
-            self::GoodsReceivedNotInvoiced, self::EmployeePayable => AccountType::Liability,
+            self::GoodsReceivedNotInvoiced, self::EmployeePayable,
+            self::UnappliedCash => AccountType::Liability,
 
             self::RetainedEarnings => AccountType::Equity,
 

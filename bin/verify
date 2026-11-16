@@ -45,6 +45,7 @@ declare(strict_types=1);
  |   php bin/verify charts     the chart templates, and the charts they produce
  |   php bin/verify sales      the invoice: what a draft refuses, and what issuing guarantees
  |   php bin/verify banking    bank accounts, balances, statements, what a bank sends, and matching
+ |   php bin/verify settlement payments, unapplied cash and allocations
  |   php bin/verify property   the balanced-entry invariant over generated entries
  |   php bin/verify group      inter-entity postings across a four-entity group
  |   php bin/verify manual     manual journal entry: validation, templates, import
@@ -273,6 +274,10 @@ if ($only === 'all' || $only === 'banking') {
     $suites['Reconciliation as a document'] = $suite(static fn (): array => (new Tests\Support\ReconciliationRules())->all());
 }
 
+if ($only === 'all' || $only === 'settlement') {
+    $suites['Payments, unapplied cash and allocations'] = $suite(static fn (): array => (new Tests\Support\SettlementRules())->all());
+}
+
 if ($only === 'all' || $only === 'sod') {
     $suites['Duty coverage'] = $suite(static fn (): array => (new Tests\Support\SodCoverageRules())->all());
 }
@@ -323,7 +328,7 @@ if ($only === 'all' || $only === 'examples') {
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | errors | repo | ops | tax | charts | sales | exchange | attachments | archive | inbound | purchasing | banking | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | errors | repo | ops | tax | charts | sales | exchange | attachments | archive | inbound | purchasing | banking | settlement | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public\n");
     exit(2);
 }
 

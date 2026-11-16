@@ -26,6 +26,7 @@ Start with the [root README](../README.md) for the whole system in one pass. Com
 | [`domain/e-invoicing.md`](domain/e-invoicing.md) | One semantic model and two syntaxes: EN 16931 business terms, UBL and CII, the four validation stages, jurisdiction profiles |
 | [`domain/purchasing.md`](domain/purchasing.md) | The payable side: orders that post nothing, the goods-received-not-invoiced accrual, the three-way match, duplicates and approval |
 | [`domain/banking.md`](domain/banking.md) | Statement formats, the matching engine pass by pass, payment initiation |
+| [`domain/settlement.md`](domain/settlement.md) | Payments, unapplied cash, allocations, and why a receipt never moves a party balance |
 | [`domain/tax-engine.md`](domain/tax-engine.md) | Tax point, place of supply, reverse charge, withholding, returns |
 | [`domain/place-of-supply.md`](domain/place-of-supply.md) | Which jurisdiction's tax applies: the rule book, its precedence, the blocs, and why the fallback refuses |
 | [`domain/schema.md`](domain/schema.md) | Every table, its columns, its constraints and its indexes |

@@ -1,6 +1,6 @@
 {
   "key": "ifrs-generic",
-  "version": 4,
+  "version": 5,
   "name_ar": "دليل حسابات عام وفق المعايير الدولية",
   "name_en": "Generic IFRS chart of accounts",
   "countries": [],
@@ -247,6 +247,17 @@
       "role": "employee_payable",
       "monetary": true,
       "note": "PF-143: what the business owes its own people. An employee is not a supplier - the balance is reported differently, it is frequently settled through payroll, and an aging report that mixed the two would show a colleague's taxi fare beside a supplier on thirty-day terms."
+    },
+    {
+      "code": "2.1.7",
+      "parent": "2.1",
+      "type": "liability",
+      "name_ar": "مقبوضات غير مخصّصة",
+      "name_en": "Unapplied cash",
+      "postable": true,
+      "role": "unapplied_cash",
+      "monetary": false,
+      "note": "NOT monetary. Deferred revenue is settled by delivering goods and services, not by paying money, so restating it at the closing rate puts an exchange difference through profit or loss for an obligation that is not denominated in currency. It is the account most often wrongly marked monetary."
     },
     {
       "code": "3",
