@@ -250,6 +250,8 @@ if ($only === 'all' || $only === 'purchasing') {
     $suites['Bills'] = $suite(static fn (): array => (new Tests\Support\BillRules())->all());
     $suites['Approvals'] = $suite(static fn (): array => (new Tests\Support\ApprovalRules())->all());
     $suites['Procurement'] = $suite(static fn (): array => (new Tests\Support\ProcurementRules())->all());
+    $suites['Supplier credits and aging'] = $suite(static fn (): array => (new Tests\Support\SupplierCreditRules())->all());
+    $suites['Requisitions'] = $suite(static fn (): array => (new Tests\Support\RequisitionRules())->all());
 }
 
 if ($only === 'all' || $only === 'sod') {

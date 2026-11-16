@@ -79,6 +79,8 @@ final class Bills
         ?string $paymentTermId = null,
         ?string $note = null,
         string $documentType = '380',
+        ?string $creditsBillId = null,
+        ?string $creditReference = null,
     ): Bill {
         if ($lines === []) {
             throw BillRefused::because('A bill with no lines records no purchase.');
@@ -111,6 +113,7 @@ final class Bills
             $entity, $entityId, $partyId, $supplierDocumentNumber, $key,
             $supplierDocumentDate, $taxPoint, $postingDate, $currency, $lines,
             $createdBy, $source, $paymentTermId, $note, $documentType,
+            $creditsBillId, $creditReference,
         ): Bill {
             $computed = $this->compute($lines, $currency);
 
@@ -136,6 +139,18 @@ final class Bills
                     'created_by' => $createdBy,
                     'source' => $source,
                     'note' => $note,
+                    /*
+                     | Written with the row, not updated onto it after.
+                     |
+                     | `bills_a_credit_note_says_what_it_credits` is checked
+                     | on the insert, and rightly: a credit note that is
+                     | momentarily referenceless is exactly the state the
+                     | constraint exists to forbid, and a two-step write
+                     | would leave that state on disk between the two steps
+                     | for anything reading in another transaction.
+                     */
+                    'credits_bill_id' => $creditsBillId,
+                    'credit_reference' => $creditReference,
                 ]);
             } catch (UniqueConstraintViolationException) {
                 /*
@@ -171,8 +186,16 @@ final class Bills
              | still have the supplier's document in front of them, which is
              | the only moment at which "billed 120, received 100" is cheap
              | to resolve.
+             |
+             | Invoices only. A credit note does not go through procurement:
+             | nothing was ordered and nothing arrived, so there is nothing
+             | for three documents to disagree about - and under
+             | `purchasing.require_order` every credit note would otherwise
+             | raise a `no_order` exception somebody has to clear.
              */
-            $this->match->match($bill->refresh());
+            if ($documentType === '380') {
+                $this->match->match($bill->refresh());
+            }
 
             $this->audit->record(
                 category: 'purchasing',
@@ -207,6 +230,25 @@ final class Bills
 
         if ($bill->isPosted()) {
             return $bill;
+        }
+
+        /*
+         | A credit note is not posted here - PF-134.
+         |
+         | `BillPostedRule` would credit the payable and debit the expense,
+         | which is the opposite of what a credit note does. The entry would
+         | balance, so nothing would look wrong: the supplier's balance
+         | would grow by the credit instead of shrinking, and the difference
+         | is found by whoever reconciles their statement.
+         */
+        if ($bill->isCreditNote()) {
+            throw BillRefused::because(sprintf(
+                'Document %s is a credit note and is posted by its own rule, not this one. Posting it '.
+                'here would credit the payable and debit the expense - the opposite of what it does - '.
+                "and the entry would balance, so the supplier's balance would grow by the credit ".
+                'instead of shrinking and nothing would look wrong.',
+                (string) $bill->supplier_document_number,
+            ));
         }
 
         $unanswered = $this->duplicates->unacknowledged($bill);
@@ -518,6 +560,7 @@ final class Bills
                  */
                 'purchase_order_line_id' => $line['purchase_order_line_id'] ?? null,
                 'goods_receipt_line_id' => $line['goods_receipt_line_id'] ?? null,
+                'credits_line_id' => $line['credits_line_id'] ?? null,
                 'dimension_1' => $line['dimension_1'] ?? null,
                 'dimension_2' => $line['dimension_2'] ?? null,
                 'dimension_3' => $line['dimension_3'] ?? null,

@@ -37,7 +37,7 @@ final class BillLine extends TenantModel
         'unit_code', 'quantity', 'unit_price', 'net_amount',
         'expense_account_id', 'tax_code_id', 'tax_category', 'tax_rate', 'tax_amount',
         'recoverable_percent', 'reverse_charge',
-        'purchase_order_line_id', 'goods_receipt_line_id',
+        'purchase_order_line_id', 'goods_receipt_line_id', 'credits_line_id',
         'dimension_1', 'dimension_2', 'dimension_3', 'dimension_4',
     ];
 

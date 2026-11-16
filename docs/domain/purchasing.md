@@ -8,6 +8,20 @@ Purchasing is structurally the mirror of selling, with two things selling does n
 
 ---
 
+## Requisitions: the request before the commitment
+
+An order commits the business to a supplier at a price. A requisition does not even name the supplier: it says somebody needs something, roughly what it will cost, and **why**.
+
+The justification is the reason the step exists. Strip it out and a requisition is a purchase order with extra clicks; what makes it worth having is that somebody wrote down why and somebody else read it, which is the only thing a budget holder can act on three months later when asked why the department spent what it did. `purchase_requisitions_justification_says_something` refuses "needed".
+
+It routes through the **same** approval engine as a bill, as a subject of type `requisition`. That buys the limits, the delegation record, the fingerprint check that returns an edited document to the start of the chain, and the refusal when the requester tries to approve their own request. A workflow of its own would mean a second set of limits to keep in step with the first, and the one that drifts is the one nobody is looking at. The fingerprint covers the justification deliberately: changing *why* after somebody approved it is a different request.
+
+The step is **optional** (`purchasing.require_requisition`, default off). A three-person business forced through it approves its own requests to itself all day and learns to click past them — and an approval somebody has learned to click past is worse than none, because in an audit it looks like a control. Where it is on, `PurchaseOrders::raise()` refuses an order that names no requisition, which is the only place the rule can be enforced: the requisition is the document that would otherwise simply not exist.
+
+Conversion carries the **dimensions** forward, line first then header, so the cost centre that approved the spend is the one the expense lands against. It takes the quoted price where one is given and keeps the estimate where it is not — with the order's note saying which lines carry an estimate. Refusing would be wrong, because stationery at a catalogue price needs no re-quoting; copying an estimate in silently would be worse, because somebody will later read it as an agreed price.
+
+---
+
 ## The three documents, and why all three
 
 | Document | Says | Answers |
@@ -241,6 +255,92 @@ Detection runs at entry **and** at payment time, because the duplicate frequentl
 
 ---
 
+## Credit notes
+
+A credit note is a bill of another type, not a bill with a minus sign. `document_type` already distinguishes them (`380` an invoice, `381` a credit note, UNCL 1001), so a credit note carries **positive** figures and its own posting rule produces the opposite debits and credits:
+
+```
+Dr  accounts_payable                       the gross no longer owed
+Cr  the line's expense or asset account    each line's net, plus its non-recoverable tax
+Cr  vat_input @ the jurisdiction           the recoverable tax, given back
+```
+
+Storing it as a negative bill would make every query about "what do we owe this supplier" depend on remembering to sum rather than filter, and the first report that forgot would show a credit as a payable.
+
+### A rule of its own, not the bill rule with the signs flipped
+
+Because the two documents are not symmetrical in the one place it matters: **a credit note can be for less than the bill**. A negation of the original's rows credits everything the original debited in the original's proportions, and a partial credit is not in those proportions — a supplier who credits one line of a four-line invoice credits one expense account and the tax on that line.
+
+Reversing the stored *entry* has the same problem from the other side: the ledger's reversal machinery exists for correcting an entry that should not have been made, and this entry should have been made. The credit note is a second real event, with its own date, its own period and its own number from the supplier.
+
+Posting a credit note through the bill rule is refused outright. It would credit the payable and debit the expense, the entry would balance, and the supplier's balance would grow by the credit instead of shrinking.
+
+### Three ways to raise one
+
+In **full** — a return, a cancellation, a duplicate the supplier has accepted. By **line** — goods that came back, crediting the lines they came from and the tax on those lines. By **amount** — a settlement or a rebate, which has no lines behind it.
+
+An amount-only credit is **apportioned, never assigned one rate**. A 1,000 settlement on a bill with 15% and 0% lines is not a 15% credit: choosing one rate would misstate both boxes of the return, and the error is in the input tax rather than in the expense, so the accounts still balance and nothing looks wrong until the authority compares the figures. Each share is split back into net and tax at its own line's rate, with the tax as the difference rather than a second rounded multiplication, so the two always add back to the share exactly.
+
+### The reference is mandatory
+
+A credit note either names the bill it credits or states the supplier's own reference in words, and `bills_a_credit_note_says_what_it_credits` agrees. A credit against nothing is a figure nobody can tie to a purchase, and it is the shape a supplier's balance takes when somebody has keyed a rebate twice. A volume rebate genuinely has no single invoice behind it, which is why the second form exists — but it still has to say what it is for.
+
+### The ceiling
+
+A credit cannot exceed the bill's remaining uncredited value. Checked in the service so the person gets a sentence that names what was charged and what is left, and enforced by a trigger so an import, a second worker or a retried job cannot get past it: two credit notes entered at the same moment against one bill would both pass a check that read the total before either was written. The same trigger refuses a credit note that crosses suppliers or currencies.
+
+The ceiling counts **draft** credit notes; what the supplier is owed counts only **approved or posted** ones. Both are right and they answer different questions — two drafts could otherwise each pass the ceiling and together exceed the bill, while a draft counted as a reduction would make the aging report stop agreeing with the control account.
+
+### Allocation posts nothing
+
+A credit note and a bill are both in `accounts_payable` against the same party. Netting two items inside one control account for one counterparty changes no balance anywhere: the allocation row is what makes the open-item statement right, not an accounting event. A journal for it would write two entries that cancel.
+
+The two dispositions are exclusive both ways round. A credit marked for refund cannot also be allocated, and an allocated credit cannot also be claimed back — either would reduce what we owe *and* collect the cash for the same credit. A credit note already referenced to a bill cannot be allocated to that same bill, which would reduce it twice. And allocation is bounded from both ends: not beyond the credit's own value, not beyond what the target bill still owes.
+
+---
+
+## Aging and statements
+
+### The basis is a decision, and the report states it
+
+The **due date** answers "what is overdue", which a payables clerk asks. The **document date** answers "how old is this balance", which an auditor asks about a supplier who has not been paid. Both are legitimate, they disagree by the payment terms, and a report that does not say which it used is a report two people read differently and both believe.
+
+So `aging.basis` is an entity setting, every row carries the date it was aged from, and the header says which basis produced it.
+
+### Instalments are aged separately
+
+A bill on 30/60/90 terms has three due dates. Aging the whole bill from the last hides two months of overdue money; from the first, it makes two thirds of it look overdue when it is not due at all. On a large bill that is the difference between a supplier who is owed nothing yet and one who is about to stop delivering.
+
+The amounts come from the **frozen** terms snapshot, so a report run next month ages the bill exactly as it aged it this month. A payment is applied to the earliest instalment first, which is how a supplier applies it unless told otherwise — spreading it proportionally would leave every instalment partly unpaid and each in a different bucket.
+
+### The reconciliation is the report's own test
+
+The aging total must equal the accounts-payable control account's balance. If it does not, one of them is wrong and both are used to pay people, so the report computes both and says so in its own output:
+
+| Cause | What it looks like |
+|-------|--------------------|
+| A bill approved and never posted | the aging counts it, the ledger knows nothing about it |
+| A journal posted straight to the control account | the ledger moves, no document moved |
+| A payment recorded against the ledger and not against the document | the document still looks unpaid |
+
+And it says when it was **not** attempted: filtered to one supplier a partial total cannot reconcile to a whole balance, and with foreign-currency documents present, comparing them to a functional-currency balance would report an exchange rate as a difference.
+
+### Currencies stay apart
+
+Buckets and totals are per currency, because 1,000 USD and 1,000 EUR are not 2,000 of anything and a combined figure would be read as something somebody could pay. A balance-forward statement refuses outright to add two currencies into one running balance.
+
+### DPO
+
+`(payables / purchases in the window) x days`, with the window stated. **Null rather than zero** where there were no purchases: zero reads as "we pay immediately", which is the opposite of what an empty window means.
+
+### Statements
+
+**Open-item** lists what is unpaid, which is what a supplier wants when they are chasing. **Balance-forward** lists every movement from an opening balance, which is what a reconciliation needs — it shows the payments and credits too, so the two sides can find where they diverged. A supplier who disputes a balance is usually disputing something one side has and the other does not.
+
+The opening balance is computed from the documents rather than carried as a stored figure. A stored opening balance is a number nobody can check: the first time it disagrees with the documents, there is no way to tell which is wrong.
+
+---
+
 ## Approval
 
 The approval engine is shared: bills, requisitions and expense claims route through one mechanism rather than three.
@@ -260,7 +360,7 @@ The approval engine is shared: bills, requisitions and expense claims route thro
 | Gap | Why |
 |-----|-----|
 | Orders sent as a PDF, or by Peppol | The PDF toolchain (Gotenberg, Ghostscript, veraPDF) is not installable in this environment; Peppol transport needs the AS4 access point and SMP lookup of PF-121 and PF-122. The order document is a UBL `Order`, a different document type from the invoice the Exchange plane serializes today |
-| Requisitions, supplier credit notes, email and Peppol intake, document extraction, expense claims, AP aging | PF-130, PF-134, PF-140 to PF-144 |
+| Email and Peppol intake, document extraction, expense claims | PF-140 to PF-143 |
 | A bill in a foreign currency booking at its tax point's rate | The columns exist; the rate service call site arrives with PF-138 |
 | The receive-then-approve segregation-of-duties pair | Whoever confirms a delivery should not approve the bill for it, and the fictitious-receipt fraud is to confirm a delivery that never came and approve the invoice for it. But the two duties sit on different objects linked by an order, and the engine's scopes are the same document, the same counterparty or the same period. Closing it means a **chain** scope that expands a bill into the receipts behind it, which is a change to PF-033 rather than to this module |
 

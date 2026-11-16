@@ -83,6 +83,7 @@ trait EntersBills
         ?Carbon $postingDate = null,
         string $currency = 'SAR',
         ?string $partyId = null,
+        ?string $paymentTermId = null,
     ): Bill {
         $lines ??= [[
             'description' => 'Machined brackets, batch 41',
@@ -108,7 +109,7 @@ trait EntersBills
             currency: $currency,
             lines: $lines,
             createdBy: $this->actorId(),
-            paymentTermId: $this->terms === null ? null : (string) $this->terms->getKey(),
+            paymentTermId: $paymentTermId ?? ($this->terms === null ? null : (string) $this->terms->getKey()),
         );
     }
 

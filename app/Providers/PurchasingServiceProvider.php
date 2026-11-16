@@ -7,6 +7,7 @@ namespace App\Providers;
 use App\Tenant\Ledger\Posting\PostingRuleRegistry;
 use App\Tenant\Purchasing\Posting\Rules\BillPostedRule;
 use App\Tenant\Purchasing\Posting\Rules\GoodsReceivedRule;
+use App\Tenant\Purchasing\Posting\Rules\SupplierCreditNotePostedRule;
 use Illuminate\Support\ServiceProvider;
 
 /**
@@ -27,5 +28,6 @@ final class PurchasingServiceProvider extends ServiceProvider
 
         $registry->register(new BillPostedRule());
         $registry->register(new GoodsReceivedRule());
+        $registry->register(new SupplierCreditNotePostedRule());
     }
 }

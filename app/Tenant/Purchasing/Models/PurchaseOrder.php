@@ -49,7 +49,7 @@ final class PurchaseOrder extends TenantModel
         'entity_id', 'number', 'series_key', 'status', 'party_id',
         'ordered_on', 'expected_on', 'currency',
         'net_amount', 'tax_amount', 'gross_amount',
-        'payment_term_id', 'created_by',
+        'payment_term_id', 'created_by', 'purchase_requisition_id',
         'confirmed_at', 'confirmed_by', 'closed_at', 'closed_by', 'closed_reason',
         'note',
     ];
@@ -71,6 +71,16 @@ final class PurchaseOrder extends TenantModel
     public function receipts(): HasMany
     {
         return $this->hasMany(GoodsReceipt::class);
+    }
+
+    /**
+     * The request this order came from, where the entity asks for one.
+     *
+     * @return BelongsTo<PurchaseRequisition, $this>
+     */
+    public function requisition(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseRequisition::class, 'purchase_requisition_id');
     }
 
     /** @return BelongsTo<Party, $this> */

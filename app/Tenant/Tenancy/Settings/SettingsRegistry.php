@@ -263,6 +263,28 @@ final class SettingsRegistry
             // ---- Purchasing --------------------------------------------------
 
             /*
+             | Whether a purchase order needs an approved requisition
+             | behind it - PF-130.
+             |
+             | Off by default, because a three-person business forced
+             | through a requisition step approves its own requests to
+             | itself all day and learns to click past them - and an
+             | approval somebody has learned to click past is worse than no
+             | approval, because it looks like a control in an audit.
+             |
+             | On, it is the control that stops a buyer committing money
+             | nobody agreed to spend.
+             */
+            new SettingDefinition(
+                key: 'purchasing.require_requisition',
+                type: 'bool',
+                scope: 'entity',
+                default: false,
+                descriptionAr: 'إلزام أوامر الشراء بطلب شراء معتمد قبل إصدارها.',
+                descriptionEn: 'Require an approved purchase requisition before an order can be raised.',
+            ),
+
+            /*
              | Whether a bill without an order is an exception - PF-135.
              |
              | Not every purchase goes through an order: a utility bill, a
@@ -296,6 +318,26 @@ final class SettingsRegistry
              | would land in the wrong month and the balance sheet would omit
              | a liability that exists.
              */
+            /*
+             | What an aging report ages from - PF-144.
+             |
+             | The due date answers "what is overdue", which is the question
+             | a payables clerk asks. The document date answers "how old is
+             | this balance", which is the question an auditor asks about a
+             | supplier who has not been paid. Both are legitimate and they
+             | disagree by the payment terms, so a report that does not say
+             | which it used is a report two people read differently.
+             */
+            new SettingDefinition(
+                key: 'aging.basis',
+                type: 'string',
+                scope: 'entity',
+                default: 'due_date',
+                descriptionAr: 'أساس تقادم الأرصدة: تاريخ الاستحقاق أو تاريخ المستند.',
+                descriptionEn: 'What the aging report ages from: the due date or the document date.',
+                allowed: ['due_date', 'document_date'],
+            ),
+
             new SettingDefinition(
                 key: 'purchasing.accrue_receipts',
                 type: 'bool',

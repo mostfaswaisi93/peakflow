@@ -14,6 +14,7 @@ use App\Tenant\Purchasing\Models\PurchaseOrder;
 use App\Tenant\Purchasing\Models\PurchaseOrderLine;
 use App\Tenant\Tax\Enums\TaxCategory;
 use App\Tenant\Tenancy\Models\Entity;
+use App\Tenant\Tenancy\Services\Settings;
 use Brick\Math\BigDecimal;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -61,6 +62,7 @@ final class PurchaseOrders
 {
     public function __construct(
         private readonly NumberAllocator $numbers,
+        private readonly Settings $settings,
         private readonly AuditTrail $audit,
     ) {}
 
@@ -82,6 +84,7 @@ final class PurchaseOrders
         ?string $paymentTermId = null,
         ?string $note = null,
         string $seriesKey = 'PO',
+        ?string $requisitionId = null,
     ): PurchaseOrder {
         if ($lines === []) {
             throw OrderRefused::because(
@@ -92,9 +95,26 @@ final class PurchaseOrders
 
         $entityId = (string) $entity->getKey();
 
+        /*
+         | The requisition step, where the entity asks for one - PF-130.
+         |
+         | Enforced here rather than in `Requisitions`, because this is the
+         | only place it can be: the requisition is the document that would
+         | otherwise simply not exist, so a check inside the requisition
+         | service would never run.
+         */
+        if ($requisitionId === null
+            && $this->settings->bool('purchasing.require_requisition', $entityId)) {
+            throw OrderRefused::because(
+                'This entity requires an approved purchase requisition before an order is raised, and '.
+                'this order names none. An order with no request behind it commits the business to '.
+                'money nobody agreed to spend, which is what the requisition step exists to prevent.',
+            );
+        }
+
         return DB::connection('tenant')->transaction(function () use (
             $entity, $entityId, $partyId, $orderedOn, $expectedOn, $currency, $lines,
-            $createdBy, $paymentTermId, $note, $seriesKey,
+            $createdBy, $paymentTermId, $note, $seriesKey, $requisitionId,
         ): PurchaseOrder {
             $computed = $this->compute($lines, $currency);
 
@@ -113,6 +133,7 @@ final class PurchaseOrders
                 'payment_term_id' => $paymentTermId,
                 'created_by' => $createdBy,
                 'note' => $note,
+                'purchase_requisition_id' => $requisitionId,
             ]);
 
             foreach ($lines as $index => $line) {
@@ -130,6 +151,7 @@ final class PurchaseOrders
                     'gross' => (string) $computed['gross']->amount,
                     'currency' => $currency,
                     'lines' => \count($lines),
+                    'requisition' => $requisitionId,
                 ],
                 entityId: $entityId,
                 partyId: $partyId,

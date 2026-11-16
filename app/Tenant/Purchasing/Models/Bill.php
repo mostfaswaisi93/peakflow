@@ -54,6 +54,7 @@ final class Bill extends TenantModel
         'profile', 'note', 'created_by', 'approved_at', 'approved_by',
         'posted_at', 'journal_entry_id', 'source',
         'match_status', 'matched_at',
+        'credits_bill_id', 'credit_reference', 'credit_disposition',
     ];
 
     protected $casts = [
@@ -81,6 +82,24 @@ final class Bill extends TenantModel
         return $this->hasMany(BillTaxBreakdownRow::class);
     }
 
+    /**
+     * The credit notes raised against this bill - PF-134.
+     *
+     * @return HasMany<Bill, $this>
+     */
+    public function creditNotes(): HasMany
+    {
+        return $this->hasMany(Bill::class, 'credits_bill_id')
+            ->where('document_type', '381')
+            ->where('status', '!=', 'cancelled');
+    }
+
+    /** @return HasMany<BillCreditAllocation, $this> */
+    public function creditAllocations(): HasMany
+    {
+        return $this->hasMany(BillCreditAllocation::class, 'bill_id');
+    }
+
     /** @return HasMany<BillDuplicateWarning, $this> */
     public function duplicateWarnings(): HasMany
     {
@@ -101,6 +120,11 @@ final class Bill extends TenantModel
     public function isPosted(): bool
     {
         return $this->status === 'posted';
+    }
+
+    public function isCreditNote(): bool
+    {
+        return $this->document_type === '381';
     }
 
     public function net(): Money
@@ -130,7 +154,75 @@ final class Bill extends TenantModel
 
     public function outstanding(): Money
     {
-        return $this->gross()->minus(Money::of($this->paid_amount, $this->currency));
+        return $this->gross()
+            ->minus(Money::of($this->paid_amount, $this->currency))
+            ->minus($this->effectiveCredit())
+            ->minus($this->allocatedCredit());
+    }
+
+    /**
+     * What has been credited against this bill - PF-134.
+     *
+     * Summed from the credit notes rather than kept as a column on the bill,
+     * because a stored total is a second place the truth lives: a credit
+     * note cancelled or re-dated would leave the column saying something the
+     * documents do not. The database's over-credit trigger reads the same
+     * sum, so the figure a refusal quotes and the figure a report shows are
+     * one query apart rather than two implementations apart.
+     */
+    public function creditedAmount(): Money
+    {
+        $total = Money::zero((string) $this->currency);
+
+        foreach ($this->creditNotes as $note) {
+            $total = $total->plus(Money::of((string) $note->gross_amount, (string) $this->currency));
+        }
+
+        return $total;
+    }
+
+    /** What is still chargeable - the ceiling on a further credit note. */
+    public function remainingUncredited(): Money
+    {
+        return $this->gross()->minus($this->creditedAmount());
+    }
+
+    /**
+     * The credit notes against this bill that have actually happened.
+     *
+     * Approved or posted only, where {@see creditedAmount()} counts drafts
+     * too. The two answer different questions and both are right: the
+     * ceiling on a further credit has to count a draft, or two drafts could
+     * each pass the check and together exceed the bill; what the supplier is
+     * owed today cannot count one, because a draft credit note has changed
+     * nothing in the ledger and an aging report that counted it would stop
+     * agreeing with the control account.
+     */
+    public function effectiveCredit(): Money
+    {
+        $total = Money::zero((string) $this->currency);
+
+        foreach ($this->creditNotes as $note) {
+            if (! \in_array((string) $note->status, ['approved', 'posted'], true)) {
+                continue;
+            }
+
+            $total = $total->plus(Money::of((string) $note->gross_amount, (string) $this->currency));
+        }
+
+        return $total;
+    }
+
+    /** Credit notes applied to this bill by allocation rather than by reference. */
+    public function allocatedCredit(): Money
+    {
+        $total = Money::zero((string) $this->currency);
+
+        foreach ($this->creditAllocations as $allocation) {
+            $total = $total->plus(Money::of((string) $allocation->amount, (string) $this->currency));
+        }
+
+        return $total;
     }
 
     /** The supplier's legal name as it stood when the bill was entered. */
