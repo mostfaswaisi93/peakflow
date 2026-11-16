@@ -129,7 +129,9 @@ The authoritative description of every table. **A schema change updates this fil
 | `approval_delegations` | Date-bounded | A delegate cannot receive an approval SoD forbids them |
 | `expense_policies` | What a category of expense may be | A rate, a ceiling or both; dated, because rates change; `tax_recoverable` and `recoverable_percent` kept consistent by CHECK |
 | `expense_claims`, `expense_claim_lines` | Employee claims | Post to `employee_payable`, a distinct control account; the claimant is a **user**, not a party; recovery needs a receipt **and** a stated reason (CHECK); the rate is frozen from the policy on the date incurred; a trigger refuses submission while a policy breach is unexplained |
-| `inbox_items` | Email and Peppol intake, before they are bills | Sender allowlisting; unknown senders quarantined |
+| `inbound_documents` | Email and Peppol intake, before they are bills | An inbox item is **not** a bill; unique on `(entity, content_hash)` so a retried delivery is one row; `match_method` enumerates what is allowed, so a **name match stays impossible**; a rejection must carry a report; a converted row must name its bill and its supplier |
+| `inbound_senders` | The allowlist, per supplier | An address rather than a domain - a domain allowlist is the broader grant and nobody revisits it |
+| `parties.default_expense_account_id` | Where a supplier's purchases usually post | EN 16931 has no term for it: the chart is ours, not theirs. Null means the draft cannot post until a person codes it |
 
 ### Banking
 

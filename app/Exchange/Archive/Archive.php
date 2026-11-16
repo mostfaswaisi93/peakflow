@@ -53,7 +53,17 @@ use Illuminate\Support\Str;
 final class Archive
 {
     /** The artefact kinds, in the order a manifest lists them. */
-    public const KINDS = ['sent_xml', 'cleared_xml', 'signature', 'receipt', 'pdf', 'qr'];
+    /**
+     * The artefacts an archive holds.
+     *
+     * `received_xml` is apart from `sent_xml` deliberately - PF-141. The two
+     * answer different questions: what we sent them, and what they actually
+     * sent us as opposed to what our parser made of it. A dispute about an
+     * inbound invoice is settled by the bytes that arrived, and one kind for
+     * both would make the uniqueness rule below treat our copy and their
+     * original as rival answers to the same question.
+     */
+    public const KINDS = ['sent_xml', 'received_xml', 'cleared_xml', 'signature', 'receipt', 'pdf', 'qr'];
 
     public function __construct(private readonly AuditTrail $audit) {}
 

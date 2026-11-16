@@ -41,6 +41,7 @@ final class Party extends TenantModel
         'is_customer', 'is_supplier', 'is_employee', 'party_group',
         'country', 'default_currency', 'default_locale', 'registration_number',
         'tax_treatment', 'payment_term_id', 'risk_grade', 'active',
+        'default_expense_account_id',
         'merged_into_id', 'merged_at',
     ];
 

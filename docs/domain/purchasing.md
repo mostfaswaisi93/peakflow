@@ -355,6 +355,61 @@ The approval engine is shared: bills, requisitions and expense claims route thro
 
 ---
 
+## Documents that arrive
+
+An invoice we issue is composed. A supplier's bill is handed to us, by email or over a network, by somebody who may not be a supplier, in a format that may not be valid. So it becomes an **inbox item** first.
+
+Turning it straight into a bill means a stranger's attachment creates a payable, and the worst version of that is an invoice from a supplier who does not exist for goods nobody ordered.
+
+### Read into the model, not into a bill
+
+`UblReader` reads a document into the **semantic model** — the standard's own model, not a document of ours — and the validation pipeline runs there. Only a document that passes every stage is converted, in one transaction. There is no state in which half a supplier's invoice is in our ledger: a failed import that left a draft bill nobody raised would be approved by somebody who assumes a draft came from a colleague.
+
+The reader is checked against our own serializer: a real invoice is serialized, read back, and the business terms compared. A term the serializer emits and the reader drops is a field an inbound bill arrives without; a term the reader produces that the document does not carry is a guess wearing a business term's name. That is not a substitute for the official corpus (PF-128) and does not claim to be — it is the strongest check available without one.
+
+### Three things the reader gets right that a naive one does not
+
+- **Prefixes are not namespaces.** Every expression matches on `local-name()`, because `ns2:Invoice` is as valid as `Invoice` and several large finance systems emit `ns0:` throughout.
+- **A CreditNote is a different document.** `cac:CreditNoteLine`, `cbc:CreditedQuantity`, `cbc:CreditNoteTypeCode` — a reader that knew only the invoice forms reads every credit note as having nothing on it.
+- **BT-110 is on the document, not in the monetary total.** Looking for it inside `cac:LegalMonetaryTotal` finds nothing and reports a calculation rule against a document that was right.
+
+### A failing document gets the standard's own answer
+
+A UBL `ApplicationResponse` with the UNCL 4343 code and one `cac:LineResponse` per violation, naming the rule and its explanation. The sender's system raised the document and the sender's system is what has to be told; an email reaches a person who then has to describe a rule number to a developer.
+
+`AP` accepted, `RE` rejected, `CA` conditionally accepted — the last for a document that passed every rule and whose supplier nobody recognises. Saying `AP` there would tell the sender their invoice is in our ledger when it is in a queue.
+
+A rejection with no report is refused by the database: "rejected" is a verdict and a report is a reason.
+
+### Supplier matching, and the match that does not exist
+
+| Resort | Why it is one |
+|--------|---------------|
+| Electronic address (BT-34 **with its scheme**) | what the network routes on, registered by the supplier; the scheme is half the identifier, because the same digits are a company number in one registry and a VAT number in another |
+| Tax registration (BT-31 or BT-32) | issued by an authority and unique within it |
+| The sender allowlist | somebody deliberately associated an address with a supplier and is answerable for it |
+| A person | the honest answer when the only remaining evidence is a name |
+
+**There is no name match.** Two suppliers called "Gulf Trading" are two suppliers, a Latin transliteration of an Arabic name has at least four plausible spellings, and a bill paid to the wrong supplier is the hardest error in accounts payable to get back. A fuzzy match would be right most of the time, and "most of the time" on a payment instruction is not a standard anybody would defend out loud. The `match_method` column enumerates what is allowed, so the absence stays absent.
+
+Note that BT-31 arrives with a country prefix — BR-CO-9 requires it — while `party_tax_registrations` holds the identifier as the authority issued it. The matcher tries both forms; storing the prefixed form instead would change what the tax engine, the returns and the printed invoice all read.
+
+### Per-line tax is derived and reconciled
+
+EN 16931 has **no per-line tax amount**. A line carries its category and its rate and the tax lives in the VAT breakdown per rate group. So each line's tax is computed from its own rate, and the group's total is then reconciled to the amount the document states, any remainder landing on the group's largest line.
+
+Three lines of 1.03 at 15% derive 0.4635 where the group states 0.46. Without the reconciliation a bill built from a correct document would disagree with it, and the disagreement would be found by whoever reconciles the input tax to the return.
+
+### Email intake
+
+The intake address is `inbox+<entity code>@<domain>`, and **it is the only thing that decides whose queue a document joins** — not the sender, not the subject, not a header. A group with eight entities receives eight suppliers' invoices at eight addresses, and resolving the entity from anything the sender controls means the sender chooses which company's ledger their invoice lands in. An address nobody recognises resolves to nobody.
+
+Attachments and bodies each become an item. Every attachment goes through the attachment store first — sniffed, capped and scanned — because the declared name and type come from the sender and are not evidence of anything, and scanning after parsing is scanning after the damage. An attachment the store refuses is **quarantined with the store's own sentence**, not dropped: "we would not open this file" and "we do not know this sender" need different answers, and a supplier told neither hears "we never received it".
+
+The original is archived before anything is parsed, under `received_xml` — a kind of its own, because `sent_xml` answers "what did we send them" and this answers "what did they actually send us, as opposed to what our parser made of it". The same bytes delivered twice are one row: an access point retries, an email is forwarded twice, and the second row would become a second draft bill.
+
+---
+
 ## Expense claims
 
 The payable is to the **employee**, in `employee_payable` rather than `accounts_payable`:
@@ -394,7 +449,8 @@ A line over its ceiling is **flagged with the figures, not refused** — a hotel
 | Gap | Why |
 |-----|-----|
 | Orders sent as a PDF, or by Peppol | The PDF toolchain (Gotenberg, Ghostscript, veraPDF) is not installable in this environment; Peppol transport needs the AS4 access point and SMP lookup of PF-121 and PF-122. The order document is a UBL `Order`, a different document type from the invoice the Exchange plane serializes today |
-| Email and Peppol intake, document extraction | PF-140 to PF-142 |
+| Document extraction - embedded XML from a Factur-X PDF, and OCR as a fallback | PF-142 |
+| Receiving a document over the network: the AS4 transport and SMP lookup | PF-121 and PF-122, which need an accredited access point. What happens after delivery is built |
 | Reimbursing a claim through a payment run | The claim's balance sits in a control account a payment run can read; the run itself is Phase 09 |
 | A bill in a foreign currency booking at its tax point's rate | The columns exist; the rate service call site arrives with PF-138 |
 | The receive-then-approve segregation-of-duties pair | Whoever confirms a delivery should not approve the bill for it, and the fictitious-receipt fraud is to confirm a delivery that never came and approve the invoice for it. But the two duties sit on different objects linked by an order, and the engine's scopes are the same document, the same counterparty or the same period. Closing it means a **chain** scope that expands a bill into the receipts behind it, which is a change to PF-033 rather than to this module |

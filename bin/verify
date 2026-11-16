@@ -232,6 +232,10 @@ if ($only === 'all' || $only === 'attachments') {
     $suites['Attachments'] = $suite(static fn (): array => (new Tests\Support\AttachmentRules())->all());
 }
 
+if ($only === 'all' || $only === 'inbound') {
+    $suites['Inbound documents'] = $suite(static fn (): array => (new Tests\Support\InboundDocumentRules())->all());
+}
+
 if ($only === 'all' || $only === 'archive') {
     $suites['The archive'] = $suite(static fn (): array => (new Tests\Support\ArchiveRules())->all());
 }
@@ -305,7 +309,7 @@ if ($only === 'all' || $only === 'examples') {
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | errors | repo | ops | tax | charts | sales | exchange | attachments | archive | purchasing | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | errors | repo | ops | tax | charts | sales | exchange | attachments | archive | inbound | purchasing | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public\n");
     exit(2);
 }
 

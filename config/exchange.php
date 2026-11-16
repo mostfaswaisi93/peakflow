@@ -128,6 +128,29 @@ return [
     |
     */
 
+    /*
+    |---------------------------------------------------------------------------
+    | Email intake - PF-140
+    |---------------------------------------------------------------------------
+    |
+    | A supplier sends to `inbox+<entity code>@<domain>`, and that address is
+    | the ONLY thing that decides which entity's queue the document joins.
+    | Not the sender, not the subject, not a header: a group with eight
+    | entities receives eight suppliers' invoices at eight addresses, and
+    | resolving the entity from anything the sender controls means the sender
+    | chooses which company's ledger their invoice lands in.
+    |
+    | Derived rather than stored per entity, because a stored address is a
+    | second answer to "which entity is this" - and the two disagree the
+    | first time somebody renames an entity.
+    |
+    */
+
+    'intake' => [
+        'domain' => env('EXCHANGE_INTAKE_DOMAIN', 'invoices.peakflow.test'),
+        'mailbox' => env('EXCHANGE_INTAKE_MAILBOX', 'inbox'),
+    ],
+
     'xml' => [
         'allow_external_entities' => false,
         'allow_dtd' => false,
