@@ -47,6 +47,7 @@ final class Stock
     public function __construct(
         private readonly AuditTrail $audit,
         private readonly Poster $poster,
+        private readonly Batches $batches,
     ) {}
 
     /**
@@ -105,9 +106,26 @@ final class Stock
         ?string $sourceType = null,
         ?string $sourceId = null,
         ?string $batchId = null,
+        ?string $expiryAcceptedBy = null,
+        ?string $expiryAcceptedReason = null,
     ): array {
         $item = $this->stockedItem($itemId);
         $this->assertPositive($quantity, 'An issue takes stock out; give the quantity as a positive figure.');
+
+        /*
+         | An expired batch needs somebody's name - PF-250.
+         |
+         | Sometimes right: a cosmetic best-before, a batch re-tested and
+         | released. Never right silently, which is why the refusal names
+         | what is missing rather than simply saying no.
+         */
+        if ($batchId !== null) {
+            $verdict = $this->batches->mayIssue($batchId, $on);
+
+            if ($verdict['expired'] && ($expiryAcceptedBy === null || mb_strlen(trim((string) $expiryAcceptedReason)) < 15)) {
+                throw StockRefused::because($verdict['why']);
+            }
+        }
 
         $entity = Entity::query()->findOrFail($entityId);
         $currency = (string) $entity->functional_currency;
@@ -129,6 +147,8 @@ final class Stock
             $sourceType,
             $sourceId,
             $batchId,
+            $expiryAcceptedBy,
+            $expiryAcceptedReason,
             $currency,
         ): array {
             $unitCost = $this->costFor($entityId, (string) $item->id, $locationId, $quantity, $currency, $item);
@@ -147,6 +167,8 @@ final class Stock
                 sourceId: $sourceId,
                 batchId: $batchId,
                 postingSign: -1,
+                expiryAcceptedBy: $expiryAcceptedBy,
+                expiryAcceptedReason: $expiryAcceptedReason === null ? null : trim($expiryAcceptedReason),
                 narration: sprintf('%s issued', (string) $item->code),
             );
         });
@@ -489,6 +511,8 @@ final class Stock
         ?string $batchId = null,
         ?string $reason = null,
         int $postingSign = 1,
+        ?string $expiryAcceptedBy = null,
+        ?string $expiryAcceptedReason = null,
     ): array {
         $this->assertTheLocationExists($entityId, $locationId);
 
@@ -524,6 +548,8 @@ final class Stock
             $batchId,
             $reason,
             $postingSign,
+            $expiryAcceptedBy,
+            $expiryAcceptedReason,
             $movementId,
         ): array {
             DB::connection('tenant')->table('stock_movements')->insert([
@@ -540,6 +566,8 @@ final class Stock
                 'source_id' => $sourceId,
                 'batch_id' => $batchId,
                 'reason' => $reason,
+                'expiry_accepted_by' => $expiryAcceptedBy,
+                'expiry_accepted_reason' => $expiryAcceptedReason,
                 'moved_on' => $on->toDateString(),
                 'moved_by' => $userId,
                 'created_at' => now(),

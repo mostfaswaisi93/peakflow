@@ -88,6 +88,20 @@ final class StockRules
                 'a shortfall is a cost and a surplus is not' => fn (): array => $this->adjustmentsGoBothWays(),
                 'the sign of a movement matches its kind' => fn (): array => $this->signsMatchTheirKind(),
 
+                // ---- Variants - PF-249 ---------------------------------
+                'the axes are data, not columns' => fn (): array => $this->axesAreData(),
+                'a variant inherits what it does not override' => fn (): array => $this->variantsInherit(),
+                'a combination that does not exist is absent' => fn (): array => $this->combinationsAreAbsent(),
+                'an axis value in use cannot be deleted' => fn (): array => $this->axisValuesWithHistoryStay(),
+
+                // ---- Batches - PF-250 ----------------------------------
+                'a tracked movement names its batch' => fn (): array => $this->trackedMovementsNameTheirBatch(),
+                'first-expiry-first-out is offered, never applied' => fn (): array => $this->fefoIsOfferedNotApplied(),
+                'expiry is reported before it happens' => fn (): array => $this->expiryIsReportedBefore(),
+                'an expired batch needs somebody\'s name' => fn (): array => $this->expiredNeedsAName(),
+                'a batch answers who has the goods' => fn (): array => $this->aBatchIsTraceable(),
+                'a batch is recorded once' => fn (): array => $this->aBatchIsRecordedOnce(),
+
                 // ---- The tie --------------------------------------------
                 'the inventory account equals its movements' => fn (): array => $this->inventoryReconciles(),
                 'and the check notices when it does not' => fn (): array => $this->inventoryDriftIsCaught(),
@@ -822,7 +836,583 @@ final class StockRules
         return $failures;
     }
 
+
+    // ---- Variants - PF-249 ------------------------------------------------
+
+    /** @return list<string> */
+    private function axesAreData(): array
+    {
+        $failures = [];
+        $columns = DB::connection('tenant')->getSchemaBuilder()->getColumnListing('item_variants');
+
+        /*
+         | No `size`, no `colour`, no enum of either.
+         |
+         | A product with a hard-coded size column cannot sell shoes and
+         | coffee, and the next vertical always needs an axis nobody
+         | thought of - grind, dosage, offset.
+         */
+        foreach (['size', 'colour', 'color', 'strength'] as $hardCoded) {
+            if (\in_array($hardCoded, $columns, true)) {
+                $failures[] = sprintf(
+                    'item_variants carries a "%s" column, so the axes are in the schema - and the next '.
+                    'vertical needs one nobody thought of',
+                    $hardCoded,
+                );
+            }
+        }
+
+        $item = $this->aStockedItem();
+        $size = $this->anAxis('SIZE', 1, ['S', 'M', 'L']);
+        $colour = $this->anAxis('COLOUR', 2, ['RED', 'BLUE']);
+
+        $variant = $this->aVariant($item, ['SIZE' => 'L', 'COLOUR' => 'RED']);
+
+        if ($variant === null) {
+            return [...$failures, 'a variant could not be created from two axes'];
+        }
+
+        /*
+         | The same combination in the other key order is the same row.
+         |
+         | jsonb normalises key order, so "large red" and "red large" are
+         | one value - and the unique index is on it, so the second insert
+         | is refused rather than selling the same shoe twice.
+         */
+        $again = $this->refusal(fn () => $this->aVariant($item, ['COLOUR' => 'RED', 'SIZE' => 'L']));
+
+        if ($again === null) {
+            $failures[] = 'the same combination written with its keys in the other order created a second '.
+                'variant, so the same shoe can be sold twice under two codes';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function variantsInherit(): array
+    {
+        $item = $this->aStockedItem();
+        $this->anAxis('SIZE', 1, ['S', 'L']);
+
+        $plain = $this->aVariant($item, ['SIZE' => 'S']);
+        $dearer = $this->aVariant($item, ['SIZE' => 'L'], price: '150.00000000');
+
+        $failures = [];
+
+        $plainPrice = DB::connection('tenant')->table('item_variants')->where('id', $plain)->value('price_override');
+        $dearerPrice = DB::connection('tenant')->table('item_variants')->where('id', $dearer)->value('price_override');
+
+        /*
+         | NULL means "whatever the item says".
+         |
+         | Which is the whole inheritance rule: changing the item's tax
+         | code changes forty variants, and changing one variant's price
+         | changes one. A variant that copied every field would be forty
+         | rows to update and thirty-nine chances to miss one.
+         */
+        if ($plainPrice !== null) {
+            $failures[] = 'a variant that overrides nothing still stores a price, so changing the item '.
+                'leaves forty variants holding the old one';
+        }
+
+        if ($dearerPrice === null) {
+            $failures[] = 'a variant that overrides its price did not keep the override';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function combinationsAreAbsent(): array
+    {
+        $item = $this->aStockedItem();
+        $this->anAxis('SIZE', 1, ['S', 'M', 'L']);
+        $this->anAxis('COLOUR', 2, ['RED', 'BLUE']);
+
+        $this->aVariant($item, ['SIZE' => 'L', 'COLOUR' => 'RED']);
+        $this->aVariant($item, ['SIZE' => 'S', 'COLOUR' => 'BLUE']);
+
+        $count = DB::connection('tenant')->table('item_variants')
+            ->where('item_id', $item)
+            ->whereNull('deleted_at')
+            ->count();
+
+        /*
+         | Two, not six.
+         |
+         | A matrix of three sizes and two colours generates six, and a
+         | shop stocking two now has four rows that need stock records,
+         | price lines and a reason for being inactive - and every report
+         | has to remember to exclude them.
+         */
+        return $count === 2
+            ? []
+            : [sprintf(
+                'three sizes and two colours produced %d variants for a shop that stocks two - the four '.
+                'that do not exist would need stock records, price lines and a reason for being inactive, '.
+                'and every report would have to remember to exclude them',
+                $count,
+            )];
+    }
+
+    /** @return list<string> */
+    private function axisValuesWithHistoryStay(): array
+    {
+        $item = $this->aStockedItem();
+        $axis = $this->anAxis('SIZE', 1, ['S', 'L']);
+        $this->aVariant($item, ['SIZE' => 'L']);
+
+        $value = DB::connection('tenant')->table('item_axis_values')
+            ->where('axis_id', $axis)
+            ->where('code', 'L')
+            ->value('id');
+
+        $refusal = $this->refusal(fn () => DB::connection('tenant')->table('item_axis_values')
+            ->where('id', $value)
+            ->delete());
+
+        if ($refusal === null) {
+            return ['an axis value in use was deleted, leaving a variant describing a combination that no '.
+                'longer exists - and its stock would be stock of nothing'];
+        }
+
+        $failures = [];
+
+        if (! str_contains($refusal, 'stock of nothing')) {
+            $failures[] = 'the refusal does not say what the consequence is: '.$refusal;
+        }
+
+        /*
+         | And it names what holds it.
+         |
+         | "Cannot delete" sends somebody looking; "1 variant is the large
+         | of the size axis" tells them where to go.
+         */
+        if (! str_contains($refusal, 'variant(s) are the')) {
+            $failures[] = 'the refusal does not name what holds the value, so somebody has to go looking: '.$refusal;
+        }
+
+        /*
+         | An unused value goes.
+         |
+         | A check that only proved the refusal would pass with the
+         | trigger refusing every delete, and then nobody could ever
+         | remove a typo.
+         */
+        $unused = DB::connection('tenant')->table('item_axis_values')
+            ->where('axis_id', $axis)
+            ->where('code', 'S')
+            ->value('id');
+
+        if ($this->refusal(fn () => DB::connection('tenant')->table('item_axis_values')
+            ->where('id', $unused)->delete()) !== null) {
+            $failures[] = 'an axis value nothing uses cannot be deleted either, so a typo is permanent';
+        }
+
+        return $failures;
+    }
+
+    // ---- Batches - PF-250 -------------------------------------------------
+
+    /** @return list<string> */
+    private function trackedMovementsNameTheirBatch(): array
+    {
+        $item = $this->aTrackedItem();
+
+        $refusal = $this->refusal(fn () => app(Stock::class)->receive(
+            entityId: $this->entityId,
+            itemId: $item,
+            locationId: $this->locationId,
+            quantity: '10',
+            unitCost: '4.0000',
+            on: $this->date->copy(),
+            userId: $this->actorId(),
+        ));
+
+        if ($refusal === null) {
+            return ['an item under batch control moved without naming a batch, which is a traceability '.
+                'gap - and for food or medicine a regulatory one'];
+        }
+
+        $failures = [];
+
+        if (! str_contains($refusal, 'who has this batch')) {
+            $failures[] = 'the refusal does not say why a batch matters: '.$refusal;
+        }
+
+        /*
+         | And a batch of another item is refused.
+         |
+         | A movement naming the wrong item's batch makes a recall return
+         | the wrong customers, which is worse than returning none -
+         | because somebody acts on it.
+         */
+        $other = $this->aTrackedItem();
+        $otherBatch = $this->aBatch($other, 'OTHER-1');
+
+        $wrong = $this->refusal(fn () => app(Stock::class)->receive(
+            entityId: $this->entityId,
+            itemId: $item,
+            locationId: $this->locationId,
+            quantity: '10',
+            unitCost: '4.0000',
+            on: $this->date->copy(),
+            userId: $this->actorId(),
+            batchId: $otherBatch,
+        ));
+
+        if ($wrong === null) {
+            $failures[] = 'a movement named another item\'s batch, so a recall would return the wrong '.
+                'customers - which is worse than returning none';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function fefoIsOfferedNotApplied(): array
+    {
+        $item = $this->aTrackedItem();
+
+        $soon = $this->aBatch($item, 'SOON', expires: '2026-06-01');
+        $later = $this->aBatch($item, 'LATER', expires: '2026-12-01');
+        $never = $this->aBatch($item, 'NEVER', expires: null);
+
+        $this->receiveBatch($item, $later, '10', '4.0000');
+        $this->receiveBatch($item, $soon, '10', '4.0000');
+        $this->receiveBatch($item, $never, '10', '4.0000');
+
+        $before = DB::connection('tenant')->table('stock_movements')->count();
+        $suggestion = app(\App\Tenant\Inventory\Services\Batches::class)
+            /*
+             | 25 of 30, so all three batches are needed.
+             |
+             | The first draft asked for 15, which SOON and LATER satisfy
+             | between them - so the batch with no expiry never appeared
+             | and the assertion about it being LAST was asserting
+             | nothing. The check was wrong, not the ordering.
+             */
+            ->suggest($this->entityId, $item, $this->locationId, '25');
+        $after = DB::connection('tenant')->table('stock_movements')->count();
+
+        $failures = [];
+
+        if ($before !== $after) {
+            $failures[] = 'asking for a suggestion wrote movements, so the suggestion is an application - '.
+                'and the right batch is sometimes the one already in the van';
+        }
+
+        $order = array_column($suggestion['plan'], 'number');
+
+        if (($order[0] ?? '') !== 'SOON') {
+            $failures[] = sprintf(
+                'first-expiry-first-out suggested %s first rather than the batch expiring in June',
+                (string) ($order[0] ?? 'nothing'),
+            );
+        }
+
+        /*
+         | And the batch with no expiry comes LAST.
+         |
+         | PostgreSQL sorts nulls first by default, which would put the
+         | one batch with no deadline ahead of the one expiring on
+         | Friday - the exact opposite of the rule.
+         */
+        if (($order[\count($order) - 1] ?? '') !== 'NEVER') {
+            $failures[] = sprintf(
+                'the batch with no expiry is not last in the suggestion (%s) - nulls sort first by '.
+                'default, which puts the one batch with no deadline ahead of the one expiring on Friday',
+                implode(', ', $order),
+            );
+        }
+
+        if (! str_contains((string) $suggestion['why'], 'already in the van')) {
+            $failures[] = 'the suggestion does not say it is a suggestion, so a screen would apply it';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function expiryIsReportedBefore(): array
+    {
+        $item = $this->aTrackedItem();
+
+        $soon = $this->aBatch($item, 'SOON', expires: Carbon::now()->addDays(10)->toDateString());
+        $far = $this->aBatch($item, 'FAR', expires: Carbon::now()->addDays(200)->toDateString());
+
+        $this->receiveBatch($item, $soon, '10', '4.0000');
+        $this->receiveBatch($item, $far, '10', '4.0000');
+
+        $failures = [];
+        $expiring = app(\App\Tenant\Inventory\Services\Batches::class)->expiring($this->entityId, 30);
+        $numbers = array_column($expiring, 'number');
+
+        if (! \in_array('SOON', $numbers, true)) {
+            $failures[] = 'a batch expiring in ten days is not reported at a thirty-day lead time, so the '.
+                'report arrives after the write-off rather than before the decision';
+        }
+
+        if (\in_array('FAR', $numbers, true)) {
+            $failures[] = 'a batch expiring in two hundred days is reported at a thirty-day lead time, so '.
+                'the report is everything and nobody reads it';
+        }
+
+        /*
+         | And the lead time is a parameter, not a constant.
+         |
+         | A business selling fresh food wants seven days and one selling
+         | medicine wants ninety. A constant is right for neither.
+         */
+        if (array_column(app(\App\Tenant\Inventory\Services\Batches::class)
+            ->expiring($this->entityId, 365), 'number') === $numbers) {
+            $failures[] = 'the lead time changes nothing, so it is a constant wearing a parameter\'s '.
+                'clothes - and seven days is right for fresh food where ninety is right for medicine';
+        }
+
+        if ($expiring !== [] && ! str_contains((string) $expiring[0]['why'], 'still time to')) {
+            $failures[] = 'the report does not say what can still be done, which is the only reason to '.
+                'send it early: '.(string) $expiring[0]['why'];
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function expiredNeedsAName(): array
+    {
+        $item = $this->aTrackedItem();
+        /*
+         | Received and expired inside the open period.
+         |
+         | The receipt posts on its own date, so a fixture reaching back
+         | into April posts into a period nobody opened - which the ledger
+         | refuses, correctly. The batch is received on the 2nd, expires
+         | on the 10th, and the issue is attempted on the 18th.
+         */
+        $expired = $this->aBatch($item, 'OLD', expires: '2026-05-10', received: '2026-05-02');
+        $this->receiveBatch($item, $expired, '10', '4.0000', on: '2026-05-02');
+
+        $refusal = $this->refusal(fn () => app(Stock::class)->issue(
+            entityId: $this->entityId,
+            itemId: $item,
+            locationId: $this->locationId,
+            quantity: '2',
+            on: Carbon::parse('2026-05-18'),
+            userId: $this->actorId(),
+            batchId: $expired,
+        ));
+
+        $failures = [];
+
+        if ($refusal === null) {
+            $failures[] = 'stock was issued from an expired batch with nobody\'s name on it';
+        } elseif (! str_contains($refusal, 'never right silently')) {
+            $failures[] = 'the refusal does not say that issuing it is sometimes right: '.$refusal;
+        }
+
+        /*
+         | And with a name and a reason it goes through, recorded.
+         |
+         | A check that only proved the refusal would pass with the issue
+         | refused outright - and then a batch re-tested and released
+         | could never be sold.
+         */
+        $allowed = app(Stock::class)->issue(
+            entityId: $this->entityId,
+            itemId: $item,
+            locationId: $this->locationId,
+            quantity: '2',
+            on: Carbon::parse('2026-05-18'),
+            userId: $this->actorId(),
+            batchId: $expired,
+            expiryAcceptedBy: $this->secondActorId(),
+            expiryAcceptedReason: 'the batch was re-tested by the laboratory on 12 May and released',
+        );
+
+        $stored = DB::connection('tenant')->table('stock_movements')
+            ->where('id', $allowed['id'])
+            ->first();
+
+        if (($stored->expiry_accepted_by ?? null) === null) {
+            $failures[] = 'the acknowledgement is not recorded on the movement, so who accepted the risk '.
+                'is a question with no answer';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function aBatchIsTraceable(): array
+    {
+        $item = $this->aTrackedItem();
+        $batch = $this->aBatch($item, 'TRACE-1', lot: 'SUP-LOT-99');
+        $this->receiveBatch($item, $batch, '10', '4.0000');
+
+        app(Stock::class)->issue(
+            entityId: $this->entityId,
+            itemId: $item,
+            locationId: $this->locationId,
+            quantity: '3',
+            on: $this->date->copy(),
+            userId: $this->actorId(),
+            batchId: $batch,
+        );
+
+        $trace = app(\App\Tenant\Inventory\Services\Batches::class)->traceOf($this->entityId, $batch);
+        $failures = [];
+
+        if (\count($trace['went_to']) !== 1) {
+            $failures[] = sprintf(
+                'the trace of a batch with one issue returned %d movement(s) - the point of batch '.
+                'tracking is reaching the people who have the goods',
+                \count($trace['went_to']),
+            );
+        }
+
+        if (($trace['supplier_lot'] ?? null) !== 'SUP-LOT-99') {
+            $failures[] = 'the trace does not carry the supplier\'s own lot, which is what a recall '.
+                'notice names - ours has to be findable from theirs';
+        }
+
+        /*
+         | And a receipt is not a destination.
+         |
+         | A trace that listed the receipt would answer "where did this
+         | come from" during a recall, which is a different question from
+         | the one being asked.
+         */
+        foreach ($trace['went_to'] as $went) {
+            if (\Brick\Math\BigDecimal::of((string) $went['quantity'])->isNegative()) {
+                $failures[] = 'the trace includes a receipt, so it answers where the stock came from '.
+                    'rather than who has it';
+            }
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function aBatchIsRecordedOnce(): array
+    {
+        $item = $this->aTrackedItem();
+        $this->aBatch($item, 'DUP-1');
+
+        $refusal = $this->refusal(fn () => $this->aBatch($item, 'DUP-1'));
+
+        if ($refusal === null) {
+            return ['one batch was recorded twice, which splits its history - so a recall returns half '.
+                'the customers'];
+        }
+
+        return str_contains($refusal, 'half the customers')
+            ? []
+            : ['the duplicate batch was refused without saying what it costs: '.$refusal];
+    }
+
     // ---- Helpers ----------------------------------------------------------
+    // ---- Variant and batch helpers ----------------------------------------
+
+    /** @param list<string> $values */
+    private function anAxis(string $code, int $position, array $values): string
+    {
+        $id = (string) Str::ulid();
+
+        DB::connection('tenant')->table('item_axes')->insert([
+            'id' => $id,
+            'entity_id' => $this->entityId,
+            'code' => $code,
+            'name_ar' => $code,
+            'name_en' => $code,
+            'position' => $position,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        foreach ($values as $index => $value) {
+            DB::connection('tenant')->table('item_axis_values')->insert([
+                'id' => (string) Str::ulid(),
+                'entity_id' => $this->entityId,
+                'axis_id' => $id,
+                'code' => $value,
+                'name_ar' => $value,
+                'name_en' => $value,
+                'position' => $index + 1,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        return $id;
+    }
+
+    /** @param array<string, string> $axes */
+    private function aVariant(string $itemId, array $axes, ?string $price = null): string
+    {
+        $id = (string) Str::ulid();
+
+        DB::connection('tenant')->table('item_variants')->insert([
+            'id' => $id,
+            'entity_id' => $this->entityId,
+            'item_id' => $itemId,
+            'code' => 'V-'.Str::upper(Str::random(8)),
+            'axes' => json_encode($axes, JSON_THROW_ON_ERROR),
+            'price_override' => $price,
+            'active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $id;
+    }
+
+    private function aTrackedItem(): string
+    {
+        $id = $this->aStockedItem();
+
+        DB::connection('tenant')->table('items')->where('id', $id)->update(['batch_tracked' => true]);
+
+        return $id;
+    }
+
+    private function aBatch(
+        string $itemId,
+        string $number,
+        ?string $expires = '2026-12-31',
+        ?string $lot = null,
+        string $received = '2026-05-01',
+    ): string {
+        return (string) app(\App\Tenant\Inventory\Services\Batches::class)->record(
+            entityId: $this->entityId,
+            itemId: $itemId,
+            number: $number,
+            receivedOn: Carbon::parse($received),
+            expiresOn: $expires === null ? null : Carbon::parse($expires),
+            userId: $this->actorId(),
+            supplierLot: $lot,
+        )['id'];
+    }
+
+    /** @return array<string, mixed> */
+    private function receiveBatch(
+        string $item,
+        string $batch,
+        string $quantity,
+        string $cost,
+        string $on = '2026-05-18',
+    ): array {
+        return app(Stock::class)->receive(
+            entityId: $this->entityId,
+            itemId: $item,
+            locationId: $this->locationId,
+            quantity: $quantity,
+            unitCost: $cost,
+            on: Carbon::parse($on),
+            userId: $this->actorId(),
+            batchId: $batch,
+        );
+    }
 
     private function seedTheLocations(): void
     {

@@ -34,18 +34,21 @@ It comes from a gap analysis against [hawalaty](https://github.com/mostfaswaisi9
 ### PF-249 · Product variants
 `Catalog` · **5 pts** · depends: PF-247 · standards: — · `type:schema`
 
-- [ ] An item may have axes (size, colour, strength) and a variant per combination, each with its own code, price and stock - and the axes are **data**, because a product with a hard-coded size enum is a product that cannot sell shoes
-- [ ] A variant inherits what it does not override, so changing the parent's tax code changes forty variants and changing one variant's price changes one
-- [ ] A combination that does not exist is **absent**, not disabled: a matrix that generates every combination produces stock records for shoes nobody makes
-- [ ] Deleting an axis value with stock or history is refused, naming what holds it
+- [x] An item may have axes and a variant per combination, each with its own code and barcode - and the axes are **data**, asserted by a check that there is no `size` or `colour` column anywhere: the next vertical always needs an axis nobody thought of, like grind for coffee or offset for wheels
+- [x] A variant inherits what it does not override - `NULL` means "whatever the item says", so changing the item's tax code changes forty variants and changing one variant's price changes one. A variant that copied every field would be forty rows to update and thirty-nine chances to miss one
+- [x] A combination that does not exist is **absent**, not disabled, proved by creating two of six and asserting two rows exist. The four that do not would need stock records, price lines and a reason for being inactive, and every report would have to remember to exclude them
+- [x] Deleting an axis value in use is refused and **names what holds it** - "cannot delete" sends somebody looking; "1 variant is the large of the size axis" tells them where to go. An unused value still deletes, so a typo is not permanent
+- [x] **And:** the same combination written with its keys in the other order is the same variant. `jsonb` normalises key order and compares by content, so the unique index is on the column itself - a signature column was built first, as a generated column with a subquery in it, which PostgreSQL refuses outright. The refusal was useful: the signature added nothing the check against `{}` did not already cover
 
 ### PF-250 · Batches, expiry and lot tracking
-`Catalog` · **5 pts** · depends: PF-248 · standards: IAS 2 · `risk:high`
+`Inventory` · **5 pts** · depends: PF-248 · standards: IAS 2 · `risk:high`
 
-- [ ] A batch carries its number, its received date and its expiry, and an issue **names the batch** - a stocked item under batch control that moves without one is a traceability gap, which for food or medicine is a regulatory one
-- [ ] First-expiry-first-out is offered and never silently applied; the suggestion is shown and somebody confirms, because the right batch is sometimes the one in the van
-- [ ] Expired stock is reported before it expires, with lead time, since a report of what expired yesterday is an accounting entry rather than a decision
-- [ ] Issuing from an expired batch needs an explicit, recorded acknowledgement naming the person
+- [x] A batch carries its number, its received date, its expiry and **the supplier's own lot** - a recall notice names theirs, so ours has to be findable from it. An item under batch control cannot move without naming one, enforced by a trigger because an import is the other door; and a movement naming another item's batch is refused, because that makes a recall return the wrong customers, which is worse than returning none
+- [x] First-expiry-first-out is offered and never applied: `suggest()` returns the order with its reasoning and writes nothing, asserted by counting movements before and after. The right batch is usually the one expiring first and is sometimes the one already in the van, and the person who loaded it is the one who knows
+- [x] Expired stock is reported **before** it expires, with the lead time as a parameter - seven days is right for fresh food where ninety is right for medicine, so a constant is right for neither. The report says what can still be done, which is the only reason to send it early
+- [x] Issuing from an expired batch needs a name and a reason recorded on the movement. It is sometimes right - a cosmetic best-before, a batch re-tested and released - and never right silently, so the check proves both directions: refused without, allowed and recorded with
+- [x] **And:** a batch answers *who has the goods*, not how much is left. The trace follows the movement to the document to the party and excludes receipts, because "where did this come from" is a different question from the one a recall asks
+- [x] **Found while checking this task:** `ORDER BY expires_on` puts nulls **first** in PostgreSQL, so the one batch with no deadline was suggested ahead of the one expiring on Friday - the exact opposite of the rule. `NULLS LAST` was missing, and the check that caught it had to ask for more than the first two batches held, because asking for less never reached the third one and asserted nothing
 
 ### PF-251 · Serial numbers and warranty
 `Catalog` · **5 pts** · depends: PF-248 · standards: — · `risk:high`
