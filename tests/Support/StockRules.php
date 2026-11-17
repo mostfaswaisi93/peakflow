@@ -102,6 +102,26 @@ final class StockRules
                 'a batch answers who has the goods' => fn (): array => $this->aBatchIsTraceable(),
                 'a batch is recorded once' => fn (): array => $this->aBatchIsRecordedOnce(),
 
+                // ---- Serials and warranty - PF-251 ---------------------
+                'a serial\'s history reads as one list' => fn (): array => $this->serialHistoryIsOneList(),
+                'a serial is sold once, by an index' => fn (): array => $this->aSerialIsSoldOnce(),
+                'the warranty end is computed, never stored' => fn (): array => $this->warrantyIsComputed(),
+                'a specific term beats the entity default' => fn (): array => $this->aSpecificTermBeatsTheDefault(),
+                'a term sold with the unit beats the item\'s' => fn (): array => $this->aTermSoldWithTheUnitWins(),
+                'a claim records its fault, decision and outcome' => fn (): array => $this->aClaimRecordsItsOutcome(),
+                'a serial event cannot be edited or deleted' => fn (): array => $this->serialEventsAreFacts(),
+
+                // ---- Returns - PF-252 ----------------------------------
+                'a return cannot bring back more than was sold' => fn (): array => $this->aReturnCannotExceedTheSale(),
+                'faulty goods go to quarantine, not the shelf' => fn (): array => $this->faultyGoodsAreQuarantined(),
+                'a restocking fee is explainable from the return' => fn (): array => $this->aRestockingFeeIsExplainable(),
+                'the credit note and the movement are one transaction' => fn (): array => $this->theCreditAndTheMovementAreOneTransaction(),
+                'a half-done return leaves nothing behind' => fn (): array => $this->aHalfDoneReturnIsNoReturn(),
+                'the cost it comes back at is the cost it left at' => fn (): array => $this->theCostItLeftAtIsRead(),
+                'quarantined goods are ours, and not on the shelf' => fn (): array => $this->quarantinedGoodsAreNotOnTheShelf(),
+                'the fee, the goods and the credit are three figures' => fn (): array => $this->theFeeIsItsOwnFigure(),
+                'a return credits cost of sales, not a supplier gap' => fn (): array => $this->aReturnCreditsCostOfSales(),
+
                 // ---- The tie --------------------------------------------
                 'the inventory account equals its movements' => fn (): array => $this->inventoryReconciles(),
                 'and the check notices when it does not' => fn (): array => $this->inventoryDriftIsCaught(),
@@ -1311,7 +1331,1305 @@ final class StockRules
             : ['the duplicate batch was refused without saying what it costs: '.$refusal];
     }
 
+
+    // ---- Serials and warranty - PF-251 ------------------------------------
+
+    /** @return list<string> */
+    private function serialHistoryIsOneList(): array
+    {
+        $item = $this->aSerialItem();
+        $serial = $this->aSerial($item, 'SN-0001');
+
+        app(\App\Tenant\Inventory\Services\Serials::class)->sell(
+            entityId: $this->entityId,
+            serialId: $serial,
+            partyId: (string) $this->party?->getKey(),
+            on: Carbon::parse('2026-05-10'),
+            userId: $this->actorId(),
+        );
+
+        $history = app(\App\Tenant\Inventory\Services\Serials::class)
+            ->historyOf($this->entityId, $serial);
+
+        $failures = [];
+        $events = array_column($history['events'], 'event');
+
+        /*
+         | Received then sold, both still there.
+         |
+         | An updated row answers "where is it now" and nothing else,
+         | which is the question nobody asks during a warranty claim.
+         */
+        if ($events !== ['received', 'sold']) {
+            $failures[] = sprintf(
+                'the history of a received-then-sold unit reads as %s - every change of state has to be '.
+                'a row, because "where is this unit" is answered by a list',
+                implode(', ', $events) ?: 'nothing',
+            );
+        }
+
+        if (($history['state'] ?? '') !== 'sold') {
+            $failures[] = 'the serial\'s state did not follow its last event, so the denormalised column '.
+                'has drifted from the record it is meant to index';
+        }
+
+        if (($history['events'][1]['party'] ?? '-') === '-') {
+            $failures[] = 'the sale event records no customer, so a recall or a claim cannot reach them';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function aSerialIsSoldOnce(): array
+    {
+        $item = $this->aSerialItem();
+        $serial = $this->aSerial($item, 'SN-ONCE');
+
+        app(\App\Tenant\Inventory\Services\Serials::class)->sell(
+            entityId: $this->entityId,
+            serialId: $serial,
+            partyId: (string) $this->party?->getKey(),
+            on: Carbon::parse('2026-05-10'),
+            userId: $this->actorId(),
+        );
+
+        $failures = [];
+        $refusal = $this->refusal(fn () => app(\App\Tenant\Inventory\Services\Serials::class)->sell(
+            entityId: $this->entityId,
+            serialId: $serial,
+            partyId: (string) $this->party?->getKey(),
+            on: Carbon::parse('2026-05-12'),
+            userId: $this->actorId(),
+        ));
+
+        if ($refusal === null) {
+            $failures[] = 'one unit was sold twice';
+        }
+
+        /*
+         | And the index refuses it, which is the control.
+         |
+         | The second sale almost always arrives from an import, a second
+         | till or a retried job - none of which goes through the service
+         | check, and all of which go through the index.
+         */
+        $direct = $this->refusal(fn () => DB::connection('tenant')->table('serial_events')->insert([
+            'id' => (string) Str::ulid(),
+            'entity_id' => $this->entityId,
+            'serial_id' => $serial,
+            'event' => 'sold',
+            'happened_on' => '2026-05-12',
+            'recorded_by' => $this->actorId(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]));
+
+        if ($direct === null) {
+            $failures[] = 'the database accepted a second sale of one unit, so an import or a second till '.
+                'sells it again';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function warrantyIsComputed(): array
+    {
+        $item = $this->aSerialItem();
+        $this->aWarrantyTerm($item, 12);
+        $serial = $this->aSerial($item, 'SN-WAR');
+
+        app(\App\Tenant\Inventory\Services\Serials::class)->sell(
+            entityId: $this->entityId,
+            serialId: $serial,
+            partyId: (string) $this->party?->getKey(),
+            on: Carbon::parse('2026-05-10'),
+            userId: $this->actorId(),
+        );
+
+        $warranty = app(\App\Tenant\Inventory\Services\Serials::class)
+            ->warrantyOf($this->entityId, $serial);
+
+        $failures = [];
+
+        if ($warranty === null) {
+            return ['a unit sold under a twelve-month term reports no warranty at all'];
+        }
+
+        if (($warranty['expires_on'] ?? '') !== '2027-05-10') {
+            $failures[] = sprintf(
+                'twelve months from 2026-05-10 computed as %s',
+                (string) ($warranty['expires_on'] ?? 'nothing'),
+            );
+        }
+
+        /*
+         | And nothing stores it.
+         |
+         | A stored end date stops agreeing with the sale the first time
+         | somebody corrects it, and the customer finds out at the counter
+         | holding a receipt.
+         */
+        $columns = DB::connection('tenant')->getSchemaBuilder()->getColumnListing('serials');
+
+        foreach (['warranty_expires_on', 'warranty_end', 'expires_on'] as $forbidden) {
+            if (\in_array($forbidden, $columns, true)) {
+                $failures[] = sprintf(
+                    'serials carries a "%s" column, so the warranty date is stored - and it stops '.
+                    'agreeing with the sale the first time somebody corrects the sale date',
+                    $forbidden,
+                );
+            }
+        }
+
+        /*
+         | The term's OWN words, not the sentence's.
+         |
+         | Asserting that the explanation contains the word "covers" is
+         | satisfied by the template that wrote it - which is a check
+         | measuring its own sprintf.
+         */
+        foreach (['why', 'covers'] as $field) {
+            if (! str_contains((string) $warranty[$field], 'manufacturing defects')) {
+                $failures[] = sprintf(
+                    'the warranty\'s %s does not carry what the term actually covers, which is what a '.
+                    'claim turns on: %s',
+                    $field,
+                    (string) $warranty[$field],
+                );
+            }
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function aSpecificTermBeatsTheDefault(): array
+    {
+        $item = $this->aSerialItem();
+
+        /*
+         | A default for everything, and a longer one for this item.
+         |
+         | Ordered so the specific one wins. A fallback that beat the
+         | specific term would make every item's warranty the default's,
+         | which is the failure that looks like it works.
+         */
+        $this->aWarrantyTerm(null, 6);
+        $this->aWarrantyTerm($item, 24);
+
+        $serial = $this->aSerial($item, 'SN-SPEC');
+
+        app(\App\Tenant\Inventory\Services\Serials::class)->sell(
+            entityId: $this->entityId,
+            serialId: $serial,
+            partyId: (string) $this->party?->getKey(),
+            on: Carbon::parse('2026-05-10'),
+            userId: $this->actorId(),
+        );
+
+        $warranty = app(\App\Tenant\Inventory\Services\Serials::class)
+            ->warrantyOf($this->entityId, $serial);
+
+        return ($warranty['months'] ?? 0) === 24
+            ? []
+            : [sprintf(
+                'an item with its own 24-month term reports %d months, so the entity default is beating '.
+                'the specific one - which makes every item\'s warranty the default\'s',
+                (int) ($warranty['months'] ?? 0),
+            )];
+    }
+
+    /** @return list<string> */
+    private function aClaimRecordsItsOutcome(): array
+    {
+        $item = $this->aSerialItem();
+
+        /*
+         | The item's own term, and a longer one the customer paid for.
+         |
+         | Two different numbers, so that what the replacement reports
+         | says which of them travelled with it. A fixture where both
+         | terms were twelve months would pass whether the cover
+         | followed the unit or was looked up afresh.
+         */
+        $this->aWarrantyTerm($item, 12);
+        $extended = $this->aWarrantyTerm($item, 36);
+
+        $faulty = $this->aSerial($item, 'SN-BAD');
+        $replacement = $this->aSerial($item, 'SN-NEW');
+
+        app(\App\Tenant\Inventory\Services\Serials::class)->sell(
+            entityId: $this->entityId,
+            serialId: $faulty,
+            partyId: (string) $this->party?->getKey(),
+            on: Carbon::parse('2026-05-10'),
+            userId: $this->actorId(),
+            warrantyTermId: $extended,
+        );
+
+        $failures = [];
+
+        $thin = $this->refusal(fn () => app(\App\Tenant\Inventory\Services\Serials::class)->claim(
+            entityId: $this->entityId,
+            serialId: $faulty,
+            fault: 'broken',
+            on: Carbon::parse('2026-06-01'),
+            userId: $this->actorId(),
+        ));
+
+        if ($thin === null) {
+            $failures[] = 'a claim was recorded with "broken" as the fault - and the decision turns on '.
+                'whether the warranty covers this, which a word cannot be held against';
+        } elseif (! str_contains($thin, 'not a fault')) {
+            /*
+             | And the sentence is the service's, not the constraint's.
+             |
+             | The column refuses a short fault too, which is the control
+             | - but "violates check constraint" is read by a person at a
+             | counter, and it tells them nothing to do.
+             */
+            $failures[] = 'a one-word fault is refused by the column rather than explained by the '.
+                'service, so the person typing it is shown a constraint name: '.$thin;
+        }
+
+        $claim = app(\App\Tenant\Inventory\Services\Serials::class)->claim(
+            entityId: $this->entityId,
+            serialId: $faulty,
+            fault: 'the screen shows vertical lines after a week of use',
+            on: Carbon::parse('2026-06-01'),
+            userId: $this->actorId(),
+            partyId: (string) $this->party?->getKey(),
+        );
+
+        $noReplacement = $this->refusal(fn () => app(\App\Tenant\Inventory\Services\Serials::class)->decide(
+            claimId: $claim['id'],
+            decision: 'replaced',
+            reason: 'the panel is covered and a unit was in stock',
+            on: Carbon::parse('2026-06-02'),
+            userId: $this->secondActorId(),
+        ));
+
+        if ($noReplacement === null) {
+            $failures[] = 'a claim was decided "replaced" without naming the unit that went out, so the '.
+                'stock says nothing left and the next count finds one too many';
+        } elseif (! str_contains($noReplacement, 'next count finds one too many')) {
+            $failures[] = 'the missing replacement is refused by the column rather than explained by '.
+                'the service, so the person deciding the claim is shown a constraint name: '.$noReplacement;
+        }
+
+        app(\App\Tenant\Inventory\Services\Serials::class)->decide(
+            claimId: $claim['id'],
+            decision: 'replaced',
+            reason: 'the panel is covered and a unit was in stock',
+            on: Carbon::parse('2026-06-02'),
+            userId: $this->secondActorId(),
+            replacementSerialId: $replacement,
+        );
+
+        /*
+         | Both units moved: the faulty one back, the new one out.
+         |
+         | A product that recorded only the decision would leave the stock
+         | wrong in both directions at once.
+         */
+        $states = DB::connection('tenant')->table('serials')
+            ->whereIn('id', [$faulty, $replacement])
+            ->pluck('state', 'id')
+            ->all();
+
+        if (($states[$faulty] ?? '') !== 'replaced') {
+            $failures[] = sprintf('the faulty unit is %s rather than replaced', (string) ($states[$faulty] ?? '?'));
+        }
+
+        if (($states[$replacement] ?? '') !== 'sold') {
+            $failures[] = sprintf(
+                'the replacement unit is %s rather than sold, so it is still in stock and will be sold '.
+                'again',
+                (string) ($states[$replacement] ?? '?'),
+            );
+        }
+
+        /*
+         | And the cover the customer bought went with the new unit.
+         |
+         | Losing an extended warranty because the first unit failed is
+         | the opposite of what it is for. The fixture sells the faulty
+         | unit under the item's twelve-month term, so the replacement
+         | reporting twelve months from the replacement date is the
+         | proof that the term travelled rather than being looked up
+         | afresh.
+         */
+        $cover = app(\App\Tenant\Inventory\Services\Serials::class)
+            ->warrantyOf($this->entityId, $replacement);
+
+        if (($cover['months'] ?? 0) !== 36) {
+            $failures[] = sprintf(
+                'the replacement unit reports %d months of cover rather than the thirty-six the '.
+                'customer bought, so a warranty replacement quietly cancels the extended warranty they '.
+                'paid for',
+                (int) ($cover['months'] ?? 0),
+            );
+        }
+
+        if (($cover['expires_on'] ?? '') !== '2029-06-02') {
+            $failures[] = sprintf(
+                'the replacement is covered until %s - thirty-six months from 2026-06-02, when it '.
+                'went out, so a date measured from anywhere else is being read off a unit the customer '.
+                'no longer has',
+                (string) ($cover['expires_on'] ?? '-'),
+            );
+        }
+
+        $twice = $this->refusal(fn () => app(\App\Tenant\Inventory\Services\Serials::class)->decide(
+            claimId: $claim['id'],
+            decision: 'rejected',
+            reason: 'changed our mind about the panel',
+            on: Carbon::parse('2026-06-03'),
+            userId: $this->secondActorId(),
+        ));
+
+        if ($twice === null) {
+            $failures[] = 'a decided claim was decided again, leaving the stock movements the first '.
+                'decision caused describing something that did not happen';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function serialEventsAreFacts(): array
+    {
+        $item = $this->aSerialItem();
+        $serial = $this->aSerial($item, 'SN-FACT');
+
+        $event = DB::connection('tenant')->table('serial_events')
+            ->where('serial_id', $serial)
+            ->value('id');
+
+        $failures = [];
+
+        foreach ([
+            fn () => DB::connection('tenant')->table('serial_events')->where('id', $event)->update(['event' => 'sold']),
+            fn () => DB::connection('tenant')->table('serial_events')->where('id', $event)->delete(),
+        ] as $attempt) {
+            if ($this->refusal($attempt) === null) {
+                $failures[] = 'a serial event can be changed or removed - and the warranty start is '.
+                    'derived from the sale event, so an editable event is an editable warranty';
+            }
+        }
+
+        return $failures;
+    }
+
+    // ---- Returns - PF-252 -------------------------------------------------
+
+    /** @return list<string> */
+    private function aReturnCannotExceedTheSale(): array
+    {
+        [$invoice, $line, $item] = $this->anInvoicedSale('10');
+        $return = $this->aReturn($invoice);
+
+        $failures = [];
+
+        /*
+         | Four back, then four more, then four again: the third is
+         | refused because 4 + 4 + 4 is more than 10.
+         |
+         | A part return of a part return is where a check that reads the
+         | invoice once gets it wrong - it subtracts what it can see and
+         | misses the return another till recorded two seconds ago.
+         */
+        $this->aReturnLine($return, $line, $item, '4');
+        $this->aReturnLine($return, $line, $item, '4');
+
+        $refusal = $this->refusal(fn () => $this->aReturnLine($return, $line, $item, '4'));
+
+        if ($refusal === null) {
+            $failures[] = '12 came back from a line that sold 10, so the customer is credited for goods '.
+                'that never left';
+        } elseif (! str_contains($refusal, 'part return of a part return')) {
+            $failures[] = 'the refusal does not say why one read of the invoice is not enough: '.$refusal;
+        }
+
+        /*
+         | And the remaining 2 go back fine.
+         |
+         | A check that only proved the refusal would pass with the
+         | trigger refusing every second line.
+         */
+        if ($this->refusal(fn () => $this->aReturnLine($return, $line, $item, '2')) !== null) {
+            $failures[] = 'the last 2 of 10 could not come back, so the limit is being applied per line '.
+                'rather than per total';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function faultyGoodsAreQuarantined(): array
+    {
+        [$invoice, $line, $item] = $this->anInvoicedSale('10');
+        $return = $this->aReturn($invoice);
+
+        $failures = [];
+
+        $refusal = $this->refusal(fn () => $this->aReturnLine(
+            $return,
+            $line,
+            $item,
+            '1',
+            resellable: false,
+            locationId: $this->locationId,
+            note: 'the casing is cracked along the seam',
+        ));
+
+        if ($refusal === null) {
+            $failures[] = 'a faulty unit went back into sellable stock, so the next customer finds it';
+        } elseif (! str_contains($refusal, 'quarantine is a real place')) {
+            $failures[] = 'the refusal does not say where it should go instead: '.$refusal;
+        }
+
+        /*
+         | Into quarantine it goes.
+         */
+        if ($this->refusal(fn () => $this->aReturnLine(
+            $return,
+            $line,
+            $item,
+            '1',
+            resellable: false,
+            locationId: $this->quarantineId,
+            note: 'the casing is cracked along the seam',
+        )) !== null) {
+            $failures[] = 'a faulty unit could not be returned into a non-sellable location either, so '.
+                'there is nowhere for it to go';
+        }
+
+        /*
+         | And a fault needs describing.
+         |
+         | "Not resellable" with no note is a unit in quarantine nobody
+         | can decide about: scrap it, repair it, return it to the
+         | supplier - all three need the sentence.
+         */
+        $silent = $this->refusal(fn () => $this->aReturnLine(
+            $return,
+            $line,
+            $item,
+            '1',
+            resellable: false,
+            locationId: $this->quarantineId,
+            note: null,
+        ));
+
+        if ($silent === null) {
+            $failures[] = 'a unit was quarantined with no description of the fault, so nobody can decide '.
+                'whether to scrap it, repair it or send it back';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function aRestockingFeeIsExplainable(): array
+    {
+        [$invoice] = $this->anInvoicedSale('10');
+        $failures = [];
+
+        /*
+         | The credit is the goods less the fee, asserted by the table.
+         |
+         | So the figure on the credit note cannot drift from its own
+         | inputs - which is the one arithmetic a customer checks.
+         */
+        $wrong = $this->refusal(fn () => DB::connection('tenant')->table('sales_returns')->insert([
+            'id' => (string) Str::ulid(),
+            'entity_id' => $this->entityId,
+            'invoice_id' => $invoice,
+            'party_id' => (string) $this->party?->getKey(),
+            'number' => 'RET-'.Str::upper(Str::random(6)),
+            'returned_on' => '2026-05-18',
+            'state' => 'draft',
+            'reason' => 'the customer ordered the wrong size',
+            'goods_value' => '100.0000',
+            'restocking_fee' => '10.0000',
+            'credit_value' => '95.0000',
+            'currency' => 'SAR',
+            'created_by' => $this->actorId(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]));
+
+        if ($wrong === null) {
+            $failures[] = 'a return credited 95 on goods of 100 with a fee of 10, so the credit note '.
+                'cannot be explained from the return - which is the one arithmetic a customer checks';
+        }
+
+        /*
+         | And a fee larger than the goods is refused by the same rule.
+         |
+         | Because it would need a negative credit. Asserted here as the
+         | implication it is rather than as a second constraint: a fee
+         | ceiling written separately is the same invariant twice, and
+         | the copy is what survives a change to the original.
+         */
+        $greedy = $this->refusal(fn () => DB::connection('tenant')->table('sales_returns')->insert([
+            'id' => (string) Str::ulid(),
+            'entity_id' => $this->entityId,
+            'invoice_id' => $invoice,
+            'party_id' => (string) $this->party?->getKey(),
+            'number' => 'RET-'.Str::upper(Str::random(6)),
+            'returned_on' => '2026-05-18',
+            'state' => 'draft',
+            'reason' => 'the customer ordered the wrong size',
+            'goods_value' => '100.0000',
+            'restocking_fee' => '150.0000',
+            'credit_value' => '-50.0000',
+            'currency' => 'SAR',
+            'created_by' => $this->actorId(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]));
+
+        if ($greedy === null) {
+            $failures[] = 'a restocking fee larger than the goods was accepted, so a return costs the '.
+                'customer money';
+        }
+
+        /*
+         | And there is no second constraint saying the same thing.
+         |
+         | The one that was here was unreachable: every row it would have
+         | refused was already refused by the arithmetic and the
+         | non-negative credit together, which the bite sweep found by
+         | dropping it and watching nothing change.
+         */
+        $ceilings = DB::connection('tenant')->selectOne(
+            "SELECT count(*) AS n FROM pg_constraint ".
+            "WHERE conrelid = 'sales_returns'::regclass ".
+            "AND pg_get_constraintdef(oid) LIKE '%restocking_fee <= goods_value%'",
+        );
+
+        if ((int) ($ceilings->n ?? 0) > 0) {
+            $failures[] = 'the fee ceiling is stated twice - once as the credit arithmetic and once on '.
+                'its own - so one of the two can be changed without the other and nothing will say so';
+        }
+
+        return $failures;
+    }
+
+
+    /** @return list<string> */
+    private function theCreditAndTheMovementAreOneTransaction(): array
+    {
+        [$invoice, $line, $item] = $this->anInvoicedSale('10', movesStock: true);
+
+        $returns = app(\App\Tenant\Sales\Services\SalesReturns::class);
+
+        $return = $returns->open(
+            entityId: $this->entityId,
+            invoiceId: $invoice,
+            reason: 'the customer ordered the wrong size',
+            on: Carbon::parse('2026-05-18'),
+            userId: $this->actorId(),
+        )['id'];
+
+        $returns->addLine(
+            returnId: $return,
+            invoiceLineId: $line,
+            quantity: '4',
+            locationId: $this->locationId,
+            resellable: true,
+            userId: $this->actorId(),
+        );
+
+        $failures = [];
+
+        $accepted = $returns->accept($return, Carbon::parse('2026-05-18'), $this->secondActorId());
+
+        $credit = DB::connection('tenant')->table('invoices')
+            ->where('id', (string) $accepted['credit_note_id'])
+            ->first();
+
+        if ($credit === null) {
+            $failures[] = 'accepting the return produced no credit note, so the customer is owed money '.
+                'nobody has written down';
+        }
+
+        $back = app(Stock::class)->onHand($this->entityId, $item, $this->locationId);
+
+        if (! $back->isEqualTo('4')) {
+            $failures[] = sprintf(
+                'four units came back and the shelf holds %s of them',
+                (string) $back,
+            );
+        }
+
+        /*
+         | And the cost is the cost it LEFT at, not today's average.
+         |
+         | The receipt that brought it in cost 4.0000 and the issue took
+         | it out at 4.0000, so a return at anything else would mean the
+         | basis was re-derived rather than read.
+         */
+        $cost = DB::connection('tenant')->table('stock_movements')
+            ->where('source_type', 'sales_return_line')
+            ->orderBy('id')
+            ->value('unit_cost');
+
+        if (BigDecimal::of((string) $cost)->compareTo('4') !== 0) {
+            $failures[] = sprintf(
+                'the return restored the stock at %s when the sale took it out at 4 - inventory now '.
+                'holds a figure the sale never removed',
+                (string) $cost,
+            );
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function aHalfDoneReturnIsNoReturn(): array
+    {
+        [$invoice, $line, $item] = $this->anInvoicedSale('10', movesStock: true);
+
+        $returns = app(\App\Tenant\Sales\Services\SalesReturns::class);
+
+        $return = $returns->open(
+            entityId: $this->entityId,
+            invoiceId: $invoice,
+            reason: 'the customer ordered the wrong size',
+            on: Carbon::parse('2026-05-18'),
+            userId: $this->actorId(),
+        )['id'];
+
+        $returns->addLine(
+            returnId: $return,
+            invoiceLineId: $line,
+            quantity: '4',
+            locationId: $this->locationId,
+            resellable: true,
+            userId: $this->actorId(),
+        );
+
+        /*
+         | The stock side made to fail AFTER the credit note is drawn.
+         |
+         | Unstocking the item is the cheapest way to do it; the point is
+         | not how it fails but that a failure half way leaves nothing
+         | behind. A return that credited the customer and did not restore
+         | the stock is the error nobody notices until a count.
+         */
+        DB::connection('tenant')->table('items')->where('id', $item)->update(['stocked' => false]);
+
+        $failures = [];
+        $refusal = $this->refusal(fn () => $returns->accept(
+            $return,
+            Carbon::parse('2026-05-18'),
+            $this->secondActorId(),
+        ));
+
+        if ($refusal === null) {
+            return ['the stock side was broken and the return was accepted anyway'];
+        }
+
+        $credits = DB::connection('tenant')->table('invoices')
+            ->where('entity_id', $this->entityId)
+            ->where('document_type', 'credit_note')
+            ->count();
+
+        if ($credits !== 0) {
+            $failures[] = 'the stock movement failed and a credit note survived it, so the customer has '.
+                'been credited for goods that never came back onto any shelf';
+        }
+
+        $state = DB::connection('tenant')->table('sales_returns')->where('id', $return)->value('state');
+
+        if ((string) $state !== 'draft') {
+            $failures[] = sprintf(
+                'the return is %s after a failed acceptance, so it cannot be accepted again once the '.
+                'cause is fixed',
+                (string) $state,
+            );
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function theCostItLeftAtIsRead(): array
+    {
+        [$invoice, $line] = $this->anInvoicedSale('10');
+
+        $returns = app(\App\Tenant\Sales\Services\SalesReturns::class);
+
+        $return = $returns->open(
+            entityId: $this->entityId,
+            invoiceId: $invoice,
+            reason: 'the customer ordered the wrong size',
+            on: Carbon::parse('2026-05-18'),
+            userId: $this->actorId(),
+        )['id'];
+
+        $returns->addLine(
+            returnId: $return,
+            invoiceLineId: $line,
+            quantity: '4',
+            locationId: $this->locationId,
+            resellable: true,
+            userId: $this->actorId(),
+        );
+
+        /*
+         | The sale moved no stock, so there is no cost to come back at.
+         |
+         | Refused rather than guessed: today's average restores inventory
+         | at a figure the sale never took out, and the selling price puts
+         | margin into inventory. Both are found by a count.
+         */
+        $refusal = $this->refusal(fn () => $returns->accept(
+            $return,
+            Carbon::parse('2026-05-18'),
+            $this->secondActorId(),
+        ));
+
+        if ($refusal === null) {
+            return ['a return was accepted against a sale that never moved stock, so the cost it came '.
+                'back at was invented'];
+        }
+
+        return str_contains($refusal, 'did not move stock')
+            ? []
+            : ['the refusal does not say that the sale moved no stock: '.$refusal];
+    }
+
+    /** @return list<string> */
+    private function quarantinedGoodsAreNotOnTheShelf(): array
+    {
+        [$invoice, $line, $item] = $this->anInvoicedSale('10', movesStock: true);
+
+        $returns = app(\App\Tenant\Sales\Services\SalesReturns::class);
+
+        $return = $returns->open(
+            entityId: $this->entityId,
+            invoiceId: $invoice,
+            reason: 'two arrived with cracked casings',
+            on: Carbon::parse('2026-05-18'),
+            userId: $this->actorId(),
+        )['id'];
+
+        /*
+         | One parcel, two destinations.
+         |
+         | Which is why the decision is on the line: a single destination
+         | on the return would force two returns for one delivery, and
+         | the second one is the one nobody raises.
+         */
+        $returns->addLine(
+            returnId: $return,
+            invoiceLineId: $line,
+            quantity: '3',
+            locationId: $this->locationId,
+            resellable: true,
+            userId: $this->actorId(),
+        );
+
+        $returns->addLine(
+            returnId: $return,
+            invoiceLineId: $line,
+            quantity: '2',
+            locationId: $this->quarantineId,
+            resellable: false,
+            userId: $this->actorId(),
+            conditionNote: 'the casing is cracked along the seam',
+        );
+
+        $returns->accept($return, Carbon::parse('2026-05-18'), $this->secondActorId());
+
+        $failures = [];
+        $stock = app(Stock::class);
+
+        $shelf = $stock->onHand($this->entityId, $item, $this->locationId);
+        $quarantine = $stock->onHand($this->entityId, $item, $this->quarantineId);
+
+        if (! $shelf->isEqualTo('3')) {
+            $failures[] = sprintf('the sellable shelf holds %s rather than the three good units', (string) $shelf);
+        }
+
+        if (! $quarantine->isEqualTo('2')) {
+            $failures[] = sprintf(
+                'quarantine holds %s rather than the two cracked units - which means either they were '.
+                'put on the shelf or they vanished',
+                (string) $quarantine,
+            );
+        }
+
+        /*
+         | And they are still OURS: five units, in two places.
+         |
+         | A product that wrote the cracked pair off here would be making
+         | a decision the person at the counter cannot make - a cracked
+         | casing may be repairable, and the write-off would be reversed
+         | by hand the day it turns out to be.
+         */
+        $total = $stock->onHand($this->entityId, $item);
+
+        if (! $total->isEqualTo('5')) {
+            $failures[] = sprintf(
+                'five units came back and inventory counts %s of them, so the quarantined pair was '.
+                'written off by a return rather than by somebody who looked at them',
+                (string) $total,
+            );
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function theFeeIsItsOwnFigure(): array
+    {
+        [$invoice, $line] = $this->anInvoicedSale('10', movesStock: true);
+
+        $returns = app(\App\Tenant\Sales\Services\SalesReturns::class);
+
+        $return = $returns->open(
+            entityId: $this->entityId,
+            invoiceId: $invoice,
+            reason: 'the customer changed their mind after delivery',
+            on: Carbon::parse('2026-05-18'),
+            userId: $this->actorId(),
+        )['id'];
+
+        $returns->addLine(
+            returnId: $return,
+            invoiceLineId: $line,
+            quantity: '4',
+            locationId: $this->locationId,
+            resellable: true,
+            userId: $this->actorId(),
+        );
+
+        $failures = [];
+
+        $silent = $this->refusal(fn () => $returns->chargeRestocking($return, '40.0000', 'fee', $this->actorId()));
+
+        if ($silent === null) {
+            $failures[] = 'a restocking fee was charged with "fee" as its reason - and it is the figure '.
+                'the customer telephones about';
+        }
+
+        $greedy = $this->refusal(fn () => $returns->chargeRestocking(
+            $return,
+            '500.0000',
+            'a percentage of the order rather than of the return',
+            $this->actorId(),
+        ));
+
+        if ($greedy === null) {
+            $failures[] = 'a fee of 500 was charged against goods of 400, so the customer pays to send '.
+                'goods back';
+        }
+
+        $returns->chargeRestocking(
+            $return,
+            '40.0000',
+            'the courier collection and the repackaging of the four units',
+            $this->actorId(),
+        );
+
+        $row = DB::connection('tenant')->table('sales_returns')->where('id', $return)->first();
+
+        /*
+         | 400 of goods, 40 kept, 360 credited - all three on the record.
+         |
+         | Not one net figure. "Why is this 360 when I sent back 400" is
+         | the question, and a product that stored only the 360 answers it
+         | with a shrug.
+         */
+        foreach ([
+            ['goods_value', '400.0000'],
+            ['restocking_fee', '40.0000'],
+            ['credit_value', '360.0000'],
+        ] as [$column, $expected]) {
+            if (BigDecimal::of((string) $row?->$column)->compareTo($expected) !== 0) {
+                $failures[] = sprintf(
+                    '%s reads %s rather than %s, so the credit note cannot be explained from the return',
+                    $column,
+                    (string) $row?->$column,
+                    $expected,
+                );
+            }
+        }
+
+        $reason = DB::connection('tenant')->table('audit_log')
+            ->where('subject_id', $return)
+            ->where('action', 'return.fee_charged')
+            ->value('reason');
+
+        if ($reason === null || ! str_contains((string) $reason, 'courier')) {
+            $failures[] = 'the fee was charged with nothing on record about what it covers';
+        }
+
+        return $failures;
+    }
+
+
+    /** @return list<string> */
+    private function aReturnCreditsCostOfSales(): array
+    {
+        [$invoice, $line] = $this->anInvoicedSale('10', movesStock: true);
+
+        $before = [
+            'inventory' => $this->balanceOf(ControlRole::Inventory),
+            'cost' => $this->balanceOf(ControlRole::CostOfSales),
+            'grni' => $this->balanceOf(ControlRole::GoodsReceivedNotInvoiced),
+        ];
+
+        $returns = app(\App\Tenant\Sales\Services\SalesReturns::class);
+
+        $return = $returns->open(
+            entityId: $this->entityId,
+            invoiceId: $invoice,
+            reason: 'the customer ordered the wrong size',
+            on: Carbon::parse('2026-05-18'),
+            userId: $this->actorId(),
+        )['id'];
+
+        $returns->addLine(
+            returnId: $return,
+            invoiceLineId: $line,
+            quantity: '4',
+            locationId: $this->locationId,
+            resellable: true,
+            userId: $this->actorId(),
+        );
+
+        $returns->accept($return, Carbon::parse('2026-05-18'), $this->secondActorId());
+
+        $failures = [];
+        $value = Money::of('16.0000', 'SAR');
+
+        /*
+         | Four units at 4.0000: inventory up 16, cost of sales down 16.
+         |
+         | And goods-received-not-invoiced untouched, which is the whole
+         | point of this check. The first draft of PF-252 restored the
+         | stock with a receipt, and a receipt credits GRNI - a liability
+         | that holds the gap until a SUPPLIER bills us. A sales return
+         | has no supplier and no bill coming, so the credit sat where
+         | the three-way match could never clear it while cost of sales
+         | stayed overstated by the same figure.
+         |
+         | Neither half of that shows in a stock report: the quantity and
+         | the inventory value are right either way, which is what the
+         | reconciliation below asserts. Only the credit side is wrong.
+         */
+        $moves = [
+            ['inventory', ControlRole::Inventory, $value],
+            ['cost of sales', ControlRole::CostOfSales, $value->negated()],
+            ['goods received not invoiced', ControlRole::GoodsReceivedNotInvoiced, Money::zero('SAR')],
+        ];
+
+        foreach ($moves as [$label, $role, $expected]) {
+            $key = match ($role) {
+                ControlRole::Inventory => 'inventory',
+                ControlRole::CostOfSales => 'cost',
+                default => 'grni',
+            };
+
+            $moved = $this->balanceOf($role)->minus($before[$key]);
+
+            if (! $moved->equals($expected)) {
+                $failures[] = sprintf(
+                    'a four-unit return at 4.0000 moved %s by %s rather than %s%s',
+                    $label,
+                    (string) $moved->amount,
+                    (string) $expected->amount,
+                    $role === ControlRole::GoodsReceivedNotInvoiced
+                        ? ' - a sales return has no supplier behind it, so there is no gap until a bill'
+                        : '',
+                );
+            }
+        }
+
+        return $failures;
+    }
+
+
+    /** @return list<string> */
+    private function aTermSoldWithTheUnitWins(): array
+    {
+        $item = $this->aSerialItem();
+
+        /*
+         | A default, an item term, and an extended one sold at the till.
+         |
+         | Three sources, and the sale's is the answer: two units of one
+         | model go out of the door with different cover, so cover is a
+         | property of the sale and not of the model.
+         */
+        $this->aWarrantyTerm(null, 6);
+        $this->aWarrantyTerm($item, 12);
+        $extended = $this->aWarrantyTerm($item, 36);
+
+        $plain = $this->aSerial($item, 'SN-PLAIN');
+        $covered = $this->aSerial($item, 'SN-EXT');
+
+        $serials = app(\App\Tenant\Inventory\Services\Serials::class);
+
+        foreach ([[$plain, null], [$covered, $extended]] as [$serial, $term]) {
+            $serials->sell(
+                entityId: $this->entityId,
+                serialId: $serial,
+                partyId: (string) $this->party?->getKey(),
+                on: Carbon::parse('2026-05-10'),
+                userId: $this->actorId(),
+                warrantyTermId: $term,
+            );
+        }
+
+        $failures = [];
+
+        foreach ([
+            [$plain, 12, 'the item', '2027-05-10'],
+            [$covered, 36, 'the sale', '2029-05-10'],
+        ] as [$serial, $months, $from, $expires]) {
+            $warranty = $serials->warrantyOf($this->entityId, $serial);
+
+            if (($warranty['months'] ?? 0) !== $months) {
+                $failures[] = sprintf(
+                    'a unit whose cover should come from %s reports %d months rather than %d',
+                    $from,
+                    (int) ($warranty['months'] ?? 0),
+                    $months,
+                );
+            }
+
+            if (($warranty['from'] ?? '') !== $from) {
+                $failures[] = sprintf(
+                    'the warranty does not say where its term came from (%s rather than %s), so a '.
+                    'dispute about cover cannot be settled by reading it',
+                    (string) ($warranty['from'] ?? '-'),
+                    $from,
+                );
+            }
+
+            if (($warranty['expires_on'] ?? '') !== $expires) {
+                $failures[] = sprintf(
+                    'cover from %s ends %s rather than %s',
+                    $from,
+                    (string) ($warranty['expires_on'] ?? '-'),
+                    $expires,
+                );
+            }
+        }
+
+        /*
+         | And a term can only hang off a sale.
+         |
+         | A term on a `returned` row would be a second answer to "what
+         | cover does this unit have", which is the question the whole
+         | task exists to make unambiguous.
+         */
+        $elsewhere = $this->refusal(fn () => DB::connection('tenant')->table('serial_events')->insert([
+            'id' => (string) Str::ulid(),
+            'entity_id' => $this->entityId,
+            'serial_id' => $plain,
+            'event' => 'returned',
+            'happened_on' => '2026-06-01',
+            'warranty_term_id' => $extended,
+            'recorded_by' => $this->actorId(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]));
+
+        if ($elsewhere === null) {
+            $failures[] = 'a warranty term was attached to a return event, so a unit now has two answers '.
+                'to what it is covered for';
+        }
+
+        /*
+         | And a term nobody has on record is refused at the till.
+         */
+        $unknown = $this->refusal(fn () => $serials->sell(
+            entityId: $this->entityId,
+            serialId: $this->aSerial($item, 'SN-GHOST'),
+            partyId: (string) $this->party?->getKey(),
+            on: Carbon::parse('2026-05-10'),
+            userId: $this->actorId(),
+            warrantyTermId: (string) Str::ulid(),
+        ));
+
+        if ($unknown === null) {
+            $failures[] = 'a unit was sold under a warranty term that does not exist, so the cover is '.
+                'whatever somebody remembers';
+        }
+
+        return $failures;
+    }
+
     // ---- Helpers ----------------------------------------------------------
+    // ---- Serial, warranty and return helpers ------------------------------
+
+    private function aSerialItem(): string
+    {
+        $id = $this->aStockedItem();
+
+        DB::connection('tenant')->table('items')->where('id', $id)->update(['serial_tracked' => true]);
+
+        return $id;
+    }
+
+    private function aSerial(string $itemId, string $number): string
+    {
+        return (string) app(\App\Tenant\Inventory\Services\Serials::class)->receive(
+            entityId: $this->entityId,
+            itemId: $itemId,
+            number: $number,
+            locationId: $this->locationId,
+            on: Carbon::parse('2026-05-02'),
+            userId: $this->actorId(),
+        )['id'];
+    }
+
+    private function aWarrantyTerm(?string $itemId, int $months): string
+    {
+        $id = (string) Str::ulid();
+
+        DB::connection('tenant')->table('warranty_terms')->insert([
+            'id' => $id,
+            'entity_id' => $this->entityId,
+            'item_id' => $itemId,
+            'name_ar' => $months.' شهر',
+            'name_en' => $months.' months',
+            'months' => $months,
+            'covers_ar' => 'عيوب التصنيع في الأجزاء والعمالة خلال مدة الضمان',
+            'covers_en' => 'manufacturing defects in parts and labour, excluding accidental damage',
+            'active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $id;
+    }
+
+    /**
+     * An issued invoice that sold a stocked item, and the stock behind it.
+     *
+     * The quantity is set on the DRAFT and then issued, because an issued
+     * document is frozen - which is the behaviour a return exists for: you
+     * cannot edit the invoice, so goods coming back are their own record.
+     *
+     * @return array{0: string, 1: string, 2: string}
+     */
+    private function anInvoicedSale(string $quantity, bool $movesStock = false): array
+    {
+        $item = $this->aStockedItem();
+        $this->receive($item, $quantity, '4.0000');
+
+        $draft = $this->draft();
+
+        $line = (string) DB::connection('tenant')->table('invoice_lines')
+            ->where('invoice_id', (string) $draft->getKey())
+            ->value('id');
+
+        /*
+         | The unit price divided out of the fixture's net, not invented.
+         |
+         | The shared draft sells one unit for 1,000.00. Selling ten of
+         | them has to leave the same net, or a credit for the whole line
+         | would exceed the line - and the check would then be measuring
+         | its own fixture.
+         */
+        DB::connection('tenant')->table('invoice_lines')
+            ->where('id', $line)
+            ->update([
+                'quantity' => $quantity,
+                'item_id' => $item,
+                'unit_price' => (string) BigDecimal::of('1000.0000')
+                    ->dividedBy($quantity, 8, \Brick\Math\RoundingMode::Unnecessary),
+            ]);
+
+        if ($movesStock) {
+            app(Stock::class)->issue(
+                entityId: $this->entityId,
+                itemId: $item,
+                locationId: $this->locationId,
+                quantity: $quantity,
+                on: Carbon::parse('2026-05-18'),
+                userId: $this->actorId(),
+                sourceType: 'invoice_line',
+                sourceId: $line,
+            );
+        }
+
+        $invoice = app(\App\Tenant\Sales\Services\Issuer::class)->issue(
+            $draft->refresh(),
+            $this->entity(),
+            $this->actorId(),
+            $this->decision,
+            $this->terms,
+        );
+
+        return [(string) $invoice->getKey(), $line, $item];
+    }
+
+    private function aReturn(string $invoiceId): string
+    {
+        $id = (string) Str::ulid();
+
+        DB::connection('tenant')->table('sales_returns')->insert([
+            'id' => $id,
+            'entity_id' => $this->entityId,
+            'invoice_id' => $invoiceId,
+            'party_id' => (string) $this->party?->getKey(),
+            'number' => 'RET-'.Str::upper(Str::random(8)),
+            'returned_on' => '2026-05-18',
+            'state' => 'draft',
+            'reason' => 'the customer ordered the wrong size',
+            'goods_value' => '0.0000',
+            'restocking_fee' => '0.0000',
+            'credit_value' => '0.0000',
+            'currency' => 'SAR',
+            'created_by' => $this->actorId(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $id;
+    }
+
+    private function aReturnLine(
+        string $returnId,
+        string $lineId,
+        string $itemId,
+        string $quantity,
+        bool $resellable = true,
+        ?string $locationId = null,
+        ?string $note = null,
+    ): string {
+        $id = (string) Str::ulid();
+
+        DB::connection('tenant')->table('sales_return_lines')->insert([
+            'id' => $id,
+            'entity_id' => $this->entityId,
+            'return_id' => $returnId,
+            'invoice_line_id' => $lineId,
+            'item_id' => $itemId,
+            'quantity' => $quantity,
+            'unit_price' => '10.00000000',
+            'line_value' => (string) \Brick\Math\BigDecimal::of($quantity)->multipliedBy('10')->toScale(4),
+            'location_id' => $locationId ?? $this->locationId,
+            'resellable' => $resellable,
+            'condition_note' => $note,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $id;
+    }
     // ---- Variant and batch helpers ----------------------------------------
 
     /** @param list<string> $values */

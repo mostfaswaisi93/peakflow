@@ -50,21 +50,80 @@ It comes from a gap analysis against [hawalaty](https://github.com/mostfaswaisi9
 - [x] **And:** a batch answers *who has the goods*, not how much is left. The trace follows the movement to the document to the party and excludes receipts, because "where did this come from" is a different question from the one a recall asks
 - [x] **Found while checking this task:** `ORDER BY expires_on` puts nulls **first** in PostgreSQL, so the one batch with no deadline was suggested ahead of the one expiring on Friday - the exact opposite of the rule. `NULLS LAST` was missing, and the check that caught it had to ask for more than the first two batches held, because asking for less never reached the third one and asserted nothing
 
-### PF-251 · Serial numbers and warranty
-`Catalog` · **5 pts** · depends: PF-248 · standards: — · `risk:high`
+### PF-251 · Serial numbers and warranty — done
+`Inventory` · **5 pts** · depends: PF-248 · standards: — · `risk:high`
 
-- [ ] A serial is unique per item across the tenant, and its whole history - received, sold, returned, replaced - reads as one list, because "where is this unit" is the question a warranty claim starts with
-- [ ] A serial can be sold once. Selling it twice is refused by a **unique index**, not by a service check, because the second sale usually arrives from an import or a second till
-- [ ] Warranty terms per item or per sale, with the start date derived from the sale and the end computed, so a claim is answered by a date rather than by an argument
-- [ ] A claim records the fault, the decision and the outcome, and a replacement moves the new serial out and the old one in - the stock has to be right either way
+- [x] A serial is unique per item across the tenant, and its whole history - received, sold, returned, replaced - reads as one list, because "where is this unit" is the question a warranty claim starts with
+- [x] A serial can be sold once. Selling it twice is refused by a **unique index**, not by a service check, because the second sale usually arrives from an import or a second till
+- [x] Warranty terms per item or per sale, with the start date derived from the sale and the end computed, so a claim is answered by a date rather than by an argument
+- [x] A claim records the fault, the decision and the outcome, and a replacement moves the new serial out and the old one in - the stock has to be right either way
 
-### PF-252 · Returns and credit
+`serials`, `serial_events`, `warranty_terms`, `warranty_claims` ·
+`App\Tenant\Inventory\Services\Serials` · `bin/verify stock`
+
+The index is partial - `UNIQUE (serial_id) WHERE event = 'sold'` - so a
+unit that came back and was sold again is a second sale of a returned
+unit rather than a duplicate, and the one case the control exists for
+still cannot happen twice. The end of cover is computed from the sale
+event and stored nowhere, which a check enforces by refusing the
+column: a stored date stops agreeing with the sale the first time
+somebody corrects it, and the customer finds out at the counter holding
+a receipt.
+
+Cover comes from one of three places, in this order: **the sale**, the
+item, the entity's default. The sale first because an extended warranty
+is bought at the till and is not a property of the item - two units of
+one model go out of the door with different cover - and
+`serial_events_only_a_sale_carries_a_term` keeps a term off every other
+kind of event, so "what is this unit covered for" has one answer.
+`warrantyOf()` reports which of the three it read, because a dispute
+about cover is settled by reading that.
+
+### PF-252 · Returns and credit — done
 `Sales` · **5 pts** · depends: PF-248, PF-096 · standards: — · `risk:high`
 
-- [ ] A return names the invoice it reverses, the lines and the quantities, and **refuses more than was sold** - the database holds that, because a part return of a part return is where a service check is wrong
-- [ ] The credit note and the stock movement are one transaction: a return that credited the customer and did not restore the stock is the error nobody notices until a count
-- [ ] Restocking is a **decision**, not an assumption. Faulty goods come back into a quarantine location rather than into sellable stock, and the two have different accounting
-- [ ] A restocking fee or a partial credit is recorded as such, so the figure on the credit note is explainable from the return
+- [x] A return names the invoice it reverses, the lines and the quantities, and **refuses more than was sold** - the database holds that, because a part return of a part return is where a service check is wrong
+- [x] The credit note and the stock movement are one transaction: a return that credited the customer and did not restore the stock is the error nobody notices until a count
+- [x] Restocking is a **decision**, not an assumption. Faulty goods come back into a quarantine location rather than into sellable stock, and the two have different accounting
+- [x] A restocking fee or a partial credit is recorded as such, so the figure on the credit note is explainable from the return
+
+`sales_returns`, `sales_return_lines` ·
+`App\Tenant\Sales\Services\SalesReturns` · `bin/verify stock`
+
+Three decisions worth reading before changing any of it.
+
+**The cost it comes back at is the cost it left at**, read from the
+issue movement the sale recorded against that invoice line. A sale that
+moved no stock is a refusal, not a fallback: today's average restores
+inventory at a figure the sale never took out of it, and the selling
+price puts margin into inventory. Both are found by a count, months
+later.
+
+**A return credits cost of sales, not a supplier gap.** The first draft
+restored the stock with `Stock::receive`, and a receipt credits
+goods-received-not-invoiced - the account that holds the gap until a
+*supplier* bills us. A sales return has no supplier and no bill coming,
+so the credit sat in a liability the three-way match could never clear
+while cost of sales stayed overstated by the same figure. Neither half
+shows in a stock report: the quantity and the inventory value are right
+either way, which is all `InventoryIsItsMovements` asserts. Hence
+`StockReturnedRule` and `Stock::returnIn`, and a check that watches all
+three control accounts rather than two.
+
+**Quarantined goods are not written off by the return.** They come back
+into inventory at that cost, in a location that is not sellable. The
+person accepting a parcel does not know whether a cracked casing can be
+repaired, reshipped or scrapped, and a return that wrote the unit off
+would be reversed by hand the day it turns out to be repairable - so
+the write-down is its own adjustment, with its own reason and its own
+name against it.
+
+**The fee ceiling is stated once.** A fee larger than the goods needs a
+negative credit, which `sales_returns_amounts_are_not_negative` already
+refuses - so the separate `restocking_fee <= goods_value` constraint
+this task first shipped was unreachable, and was removed. The bite
+sweep found it: dropping it changed nothing. The readable sentence
+lives in `chargeRestocking`, where somebody will see it.
 
 ### PF-253 · Stock counts
 `Catalog` · **3 pts** · depends: PF-248 · standards: — · `type:posting`

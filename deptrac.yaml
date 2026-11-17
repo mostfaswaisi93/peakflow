@@ -153,6 +153,14 @@ deptrac:
       - Parties
       - Catalog
       - Tax
+      # A sale moves stock, and a return moves it back - PF-252.
+      #
+      # This direction and not the other. The sale is the event and the
+      # movement is its consequence, so `Sales` knows about stock and
+      # `Inventory` knows nothing about invoices: a stock module that
+      # could read a document would be a second place the question "what
+      # did this unit cost" is answered.
+      - Inventory
 
     Purchasing:
       - Support

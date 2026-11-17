@@ -7,6 +7,7 @@ namespace App\Providers;
 use App\Tenant\Inventory\Posting\Rules\StockAdjustedRule;
 use App\Tenant\Inventory\Posting\Rules\StockIssuedRule;
 use App\Tenant\Inventory\Posting\Rules\StockReceivedRule;
+use App\Tenant\Inventory\Posting\Rules\StockReturnedRule;
 use App\Tenant\Ledger\Posting\PostingRuleRegistry;
 use Illuminate\Support\ServiceProvider;
 
@@ -36,18 +37,26 @@ final class InventoryServiceProvider extends ServiceProvider
         $registry = $this->app->make(PostingRuleRegistry::class);
 
         /*
-         | Three rules, because the credit differs and a reader needs to
+         | Four rules, because the credit differs and a reader needs to
          | see which happened.
          |
          | A receipt credits goods-received-not-invoiced, because the
-         | goods are here and the invoice is not. An issue credits
-         | inventory against cost of sales. An adjustment does the same
-         | and is a different event: one has a creditor behind it, the
-         | other has a reason somebody typed.
+         | goods are here and the supplier's invoice is not. An issue
+         | credits inventory against cost of sales. An adjustment does
+         | the same and is a different event: one has a creditor behind
+         | it, the other has a reason somebody typed.
+         |
+         | A sales return posts the adjustment's shape and is a fourth
+         | rule rather than a reuse of either - PF-252. Restoring it with
+         | a receipt would credit a supplier gap that has no supplier,
+         | and folding it into adjustments would put returns into the
+         | shrinkage figure, where a rising returns rate looks like
+         | theft.
          */
         $registry->register(new StockReceivedRule());
         $registry->register(new StockIssuedRule());
         $registry->register(new StockAdjustedRule());
+        $registry->register(new StockReturnedRule());
 
         /*
          | And what Catalog asserts about the ledger - PF-248.

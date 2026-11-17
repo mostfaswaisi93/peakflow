@@ -10,6 +10,7 @@ use App\Tenant\Inventory\Exceptions\StockRefused;
 use App\Tenant\Inventory\Posting\Rules\StockAdjustedRule;
 use App\Tenant\Inventory\Posting\Rules\StockIssuedRule;
 use App\Tenant\Inventory\Posting\Rules\StockReceivedRule;
+use App\Tenant\Inventory\Posting\Rules\StockReturnedRule;
 use App\Tenant\Ledger\Services\Poster;
 use App\Tenant\Tenancy\Models\Entity;
 use Brick\Math\BigDecimal;
@@ -263,6 +264,60 @@ final class Stock
     }
 
     /**
+     * Goods a customer sent back, at the cost the sale took out - PF-252.
+     *
+     * ## Why the cost is given rather than derived
+     *
+     * Every other way in costs the stock from what is already there. A
+     * return cannot: the figure that belongs here is what THIS unit cost
+     * when it left, which lives on the issue movement the sale recorded
+     * and nowhere else. Today's weighted average would restore inventory
+     * at a figure the sale never took out of it, and the difference sits
+     * in cost of sales until a count.
+     *
+     * So the caller reads it from the sale and passes it, and
+     * {@see \App\Tenant\Sales\Services\SalesReturns} refuses the return
+     * when there is no issue to read it from.
+     *
+     * @return array<string, mixed>
+     *
+     * @throws StockRefused
+     */
+    public function returnIn(
+        string $entityId,
+        string $itemId,
+        string $locationId,
+        string $quantity,
+        string $unitCost,
+        Carbon $on,
+        string $userId,
+        string $sourceType,
+        string $sourceId,
+        ?string $batchId = null,
+        ?string $serialId = null,
+    ): array {
+        $item = $this->stockedItem($itemId);
+        $this->assertPositive($quantity, 'A return brings stock back in, so its quantity is positive.');
+
+        return $this->write(
+            entityId: $entityId,
+            item: $item,
+            locationId: $locationId,
+            kind: 'return_in',
+            quantity: $quantity,
+            unitCost: BigDecimal::of($unitCost),
+            on: $on,
+            userId: $userId,
+            ruleKey: StockReturnedRule::KEY,
+            sourceType: $sourceType,
+            sourceId: $sourceId,
+            batchId: $batchId,
+            serialId: $serialId,
+            narration: sprintf('%s returned to stock', (string) $item->code),
+        );
+    }
+
+    /**
      * Quantity on hand, derived - there is no column for it.
      */
     public function onHand(string $entityId, string $itemId, ?string $locationId = null): BigDecimal
@@ -513,6 +568,7 @@ final class Stock
         int $postingSign = 1,
         ?string $expiryAcceptedBy = null,
         ?string $expiryAcceptedReason = null,
+        ?string $serialId = null,
     ): array {
         $this->assertTheLocationExists($entityId, $locationId);
 
@@ -550,6 +606,7 @@ final class Stock
             $postingSign,
             $expiryAcceptedBy,
             $expiryAcceptedReason,
+            $serialId,
             $movementId,
         ): array {
             DB::connection('tenant')->table('stock_movements')->insert([
@@ -565,6 +622,7 @@ final class Stock
                 'source_type' => $sourceType,
                 'source_id' => $sourceId,
                 'batch_id' => $batchId,
+                'serial_id' => $serialId,
                 'reason' => $reason,
                 'expiry_accepted_by' => $expiryAcceptedBy,
                 'expiry_accepted_reason' => $expiryAcceptedReason,
