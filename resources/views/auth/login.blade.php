@@ -1,4 +1,4 @@
-@extends('layouts.plain', ['title' => __('تسجيل الدخول'), 'aurora' => true])
+@extends('layouts.plain', ['title' => __('تسجيل الدخول'), 'aurora' => true, 'brand' => false])
 
 {{--
     Sign in - UX-031: Dark Gradient + Aurora + Glass + Organic.
@@ -16,7 +16,7 @@
 @section('content')
     <div class="relative mx-auto w-full max-w-md">
         <svg aria-hidden="true" focusable="false" viewBox="0 0 200 200"
-             class="pointer-events-none absolute -top-20 -end-24 size-64 text-tertiary opacity-20">
+             class="pointer-events-none absolute -top-20 -end-24 size-64 text-accent opacity-20">
             <path fill="currentColor" transform="translate(100 100)"
                   d="M43.6-58.4C56.3-50.8 66.1-37.4 70.9-22.4 75.7-7.4 75.4 9.2 69.3 23 63.3 36.8 51.4 47.8 37.9 56.2 24.4 64.6 9.2 70.4-6.6 71.9-22.4 73.3-38.8 70.4-51.3 61.4-63.8 52.4-72.4 37.3-75.4 21.2-78.4 5.1-75.8-12-68.3-26.2-60.8-40.4-48.3-51.6-34.6-58.7-20.9-65.9-6-69 8.6-70.6 23.2-72.2 30.9-66 43.6-58.4Z"/>
         </svg>
@@ -27,18 +27,12 @@
         </svg>
 
         <div class="glass relative rounded-sheet p-8 sm:p-10">
-            <div class="flex items-center gap-3">
-                <svg aria-hidden="true" focusable="false" viewBox="0 0 32 32" class="size-10 shrink-0">
-                    <rect width="32" height="32" rx="9" class="fill-primary"/>
-                    <path d="M6.5 21.5 13 11.5l4 6 3-4 5.5 8" fill="none" stroke-width="2.4"
-                          stroke-linecap="round" stroke-linejoin="round" class="stroke-on-primary"/>
-                    <path d="M6.5 25.5c3.2-1.5 6.3-1.5 9.5 0s6.3 1.5 9.5 0" fill="none" stroke-width="1.8"
-                          stroke-linecap="round" class="stroke-on-primary opacity-60"/>
-                </svg>
-                <span class="text-title font-semibold text-on-surface">{{ config('app.name') }}</span>
-            </div>
+            {{-- The full logo: 40 px high is about 215 px wide, above the kit's
+                 200 px floor for the full artwork. The card's padding is its
+                 clear space. --}}
+            <x-brand.logo size="full" class="h-10"/>
 
-            <h1 class="mt-8 text-headline font-semibold text-on-surface">{{ __('تسجيل الدخول') }}</h1>
+            <h1 class="mt-8 text-headline font-bold text-on-surface">{{ __('تسجيل الدخول') }}</h1>
             <p class="mt-1 text-label text-on-surface-muted">{{ __('ادخل إلى مساحة عمل شركتك.') }}</p>
 
             @if (session('session_ended'))

@@ -16,12 +16,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{{ isset($title) ? $title . ' · Ops' : 'Ops' }}</title>
+    @include('partials.brand-meta')
     @vite(['resources/css/app.css'])
 </head>
 <body class="min-h-dvh bg-background text-on-background antialiased">
     <header class="border-b border-outline bg-sidebar text-on-sidebar">
         <div class="mx-auto flex max-w-6xl items-center gap-4 px-6 py-3">
-            <span class="font-semibold">{{ config('app.name') }} · {{ __('وحدة التشغيل') }}</span>
+            {{-- The header is the navy sidebar colour in every theme, so the
+                 logo is the artwork made for a dark background. --}}
+            <x-brand.logo size="small" tone="on-dark" class="h-8"/>
+            <span aria-hidden="true" class="h-5 w-px bg-on-sidebar-muted opacity-40"></span>
+            <span class="font-semibold">{{ __('وحدة التشغيل') }}</span>
 
             @auth('ops')
                 <div class="ms-auto flex items-center gap-4">

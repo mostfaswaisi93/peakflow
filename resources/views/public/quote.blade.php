@@ -6,7 +6,7 @@
         \App\Support\Money\Money::of($amount, (string) $quote->currency)->format($locale);
 @endphp
 
-@extends('layouts.plain', ['title' => $title])
+@extends('layouts.plain', ['title' => $title, 'brand' => false])
 
 @section('content')
     {{--
@@ -196,5 +196,14 @@
                 {{ __('هذا العرض لم يعد قابلاً للقبول.') }}
             </p>
         @endif
+
+        {{-- The platform signs the page quietly, in the footer: the document
+             above is the issuer's, and their name leads it. The PF monogram,
+             because at this size the kit says anything under 120 px is the
+             monogram. --}}
+        <footer class="flex items-center justify-center gap-2 pt-4 text-caption text-on-surface-muted">
+            <x-brand.logo size="monogram" decorative class="h-5"/>
+            <span>{{ __('صادر عبر :app', ['app' => __('بيك فلو')]) }}</span>
+        </footer>
     </main>
 @endsection

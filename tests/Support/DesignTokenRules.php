@@ -69,6 +69,8 @@ final class DesignTokenRules
             'Arabic is never letter-spaced' => $this->arabicIsNeverLetterSpaced($css),
             'nothing moves for longer than 500ms, and nothing loops' => $this->motionStaysShort(),
             'glass is the only backdrop filter' => $this->glassIsTheOnlyBackdrop($css),
+            'the brand kit\'s colours are used exactly' => $this->brandColoursAreExact($css),
+            'every layout carries the brand icons' => $this->layoutsCarryTheBrand(),
         ];
     }
 
@@ -140,13 +142,16 @@ final class DesignTokenRules
                 'cannot reproduce the mistake it guards against. Point it at the new value rather than deleting it.'];
         }
 
+        // The refusal is what matters, not its second decimal: the ratio moved
+        // from 2.89 to whatever the neutral hue makes it when the ramps were
+        // re-derived from the brand kit, and the mistake stayed a mistake.
         foreach ($this->contrastViolations($mutated) as $violation) {
-            if (str_starts_with($violation, 'light: outline-control on surface is 2.89:1')) {
+            if (preg_match('/^light: outline-control on surface is (\d+\.\d+):1/', $violation, $m) === 1 && (float) $m[1] < 3.0) {
                 return [];
             }
         }
 
-        return ['Setting the light control border to neutral-400 (2.89:1 on white, the first draft\'s mistake) '.
+        return ['Setting the light control border to neutral-400 (under 3:1 on white, the first draft\'s mistake) '.
             'was NOT refused. The contrast check has stopped resolving the light theme, or stopped measuring '.
             'outline-control - and a check in that state passes everything.'];
     }
@@ -501,8 +506,10 @@ final class DesignTokenRules
 
     /**
      * UX-007, read from the BUILT stylesheet - the one the browser gets, with
-     * every utility a template asked for - because a 700ms duration or an
-     * a looping animation asked for in a template never appears in app.css itself.
+     * every utility a template asked for - because a slow duration utility or
+     * a looping animation utility in a template never appears in app.css
+     * itself. (Not named literally here: Tailwind reads source files for class
+     * names, and naming them in this comment once put them in the build.)
      *
      * @return list<string>
      */
@@ -551,6 +558,71 @@ final class DesignTokenRules
         }
 
         return array_values(array_unique($violations));
+    }
+
+    /**
+     * The five colours of the PeakFlow brand kit, as the kit's README states
+     * them. The primitives must convert back to these exact hex values - a
+     * brand colour "adjusted" by a rounding or a tweak is a different colour
+     * on every screen and every printout.
+     *
+     * @return list<string>
+     */
+    private function brandColoursAreExact(string $css): array
+    {
+        $kit = [
+            '--p-brand-navy' => '#0F1E3D',
+            '--p-brand-teal' => '#0E9C8F',
+            '--p-brand-glacier' => '#2DD4BF',
+            '--p-brand-amber' => '#FFB547',
+            '--p-brand-mist' => '#F3F6FA',
+        ];
+
+        $tokens = self::resolveTheme(self::topLevelBlocks($css), [':root']);
+        $violations = [];
+
+        foreach ($kit as $token => $hex) {
+            try {
+                [$actual] = self::colour($tokens, $token);
+            } catch (RuntimeException $e) {
+                $violations[] = $e->getMessage();
+
+                continue;
+            }
+
+            if ($actual !== $hex) {
+                $violations[] = \sprintf('%s renders as %s; the brand kit says %s.', $token, $actual, $hex);
+            }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * The favicon, the home-screen icon and the theme colour are the brand in
+     * the browser's own chrome; a layout without them shows a blank tab.
+     *
+     * @return list<string>
+     */
+    private function layoutsCarryTheBrand(): array
+    {
+        $violations = [];
+
+        foreach (['app', 'plain', 'ops', 'error'] as $layout) {
+            $source = $this->read('resources/views/layouts/'.$layout.'.blade.php');
+
+            if (! str_contains($source, "@include('partials.brand-meta')")) {
+                $violations[] = \sprintf('layouts/%s.blade.php does not include partials.brand-meta.', $layout);
+            }
+        }
+
+        foreach (['favicon.ico', 'favicon.svg', 'apple-touch-icon.png', 'site.webmanifest'] as $file) {
+            if (! is_file($this->base.'/public/'.$file) || filesize($this->base.'/public/'.$file) === 0) {
+                $violations[] = \sprintf('public/%s is missing or empty.', $file);
+            }
+        }
+
+        return $violations;
     }
 
     /**

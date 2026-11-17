@@ -850,8 +850,9 @@ EXCHANGE_DRIVER=log
 php artisan migrate
 php artisan db:seed
 
-# 4. Optional: a fully worked demo entity - chart of accounts, a year of
-#    invoices, bills, statements and a completed reconciliation
+# 4. Optional: five months of a trading company in the DEMO entity -
+#    invoices, bills, receipts and payments, monthly bank statements and
+#    most lines matched, all through the real services
 php artisan db:seed --class=DemoTenantSeeder
 
 # 5. Build assets

@@ -4,22 +4,28 @@ import { bunny } from 'laravel-vite-plugin/fonts';
 import tailwindcss from '@tailwindcss/vite';
 
 /*
- | The three faces the design system declares, downloaded at BUILD time and
- | served from this origin.
+ | The faces the brand kit names, downloaded at BUILD time and served from
+ | this origin.
  |
  | That is what `resources/css/app.css` means by self-hosted: an offline load
  | keeps its typography, and no third party learns which pages a customer's
- | finance team opens. The skeleton shipped Instrument Sans, which the design
- | system never mentions - so the stylesheet asked for IBM Plex and the build
- | fetched something else.
+ | finance team opens.
  |
- | IBM Plex Sans Arabic carries the UI because the primary locale is Arabic;
- | IBM Plex Sans carries the numerals, because numbers do not flip in RTL and
- | want a face designed for them.
+ | From the PeakFlow brand kit:
+ |   Plus Jakarta Sans  Latin - Medium 500 body, Bold 700 headings
+ |                      (ExtraBold 800 is the wordmark, which is artwork)
+ |   Readex Pro         Arabic - the kit names Bold 700; the UI needs the
+ |                      lighter weights for body text as well
+ |
+ | IBM Plex Sans stays for FIGURES only: Plus Jakarta Sans has no tabular
+ | figures (measured - see --font-figure in app.css), and a figure column whose
+ | digits are not all one width cannot be scanned. IBM Plex Mono stays for
+ | references, hashes and IBANs; the brand names no monospace.
  */
 const fontFaces = [
-    bunny('IBM Plex Sans Arabic', { weights: [400, 500, 600, 700] }),
-    bunny('IBM Plex Sans', { weights: [400, 500, 600] }),
+    bunny('Plus Jakarta Sans', { weights: [400, 500, 600, 700] }),
+    bunny('Readex Pro', { weights: [400, 500, 600, 700] }),
+    bunny('IBM Plex Sans', { weights: [400, 500, 600, 700] }),
     bunny('IBM Plex Mono', { weights: [400, 500] }),
 ];
 
