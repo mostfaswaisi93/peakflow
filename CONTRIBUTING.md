@@ -84,6 +84,14 @@ analyser's output stops meaning anything.
 
 > **Never run `npm run build` straight after `php artisan view:clear`.** The stylesheet scans compiled Blade via `@source`. With that directory emptied, the build succeeds, says nothing, and ships a stylesheet missing every utility that only appears in compiled templates. Run `php artisan view:cache` first, or build before clearing.
 
+> **And the build is a function of browser history unless you clear first.** That same directory holds whatever *vendor* views have been compiled on demand. Requesting `/up` once compiles Laravel's own health view, which asks for `animate-ping` — and the built CSS then carries a looping animation that `bin/verify public` forbids, on a build that was green an hour earlier with no source change. The sequence that is deterministic is:
+>
+> ```
+> php artisan view:clear && php artisan view:cache && npm run build
+> ```
+>
+> `view:cache` compiles this repository's views and no others, which makes the stylesheet a function of the repository.
+
 Hard refusals, each from an architecture test rather than from a reviewer's attention:
 
 | Refusal | Why |

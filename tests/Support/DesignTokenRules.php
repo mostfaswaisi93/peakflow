@@ -501,8 +501,8 @@ final class DesignTokenRules
 
     /**
      * UX-007, read from the BUILT stylesheet - the one the browser gets, with
-     * every utility a template asked for - because a `duration-700` or an
-     * `animate-pulse` in a template never appears in app.css itself.
+     * every utility a template asked for - because a 700ms duration or an
+     * a looping animation asked for in a template never appears in app.css itself.
      *
      * @return list<string>
      */

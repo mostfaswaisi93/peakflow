@@ -25,11 +25,39 @@
  *  stylesheet missing every utility that only appears in compiled Blade -
  *  roughly 18 kB of rules. Run `php artisan view:cache` first, or build before
  *  clearing. See CONTRIBUTING.md.
+ *
+ *  ⚠️  AND the other direction: this directory also holds whatever VENDOR
+ *  views have been compiled on demand, so the stylesheet depends on which
+ *  pages somebody has visited. Requesting `/up` once compiles Laravel's own
+ *  health view, which asks for `animate-ping` - and the built CSS then
+ *  carries a looping animation that `bin/verify public` forbids, on a build
+ *  that was green an hour earlier with no source change.
+ *
+ *  So the build sequence is `view:clear`, then `view:cache`, then `npm run
+ *  build`: cache compiles OUR views and no others, which makes the output a
+ *  function of the repository rather than of the browser history.
  * ------------------------------------------------------------------------ */
 @source '../../app/**/*.php';
 @source '../../resources/views/**/*.blade.php';
 @source '../../storage/framework/views/*.php';
 @source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
+
+/* ---------------------------------------------------------------------------
+ *  And one candidate removed by name.
+ *
+ *  Laravel's own `/up` health view asks for `animate-ping`. It compiles into
+ *  the same gitignored directory this stylesheet scans, so the built CSS
+ *  carried a looping animation as soon as anybody - or the test suite -
+ *  requested that route. `bin/verify public` forbids anything that loops, so
+ *  the build went red with no source change and green again after a clear,
+ *  which is the worst shape a failure can have.
+ *
+ *  The source itself cannot be dropped: measured, it contributes about 20 kB
+ *  of rules that appear nowhere else, so the warning above is correct.
+ *  Excluding the one candidate by name is precise, survives a vendor upgrade
+ *  that moves the file, and says why in the place somebody will look.
+ * ------------------------------------------------------------------------ */
+@source not inline('animate-ping');
 
 /* ===========================================================================
  *  LAYER 1 - PRIMITIVES ("Summit & Flow" - UX-001)
