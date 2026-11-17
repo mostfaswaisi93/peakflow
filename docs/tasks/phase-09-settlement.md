@@ -117,24 +117,27 @@ The single highest-consequence control in the product.
 - [x] Pre-notification lead times enforced per scheme - and the notification has to cover *this* collection: collecting more than was notified is refused, because the notice promised a figure and the debtor's refund right runs for thirteen months either way. Less is allowed, since nobody disputes being charged less than they were told
 - [x] Mandate cancellation and expiry stop collections rather than failing them at the bank - in the service and in a trigger, because a collection against a revoked mandate comes back days later after the customer has seen it on their statement
 - [x] Returns and refunds ingested with the reason code retained, and a disputed-mandate code (`MD01`, `MD02`, `MD06`, `MD07`) cancels the mandate, because presenting again would be returned again and a creditor that does not read its returns is one whose identifier gets suspended. An insufficient balance deliberately does **not** cancel it: one short week should not end an arrangement somebody has to ask the customer to sign again
-  - The **posting** half of this criterion lands with PF-179, which defines the in-transit account a presented collection sits in. Posting it here would mean inventing that account twice.
+  - The **posting** half of this criterion was deferred to PF-179, which defines the in-transit account. PF-179 has landed, and the collection side posts through the same three rules - released, cleared, refused - with a collection's return taking the refused path.
 - [x] **Found while checking this task:** the creditor's own IBAN was briefly in the debtor's account element - the two have the same shape in the schema, and a substitution landed on the wrong one. The file would have collected money from our own account. The check that walks the produced document caught it on the first run
 
 ### PF-178 · PAIN.002 status ingestion
 `Settlement` · **5 pts** · depends: PF-176 · standards: ISO 20022 PAIN.002
 
-- [ ] Status reports ingested and applied down to the **individual instruction**, not just the batch
-- [ ] A rejected instruction reverses its in-transit posting and returns the payable to open, with the bank's reason code attached
-- [ ] A partially rejected batch is handled correctly - the accepted instructions stay accepted
-- [ ] Unmatched status reports are surfaced rather than discarded
+- [x] Status reports ingested and applied down to the **individual instruction**, not just the batch. The group status is recorded beside the per-transaction statuses rather than instead of them: a product that read only the group would mark a partly-refused batch pending, or worse accepted, and a supplier would go unpaid with nothing in the system saying so
+- [x] A rejected instruction reverses its in-transit posting and returns the payable to open, with the bank's reason code attached - posted for that instruction's own amount, because reversing the release entry would unwind the instructions the bank accepted and those are going to clear
+- [x] A partially rejected batch is handled correctly - the accepted instructions stay accepted, and the in-transit position after ingestion equals exactly their total
+- [x] Unmatched status reports are surfaced rather than discarded, with the three usual causes named: a file submitted twice, a reference the bank mangled, or a report for another company routed to us. A status naming an instruction we cannot find posts nothing, because there is no payable to return
+- [x] **And:** the same report cannot be ingested twice. A bank that resends one is ordinary, and applying it again would reverse an in-transit posting that was already reversed - so the payable would come back owed twice, which the supplier discovers when they are paid twice
 
 ### PF-179 · In-transit and the three-way tie
 `Settlement` · **5 pts** · depends: PF-178, PF-163 · standards: — · `risk:high` `type:posting`
 
-- [ ] On release, payables move from AP to `payments_in_transit`; the statement line clearing against the bank account closes the in-transit position
-- [ ] The in-transit account is what makes the tie between AP, the bank and the GL possible, and it ages
-- [ ] An aged in-transit item means a payment that left the system and never appeared on a statement, which is a question worth asking - so it is reported and alerted
-- [ ] Asserted in `ledger:verify`: in-transit equals released-and-unreconciled
+- [x] On release, payables move from AP to `payments_in_transit`; the statement line clearing against the bank account closes the in-transit position. Crediting cash on release would report money the business still has as money it has spent, so every balance sheet between the release and the statement would be wrong - and the reconciliation would have a difference nobody could name, because the ledger would already think the payment happened
+- [x] The in-transit account is what makes the tie between AP, the bank and the GL possible, and it ages. The clearing is **pulled** from the matches rather than pushed by them, because `Banking` may not depend on `Settlement` - which costs an explicit step and buys one that is idempotent and re-runnable, where a push that failed halfway leaves a position nobody can reconstruct
+- [x] An aged in-transit item means a payment that left the system and never appeared on a statement, which is a question worth asking - so it is reported with **which** of the three causes it is: the file was never handed over, or it went and no status report was ingested, or the bank accepted it and the statement line was never matched. "Aged in transit" alone is a figure; what somebody needs is the question to ask
+- [x] Asserted in `ledger:verify`: in-transit equals released-and-unreconciled, as a **critical** finding - a control account that does not reconcile to its own subsidiary record is the same class of fault as a receivables control disagreeing with the customer ledger
+- [x] **Found while checking this task:** PF-174's freeze on a released run's lines blocked the columns that record what the bank said - so a released instruction could never learn its own outcome and the in-transit position could never close. The trigger now names the columns that define the payment and freezes those, letting the facts *about* it still be recorded: the same distinction `payment_files` already drew between its bytes and its download
+- [x] **And:** the posting is dated on the pay date, which means a run whose pay date falls in a period nobody has opened cannot be released. That refusal is correct rather than inconvenient, and it names the period
 
 ### PF-180 · Duplicate payment detection
 `Settlement` · **3 pts** · depends: PF-174, PF-139 · standards: — · `risk:high`

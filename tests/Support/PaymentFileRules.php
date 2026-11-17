@@ -6,6 +6,7 @@ namespace Tests\Support;
 
 use App\Platform\Models\Tenant;
 use App\Platform\Services\TenantConnectionResolver;
+use App\Support\Money\Money;
 use App\Support\Text\RestrictedLatin;
 use App\Tenant\Settlement\Payments\PainSequences;
 use App\Tenant\Settlement\Payments\PaymentScheme;
@@ -33,6 +34,7 @@ final class PaymentFileRules
 {
     use \Tests\Support\Concerns\OpensBankAccounts;
     use \Tests\Support\Concerns\PreparesPaymentRuns;
+    use \Tests\Support\Concerns\ProvesTheLedger;
 
     private ?\App\Tenant\Identity\Models\User $releaser = null;
 
@@ -68,7 +70,7 @@ final class PaymentFileRules
              */
             $this->signInAs($this->aReleaser());
 
-            return $this->runEachInASavepoint([
+            return $this->withTheLedgerProof($this->runEachInASavepoint([
                 // ---- The document ---------------------------------------
                 'the file has a message, a block and its transactions' => fn (): array => $this->threeLevels(),
                 'the control sums are what the bank will count' => fn (): array => $this->controlSums(),
@@ -104,9 +106,20 @@ final class PaymentFileRules
                 'the bytes of a sent file cannot be changed' => fn (): array => $this->bytesAreEvidence(),
                 'a payment file cannot be deleted' => fn (): array => $this->notDeletable(),
 
+                // ---- In transit, and the status report - PF-178, PF-179 -
+                'releasing moves the payable out of AP, not out of cash' => fn (): array => $this->releaseLeavesPayables(),
+                'in transit equals released-and-unreconciled' => fn (): array => $this->transitEqualsReleased(),
+                'the statement line closes the in-transit position' => fn (): array => $this->statementClearsTransit(),
+                'and the clearing is dated on the statement, not today' => fn (): array => $this->clearingIsDatedOnTheStatement(),
+                'an aged in-transit item is reported, with its cause' => fn (): array => $this->agedTransitIsReported(),
+                'a status report applies down to the instruction' => fn (): array => $this->statusAppliesPerInstruction(),
+                'a rejection returns the payable and leaves the rest' => fn (): array => $this->rejectionReturnsThePayable(),
+                'an unmatched status is kept and surfaced' => fn (): array => $this->unmatchedStatusesAreKept(),
+                'the same report is not applied twice' => fn (): array => $this->aReportIsNotAppliedTwice(),
+
                 // ---- Who may produce one --------------------------------
                 'producing a file needs the duty that sends money' => fn (): array => $this->needsTheReleaseDuty(),
-            ]);
+            ]));
         } finally {
             $this->signInAs($before);
             $this->connection->rollBack();
@@ -608,7 +621,16 @@ final class PaymentFileRules
     /** @return list<string> */
     private function tooFarAhead(): array
     {
-        $run = $this->aReleasedRunFor(
+        /*
+         | Prepared, not released.
+         |
+         | Releasing posts the payables into transit on the pay date, and
+         | a date a hundred days out falls in a period nobody has opened -
+         | which the ledger refuses, correctly. The rulebook check reads
+         | the run either way, and what is being checked here is the
+         | scheme's horizon rather than the ledger's.
+         */
+        $run = $this->aPreparedRunFor(
             ['9000.0000'],
             payOn: Carbon::now()->addDays(100)->next(Carbon::MONDAY)->toDateString(),
         );
@@ -1296,7 +1318,627 @@ final class PaymentFileRules
         }
     }
 
+
+    // ---- In transit, and the status report - PF-178, PF-179 ---------------
+
+    /** @return list<string> */
+    private function releaseLeavesPayables(): array
+    {
+        $run = $this->aReleasedRunFor(['9000.0000']);
+        $failures = [];
+
+        $ap = $this->balanceOfRole(\App\Tenant\Ledger\Enums\ControlRole::AccountsPayable);
+        $transit = $this->balanceOfRole(\App\Tenant\Ledger\Enums\ControlRole::PaymentsInTransit);
+
+        /*
+         | AP moves up (it is a credit balance being relieved by a debit)
+         | and in transit takes the credit.
+         */
+        if (! $transit->equals(Money::of('-9000.0000', 'SAR'))) {
+            $failures[] = sprintf(
+                'releasing 9,000 left the in-transit account at %s rather than -9,000 - and if it is '.
+                'zero, the release posted nothing and AP still shows a payable the business has '.
+                'irrevocably committed',
+                (string) $transit->amount,
+            );
+        }
+
+        if (! $ap->equals(Money::of('9000.0000', 'SAR'))) {
+            $failures[] = sprintf(
+                'the payable was relieved by %s rather than 9,000, so the creditors report still shows '.
+                'something nobody should be deciding about',
+                (string) $ap->amount,
+            );
+        }
+
+        /*
+         | And NOT the bank.
+         |
+         | Crediting cash on release reports money the business still has
+         | as money it has spent, so every balance sheet between the
+         | release and the statement is wrong.
+         */
+        $bank = $this->balanceOfRole(\App\Tenant\Ledger\Enums\ControlRole::Bank);
+
+        if (! $bank->equals(Money::of('50000.0000', 'SAR'))) {
+            $failures[] = sprintf(
+                'the bank account moved to %s on release, so the ledger reports cash as spent before the '.
+                'bank has sent it - and the reconciliation then has a difference nobody can name because '.
+                'the ledger already thinks the payment happened',
+                (string) $bank->amount,
+            );
+        }
+
+        /*
+         | Per instruction, which is the granularity a rejection arrives at.
+         */
+        $entries = DB::connection('tenant')->table('payment_run_instructions')
+            ->where('run_id', $run['id'])
+            ->whereNotNull('transit_entry_id')
+            ->count();
+
+        if ($entries !== 1) {
+            $failures[] = sprintf(
+                '%d of the run\'s instructions carry a transit entry - the posting has to be per '.
+                'instruction, because a bank refuses one beneficiary and accepts the rest',
+                $entries,
+            );
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function transitEqualsReleased(): array
+    {
+        $this->aReleasedRunFor(['9000.0000', '4500.0000']);
+
+        $expected = app(\App\Tenant\Settlement\Services\TransitClearing::class)
+            ->expected($this->entityId, 'SAR');
+
+        $failures = [];
+
+        if (! $expected->equals(Money::of('13500.0000', 'SAR'))) {
+            $failures[] = sprintf(
+                'the derived in-transit position is %s rather than 13,500',
+                (string) $expected->amount,
+            );
+        }
+
+        /*
+         | And ledger:verify says so.
+         |
+         | The derivation and the control account are two places holding
+         | one truth, which is how they come to disagree - so the check
+         | exists to notice.
+         */
+        $findings = app(\App\Tenant\Settlement\Verification\TransitIsReleasedAndUnreconciled::class)
+            ->findings($this->entityId);
+
+        if ($findings !== []) {
+            $failures[] = 'the ledger check reports a difference on a freshly released run, so the '.
+                'derivation and the posting disagree from the start: '
+                .implode(' ', array_column($findings, 'detail'));
+        }
+
+        /*
+         | Now break it, and the check must notice.
+         |
+         | An instruction marked cleared with nothing posted - which is
+         | exactly what a clearing step that failed halfway leaves, and
+         | the reason the step is pulled and idempotent rather than
+         | pushed. The derivation drops by the instruction's amount and
+         | the control account does not follow.
+         */
+        DB::connection('tenant')->table('payment_run_instructions')
+            ->where('entity_id', $this->entityId)
+            ->whereNull('cleared_on')
+            ->limit(1)
+            ->update(['cleared_on' => '2026-05-21', 'updated_at' => now()]);
+
+        $broken = app(\App\Tenant\Settlement\Verification\TransitIsReleasedAndUnreconciled::class)
+            ->findings($this->entityId);
+
+        if ($broken === []) {
+            $failures[] = 'the in-transit control account was moved to a figure no instruction accounts '.
+                'for and the ledger check said nothing - so the middle of the three-way tie can drift '.
+                'silently, and every bank reconciliation after that has a difference nobody can name';
+        } elseif ($broken[0]['severity'] !== 'critical') {
+            $failures[] = 'a control account that does not reconcile to its own subsidiary record is '.
+                'reported as advice rather than as a fault';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function statementClearsTransit(): array
+    {
+        $run = $this->aReleasedRunFor(['9000.0000']);
+
+        /*
+         | The bank debits the batch and the line is matched to the run.
+         |
+         | Which is PF-156's pass 2 - and the clearing is pulled from the
+         | match rather than pushed by it, because Banking may not depend
+         | on Settlement.
+         */
+        $this->matchTheRun($run['id'], '9000.0000');
+
+        $result = app(\App\Tenant\Settlement\Services\TransitClearing::class)
+            ->clear($this->entityId, $this->actorId());
+
+        $failures = [];
+
+        if (\count($result['cleared']) !== 1) {
+            return [sprintf(
+                'a matched bank line cleared %d instruction(s) rather than one, so the in-transit '.
+                'position stays open against money that has demonstrably left',
+                \count($result['cleared']),
+            )];
+        }
+
+        $transit = $this->balanceOfRole(\App\Tenant\Ledger\Enums\ControlRole::PaymentsInTransit);
+
+        if (! $transit->isZero()) {
+            $failures[] = sprintf(
+                'after the statement confirmed it, in transit holds %s rather than nothing',
+                (string) $transit->amount,
+            );
+        }
+
+        $bank = $this->balanceOfRole(\App\Tenant\Ledger\Enums\ControlRole::Bank);
+
+        if (! $bank->equals(Money::of('41000.0000', 'SAR'))) {
+            $failures[] = sprintf(
+                'the bank account is %s and should be 41,000 after 9,000 left',
+                (string) $bank->amount,
+            );
+        }
+
+        /*
+         | Idempotent, because the step is pulled.
+         |
+         | A clearing posted twice is the commonest way the in-transit
+         | control account comes to hold a figure no instruction accounts
+         | for - and a step somebody can run on a schedule has to be safe
+         | to run twice.
+         */
+        $again = app(\App\Tenant\Settlement\Services\TransitClearing::class)
+            ->clear($this->entityId, $this->actorId());
+
+        if ($again['cleared'] !== []) {
+            $failures[] = 'running the clearing step twice posted twice, so the control account drifts by '.
+                'the whole run every time a schedule overlaps';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function clearingIsDatedOnTheStatement(): array
+    {
+        $run = $this->aReleasedRunFor(['9000.0000']);
+        $booking = $this->matchTheRun($run['id'], '9000.0000');
+
+        app(\App\Tenant\Settlement\Services\TransitClearing::class)->clear($this->entityId, $this->actorId());
+
+        $dates = DB::connection('tenant')->table('journal_entries as e')
+            ->join('journal_lines as l', 'l.journal_entry_id', '=', 'e.id')
+            ->where('l.account_id', $this->accountForRole(\App\Tenant\Ledger\Enums\ControlRole::Bank))
+            ->where('e.posting_rule', \App\Tenant\Settlement\Posting\Rules\TransitClearedRule::KEY)
+            ->pluck('e.accounting_date')
+            ->map(static fn (mixed $d): string => \Illuminate\Support\Carbon::parse((string) $d)->toDateString())
+            ->unique()
+            ->all();
+
+        /*
+         | The bank's own date, not today's.
+         |
+         | Posting cash on the day somebody happened to run the step
+         | would put the ledger's bank balance and the statement out of
+         | step by however long nobody ran it - which is a difference
+         | that grows while looking like a timing issue.
+         */
+        return $dates === [$booking]
+            ? []
+            : [sprintf(
+                'the clearing posted on %s and the statement line is dated %s, so the ledger\'s bank '.
+                'balance and the statement are out of step by however long nobody ran the step',
+                implode(', ', $dates) ?: 'no date at all',
+                $booking,
+            )];
+    }
+
+    /** @return list<string> */
+    private function agedTransitIsReported(): array
+    {
+        $run = $this->aReleasedRunFor(['9000.0000']);
+        $failures = [];
+
+        if (app(\App\Tenant\Settlement\Services\TransitClearing::class)->aged($this->entityId) === []) {
+            $failures[] = 'a run released months ago with no statement line is not reported as aged, so a '.
+                'payment that left the system and never appeared on a statement raises nothing';
+        }
+
+        $aged = app(\App\Tenant\Settlement\Services\TransitClearing::class)->aged($this->entityId);
+
+        /*
+         | And the report names which of the three causes it is.
+         |
+         | "Aged in transit" is a figure. What somebody needs is the
+         | question to ask, and which question depends on whether the file
+         | was sent and whether a status report arrived.
+         */
+        if ($aged !== [] && ! str_contains((string) $aged[0]['why'], 'never handed over')) {
+            $failures[] = 'the aged item does not say that the file was never sent, which is the first of '.
+                'the three causes and the only one where the supplier is waiting on us: '
+                .(string) $aged[0]['why'];
+        }
+
+        /*
+         | Hand the file over, and the diagnosis changes.
+         */
+        $file = app(\App\Tenant\Settlement\Services\PaymentFiles::class)->generate($run['id'], $this->actorId());
+        app(\App\Tenant\Settlement\Services\PaymentFiles::class)->handOver($file['id'], $this->actorId());
+
+        $after = app(\App\Tenant\Settlement\Services\TransitClearing::class)->aged($this->entityId);
+
+        if ($after !== [] && ! str_contains((string) $after[0]['why'], 'no status report')) {
+            $failures[] = 'once the file has gone, the aged item still blames the file rather than the '.
+                'missing status report - so the report says the same thing whatever the evidence: '
+                .(string) $after[0]['why'];
+        }
+
+        /*
+         | And a cleared instruction drops off it.
+         */
+        $this->matchTheRun($run['id'], '9000.0000');
+        app(\App\Tenant\Settlement\Services\TransitClearing::class)->clear($this->entityId, $this->actorId());
+
+        if (app(\App\Tenant\Settlement\Services\TransitClearing::class)->aged($this->entityId) !== []) {
+            $failures[] = 'an instruction the bank confirmed is still reported as aged in transit, so the '.
+                'report grows for ever and the people reading it stop';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function statusAppliesPerInstruction(): array
+    {
+        $run = $this->aReleasedRunFor(['9000.0000', '4500.0000']);
+        $instructions = $this->instructionsOf($run['id']);
+
+        /*
+         | Thirty-eight accepted and two refused is the interesting case.
+         |
+         | Here: one accepted, one refused. A product that read only the
+         | group status would mark the whole batch pending, or worse
+         | accepted, and a supplier would go unpaid with nothing in the
+         | system saying so.
+         */
+        $result = app(\App\Tenant\Settlement\Services\PaymentStatuses::class)->ingest(
+            $this->entityId,
+            $this->aStatusReport('PART', [
+                [$instructions[0], 'ACCP', null],
+                [$instructions[1], 'RJCT', 'AC04'],
+            ]),
+            $this->actorId(),
+        );
+
+        $failures = [];
+
+        if (($result['accepted'] ?? 0) !== 1 || ($result['rejected'] ?? 0) !== 1) {
+            $failures[] = sprintf(
+                'a mixed report was read as %d accepted and %d refused rather than one of each',
+                (int) ($result['accepted'] ?? 0),
+                (int) ($result['rejected'] ?? 0),
+            );
+        }
+
+        $statuses = DB::connection('tenant')->table('payment_run_instructions')
+            ->where('run_id', $run['id'])
+            ->pluck('bank_status', 'id')
+            ->all();
+
+        if (($statuses[$instructions[0]] ?? null) !== 'ACCP') {
+            $failures[] = 'the accepted instruction does not carry its status, so "which of these forty '.
+                'did not go" has to be answered by reading the file again';
+        }
+
+        if (($statuses[$instructions[1]] ?? null) !== 'RJCT') {
+            $failures[] = 'the refused instruction does not carry its status';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function rejectionReturnsThePayable(): array
+    {
+        $run = $this->aReleasedRunFor(['9000.0000', '4500.0000']);
+        $instructions = $this->instructionsOf($run['id']);
+
+        $apBefore = $this->balanceOfRole(\App\Tenant\Ledger\Enums\ControlRole::AccountsPayable);
+
+        app(\App\Tenant\Settlement\Services\PaymentStatuses::class)->ingest(
+            $this->entityId,
+            $this->aStatusReport('PART', [
+                [$instructions[0], 'ACCP', null],
+                [$instructions[1], 'RJCT', 'AC04'],
+            ]),
+            $this->actorId(),
+        );
+
+        $failures = [];
+        $apAfter = $this->balanceOfRole(\App\Tenant\Ledger\Enums\ControlRole::AccountsPayable);
+        $moved = $apAfter->minus($apBefore);
+        $rejected = Money::of((string) DB::connection('tenant')->table('payment_run_instructions')
+            ->where('id', $instructions[1])->value('amount'), 'SAR');
+
+        /*
+         | The payable comes back, for the refused amount only.
+         |
+         | The supplier was never paid, so they are still a creditor - and
+         | a product that marked the instruction failed without returning
+         | the payable leaves a supplier owed money the system no longer
+         | thinks is outstanding.
+         */
+        if (! $moved->equals($rejected->negated())) {
+            $failures[] = sprintf(
+                'a refused instruction of %s moved accounts payable by %s - the payable has to come back '.
+                'exactly, or the supplier is owed money the system no longer thinks is outstanding',
+                (string) $rejected->toPresentation(),
+                (string) $moved->toPresentation(),
+            );
+        }
+
+        /*
+         | And the accepted one is untouched.
+         |
+         | Reversing the release entry would have unwound it too, and it
+         | is going to clear.
+         */
+        $expected = app(\App\Tenant\Settlement\Services\TransitClearing::class)
+            ->expected($this->entityId, 'SAR');
+
+        $accepted = Money::of((string) DB::connection('tenant')->table('payment_run_instructions')
+            ->where('id', $instructions[0])->value('amount'), 'SAR');
+
+        if (! $expected->equals($accepted)) {
+            $failures[] = sprintf(
+                'after one of two instructions was refused, the in-transit position is %s and should be '.
+                'the accepted instruction\'s %s - reversing the whole release would unwind the one the '.
+                'bank accepted, and that one is going to clear',
+                (string) $expected->toPresentation(),
+                (string) $accepted->toPresentation(),
+            );
+        }
+
+        /*
+         | The reason code is kept.
+         |
+         | It is what tells a closed account from a wrong IBAN from a
+         | duplicate - three facts with three different responses.
+         */
+        $code = (string) DB::connection('tenant')->table('payment_run_instructions')
+            ->where('id', $instructions[1])->value('bank_reason_code');
+
+        if ($code !== 'AC04') {
+            $failures[] = 'the bank\'s reason code is not on the instruction, so the payment is one '.
+                'somebody has to telephone the bank about';
+        }
+
+        if (app(\App\Tenant\Settlement\Verification\TransitIsReleasedAndUnreconciled::class)
+            ->findings($this->entityId) !== []) {
+            $failures[] = 'after a partial rejection the in-transit control account no longer agrees with '.
+                'the released instructions, so the three-way tie is broken by the ingestion itself';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function unmatchedStatusesAreKept(): array
+    {
+        $run = $this->aReleasedRunFor(['9000.0000']);
+        $instructions = $this->instructionsOf($run['id']);
+
+        $result = app(\App\Tenant\Settlement\Services\PaymentStatuses::class)->ingest(
+            $this->entityId,
+            $this->aStatusReport('PART', [
+                [$instructions[0], 'ACCP', null],
+                /*
+                 | A status naming something nothing here issued.
+                 |
+                 | The most interesting row in the file: a file submitted
+                 | twice, a reference the bank mangled, or a report for
+                 | another company routed to us.
+                 */
+                [str_repeat('9', 26), 'RJCT', 'AC01'],
+            ]),
+            $this->actorId(),
+        );
+
+        $failures = [];
+
+        if (\count($result['unmatched']) !== 1) {
+            $failures[] = sprintf(
+                'a status naming an instruction nothing here issued produced %d unmatched row(s) rather '.
+                'than one - discarding it loses the only evidence that a file was submitted twice or a '.
+                'report was routed to the wrong company',
+                \count($result['unmatched']),
+            );
+        }
+
+        $surfaced = app(\App\Tenant\Settlement\Services\PaymentStatuses::class)->unmatched($this->entityId);
+
+        if ($surfaced === []) {
+            $failures[] = 'the unmatched status is stored and not surfaced, which is a log rather than a '.
+                'report - and nobody reads a table they have to know about first';
+        } elseif (! str_contains((string) $surfaced[0]['why'], 'submitted twice')) {
+            $failures[] = 'the surfaced row does not name the usual causes, so a reader has a reference '.
+                'and no idea what to do with it: '.(string) $surfaced[0]['why'];
+        }
+
+        /*
+         | And it did not post anything.
+         |
+         | A rejection for an instruction we cannot find has no payable to
+         | return - posting one would credit AP against nothing.
+         */
+        if (app(\App\Tenant\Settlement\Verification\TransitIsReleasedAndUnreconciled::class)
+            ->findings($this->entityId) !== []) {
+            $failures[] = 'an unmatched rejection posted something, so the in-transit account moved for an '.
+                'instruction this business never issued';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function aReportIsNotAppliedTwice(): array
+    {
+        $run = $this->aReleasedRunFor(['9000.0000']);
+        $instructions = $this->instructionsOf($run['id']);
+        $xml = $this->aStatusReport('RJCT', [[$instructions[0], 'RJCT', 'AC04']]);
+
+        app(\App\Tenant\Settlement\Services\PaymentStatuses::class)->ingest($this->entityId, $xml, $this->actorId());
+
+        $refusal = $this->refusal(fn () => app(\App\Tenant\Settlement\Services\PaymentStatuses::class)
+            ->ingest($this->entityId, $xml, $this->actorId()));
+
+        if ($refusal === null) {
+            return ['the same status report was ingested twice, so the in-transit posting was reversed '.
+                'twice and the payable came back owed twice - which the supplier discovers when they are '.
+                'paid twice'];
+        }
+
+        return str_contains($refusal, 'already ingested')
+            ? []
+            : ['the duplicate report was refused for some other reason: '.$refusal];
+    }
+
     // ---- Helpers ----------------------------------------------------------
+    // ---- Helpers for the in-transit checks --------------------------------
+
+    private function accountForRole(\App\Tenant\Ledger\Enums\ControlRole $role): string
+    {
+        return (string) DB::connection('tenant')->table('account_roles')
+            ->where('entity_id', $this->entityId)
+            ->where('role', $role->value)
+            ->value('account_id');
+    }
+
+    private function balanceOfRole(\App\Tenant\Ledger\Enums\ControlRole $role): Money
+    {
+        $row = DB::connection('tenant')->selectOne(
+            'SELECT coalesce(sum(functional_amount), 0)::text AS balance '.
+            'FROM journal_lines WHERE entity_id = ? AND account_id = ?',
+            [$this->entityId, $this->accountForRole($role)],
+        );
+
+        return Money::of((string) ($row->balance ?? '0'), 'SAR');
+    }
+
+    /** @return list<string> */
+    private function instructionsOf(string $runId): array
+    {
+        return array_map(
+            static fn (mixed $id): string => (string) $id,
+            DB::connection('tenant')->table('payment_run_instructions')
+                ->where('run_id', $runId)
+                ->orderBy('id')
+                ->pluck('id')
+                ->all(),
+        );
+    }
+
+    /**
+     * Match a bank line to the run, as PF-156's pass 2 would.
+     *
+     * Written at the `matches` table rather than through the engine,
+     * because what is being checked here is the clearing - and the engine
+     * proposing and somebody accepting is MatchingRules' subject. The row
+     * is the same row either path produces.
+     *
+     * @return string the booking date, which is what the clearing dates on
+     */
+    private function matchTheRun(string $runId, string $amount, string $on = '2026-05-21'): string
+    {
+        $this->importLines([$this->line('-'.$amount, [
+            'bank_reference' => 'CLR-'.\Illuminate\Support\Str::upper(\Illuminate\Support\Str::random(6)),
+            'booking_date' => $on,
+            'value_date' => $on,
+        ])]);
+
+        $transaction = DB::connection('tenant')->table('bank_transactions')
+            ->where('bank_account_id', (string) $this->bank()->getKey())
+            ->orderByDesc('created_at')
+            ->first();
+
+        DB::connection('tenant')->table('matches')->insert([
+            'id' => (string) \Illuminate\Support\Str::ulid(),
+            'entity_id' => $this->entityId,
+            'bank_transaction_id' => (string) $transaction->id,
+            'booking_date' => $on,
+            'matched_type' => 'payment_run',
+            'matched_id' => $runId,
+            'amount' => '-'.$amount,
+            'currency' => 'SAR',
+            'pass' => 'payment_run',
+            'confidence' => '0.95',
+            'reason' => 'the debit equals the whole of the released run, matched for a clearing check',
+            'applied_automatically' => false,
+            'applied_at' => now(),
+            'applied_by' => $this->actorId(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $on;
+    }
+
+    /**
+     * A PAIN.002 naming instructions and their outcomes.
+     *
+     * @param  list<array{0: string, 1: string, 2: string|null}>  $statuses
+     */
+    private function aStatusReport(string $groupStatus, array $statuses, ?string $messageId = null): string
+    {
+        $messageId ??= 'STS-'.\Illuminate\Support\Str::upper(\Illuminate\Support\Str::random(8));
+        $transactions = '';
+
+        foreach ($statuses as [$reference, $status, $code]) {
+            $reason = $code === null
+                ? ''
+                : sprintf(
+                    '<StsRsnInf><Rsn><Cd>%s</Cd></Rsn><AddtlInf>the account does not exist</AddtlInf></StsRsnInf>',
+                    $code,
+                );
+
+            $transactions .= sprintf(
+                '<TxInfAndSts><OrgnlEndToEndId>%s</OrgnlEndToEndId><TxSts>%s</TxSts>%s</TxInfAndSts>',
+                $reference,
+                $status,
+                $reason,
+            );
+        }
+
+        return sprintf(
+            '<?xml version="1.0" encoding="UTF-8"?>'.
+            '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.10">'.
+            '<CstmrPmtStsRpt>'.
+            '<GrpHdr><MsgId>%s</MsgId><CreDtTm>2026-05-20T11:00:00Z</CreDtTm></GrpHdr>'.
+            '<OrgnlGrpInfAndSts><OrgnlMsgId>ORIG-1</OrgnlMsgId><GrpSts>%s</GrpSts></OrgnlGrpInfAndSts>'.
+            '<OrgnlPmtInfAndSts><OrgnlPmtInfId>ORIG-1-1</OrgnlPmtInfId>%s</OrgnlPmtInfAndSts>'.
+            '</CstmrPmtStsRpt></Document>',
+            $messageId,
+            $groupStatus,
+            $transactions,
+        );
+    }
 
     /**
      * A released run on an account declaring a scheme.

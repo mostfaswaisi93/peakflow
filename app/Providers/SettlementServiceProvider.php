@@ -47,7 +47,32 @@ final class SettlementServiceProvider extends ServiceProvider
          | day it was made; crediting bad debt back would say otherwise
          | and would net the two figures into one that describes neither.
          */
+        /*
+         | The in-transit trio - PF-178, PF-179.
+         |
+         | Released, cleared, refused. Three rules rather than one with a
+         | sign, because they answer different questions and a reader of
+         | the ledger needs to see which happened: an instruction that
+         | cleared and one the bank refused both close the in-transit
+         | position, and only one of them means the supplier was paid.
+         */
+        $registry->register(new \App\Tenant\Settlement\Posting\Rules\RunReleasedRule());
+        $registry->register(new \App\Tenant\Settlement\Posting\Rules\TransitClearedRule());
+        $registry->register(new \App\Tenant\Settlement\Posting\Rules\InstructionRejectedRule());
+
         $registry->register(new \App\Tenant\Settlement\Posting\Rules\WriteOffPostedRule());
+
+        /*
+         | And what Settlement asserts about the ledger - PF-179.
+         |
+         | Through the registry in `Support`, so the verifier never learns
+         | what a payment run is. In transit equals released-and-
+         | unreconciled: the figure in the middle of the three-way tie
+         | between AP, the bank and the GL.
+         */
+        $this->app->make(\App\Support\Verification\LedgerChecks::class)->register(
+            $this->app->make(\App\Tenant\Settlement\Verification\TransitIsReleasedAndUnreconciled::class),
+        );
         $registry->register(new \App\Tenant\Settlement\Posting\Rules\RecoveryPostedRule());
 
         /*

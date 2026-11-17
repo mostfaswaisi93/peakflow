@@ -460,3 +460,65 @@ Core and B2B cannot share a file either. B2B has no refund right and the mandate
 The mandate's reference and signature date travel with every transaction in `MndtRltdInf`: the debtor's bank matches on them, and a collection whose reference they do not recognise is returned, as is one whose signature date disagrees with their registration. Both are facts we hold, so neither should ever be the reason.
 
 > **The near-miss the checks caught.** The creditor's own IBAN was briefly in the *debtor's* account element. The two have the same shape in the schema — `Id` then `IBAN` — and a substitution landed on the wrong one. The file would have instructed the bank to collect money from our own account. The check that walks the produced document and asserts what each element holds caught it on the first run; nothing about the file would have looked wrong until the bank acted on it.
+
+## In transit, and the three-way tie — PF-178, PF-179
+
+### Why the money is not gone when the run is released
+
+The instruction has been sent and the supplier has not been paid. Those are different facts, and the gap between them is days: a file submitted on Thursday clears on Monday, a cross-border transfer takes a week, and a rejected instruction never clears at all.
+
+Crediting the bank account on release would report money the business still has as money it has spent — so every balance sheet between the release and the statement is wrong, and the bank reconciliation has a difference nobody can name, because the ledger already thinks the payment happened.
+
+So on release the payable leaves AP and the credit goes to `payments_in_transit`. AP is relieved immediately because the payable is no longer outstanding in any useful sense: nobody should select it into another run, chase it, or include it in a creditors report as something still to be decided. It *has* been decided. What is unresolved is whether the bank executed it, which is a different question in a different account.
+
+```
+accounts payable      what we still owe
+payments in transit   what we have told the bank to send
+bank                  what the bank says we have
+```
+
+In transit is the difference between the last two that we can **explain**. Without it, that difference is a figure somebody reconstructs from release dates every month — in a spreadsheet beside the accounting system.
+
+### Three rules, not one with a sign
+
+`released`, `cleared`, `refused`. An instruction that cleared and one the bank refused both close the in-transit position, and only one of them means the supplier was paid. A reader of the ledger needs to see which happened.
+
+The posting is **per instruction**, because that is the granularity a rejection arrives at: the bank refuses one beneficiary and accepts the rest, and reversing a single release entry would unwind the ones that are going to clear.
+
+### The clearing is pulled, not pushed
+
+The event is a bank line being matched to a released run, which happens in `Banking` — and `Banking` may not depend on `Settlement`, nor should it: a reconciliation screen has no business knowing what a payment run posts.
+
+So `TransitClearing` reads the matches (which `Settlement` may do) and posts what the bank has confirmed. The cost is that clearing is a step rather than an instant. What it buys is that the step is **idempotent and re-runnable** — a push that failed halfway leaves a position nobody can reconstruct, and this one simply runs again.
+
+It is dated on the **statement line**, not on the day somebody ran it. The bank's own date for the movement is the only date that makes the reconciliation tie; posting on today would put the ledger's bank balance and the statement out of step by however long nobody ran the step, which is a difference that grows while looking like a timing issue.
+
+### Ageing names the cause, not just the age
+
+An in-transit item older than a few days is one of three things, and the report says which:
+
+| Evidence | What it means |
+|---|---|
+| The file was never handed over | The payment was authorised and nobody sent it. **The supplier is waiting and nothing in the system looks wrong.** |
+| The file went, no status report | Either the bank sent one nobody loaded, or it refused the instruction and the report is in a mailbox |
+| The bank accepted it | It has probably cleared and the statement line was never matched — so the bank balance is right and the in-transit position is not |
+
+"Aged in transit" on its own is a figure. What somebody needs is the question to ask.
+
+### `ledger:verify`: in transit equals released-and-unreconciled
+
+The derived figure — released, not cleared, not refused — against the control account's balance. Two places holding one truth is how they come to disagree, so the check exists to notice.
+
+**Critical, not a warning.** A control account that does not reconcile to its own subsidiary record is the same class of fault as a receivables control disagreeing with the customer ledger, and nobody would call that advice. In transit sits in the middle of the three-way tie, so a difference there means every bank reconciliation afterwards has a difference nobody can name — and the position stops being a list of payments, which means it cannot be aged or chased either.
+
+### Status reports: down to the instruction
+
+The interesting case is thirty-eight accepted and two refused for an account that no longer exists. A product that read only the group status would mark the whole batch pending, or worse accepted, and two suppliers would go unpaid with nothing in the system saying so.
+
+So the group status is recorded *beside* the per-transaction statuses and every accounting consequence is per instruction. A rejection returns the payable for its own amount — the supplier was never paid, so they are still a creditor and the bill has to be selectable into another run.
+
+**An unmatched status is kept and surfaced**, with the three usual causes named: a file submitted twice, a reference the bank mangled, a report for another company routed to us. It is the most interesting row in the file, and discarding it loses the only evidence any of those happened. It posts nothing, because there is no payable to return.
+
+**And a report is ingested once.** A bank that resends one is ordinary; applying it twice would reverse an in-transit posting that was already reversed, so the payable would come back owed twice — which the supplier discovers when they are paid twice.
+
+> **PF-174's freeze was too wide, and PF-178 is what showed it.** A released run's lines were frozen against *any* update, which was right with the information PF-174 had: everything on an instruction then defined the payment. The columns that record what the bank said arrive after release by definition — a status report comes days later and a statement line later still — so freezing them meant a released instruction could never learn its own outcome, the in-transit position could never close, and the three-way tie could never be made. The trigger now names the columns that define the payment and freezes those, which is the same distinction `payment_files` already drew between its bytes and its download.

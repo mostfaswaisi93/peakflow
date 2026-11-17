@@ -2417,6 +2417,27 @@ final class MatchingRules
      */
     private function aRunPaying(Carbon $payOn, bool $release, string ...$amounts): array
     {
+        /*
+         | The pay date's period has to be open before the run is released.
+         |
+         | PF-179 posts the payables into transit on the pay date, so a
+         | run dated into a period nobody has opened cannot be released -
+         | which is correct, and means a fixture reaching back eight days
+         | across a month boundary has to open the period it reaches into.
+         */
+        if ($release) {
+            $period = app(\App\Tenant\Ledger\Services\FiscalCalendarGenerator::class)
+                ->periodFor($this->entityId, $payOn->copy());
+
+            if ($period !== null && $period->state !== \App\Tenant\Ledger\Enums\PeriodState::Open) {
+                app(\App\Tenant\Ledger\Services\PeriodStateMachine::class)->transition(
+                    $period,
+                    \App\Tenant\Ledger\Enums\PeriodState::Open,
+                    'opened so a payment run reaching into this period can be released',
+                );
+            }
+        }
+
         $accounts = [];
 
         foreach ($amounts as $amount) {

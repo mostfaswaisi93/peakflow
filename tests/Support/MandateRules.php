@@ -32,6 +32,7 @@ use Illuminate\Support\Str;
 final class MandateRules
 {
     use \Tests\Support\Concerns\OpensBankAccounts;
+    use \Tests\Support\Concerns\ProvesTheLedger;
 
     /** @return array<string, list<string>> */
     public function all(): array

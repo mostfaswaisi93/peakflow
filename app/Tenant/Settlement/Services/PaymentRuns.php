@@ -64,6 +64,7 @@ final class PaymentRuns
         private readonly SodEngine $sod,
         private readonly ReleaseReview $review,
         private readonly RequiresStepUp $stepUp,
+        private readonly \App\Tenant\Ledger\Services\Poster $poster,
     ) {}
 
     /**
@@ -484,6 +485,60 @@ final class PaymentRuns
         }
 
         return DB::connection('tenant')->transaction(function () use ($run, $runId, $userId, $note, $review): array {
+            /*
+             | The payables leave AP and sit in transit - PF-179.
+             |
+             | Posted per instruction, because that is the granularity a
+             | rejection arrives at: the bank refuses one beneficiary and
+             | accepts the rest, and reversing a single release entry
+             | would unwind the ones that are going to clear.
+             |
+             | Inside the release transaction, so there is no instant in
+             | which a released run has no postings - a reconciliation run
+             | in that window would report the whole batch as an
+             | unexplained difference.
+             */
+            $entity = \App\Tenant\Tenancy\Models\Entity::query()->findOrFail((string) $run->entity_id);
+            $posted = 0;
+
+            foreach (DB::connection('tenant')->table('payment_run_instructions')
+                ->where('run_id', $runId)
+                ->orderBy('id')
+                ->get() as $instruction) {
+                $entry = $this->poster->post(
+                    entity: $entity,
+                    ruleKey: \App\Tenant\Settlement\Posting\Rules\RunReleasedRule::KEY,
+                    event: [
+                        'amount' => (string) $instruction->amount,
+                        'party_id' => (string) $instruction->party_id,
+                        'narration' => sprintf('Released in run %s', (string) $run->number),
+                    ],
+                    /*
+                     | Dated on the pay date, which is the date the run is
+                     | for and the date on every document it produces.
+                     |
+                     | Which means a run whose pay date falls in a period
+                     | nobody has opened cannot be released - and that
+                     | refusal is correct rather than inconvenient: money
+                     | committed into a period that is not open is an
+                     | entry the ledger would have to accept into
+                     | somewhere nobody looks. The refusal names the
+                     | period, so the answer is to open it or move the
+                     | date.
+                     */
+                    accountingDate: \Illuminate\Support\Carbon::parse((string) $run->pay_on),
+                    journalCode: 'CSH',
+                    sourceType: 'payment_run_instruction',
+                    sourceId: (string) $instruction->id,
+                );
+
+                DB::connection('tenant')->table('payment_run_instructions')
+                    ->where('id', (string) $instruction->id)
+                    ->update(['transit_entry_id' => (string) $entry->getKey(), 'updated_at' => now()]);
+
+                $posted++;
+            }
+
             DB::connection('tenant')->table('payment_runs')->where('id', $runId)->update([
                 'state' => 'released',
                 'released_by' => $userId,

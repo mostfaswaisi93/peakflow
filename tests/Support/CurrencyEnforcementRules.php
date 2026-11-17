@@ -1014,22 +1014,38 @@ final class CurrencyEnforcementRules
          | A default would be wrong in whichever direction it pointed, and
          | this is the one case where a human knows the answer in seconds.
          */
-        $this->postForeignBalance('1.1.1.3', '2000.0000');
+        /*
+         | Accrued payroll, not payments in transit.
+         |
+         | `1.1.1.3` carries the `payments_in_transit` control role, and
+         | PF-179 asserts that account against the released instructions
+         | that have not cleared. A fixture posting a balance there is
+         | fabricating a control-account position no instruction accounts
+         | for - which is precisely the fault that check exists to find,
+         | and it duly found this.
+         |
+         | Petty cash was the first substitute and was wrong too: the
+         | revaluation check above uses it as "the cash account" and an
+         | extra 2,000 broke its arithmetic. `2.1.9` is monetary,
+         | foreign-capable, used by nothing else here, and carries no role
+         | for anything to assert against.
+         */
+        $this->postForeignBalance('2.1.9', '2000.0000');
 
         $this->connection->table('accounts')
             ->where('entity_id', $this->entityId)
-            ->where('code', '1.1.1.3')
+            ->where('code', '2.1.9')
             ->update(['monetary' => null]);
 
         $unclassified = $revaluation->unclassified($this->entityId, 'SAR', Carbon::parse($this->postingDate));
 
-        if (! $this->mentions($unclassified, '1.1.1.3')) {
+        if (! $this->mentions($unclassified, '2.1.9')) {
             $violations[] = 'an account holding a foreign balance with no monetary classification was not '.
                 'reported, so it is being silently skipped or silently revalued and nobody is told which';
         }
 
         $stillIncluded = collect($revaluation->exposures($this->entityId, 'SAR', Carbon::parse($this->postingDate)))
-            ->contains(static fn (array $row): bool => $row['code'] === '1.1.1.3');
+            ->contains(static fn (array $row): bool => $row['code'] === '2.1.9');
 
         if ($stillIncluded) {
             $violations[] = 'an unclassified account was revalued anyway, which asserts a classification '.
@@ -1396,7 +1412,7 @@ final class CurrencyEnforcementRules
             ->where('code', 'GEN')
             ->value('id');
 
-        foreach (['1.1.1.1', '1.1.1.3', '4.1', '1.1.2.1', '2.1.3', '1.2.1', '1.1.4'] as $code) {
+        foreach (['1.1.1.1', '1.1.1.3', '4.1', '1.1.2.1', '2.1.3', '1.2.1', '1.1.4', '2.1.9'] as $code) {
             $this->accounts[$code] = (string) $this->connection->table('accounts')
                 ->where('entity_id', $this->entityId)
                 ->where('code', $code)
