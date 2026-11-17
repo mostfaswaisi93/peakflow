@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\Exchange\Xml;
+namespace App\Support\Xml;
 
 /**
  * One element in a document being built, before it is ordered.

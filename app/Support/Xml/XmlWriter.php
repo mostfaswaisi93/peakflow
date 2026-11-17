@@ -2,10 +2,21 @@
 
 declare(strict_types=1);
 
-namespace App\Exchange\Xml;
+namespace App\Support\Xml;
 
 /**
- * Render an element tree in the order its schema demands - PF-112.
+ * Render an element tree in the order its schema demands - PF-112, PF-176.
+ *
+ * ## Why this lives in Support
+ *
+ * It was `Exchange`'s, built for UBL. PF-176 needs the same thing for a
+ * PAIN.001 payment file, and `Settlement` may not depend on `Exchange` -
+ * nor should it: a payment run has nothing to do with e-invoicing.
+ *
+ * A second writer in `Settlement` would have been a second answer to
+ * "how is XML ordered", and the two would have drifted on the first
+ * schema that made them disagree. The sequence table is the caller's; the
+ * ordering, the namespaces and the determinism are everybody's.
  *
  * ## Order is not a style question in UBL
  *
@@ -30,6 +41,10 @@ namespace App\Exchange\Xml;
  * ids, no timestamps, and repeated groups keep the order the model holds
  * them in. The archive hash has to be stable, and a formatter that indents
  * by nesting depth would change every byte the first time a line is added.
+ *
+ * Which matters more for a payment file than for an invoice: PF-175 hashes
+ * what was authorised, and the file has to be held against that hash
+ * byte-for-byte on the day somebody asks what was sent.
  */
 final class XmlWriter
 {

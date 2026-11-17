@@ -9,7 +9,7 @@ use App\Exchange\Semantics\BusinessTerm as BT;
 use App\Exchange\Semantics\SemanticInvoice;
 use App\Exchange\Serializers\DocumentSerializer;
 use App\Exchange\Serializers\Ubl\UblSerializer;
-use App\Exchange\Xml\Element as E;
+use App\Support\Xml\Element as E;
 
 /**
  * The ZATCA UBL subset - PF-123.

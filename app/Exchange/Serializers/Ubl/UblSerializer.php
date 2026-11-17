@@ -9,8 +9,8 @@ use App\Exchange\Semantics\BusinessTerm as BT;
 use App\Exchange\Semantics\SemanticInvoice;
 use App\Exchange\Semantics\SemanticNode;
 use App\Exchange\Serializers\DocumentSerializer;
-use App\Exchange\Xml\Element as E;
-use App\Exchange\Xml\XmlWriter;
+use App\Support\Xml\Element as E;
+use App\Support\Xml\XmlWriter;
 
 /**
  * UBL 2.1, from the semantic model - PF-112.

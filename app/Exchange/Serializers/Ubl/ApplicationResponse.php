@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\Exchange\Serializers\Ubl;
 
-use App\Exchange\Xml\Element as E;
-use App\Exchange\Xml\XmlWriter;
+use App\Support\Xml\Element as E;
+use App\Support\Xml\XmlWriter;
 use Illuminate\Support\Carbon;
 
 /**
