@@ -38,7 +38,11 @@ use Illuminate\Support\Facades\Schema;
  * payments for no reason and every split is a line the supplier has to
  * reconcile.
  *
- * @financial
+ * @financial-not-applicable: this alters `party_entity_settings`, which already
+ * carries `entity_id` and a forced row-level security policy from the migration
+ * that created it. The tag's demands - declare the column, call
+ * `peakflow_apply_entity_rls()` - would add a second column and a second policy
+ * to a table that has both.
  */
 return new class extends Migration
 {
