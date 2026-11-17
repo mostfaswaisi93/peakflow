@@ -516,7 +516,7 @@ final class LedgerEnforcementRules
          | check now owns its accounts.
          */
         $this->writeEntry([['4.1', '-120000.0000'], ['1.1.1.1', '120000.0000']]);
-        $this->writeEntry([['5.1', '45000.0000'], ['1.1.1.1', '-45000.0000']]);
+        $this->writeEntry([['5.2', '45000.0000'], ['1.1.1.1', '-45000.0000']]);
 
         /*
          | An open period blocks the close, and that is the criterion that
@@ -2245,7 +2245,7 @@ final class LedgerEnforcementRules
 
         $accounts = Account::query()
             ->where('entity_id', $entityId)
-            ->whereIn('code', ['1.1.1.1', '5.1', '5.2'])
+            ->whereIn('code', ['1.1.1.1', '5.2', '5.8'])
             ->pluck('id', 'code');
 
         foreach (['1234.5600', '77.0000', '9999.9900'] as $index => $amount) {
@@ -2253,7 +2253,7 @@ final class LedgerEnforcementRules
                 entity: $entity,
                 ruleKey: 'probe.reversal_pair',
                 event: [
-                    'debit' => (string) $accounts[['1.1.1.1', '5.1', '5.2'][$index]],
+                    'debit' => (string) $accounts[['1.1.1.1', '5.2', '5.8'][$index]],
                     'amount' => $amount,
                 ],
                 accountingDate: $date,
@@ -2369,7 +2369,7 @@ final class LedgerEnforcementRules
                 $midYear = $this->refusal(fn () => app(AdjustingEntries::class)->post(
                     $entity,
                     'probe.reversal_pair',
-                    ['debit' => (string) $accounts['5.1'], 'amount' => '10.0000'],
+                    ['debit' => (string) $accounts['5.2'], 'amount' => '10.0000'],
                     $date,
                     'from the external auditor schedule C-1, dated mid-year on purpose',
                 ));

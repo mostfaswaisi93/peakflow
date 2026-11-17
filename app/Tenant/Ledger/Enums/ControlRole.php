@@ -23,6 +23,22 @@ enum ControlRole: string
     case VatOutput = 'vat_output';
     case Bank = 'bank';
     case PaymentsInTransit = 'payments_in_transit';
+
+    /*
+     | Stock, and what it cost when it left - PF-247, PF-248.
+     |
+     | `Inventory` is an asset and deliberately NOT monetary: it is not a
+     | claim on anybody in a currency, so it is never revalued at a
+     | closing rate. A chart that marked it monetary would restate the
+     | cost of goods every month end for no reason anybody could explain.
+     |
+     | `CostOfSales` is where the cost goes when the stock does. Not a
+     | reduction of revenue: the sale happened at the invoiced figure, and
+     | what it cost to fulfil is a different fact that belongs on its own
+     | line - which is also the only way a margin can be read.
+     */
+    case Inventory = 'inventory';
+    case CostOfSales = 'cost_of_sales';
     case FxGainLoss = 'fx_gain_loss';
     case FxRevaluation = 'fx_revaluation';
     case RoundingDifference = 'rounding_difference';
@@ -168,7 +184,7 @@ enum ControlRole: string
     {
         return match ($this) {
             self::AccountsReceivable, self::Bank, self::PaymentsInTransit,
-            self::InterEntity, self::WithholdingReceivable,
+            self::InterEntity, self::WithholdingReceivable, self::Inventory,
 
             /*
              | Suspense is a balance-sheet account, not a cost.
@@ -222,7 +238,8 @@ enum ControlRole: string
             self::VatInput => AccountType::Asset,
 
             self::FxGainLoss, self::FxRevaluation, self::RoundingDifference,
-            self::BadDebt, self::BankCharges, self::EclCharge => AccountType::Expense,
+            self::BadDebt, self::BankCharges, self::EclCharge,
+            self::CostOfSales => AccountType::Expense,
 
             /*
              | A recovery is income, not a negative expense.

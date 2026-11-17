@@ -264,7 +264,7 @@ final class ManualJournalRules
         $verdict = app(ManualJournal::class)->validate($this->entity, $this->draft([
             ['1.1.1.1', 'about 12k'],
             ['4.1', '0'],
-            ['5.1', '10.000005'],
+            ['5.2', '10.000005'],
             ['9.9.9', '5'],
             ['5.2', ''],
             ['', '77'],
@@ -352,8 +352,8 @@ final class ManualJournalRules
         $key = 'accrual-'.Str::random(6);
 
         $templates->save($this->entity, $key, 'استحقاق شهري', 'Monthly accrual', [
-            ['account_code' => '5.1', 'share' => '0.333333333333'],
             ['account_code' => '5.2', 'share' => '0.333333333333'],
+            ['account_code' => '5.8', 'share' => '0.333333333333'],
             ['account_code' => '1.2.1', 'share' => '0.333333333334'],
             ['account_code' => '4.2', 'share' => '-1.000000000000'],
         ], recurrence: 'monthly', nextRunOn: $this->date->copy()->startOfMonth());
@@ -422,7 +422,7 @@ final class ManualJournalRules
 
         foreach ([
             'shares that do not cancel' => [
-                [['account_code' => '5.1', 'share' => '0.5'], ['account_code' => '4.2', 'share' => '-0.4']],
+                [['account_code' => '5.2', 'share' => '0.5'], ['account_code' => '4.2', 'share' => '-0.4']],
                 'sum to',
             ],
             'a control account' => [
@@ -438,12 +438,12 @@ final class ManualJournalRules
                 'does not exist',
             ],
             'a single line' => [
-                [['account_code' => '5.1', 'share' => '1.0']],
+                [['account_code' => '5.2', 'share' => '1.0']],
                 'at least two',
             ],
             'a share of zero' => [
                 [
-                    ['account_code' => '5.1', 'share' => '0'],
+                    ['account_code' => '5.2', 'share' => '0'],
                     ['account_code' => '5.2', 'share' => '1.0'],
                     ['account_code' => '4.2', 'share' => '-1.0'],
                 ],
@@ -485,10 +485,10 @@ final class ManualJournalRules
             ['reference' => 'JV-001', 'date' => $date, 'account_code' => '4.1', 'amount' => '-450.00'],
             ['reference' => 'JV-002', 'date' => $date, 'account_code' => '1.1.2.1', 'amount' => '100.00'],
             ['reference' => 'JV-002', 'date' => $date, 'account_code' => '4.1', 'amount' => '-100.00'],
-            ['reference' => 'JV-003', 'date' => '2026-02-30', 'account_code' => '5.1', 'amount' => '10.00'],
+            ['reference' => 'JV-003', 'date' => '2026-02-30', 'account_code' => '5.2', 'amount' => '10.00'],
             ['reference' => 'JV-003', 'date' => $date, 'account_code' => '4.1', 'amount' => '-10.00'],
-            ['reference' => '', 'date' => $date, 'account_code' => '5.1', 'amount' => '20.00'],
-            ['reference' => 'JV-004', 'date' => $date, 'account_code' => '5.1', 'amount' => '30.00'],
+            ['reference' => '', 'date' => $date, 'account_code' => '5.2', 'amount' => '20.00'],
+            ['reference' => 'JV-004', 'date' => $date, 'account_code' => '5.2', 'amount' => '30.00'],
             ['reference' => 'JV-004', 'date' => $nextDay, 'account_code' => '4.1', 'amount' => '-30.00'],
         ];
 
@@ -573,7 +573,7 @@ final class ManualJournalRules
         $good = [
             ['reference' => 'JV-010', 'date' => $date, 'account_code' => '1.1.1.1', 'amount' => '1200.00'],
             ['reference' => 'JV-010', 'date' => $date, 'account_code' => '4.1', 'amount' => '-1200.00'],
-            ['reference' => 'JV-011', 'date' => $date, 'account_code' => '5.1', 'amount' => '340.50'],
+            ['reference' => 'JV-011', 'date' => $date, 'account_code' => '5.2', 'amount' => '340.50'],
             ['reference' => 'JV-011', 'date' => $date, 'account_code' => '1.1.1.1', 'amount' => '-340.50'],
         ];
 

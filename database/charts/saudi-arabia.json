@@ -1,6 +1,6 @@
 {
   "key": "saudi-arabia",
-  "version": 7,
+  "version": 8,
   "name_ar": "دليل حسابات للمملكة العربية السعودية",
   "name_en": "Saudi Arabia chart of accounts",
   "countries": [
@@ -144,6 +144,17 @@
       "role": "withholding_receivable",
       "monetary": true,
       "note": "Withholding deducted by our customers from payments to us - a credit we claim against our own liability, which is an asset until the return that claims it. PF-083 records the certificate; this is where the credit sits."
+    },
+    {
+      "code": "1.1.7",
+      "parent": "1.1",
+      "type": "asset",
+      "name_ar": "المخزون",
+      "name_en": "Inventory",
+      "postable": true,
+      "role": "inventory",
+      "monetary": false,
+      "note": "NOT monetary. Suspense holds items nobody has identified yet, and revaluing an unidentified item asserts a classification that has not been made."
     },
     {
       "code": "1.2",
@@ -421,7 +432,7 @@
       "name_ar": "تكلفة المبيعات",
       "name_en": "Cost of sales",
       "postable": true,
-      "role": null,
+      "role": "cost_of_sales",
       "monetary": false
     },
     {
