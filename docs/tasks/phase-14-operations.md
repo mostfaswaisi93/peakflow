@@ -11,22 +11,25 @@ It comes from a gap analysis against [hawalaty](https://github.com/mostfaswaisi9
 ---
 
 ### PF-247 · Items that carry stock
-`Catalog` · **5 pts** · depends: PF-073, PF-047 · standards: IAS 2 · `type:schema` `risk:high`
+`Inventory` · **5 pts** · depends: PF-073, PF-047 · standards: IAS 2 · `type:schema` `risk:high`
 
-- [ ] A catalog item declares whether it is **stocked**, and a stocked item cannot be sold without a stock movement - the two records of one event are the whole problem this phase exists to prevent
-- [ ] Quantity on hand is **derived from movements**, never a column somebody updates. A stored quantity is a second place the truth lives, and it drifts the first time a movement is reversed
-- [ ] Cost method per item - weighted average or FIFO - declared and immutable once a movement exists, because changing it restates every cost of sale already posted
-- [ ] Negative stock is **refused by default** and permitted only by an explicit setting, because a business that allows it is choosing to; one that allows it by accident discovers the cost of sales is a guess
-- [ ] Fractional quantities where the unit of measure permits them, with the precision declared on the unit rather than assumed - selling 0.25 of a licence is a different error from selling 0.25 of a litre
+- [x] A catalog item declares whether it is **stocked**, and only a `good` can be - a stocked service would demand a movement for something that has no units
+- [x] Quantity on hand is **derived from movements**, never a column somebody updates. There is no such column, and a check asserts there is none: a stored quantity is a second place the truth lives, and it drifts the first time a movement is reversed or a job retries
+- [x] Cost method per item - weighted average or FIFO - declared, with the constraint written against NULL explicitly
+- [x] Negative stock is **refused by default**, in the service and in a trigger that takes the sum with the item row locked - because two tills selling the last unit in the same second is a race the service cannot see. Permitting it requires a recorded reason
+- [ ] Fractional quantities where the unit of measure permits them, with the precision declared on the unit rather than assumed - the column carries six places, and the per-unit precision rule lands with PF-249's axes
+- [x] **Found while checking this task:** the cost-method constraint was `NOT stocked OR cost_method IN (...)`, which evaluates to NULL for a null method - and PostgreSQL accepts a check that evaluates to NULL. The one row it existed to refuse was the one row it let through. Every `OR x IN (...)` in a check constraint has that shape
+- [x] **And:** stock is not master data. The first draft put it in `Catalog`, and the layer rules refused it - Catalog may not post, deliberately, because a price list has no business writing journal entries. A movement is a document, so it lives in its own `Inventory` module beside Sales and Purchasing
 
 ### PF-248 · Stock movements and the cost of sales
-`Catalog` · **8 pts** · depends: PF-247 · standards: IAS 2 · `risk:high` `type:posting`
+`Inventory` · **8 pts** · depends: PF-247 · standards: IAS 2 · `risk:high` `type:posting`
 
-- [ ] Every movement is typed: receipt, issue, transfer, adjustment, count, return - and carries its reason, because "adjustment" with no reason is where shrinkage hides
-- [ ] Issuing stock posts **Dr cost of sales / Cr inventory** at the item's own cost, computed from the movements before it and frozen on the line
-- [ ] A reversal reverses the cost that was posted, not the cost today - the cost moved between the two, and recomputing would leave the margin on a cancelled sale depending on when it was cancelled
-- [ ] Asserted in `ledger:verify`: the inventory control account equals the sum of quantity-on-hand times cost, per entity. A control account that does not reconcile to its own subsidiary record is the same class of fault as a receivables control that disagrees with the customer ledger
-- [ ] Movements are immutable; a correction is a new movement, because a stock ledger somebody can edit is a stock ledger nobody can audit
+- [x] Every movement is typed, and its sign must match its kind - a receipt that removes stock is somebody undoing one by entering another backwards, which makes the history unreadable. An adjustment carries its reason in the service **and** in a constraint, because "adjustment" with no reason is where shrinkage hides
+- [x] Issuing stock posts **Dr cost of sales / Cr inventory** at the item's own cost, computed from the movements before it and frozen on the line. A receipt credits **goods received not invoiced**, not the payable: the goods are here and the invoice is not, and crediting AP would create a payable no supplier has sent and post it twice when the bill arrives
+- [x] The cost is frozen, proved by receiving at a different price afterwards and asserting the earlier issue did not move - recomputing would make the margin on a sale depend on when somebody asked, and a reversal would reverse a different figure from the one it posted
+- [x] Asserted in `ledger:verify`: the inventory control account equals what the movements are worth, per entity, as a **critical** finding. Proved by writing a movement without its posting - which is what a half-failed write leaves, and the reason the two go in one transaction
+- [x] Movements are immutable and not deletable; a correction is a new movement, and the refusal says so
+- [x] **Found while checking this task:** a unit cost is a **rate**, not an amount. `Money` is at four places and a weighted average of 10 at 4.00 and 5 at 6.00 is 4.666667 - which `Money::of` refuses, correctly, because silently rounding a cost makes the valuation disagree with its own movements by a fraction per unit. The cost is a `BigDecimal` at six places and only the value becomes `Money`
 
 ### PF-249 · Product variants
 `Catalog` · **5 pts** · depends: PF-247 · standards: — · `type:schema`

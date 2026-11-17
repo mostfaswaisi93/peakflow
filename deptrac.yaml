@@ -77,6 +77,11 @@ deptrac:
         - type: directory
           value: app/Tenant/Banking/.*
 
+    - name: Inventory
+      collectors:
+        - type: directory
+          value: app/Tenant/Inventory/.*
+
     - name: Settlement
       collectors:
         - type: directory
@@ -116,9 +121,25 @@ deptrac:
       - Support
       - Tenancy
 
+    # Master data, and deliberately unable to post.
+    #
+    # A price list has no business writing journal entries, so Catalog
+    # gets neither Ledger nor anything transactional. Stock movements
+    # looked like Catalog's and are not - they are documents, and they
+    # live in `Inventory` for exactly this reason.
     Catalog:
       - Support
       - Tenancy
+
+    # Stock: a document module, like Sales and Purchasing.
+    #
+    # Needs the item from Catalog and the ledger to post the cost of what
+    # left. Nothing reads it except Reporting.
+    Inventory:
+      - Support
+      - Tenancy
+      - Ledger
+      - Catalog
 
     Tax:
       - Support
