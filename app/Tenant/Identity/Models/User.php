@@ -32,6 +32,7 @@ use Illuminate\Support\Facades\DB;
  * @property string $email
  * @property bool $active
  * @property ?string $last_entity_id
+ * @property ?string $theme the chosen colour theme; null is "never chose" - UX-004
  */
 final class User extends Authenticatable implements AuthenticatableContract
 {

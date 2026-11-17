@@ -38,6 +38,7 @@ declare(strict_types=1);
  |   php bin/verify roles      what each database role can actually reach
  |   php bin/verify config     .env.example completeness, and the settings production may not get wrong
  |   php bin/verify lang       ICU messages, and the sentences Arabic will not let you assemble
+ |   php bin/verify design     the colour tokens, and the contrast all five themes must keep
  |   php bin/verify errors     what a failure looks like from outside
  |   php bin/verify repo       the commit hook, composer setup, and the laptop setup
  |   php bin/verify ops        the tenant lifecycle on screen, and what it refuses
@@ -299,6 +300,10 @@ if ($only === 'all' || $only === 'lang') {
     $suites['Localization'] = $suite(static fn (): array => (new Tests\Support\LocalizationRules())->all());
 }
 
+if ($only === 'all' || $only === 'design') {
+    $suites['Design tokens'] = $suite(static fn (): array => (new Tests\Support\DesignTokenRules($base))->all());
+}
+
 if ($only === 'all' || $only === 'config') {
     $suites['Configuration'] = $suite(static fn (): array => (new Tests\Support\ConfigurationRules())->all());
 }
@@ -329,7 +334,7 @@ if ($only === 'all' || $only === 'examples') {
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | errors | repo | ops | tax | charts | sales | exchange | attachments | archive | inbound | purchasing | banking | settlement | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | design | errors | repo | ops | tax | charts | sales | exchange | attachments | archive | inbound | purchasing | banking | settlement | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public\n");
     exit(2);
 }
 

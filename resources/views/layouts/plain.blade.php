@@ -1,11 +1,12 @@
 <!DOCTYPE html>
+@php($theme = \App\Support\Ui\ThemePreference::forGuest(request()))
 <html lang="{{ str_replace('_', '-', app()->getLocale()) }}"
       dir="{{ in_array(app()->getLocale(), ['ar', 'he', 'fa', 'ur'], true) ? 'rtl' : 'ltr' }}"
-      class="{{ session('theme') === 'dark' ? 'dark' : '' }}">
+      class="{{ $theme->htmlClass() }}"@if ($theme->dataTheme() !== null) data-theme="{{ $theme->dataTheme() }}"@endif>
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="light dark">
+    <meta name="color-scheme" content="{{ $theme->colorScheme() }}">
 
     {{--
         This layout needs no TENANT.
@@ -16,16 +17,20 @@
         explanation of why resolution failed, and the user would get a redirect
         loop instead of a sentence.
 
-        It does read `session('theme')`, which is safe: StartSession has
-        already run by the time a view renders, and the session store is the
-        platform connection rather than the tenant's. There is no form and no
-        CSRF token, because nothing on these pages is submitted.
+        Which is also why the theme comes from the `theme` COOKIE only
+        (ThemePreference::forGuest) and never from the signed-in user: asking
+        the guard for the user queries the tenant database, which on the
+        tenant-could-not-be-resolved page does not exist. There is no form and
+        no CSRF token, because nothing on these pages is submitted.
     --}}
     <title>{{ $title ?? config('app.name') }}</title>
 
+    @include('partials.theme-boot')
     @vite(['resources/css/app.css'])
 </head>
-<body class="min-h-dvh bg-background text-on-background antialiased">
+{{-- `aurora` is the sign-in page's backdrop (UX-031): static light sources
+     that follow the theme, and a plain page in the high-contrast themes. --}}
+<body @class(['min-h-dvh bg-background text-on-background antialiased', 'aurora' => $aurora ?? false])>
     <main class="mx-auto flex min-h-dvh max-w-xl flex-col justify-center px-6 py-16">
         {{ $slot ?? '' }}
         @yield('content')

@@ -7,6 +7,7 @@ use App\Platform\Http\Controllers\OpsSettingsController;
 use App\Platform\Http\Controllers\OpsTenantController;
 use App\Tenant\Banking\Http\Controllers\StatementImportController;
 use App\Tenant\Identity\Http\Controllers\EntitySwitchController;
+use App\Tenant\Identity\Http\Controllers\ThemePreferenceController;
 use App\Http\Controllers\LoginController;
 use App\Http\Controllers\AttachmentDownloadController;
 use App\Http\Controllers\PublicQuoteController;
@@ -163,6 +164,10 @@ Route::middleware(['tenant.session', 'auth'])->group(static function (): void {
     ]))->name('entity.choose');
 
     Route::post('/entity/switch', EntitySwitchController::class)->name('entity.switch');
+
+    // Outside `entity.scope` too: a person choosing an entity may need the
+    // high-contrast theme to read the chooser at all - UX-004.
+    Route::post('/preferences/theme', ThemePreferenceController::class)->name('preferences.theme');
 });
 
 Route::middleware(['tenant.session', 'auth', 'entity.scope'])->group(static function (): void {

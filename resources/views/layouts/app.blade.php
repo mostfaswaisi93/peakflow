@@ -1,20 +1,22 @@
 <!DOCTYPE html>
+@php($theme = \App\Support\Ui\ThemePreference::forUser(request(), auth()->user()))
 <html lang="{{ str_replace('_', '-', app()->getLocale()) }}"
       dir="{{ in_array(app()->getLocale(), ['ar', 'he', 'fa', 'ur'], true) ? 'rtl' : 'ltr' }}"
-      class="{{ session('theme') === 'dark' ? 'dark' : '' }}">
+      class="{{ $theme->htmlClass() }}"@if ($theme->dataTheme() !== null) data-theme="{{ $theme->dataTheme() }}"@endif>
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="light dark">
+    <meta name="color-scheme" content="{{ $theme->colorScheme() }}">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{{ isset($title) ? $title . ' · ' . config('app.name') : config('app.name') }}</title>
+    @include('partials.theme-boot')
     @vite(['resources/css/app.css'])
 </head>
 <body class="min-h-dvh bg-background text-on-background antialiased">
     {{-- Skip link: the first thing a keyboard user meets, and the switcher
          sits between them and the content otherwise. --}}
     <a href="#content"
-       class="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:m-3 focus:rounded-lg focus:bg-surface focus:px-4 focus:py-2 focus:text-on-surface focus:outline-2 focus:outline-focus-ring">
+       class="sr-only focus:not-sr-only focus:absolute focus:z-(--z-skip) focus:m-3 focus:rounded-lg focus:bg-surface focus:px-4 focus:py-2 focus:text-on-surface focus:outline-2 focus:outline-focus-ring">
         {{ __('تخطَّ إلى المحتوى') }}
     </a>
 
@@ -32,7 +34,7 @@
             not an answer anybody finds reassuring.
         --}}
         <div role="alert"
-             class="sticky top-0 z-40 border-b-2 border-warning bg-warning px-6 py-2 text-center text-sm font-medium text-on-warning">
+             class="sticky top-0 z-(--z-floating) border-b-2 border-warning bg-warning px-6 py-2 text-center text-sm font-medium text-on-warning">
             {{ __('أنت تتصفح بالنيابة عن هذه المساحة بصفة :operator. كل إجراء يُسجَّل.', [
                 'operator' => session('impersonated_by'),
             ]) }}
@@ -46,6 +48,7 @@
             @include('partials.entity-switcher')
 
             <div class="ms-auto flex items-center gap-4">
+                @include('partials.theme-switcher')
                 <span class="text-sm text-on-surface-muted">{{ auth()->user()?->name }}</span>
                 <form method="POST" action="{{ route('logout') }}">
                     @csrf
@@ -71,6 +74,9 @@
     <div role="status" aria-live="polite" class="sr-only">
         @if (session('entity_switched'))
             {{ __('تم التبديل إلى :entity', ['entity' => session('entity_switched')]) }}
+        @endif
+        @if (session('theme_switched'))
+            {{ __('تم تغيير المظهر إلى :theme', ['theme' => session('theme_switched')]) }}
         @endif
     </div>
 

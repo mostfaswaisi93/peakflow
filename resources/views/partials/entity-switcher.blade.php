@@ -30,7 +30,7 @@
                 posting into is the right level of robustness.
             --}}
             <select id="entity-switcher" name="entity" onchange="this.form.requestSubmit()"
-                    class="rounded-lg border border-outline bg-surface-sunken px-3 py-1.5 text-sm font-medium text-on-surface
+                    class="rounded-lg border border-outline-control bg-surface-sunken px-3 py-1.5 text-sm font-medium text-on-surface
                            focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                 @foreach ($available as $entity)
                     <option value="{{ $entity->id }}" @selected($entity->id === $current->id)>

@@ -54,11 +54,11 @@
                             </p>
                         </div>
                         <input id="v-{{ $setting->id }}" name="value" value="{{ $setting->value }}" required
-                               class="figure w-24 rounded-lg border border-outline bg-surface-sunken px-2 py-1 text-on-surface
+                               class="figure w-24 rounded-lg border border-outline-control bg-surface-sunken px-2 py-1 text-on-surface
                                       focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                         <label for="r-{{ $setting->id }}" class="sr-only">{{ __('السبب') }}</label>
                         <input id="r-{{ $setting->id }}" name="reason" required minlength="8" placeholder="{{ __('السبب') }}"
-                               class="w-48 rounded-lg border border-outline bg-surface-sunken px-2 py-1 text-xs text-on-surface
+                               class="w-48 rounded-lg border border-outline-control bg-surface-sunken px-2 py-1 text-xs text-on-surface
                                       focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                         <button type="submit"
                                 class="rounded-lg border border-outline px-3 py-1.5 text-xs font-medium text-on-surface
