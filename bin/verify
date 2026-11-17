@@ -45,7 +45,7 @@ declare(strict_types=1);
  |   php bin/verify charts     the chart templates, and the charts they produce
  |   php bin/verify sales      the invoice: what a draft refuses, and what issuing guarantees
  |   php bin/verify banking    bank accounts, balances, statements, what a bank sends, and matching
- |   php bin/verify settlement payments, unapplied cash and allocations
+ |   php bin/verify settlement payments, allocations and the payment file
  |   php bin/verify property   the balanced-entry invariant over generated entries
  |   php bin/verify group      inter-entity postings across a four-entity group
  |   php bin/verify manual     manual journal entry: validation, templates, import
@@ -276,6 +276,7 @@ if ($only === 'all' || $only === 'banking') {
 
 if ($only === 'all' || $only === 'settlement') {
     $suites['Payments, unapplied cash and allocations'] = $suite(static fn (): array => (new Tests\Support\SettlementRules())->all());
+    $suites['The payment instruction file'] = $suite(static fn (): array => (new Tests\Support\PaymentFileRules())->all());
 }
 
 if ($only === 'all' || $only === 'sod') {

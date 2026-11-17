@@ -41,6 +41,19 @@ use Illuminate\Support\Facades\Gate;
  *
  * ## Why a service and not a method on the model
  *
+ * ## Why these are `ibanOf()` and not `revealIban()`
+ *
+ * They shared the model's names, and the architecture rule that forbids
+ * calling the model directly is a regex over `->revealIban(`. It cannot
+ * tell `$account->revealIban()` from `$disclosure->revealIban()`, so the
+ * first legitimate caller of this service - PF-176's rulebook check, which
+ * needs the IBAN to put in a payment file - would have been reported as the
+ * violation the rule exists to catch.
+ *
+ * Annotating that call would have defeated the rule at the one site it was
+ * written for. Renaming these instead makes the rule exact: `revealIban`
+ * now appears only on the model, so every match is a genuine direct read.
+ *
  * Because the model's `revealIban()` is the raw accessor, and an architecture
  * rule confines its callers to this class. The rule is what makes the control
  * real: a future payment-file builder reaching for the model directly fails
@@ -60,7 +73,7 @@ final class BankDetailDisclosure
      *
      * @throws DisclosureRefused
      */
-    public function revealIban(PartyBankAccount $account, string $reason): string
+    public function ibanOf(PartyBankAccount $account, string $reason): string
     {
         $this->assertMayRead($account, $reason);
 
@@ -80,7 +93,7 @@ final class BankDetailDisclosure
      *
      * @throws DisclosureRefused
      */
-    public function revealAccountNumber(PartyBankAccount $account, string $reason): string
+    public function accountNumberOf(PartyBankAccount $account, string $reason): string
     {
         $this->assertMayRead($account, $reason);
 
@@ -91,6 +104,72 @@ final class BankDetailDisclosure
         }
 
         $this->recordTheRead($account, 'account_number', $reason);
+
+        return $number;
+    }
+
+    /**
+     * The account number for a payment instruction - PF-176.
+     *
+     * ## Why this is not a disclosure
+     *
+     * {@see ibanOf()} shows a number to a person and demands
+     * `bank.manage` for it, because somebody who can see a supplier's
+     * account can use it anywhere.
+     *
+     * A payment file is a different act. The number goes into a
+     * machine-readable instruction that goes to the bank; nobody reads
+     * it, and the person producing the file has already been through
+     * maker-checker, step-up and a review of what changed.
+     *
+     * ## And requiring `bank.manage` here would create the hole
+     *
+     * `bank.manage` is what lets somebody CHANGE a supplier's bank
+     * details. `beneficiary_then_release` exists precisely to stop the
+     * person who changed them from sending the payment - so demanding
+     * `bank.manage` of whoever produces the file would hand that
+     * permission to every treasury clerk who needs to send one, and the
+     * duty pair would start firing on the people doing their jobs.
+     *
+     * A control that forces the conflict it guards against is worse than
+     * no control. So this one asks for `payment.release`: the duty that
+     * already governs money leaving.
+     *
+     * ## It is still recorded, under its own action
+     *
+     * `party.bank_account.instructed` rather than `.disclosed`, so an
+     * investigation can tell "somebody looked at this account" from "this
+     * account went into a file" - which are different questions with
+     * different answers, and one log entry for both would answer neither.
+     *
+     * @throws DisclosureRefused
+     */
+    public function forAnInstruction(PartyBankAccount $account, string $reason): string
+    {
+        if (Gate::denies('payment.release')) {
+            throw DisclosureRefused::notPermittedForAnInstruction($account->masked());
+        }
+
+        if (mb_strlen(trim($reason)) < 10) {
+            throw DisclosureRefused::needsAReason($account->masked());
+        }
+
+        $number = $account->revealIban() ?? $account->revealAccountNumber();
+
+        if ($number === null) {
+            throw DisclosureRefused::noIban($account->masked());
+        }
+
+        $this->audit->record(
+            category: 'read',
+            action: 'party.bank_account.instructed',
+            subjectType: PartyBankAccount::class,
+            subjectId: (string) $account->getKey(),
+            subjectLabel: $account->masked(),
+            after: ['field' => $account->revealIban() === null ? 'account_number' : 'iban'],
+            reason: $reason,
+            partyId: (string) $account->party_id,
+        );
 
         return $number;
     }

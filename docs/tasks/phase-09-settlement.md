@@ -101,11 +101,13 @@ The single highest-consequence control in the product.
 ### PF-176 · PAIN.001 generation
 `Settlement` · **8 pts** · depends: PF-175 · standards: ISO 20022 PAIN.001.001.09, EPC SEPA SCT · `risk:high`
 
-- [ ] Payment instruction file with correct message, payment-information and transaction-level grouping
-- [ ] **SEPA rulebook constraints validated before the file is produced**, not after it is rejected: IBAN reachability, the restricted Latin character set, the 140-character remittance limit, amount ceilings, execution-date rules
-- [ ] An Arabic beneficiary name must be transliterated for a SEPA payment, and **the user is shown exactly what will be sent** rather than having it silently mangled
-- [ ] Non-SEPA schemes produce their own variants, declared by the bank profile
-- [ ] The generated file is hashed, archived and downloadable once; regenerating produces a new file with a new hash and an audit entry
+- [x] Payment instruction file with correct message, payment-information and transaction-level grouping. One `PmtInf` block per (debtor account, execution date, service level), which is what a run is - built as a block rather than flattened, so a run paying from two accounts is two blocks and nothing else changes. The element order comes from a declared sequence table and not from the control flow that emitted it, because a bank rejecting a misplaced element names the one it did not expect rather than the one out of place
+- [x] **SEPA rulebook constraints validated before the file is produced**, not after it is rejected: reachability, the restricted Latin character set, the remittance limit, amount ceilings, execution-date rules. Every problem is reported at once with the beneficiary named, because throwing on the first means three rounds of fix-and-retry and the third is where somebody starts editing XML by hand
+- [x] An Arabic beneficiary name must be transliterated for a SEPA payment, and **the user is shown exactly what will be sent** rather than having it silently mangled - as the name's consonants, declared lossy, with the original beside it, because Arabic does not write short vowels and a guessed one is a different name that the beneficiary's bank will not match
+- [x] Non-SEPA schemes produce their own variants, declared by the bank profile. The scheme is on the **account**, because it is the bank that accepts the file - and there is deliberately no default: a file built to the wrong rulebook passes every check here and is rejected by the bank
+- [x] The generated file is hashed, archived and downloadable once; regenerating produces a new file with a new hash and an audit entry. Both are kept and the superseded one points at its replacement with a reason, because "which file did we actually send" is the question an investigation starts with
+- [x] **And:** the file carries the run's `released_hash`, so "is this the file for what was approved" is a string comparison rather than a reconstruction - and the database refuses a file whose hash is not the run's own
+- [x] **Found while checking this task:** reading a beneficiary's IBAN needed `bank.manage`, which is the permission that lets somebody **change** supplier bank details - so requiring it to produce a file would have handed every treasury clerk the permission `beneficiary_then_release` exists to keep away from them. A control that forces the conflict it guards against is worse than no control; the file path asks for `payment.release` instead, under its own audit action
 
 ### PF-177 · Direct debit
 `Settlement` · **5 pts** · depends: PF-176 · standards: ISO 20022 PAIN.008, EPC SEPA SDD

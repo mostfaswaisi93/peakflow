@@ -950,7 +950,7 @@ final class PartyEnforcementRules
 
         auth()->guard('web')->setUser($receivablesClerk);
 
-        $refused = $this->refusal(fn () => $disclosure->revealIban(
+        $refused = $this->refusal(fn () => $disclosure->ibanOf(
             $account,
             'reading it as a receivables clerk, who should not be able to',
         ));
@@ -970,7 +970,7 @@ final class PartyEnforcementRules
             ->where('subject_id', $account->getKey())
             ->count();
 
-        $revealed = $disclosure->revealIban($account, 'preparing the October payment run for this supplier');
+        $revealed = $disclosure->ibanOf($account, 'preparing the October payment run for this supplier');
 
         if ($revealed !== $iban) {
             $violations[] = sprintf('the disclosure returned "%s" rather than the stored account', $revealed);
@@ -1027,7 +1027,7 @@ final class PartyEnforcementRules
                 'whether it was read but why';
         }
 
-        $thin = $this->refusal(fn () => $disclosure->revealIban($account, 'look'));
+        $thin = $this->refusal(fn () => $disclosure->ibanOf($account, 'look'));
 
         if ($thin === null || ! str_contains($thin, 'at least ten characters')) {
             $violations[] = 'a read with no real reason was allowed. A reason nobody typed is a question '.

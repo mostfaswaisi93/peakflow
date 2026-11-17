@@ -351,3 +351,72 @@ It is written in the same statement as the release, so there is no instant in wh
 `beforeRelease()` returns the run, the changes, the hash, whether the viewer is the preparer and whether a factor is needed. A release refused at the last step is a release somebody has already decided to make, and the diff arriving then reads as an obstacle rather than as information.
 
 > **What the bite sweep took three attempts to catch.** Removing `orderBy('id')` from the hash input — leaving the order to whatever a query returned — fired no check twice over. The first version of the check rewrote every instruction in one statement, giving them all the same timestamp so any ordering agreed by accident; the second touched the row that was *already first* by id, which a descending timestamp order also puts first. Only moving the row that is **last** by id to the front of a timestamp order tells the two apart. A hash that moved there would stop matching the file after a vacuum, an index rebuild or a replica read, for reasons nobody could explain.
+
+## The payment instruction file — PF-176
+
+### A payment file is rejected as a whole
+
+One beneficiary name with a forbidden character, one remittance line two characters too long, one execution date on a Sunday: the bank returns the batch and **nobody is paid**. The rejection arrives hours later, by email, naming an XPath into a document the person who built it cannot read.
+
+So every constraint the scheme imposes is declared as data and checked **before the file is produced**, against the run somebody is looking at, with the beneficiary named. That is the difference between a control and a log.
+
+Everything is reported at once rather than the first problem only. A run of forty transfers with three problems should report three: throwing on the first means three rounds of fix-and-retry, each of which is a person waiting on a file, and the third round is where somebody starts editing the XML by hand.
+
+### The scheme is on the account, and there is no default
+
+Not on the entity and not in a global setting. An entity with a euro account in Frankfurt and a riyal account in Riyadh sends SEPA from one and a local file from the other, and a product with one hard-coded format serves whichever customer it was written for.
+
+`bank_accounts.payment_scheme` is nullable with **no default**, and an account that declares none cannot produce a file — the refusal names the schemes that exist. A default would pick one, and the first time it picked wrong the file would be built to the wrong rulebook, pass every check in this product and be rejected by the bank.
+
+### Three levels, and the grouping decision between them
+
+| Level | Element | One per |
+|---|---|---|
+| Message | `GrpHdr` | File |
+| Payment information | `PmtInf` | Debtor account, execution date, service level |
+| Transaction | `CdtTrfTxInf` | Instruction |
+
+A run pays from one account on one date, so this produces one block — but the structure is built as a block rather than flattened, because a run paying from two accounts would be two blocks and nothing else about the file would change, whereas a flattened generator would have to be rewritten.
+
+`BtchBookg` is `false`, deliberately: it asks the bank for one debit per transaction. Both are legal and PF-156's pass 2 matches either, but a statement with a line per transfer is one a person can reconcile against the run's instructions by eye.
+
+### Element order is not a style question
+
+Every ISO 20022 complex type is an `xsd:sequence`. The serializer builds children in whatever order reads best and the writer sorts them into a declared sequence table; an element with no declared position is an **error** rather than something appended at the end.
+
+A check walks the produced file and asserts every element is where its sequence says — which asserts the *table* rather than the writer. A sequence with two entries transposed produces a file that validates in this product and fails at the bank, and nothing else would catch it.
+
+### Determinism, because the file is hashed
+
+The same run renders byte-identically: no timestamps generated at render time, no ids from a sequence, no formatting that depends on nesting depth. The message id and creation time are passed in. Instructions are ordered by id — the same order PF-175's hash uses, for the same reason.
+
+### What the counterparty will read
+
+The EPC restricted set is letters, digits, space and `/ - ? : ( ) . , ' +`. Nothing else.
+
+| | | |
+|---|---|---|
+| `Müller & Søn GmbH` | → | `Mueller AND Soen GmbH` |
+| `Société Générale` | → | `Societe Generale` |
+| `Straße 1` | → | `Strasse 1` |
+| `شركة الخليج للتجارة` | → | `SHRKH ALKHLYJ LLTJARH` |
+
+The Latin expansions are the conventional ones and are **not** reported as lossy: a German supplier reads `UE` as their own name and `U` as a typo. The ampersand matters most — forbidden, extremely common in trade names, and dropping it turns "Smith & Sons" into "Smith  Sons".
+
+**Arabic is lossy and says so.** Arabic script does not write short vowels, so `محمد` can only become `MHMD` by a strict letter mapping or `MUHAMMAD` by guessing. This does the first and never the second: a guessed vowel is a different name, and the beneficiary's bank matching a name against their records is who decides whether it is close enough. The result is shown with the original beside it and a sentence saying it can be overridden.
+
+Not `iconv('ASCII//TRANSLIT')`: its output depends on the locale and the libc build, so the same name transliterates differently on a developer's machine and in production — which for a hashed file means the bytes that were hashed are not the bytes that go out. It also drops what it cannot map, silently.
+
+### Bound to what was authorised
+
+The file carries the run's `released_hash` as `authorised_hash`, and the database refuses a file whose hash is not the run's own. So "is this the file for what was approved" is a string comparison rather than a reconstruction from two tables and an argument — which is exactly why PF-175 hashes the instruction set rather than a file.
+
+### Handed over once
+
+A payment file is an instrument. Two copies in circulation is two chances for somebody to upload the second one after the first was processed, and the bank's duplicate detection is not something to rely on.
+
+The first hand-over is recorded and the database refuses a second — including clearing the column, which is the obvious shortcut. Regeneration supersedes with a reason and a new message id, because a bank rejecting a duplicate message id rejects the whole file and the usual cause is a regeneration reusing the id of the one already accepted. Nothing is deleted, and a payment file cannot be deleted at all.
+
+> **A control that would have created the hole it guards.** Reading a beneficiary's IBAN went through `BankDetailDisclosure`, which requires `bank.manage` — and that is the permission that lets somebody **change** supplier bank details. Requiring it to produce a payment file would have handed it to every treasury clerk who needs to send one, and `beneficiary_then_release` would have started firing on people doing their jobs. A payment file is not a disclosure to a person: the number goes into a machine-readable instruction, and the producer has already been through maker-checker, step-up and a review of what changed. So the file path asks for `payment.release` — the duty that already governs money leaving — and records the read under `party.bank_account.instructed`, so an investigation can tell "somebody looked at this account" from "this account went into a file".
+
+> **And the fixtures had to become three people.** The first draft of the file checks signed one user in to do everything, and `beneficiary_then_release` refused every release. The second separated the supplier maintainer and was refused by `prepare_then_release`. The third needed a real enrolled factor on top. The product requires three people and a second factor to send money, so a fixture that wanted a file had to supply all of it — which is the controls working on the checks written to exercise them.
