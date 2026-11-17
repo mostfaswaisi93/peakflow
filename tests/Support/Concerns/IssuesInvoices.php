@@ -81,6 +81,20 @@ trait IssuesInvoices
         return str_repeat('0', 26);
     }
 
+    /**
+     * Somebody else - for every control that needs two people.
+     *
+     * Approving a bill, verifying a bank account, releasing a payment
+     * run, approving a write-off. Defined once because "a different
+     * person" is one idea, and two fixtures disagreeing about who the
+     * second person is would let a self-approval check pass on a pair of
+     * ids that happened to differ.
+     */
+    protected function secondActorId(): string
+    {
+        return str_repeat('1', 26);
+    }
+
     protected function entity(): Entity
     {
         \assert($this->fixtureEntity !== null);

@@ -195,6 +195,18 @@ return [
             7 => 'fuzzy_party',
         ],
 
+        /*
+         | How far a payment-run debit may sit from the run's pay date.
+         |
+         | Wider than the five days the document passes allow, because a
+         | run's pay date is a request rather than an observation: the
+         | bank executes on the next business day, a cross-border transfer
+         | takes longer, and a file sent on a Thursday before a holiday
+         | lands the following week. Narrowing it to five would leave
+         | exactly those runs to be matched by hand.
+         */
+        'payment_run_window_days' => 10,
+
         // A tenant sets its own threshold and may LOWER it freely. The ceiling
         // is the operator's, and a tenant cannot raise past it.
         'auto_apply_threshold' => 0.90,

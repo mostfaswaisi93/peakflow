@@ -537,3 +537,42 @@ accounts_payable ──release──► payments_in_transit ──statement matc
 ```
 
 The in-transit account is what makes the tie between AP, the bank and the GL possible. It **ages**, and an aged in-transit item means a payment that left the system and never appeared on a statement — a question worth asking, so it is reported and alerted. `ledger:verify` asserts in-transit equals released-and-unreconciled.
+
+## Pass 2: the payment run — PF-156
+
+### The one pass that matches against something we sent
+
+Every other document pass compares a bank line against something a counterparty did: an invoice they owe, a reference they typed, a figure they happened to pay. This one compares it against an instruction **we** issued, on a date we chose, for an amount we computed.
+
+That is why it sits second — above structured remittance and below an exact reference. We know what we sent; the only question is which debit on the statement is it. Its base is 0.75.
+
+### Two shapes, because banks debit batches two ways
+
+A bank handed a payment file either debits the whole batch as one line, or debits each transfer separately. Both are normal, both are what the same file produces at different banks, and an engine that only knew one would leave every statement from the other bank to be matched by hand.
+
+| Shape | `matched_type` | Why it scores where it does |
+|---|---|---|
+| The run's total | `payment_run` | The figure was computed from the run's own lines minutes before the file went out. Little else on the statement is likely to equal it. |
+| One transfer within it | `payment_run_instruction` | A 3,000 transfer in a run of forty is a figure other things on the statement may also equal, and two instructions in one run at the same amount identify neither. |
+
+A single-instruction run carries a penalty rather than the batch bonus: its total **is** its one transfer, so "the batch total matches" and "a transfer matches" are the same fact counted once — and that fact is no more deliberate than any other payment of that amount.
+
+### Only released runs, and only once
+
+A prepared run has not been sent, so a debit equal to its total is a coincidence; proposing it would invite somebody to accept a match for money that never left.
+
+A run already matched is excluded too, at the pass **and** again at acceptance. The pass declines to propose what it has already matched; a pass cannot defend against two proposals accepted in the same second, and the acceptance can. Two statement lines equal to one released batch means either the bank debited twice or this is a different payment — and recording the same money leaving twice produces a reconciliation that balances while saying it.
+
+The acceptance check is its own path, because the document one asks a receivable what it still owes and a payment run has no outstanding balance to absorb anything. The questions are different ones: is it still released, is the figure still the one it was proposed for, and has this debit already been accounted for.
+
+### It never matches a receipt
+
+A payment run pays suppliers. An incoming credit equal to a run's total is a coincidence with a very bad reading — "we were refunded exactly the batch we sent" — and proposing it would put that reading in front of somebody as though the engine believed it.
+
+### What the score is made of
+
+Beyond the shape: the pay date (on the day, within days, or well after — a debit eight days from the pay date means less), the beneficiary being **identified** from the account the bank paid, and the account's last four digits agreeing where nothing stronger is available. The last four costs nothing and decrypts nothing — `last_four` is stored in the clear for exactly this — and is weak evidence, since four digits collide, so it never carries a match on its own.
+
+The window is wider than the five days the document passes allow: ten, because a run's pay date is a request rather than an observation. The bank executes on the next business day, a cross-border transfer takes longer, and a file sent on a Thursday before a holiday lands the following week.
+
+> **A defect this pass found in the payment run.** A matching fixture built two runs of 9,000 and got a second one worth 18,000. A payment run does not reduce a bill's open balance — the payment does, which is PF-176's business — so a bill selected into Monday's released run was selected again by Tuesday's, and both could be released. The supplier is paid twice and the second debit looks as ordinary as the first. The selection now excludes payables held by a prepared or released run, and deliberately **not** by a draft: nothing in a draft has been checked or can be released, so blocking on one would let an abandoned draft hold payables hostage with nothing on the screen saying why.

@@ -23,6 +23,7 @@ namespace App\Tenant\Banking\Matching;
  * | `rule_engine` | 0.95 | A human wrote the rule and said what it means. The engine is not guessing; it is doing what it was told. |
  * | `structured_remittance` | 0.90 | The payer put the document number in a field that exists for it. Nothing else is this deliberate. |
  * | `exact_reference` | 0.80 | The reference is there, in free text - which the payer typed, and which their bank may have mangled. |
+ * | `payment_run` | 0.75 | We issued the instruction, on a date we chose, for an amount we computed. The only question is which debit it is. |
  * | `amount_party_window` | 0.60 | Circumstantial. Right far more often than not, and never on its own evidence. |
  * | `subset_sum` | 0.55 | Arithmetic, not evidence. A combination that adds up is a combination that adds up. |
  * | `fuzzy_party` | 0.40 | A guess about who, with nothing about what. |

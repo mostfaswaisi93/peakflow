@@ -477,6 +477,12 @@ final class Matches
         $currency = (string) $proposal->currency;
         $amount = Money::of((string) $proposal->amount, $currency)->abs();
 
+        if (\in_array((string) $proposal->matched_type, ['payment_run', 'payment_run_instruction'], true)) {
+            $this->assertTheRunFits($proposal, $amount);
+
+            return;
+        }
+
         $open = $proposal->matched_type === 'invoice'
             ? $this->documents->receivables((string) $proposal->entity_id, $currency)
             : $this->documents->payables((string) $proposal->entity_id, $currency);
@@ -515,6 +521,90 @@ final class Matches
         ));
     }
 
+    /**
+     * A payment-run match fits if the run still says that figure, once.
+     *
+     * The document path asks whether a receivable can still absorb the
+     * amount. A payment run has no outstanding balance to absorb
+     * anything: it is an instruction that was sent, so the questions are
+     * different ones - is it still released, is the figure still the one
+     * it was proposed for, and has this debit already been accounted for
+     * by another line.
+     *
+     * The last is the important one. A released run matching two bank
+     * lines is a duplicate payment, and the pass declines to propose one
+     * it has already matched - but a pass cannot defend against two
+     * proposals accepted in the same second, and this is the moment that
+     * can.
+     *
+     * @throws MatchRefused
+     */
+    private function assertTheRunFits(MatchProposal $proposal, Money $amount): void
+    {
+        $id = (string) $proposal->matched_id;
+        $isBatch = (string) $proposal->matched_type === 'payment_run';
+
+        $row = $isBatch
+            ? DB::connection('tenant')->selectOne(
+                'SELECT r.number AS label, r.state, r.net_total::text AS figure '.
+                'FROM payment_runs r WHERE r.id = ? AND r.entity_id = ?',
+                [$id, (string) $proposal->entity_id],
+            )
+            : DB::connection('tenant')->selectOne(
+                'SELECT r.number AS label, r.state, i.amount::text AS figure '.
+                'FROM payment_run_instructions i JOIN payment_runs r ON r.id = i.run_id '.
+                'WHERE i.id = ? AND i.entity_id = ?',
+                [$id, (string) $proposal->entity_id],
+            );
+
+        if ($row === null) {
+            throw MatchRefused::because(
+                $isBatch
+                    ? 'The payment run this proposal names no longer exists in this entity.'
+                    : 'The transfer this proposal names no longer exists in this entity.',
+            );
+        }
+
+        if ((string) $row->state !== 'released') {
+            throw MatchRefused::because(sprintf(
+                'Run %s is %s, not released, so no money has left for this debit to be. A debit '.
+                'equal to a prepared run\'s total is a coincidence, and accepting it would record a '.
+                'payment the business has not made.',
+                (string) $row->label,
+                (string) $row->state,
+            ));
+        }
+
+        if (! Money::of((string) $row->figure, $amount->currency)->equals($amount)) {
+            throw MatchRefused::because(sprintf(
+                'This proposal is for %s and run %s now says %s. A released run is frozen, so that '.
+                'is the proposal having been made against a different row - re-run the matching for '.
+                'this transaction.',
+                (string) $amount->toPresentation(),
+                (string) $row->label,
+                (string) Money::of((string) $row->figure, $amount->currency)->toPresentation(),
+            ));
+        }
+
+        $already = DB::connection('tenant')->selectOne(<<<'SQL'
+            SELECT m.bank_transaction_id::text AS line
+            FROM matches m
+            WHERE m.matched_type = ?
+              AND m.matched_id = ?
+              AND m.reversed_at IS NULL
+            LIMIT 1
+        SQL, [(string) $proposal->matched_type, $id]);
+
+        if ($already !== null && (string) $already->line !== (string) $proposal->bank_transaction_id) {
+            throw MatchRefused::because(sprintf(
+                '%s is already matched to another bank line, so accepting this one would say the '.
+                'same money left twice. If this debit is a second payment, it needs its own run - '.
+                'and if the first match was wrong, reverse that one.',
+                $isBatch ? sprintf('Run %s', (string) $row->label) : sprintf('That transfer in run %s', (string) $row->label),
+            ));
+        }
+    }
+
     private function learnFrom(MatchProposal $proposal, BankTransaction $transaction, string $userId): int
     {
         $partyId = $this->partyOf($proposal);
@@ -540,7 +630,26 @@ final class Matches
             return null;
         }
 
-        $table = $proposal->matched_type === 'invoice' ? 'invoices' : 'bills';
+        /*
+         | A batch debit names no single party, and an instruction does.
+         |
+         | Learning the counterparty account from an accepted instruction
+         | match is how pass 3 gets better for suppliers: the account the
+         | bank paid becomes the identifier that identifies them next
+         | time. A batch line is several beneficiaries at once, so there
+         | is nothing to learn from it and pretending otherwise would
+         | teach the engine that one supplier owns the batch account.
+         */
+        $table = match ((string) $proposal->matched_type) {
+            'invoice' => 'invoices',
+            'payment_run_instruction' => 'payment_run_instructions',
+            'payment_run' => null,
+            default => 'bills',
+        };
+
+        if ($table === null) {
+            return null;
+        }
 
         $party = DB::connection('tenant')->table($table)
             ->where('id', (string) $proposal->matched_id)

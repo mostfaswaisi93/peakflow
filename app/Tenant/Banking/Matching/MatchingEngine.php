@@ -9,6 +9,7 @@ use App\Tenant\Banking\Matching\Passes\AmountPartyWindowPass;
 use App\Tenant\Banking\Matching\Passes\ExactReferencePass;
 use App\Tenant\Banking\Matching\Passes\FuzzyPartyPass;
 use App\Tenant\Banking\Matching\Passes\MatchingPass;
+use App\Tenant\Banking\Matching\Passes\PaymentRunPass;
 use App\Tenant\Banking\Matching\Passes\RuleEnginePass;
 use App\Tenant\Banking\Matching\Passes\StructuredRemittancePass;
 use App\Tenant\Banking\Matching\Passes\SubsetSumPass;
@@ -73,6 +74,7 @@ final class MatchingEngine
     ) {
         $this->passes = $passes ?? [
             new ExactReferencePass(),
+            new PaymentRunPass(),
             new StructuredRemittancePass(),
             new AmountPartyWindowPass(),
             new SubsetSumPass(),
@@ -526,6 +528,15 @@ final class MatchingEngine
         return match ($pass) {
             'exact_reference' => 'the transaction carries no remittance text, reference or counterparty name to find a document number in',
             'structured_remittance' => 'the transaction carries no structured remittance, which most payers never fill in',
+            /*
+             | The sign, which is the whole question for this pass.
+             |
+             | A payment run pays suppliers, so an incoming credit cannot
+             | be one however well the figure agrees - and a credit equal
+             | to a batch total has a very bad reading that the engine
+             | should not put in front of anybody.
+             */
+            'payment_run' => 'this is money coming in, and a payment run is money going out',
             'subset_sum' => \count($context->candidates()) < 2
                 ? 'there are fewer than two open documents, so there is no combination to search for'
                 : 'a single open document already settles this amount exactly, so a combination adding to the same figure would be a worse answer',

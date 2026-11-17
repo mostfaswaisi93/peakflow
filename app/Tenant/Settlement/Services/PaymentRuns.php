@@ -584,6 +584,33 @@ final class PaymentRuns
                */
               AND b.approved_at IS NOT NULL
               AND peakflow_document_open_balance('bill', b.id) > 0
+              /*
+               | And not already in a run that is going out or has gone.
+               |
+               | A payment run does not reduce a bill's open balance -
+               | the payment does, and that is PF-176's business - so
+               | without this a bill selected into Monday's released run
+               | is selected again by Tuesday's, and both can be
+               | released. The supplier is paid twice and the second
+               | debit looks as ordinary as the first.
+               |
+               | Prepared runs count too. A bill sitting in a prepared
+               | run is a bill somebody is about to release, and two runs
+               | that both hold it is the same duplicate arriving a day
+               | earlier.
+               |
+               | A draft does not: nothing has been checked and nothing
+               | can be released, so blocking on one would let an
+               | abandoned draft hold payables hostage with nobody able
+               | to see why they are missing.
+               */
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM payment_run_items pri
+                  JOIN payment_runs pr ON pr.id = pri.run_id
+                  WHERE pri.bill_id = b.id
+                    AND pr.state IN ('prepared', 'released')
+              )
               AND (
                   /*
                    | Due by the horizon, OR offering a discount that

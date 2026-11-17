@@ -19,6 +19,7 @@ use App\Tenant\Banking\Services\Matches;
 use App\Tenant\Banking\Services\MatchingRules as RuleWriter;
 use App\Tenant\Sales\Models\Invoice;
 use Brick\Math\BigDecimal;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -42,6 +43,7 @@ use Illuminate\Support\Str;
 final class MatchingRules
 {
     use \Tests\Support\Concerns\OpensBankAccounts;
+    use \Tests\Support\Concerns\PreparesPaymentRuns;
 
     /** @return array<string, list<string>> */
     public function all(): array
@@ -74,6 +76,17 @@ final class MatchingRules
                 'the outstanding figure is recomputed, not stored' => fn (): array => $this->outstandingIsRecomputed(),
                 'a settled document is not a candidate' => fn (): array => $this->settledIsNotOffered(),
                 'every proposal carries a reason that says something' => fn (): array => $this->reasonsSaySomething(),
+
+                // ---- Pass 2: the payment run - PF-156 ------------------
+                'a debit equal to a released batch is that run' => fn (): array => $this->batchDebit(),
+                'a debit equal to one transfer in it is that transfer' => fn (): array => $this->instructionDebit(),
+                'a credit is never a payment run, however well it agrees' => fn (): array => $this->aRunIsNeverAReceipt(),
+                'a run nobody released is not proposed' => fn (): array => $this->onlyReleasedRuns(),
+                'a run already matched is not proposed again' => fn (): array => $this->aRunMatchesOnce(),
+                'and accepting it twice is refused outright' => fn (): array => $this->runAcceptanceIsChecked(),
+                'two transfers at one amount identify neither' => fn (): array => $this->twoTransfersAtOneAmount(),
+                'the account the bank paid is part of the score' => fn (): array => $this->beneficiaryEvidence(),
+                'a debit far from the pay date scores lower for it' => fn (): array => $this->payDateMatters(),
 
                 // ---- Passes 3 and 4 - PF-157 ---------------------------
                 'structured remittance scores above free text' => fn (): array => $this->structuredBeatsFreeText(),
@@ -1984,7 +1997,471 @@ final class MatchingRules
         return $failures;
     }
 
+
+    // ---- Pass 2: the payment run - PF-156 ---------------------------------
+
+    /**
+     * A debit equal to a released run's total is proposed as that run.
+     *
+     * @return list<string>
+     */
+    private function batchDebit(): array
+    {
+        $run = $this->aReleasedRunPaying('9000.0000');
+
+        $this->importLines([$this->line('-9000.0000', [
+            'bank_reference' => 'REF-BATCH',
+            'counterparty_name' => 'Al Rajhi Bank outgoing batch',
+        ])]);
+
+        $considered = app(MatchingEngine::class)->consider($this->transactionBy('REF-BATCH'));
+        $candidate = $this->candidateOfType($considered, 'payment_run');
+
+        if ($candidate === null) {
+            return [sprintf(
+                'a debit of exactly 9,000 on the day run %s paid 9,000 was not proposed as that run, so '.
+                'every statement from a bank that debits the batch as one line is matched by hand',
+                $run['number'],
+            )];
+        }
+
+        $failures = [];
+
+        if ($candidate->matchedId !== $run['id']) {
+            $failures[] = 'the proposal names a different run than the one released for this amount';
+        }
+
+        if ($candidate->confidence < 0.80) {
+            $failures[] = sprintf(
+                'a batch total matching exactly scored %.2f, below the 0.80 that makes it the strong '.
+                'signal it is - the figure was computed from the run\'s own lines minutes before the '.
+                'file went out',
+                $candidate->confidence,
+            );
+        }
+
+        if (! str_contains($candidate->reason, $run['number'])) {
+            $failures[] = 'the reason does not name the run, so whoever reads it cannot go and look at what was paid';
+        }
+
+        return $failures;
+    }
+
+    /**
+     * A debit equal to one transfer within the run is proposed as that transfer.
+     *
+     * @return list<string>
+     */
+    private function instructionDebit(): array
+    {
+        $run = $this->aReleasedRunPaying('4000.0000', '5000.0000');
+
+        $this->importLines([$this->line('-4000.0000', [
+            'bank_reference' => 'REF-ONE',
+            'counterparty_name' => 'Outgoing transfer',
+        ])]);
+
+        $considered = app(MatchingEngine::class)->consider($this->transactionBy('REF-ONE'));
+        $candidate = $this->candidateOfType($considered, 'payment_run_instruction');
+
+        if ($candidate === null) {
+            return [
+                'a debit equal to one transfer in a released run was not proposed as that transfer, so '.
+                'every statement from a bank that debits each transfer separately is matched by hand',
+            ];
+        }
+
+        $failures = [];
+
+        /*
+         | Below the batch total, deliberately.
+         |
+         | A batch figure is computed and all but unique; one transfer
+         | within it is an amount other things on the statement may also
+         | equal.
+         */
+        if ($candidate->confidence >= 0.80) {
+            $failures[] = sprintf(
+                'one transfer within a run scored %.2f, as high as a whole batch total - which would let '.
+                'the weaker signal outrank the stronger one whenever both are available',
+                $candidate->confidence,
+            );
+        }
+
+        if (! str_contains($candidate->reason, 'each transfer separately')) {
+            $failures[] = 'the reason does not say the bank debited the transfers separately, which is the '.
+                'thing a reader has to understand to trust the proposal';
+        }
+
+        return $failures;
+    }
+
+    /**
+     * A credit equal to a run's total is not a payment run.
+     *
+     * @return list<string>
+     */
+    private function aRunIsNeverAReceipt(): array
+    {
+        $this->aReleasedRunPaying('9000.0000');
+
+        $this->importLines([$this->line('9000.0000', ['bank_reference' => 'REF-IN'])]);
+
+        $considered = app(MatchingEngine::class)->consider($this->transactionBy('REF-IN'));
+
+        if ($this->candidateOfType($considered, 'payment_run') !== null) {
+            return [
+                'an incoming credit of 9,000 was proposed as the run that paid 9,000 out, so the engine is '.
+                'offering "we were refunded exactly the batch we sent" as an answer somebody might accept',
+            ];
+        }
+
+        $why = (string) ($considered['skipped']['payment_run'] ?? '');
+
+        return str_contains($why, 'money going out')
+            ? []
+            : ['the pass was skipped for a credit, but not for a reason that names the sign: '.$why];
+    }
+
+    /**
+     * A prepared run is not proposed, because no money has left.
+     *
+     * @return list<string>
+     */
+    private function onlyReleasedRuns(): array
+    {
+        /*
+         | Prepared and left there, not released and walked back.
+         |
+         | A released run is frozen in the database, so there is no such
+         | thing as un-releasing one - and a fixture that tried was
+         | refused, which is the guard working.
+         */
+        $this->aRunPaying($this->openingDate()->addDays(2), false, '9000.0000');
+
+        $this->importLines([$this->line('-9000.0000', ['bank_reference' => 'REF-PREP'])]);
+
+        $considered = app(MatchingEngine::class)->consider($this->transactionBy('REF-PREP'));
+
+        return $this->candidateOfType($considered, 'payment_run') === null
+            ? []
+            : [
+                'a debit was proposed as a run nobody has released, so accepting it would record a payment '.
+                'the business has not made - and the debit it really was stays unexplained',
+            ];
+    }
+
+    /**
+     * A run already matched is not proposed against a second line.
+     *
+     * @return list<string>
+     */
+    private function aRunMatchesOnce(): array
+    {
+        $run = $this->aReleasedRunPaying('9000.0000');
+
+        $this->importLines([
+            $this->line('-9000.0000', ['bank_reference' => 'REF-FIRST']),
+            $this->line('-9000.0000', ['bank_reference' => 'REF-SECOND']),
+        ]);
+
+        $first = $this->transactionBy('REF-FIRST');
+        app(MatchingEngine::class)->propose($first);
+        $failures = [];
+
+        $proposal = MatchProposal::query()
+            ->where('bank_transaction_id', (string) $first->getKey())
+            ->where('matched_type', 'payment_run')
+            ->first();
+
+        if ($proposal === null) {
+            return ['the first debit produced no payment-run proposal, so there is nothing to match twice'];
+        }
+
+        app(Matches::class)->accept($proposal, $this->actorId());
+
+        /*
+         | The second line, which is the duplicate-payment case.
+         |
+         | Two statement lines equal to one released batch means either
+         | the bank debited twice or this is a different payment. Either
+         | way, proposing the same run again invites somebody to record
+         | the same money leaving twice.
+         */
+        $second = $this->transactionBy('REF-SECOND');
+        $again = app(MatchingEngine::class)->consider($second);
+
+        if ($this->candidateOfType($again, 'payment_run') !== null) {
+            $failures[] = sprintf(
+                'run %s was proposed against a second bank line although it is already matched, so the '.
+                'same money can be recorded as leaving twice',
+                $run['number'],
+            );
+        }
+
+        return $failures;
+    }
+
+    /**
+     * Accepting a run match is refused where the run cannot absorb it.
+     *
+     * The pass declines to propose a run it has already matched, and a
+     * pass cannot defend against two proposals accepted in the same
+     * second. The acceptance can, and this is where it is asserted -
+     * because the document path's own fit check only knows how to ask a
+     * receivable what it still owes.
+     *
+     * @return list<string>
+     */
+    private function runAcceptanceIsChecked(): array
+    {
+        $run = $this->aReleasedRunPaying('9000.0000');
+
+        $this->importLines([
+            $this->line('-9000.0000', ['bank_reference' => 'REF-FIT-A']),
+            $this->line('-9000.0000', ['bank_reference' => 'REF-FIT-B']),
+        ]);
+
+        $a = $this->transactionBy('REF-FIT-A');
+        app(MatchingEngine::class)->propose($a);
+
+        $b = $this->transactionBy('REF-FIT-B');
+        app(MatchingEngine::class)->propose($b);
+
+        $first = MatchProposal::query()
+            ->where('bank_transaction_id', (string) $a->getKey())
+            ->where('matched_type', 'payment_run')
+            ->first();
+
+        $second = MatchProposal::query()
+            ->where('bank_transaction_id', (string) $b->getKey())
+            ->where('matched_type', 'payment_run')
+            ->first();
+
+        if ($first === null || $second === null) {
+            return ['two debits equal to one released run did not both produce a proposal, so the race '.
+                'this check is about cannot be reached'];
+        }
+
+        app(Matches::class)->accept($first, $this->actorId());
+
+        try {
+            app(Matches::class)->accept($second, $this->actorId());
+
+            return [sprintf(
+                'run %s was accepted against two bank lines, so the business has recorded the same batch '.
+                'leaving twice and the bank reconciliation will balance while saying it',
+                $run['number'],
+            )];
+        } catch (\Throwable $e) {
+            return str_contains($e->getMessage(), 'already matched')
+                ? []
+                : ['the second acceptance was refused for some other reason: '.$e->getMessage()];
+        }
+    }
+
+    /**
+     * Two transfers in one run at the same amount identify neither.
+     *
+     * @return list<string>
+     */
+    private function twoTransfersAtOneAmount(): array
+    {
+        $run = $this->aReleasedRunPaying('4000.0000', '4000.0000');
+
+        $this->importLines([$this->line('-4000.0000', ['bank_reference' => 'REF-AMBIG'])]);
+
+        $considered = app(MatchingEngine::class)->consider($this->transactionBy('REF-AMBIG'));
+
+        $instructions = array_values(array_filter(
+            $considered['candidates'],
+            static fn (object $c): bool => $c->matchedType === 'payment_run_instruction',
+        ));
+
+        if (\count($instructions) < 2) {
+            return [sprintf(
+                'two transfers of 4,000 in run %s produced %d proposal(s), so one was presented as the '.
+                'answer when the engine cannot tell them apart',
+                $run['number'],
+                \count($instructions),
+            )];
+        }
+
+        $failures = [];
+
+        foreach ($instructions as $candidate) {
+            $named = array_column($candidate->factors, 'factor');
+
+            if (! \in_array('several_instructions_at_this_amount', $named, true)) {
+                $failures[] = 'a transfer competing with another at the same amount carries no penalty for '.
+                    'it, so an ambiguous proposal reads as a confident one';
+            }
+        }
+
+        return $failures;
+    }
+
+    /**
+     * The beneficiary being identified raises the score, and disagreeing sinks it.
+     *
+     * @return list<string>
+     */
+    private function beneficiaryEvidence(): array
+    {
+        $run = $this->aReleasedRunPaying('4000.0000', '5000.0000');
+
+        $this->importLines([$this->line('-4000.0000', [
+            'bank_reference' => 'REF-BENE',
+            'counterparty_account' => $run['accounts'][0],
+        ])]);
+
+        $considered = app(MatchingEngine::class)->consider($this->transactionBy('REF-BENE'));
+        $candidate = $this->candidateOfType($considered, 'payment_run_instruction');
+
+        if ($candidate === null) {
+            return ['no transfer was proposed for a debit equal to one of the run\'s instructions'];
+        }
+
+        $named = array_column($candidate->factors, 'factor');
+
+        return \in_array('account_tail_agrees', $named, true) || \in_array('beneficiary_is_identified', $named, true)
+            ? []
+            : [
+                'the statement shows the very account the run paid, and the proposal records nothing about '.
+                'it - so the one piece of evidence that is not the amount is not in the score: '
+                .implode(', ', $named),
+            ];
+    }
+
+    /**
+     * A debit far from the pay date scores lower for it.
+     *
+     * @return list<string>
+     */
+    private function payDateMatters(): array
+    {
+        $booking = $this->openingDate()->addDays(2);
+
+        /*
+         | Two runs for the same figure, eight days apart.
+         |
+         | Built as two runs rather than one run moved, because a released
+         | run is frozen - and compared in one `consider()` call, which is
+         | how somebody will actually see them: two proposals for one
+         | debit, ranked.
+         */
+        $far = $this->aRunPaying($booking->copy()->subDays(8), true, '9000.0000');
+        $near = $this->aRunPaying($booking->copy(), true, '9000.0000');
+
+        $this->importLines([$this->line('-9000.0000', ['bank_reference' => 'REF-DATE'])]);
+
+        $considered = app(MatchingEngine::class)->consider($this->transactionBy('REF-DATE'));
+
+        $scores = [];
+
+        foreach ($considered['candidates'] as $candidate) {
+            if ($candidate->matchedType === 'payment_run') {
+                $scores[(string) $candidate->matchedId] = $candidate->confidence;
+            }
+        }
+
+        if (! isset($scores[$near['id']], $scores[$far['id']])) {
+            return [sprintf(
+                'two released runs of 9,000 produced %d payment-run proposal(s) for a 9,000 debit, so one '.
+                'of them was not offered at all - and a file sent before a holiday weekend is the one that '.
+                'goes missing',
+                \count($scores),
+            )];
+        }
+
+        return $scores[$near['id']] > $scores[$far['id']]
+            ? []
+            : [sprintf(
+                'the run that paid on the day of the debit scored %.2f and the one that paid eight days '.
+                'earlier scored %.2f, so how long the money took means nothing to the engine and the '.
+                'wrong run can be presented first',
+                $scores[$near['id']],
+                $scores[$far['id']],
+            )];
+    }
+
     // ---- Helpers ----------------------------------------------------------
+    /**
+     * A released run paying one supplier per amount given.
+     *
+     * One supplier each, because a single supplier's bills group into one
+     * instruction - which is right, and is the opposite of what a check
+     * about two transfers at the same amount needs.
+     *
+     * The pay date is the day the statement line is booked, so the
+     * fixture is the ordinary case: a file sent, the bank debiting it,
+     * and the debit appearing on the statement that week.
+     *
+     * @return array{id: string, number: string, pay_on: string, accounts: list<string>}
+     */
+    private function aReleasedRunPaying(string ...$amounts): array
+    {
+        return $this->aRunPaying($this->openingDate()->addDays(2), true, ...$amounts);
+    }
+
+    /**
+     * A run with its own suppliers and bills, on any date, released or not.
+     *
+     * A released run is frozen and cannot walk backwards, so a check that
+     * needs a prepared run or an earlier pay date builds one that way
+     * rather than editing one that has gone. The first attempt did edit
+     * them, and the state machine refused both - which is the guard
+     * working and the fixture being wrong.
+     *
+     * @return array{id: string, number: string, pay_on: string, accounts: list<string>}
+     */
+    private function aRunPaying(Carbon $payOn, bool $release, string ...$amounts): array
+    {
+        $accounts = [];
+
+        foreach ($amounts as $amount) {
+            $supplier = $this->aPayableSupplier();
+            $this->anApprovedBill($supplier, $amount, $payOn->toDateString());
+
+            $accounts[] = (string) DB::connection('tenant')->table('party_bank_accounts')
+                ->where('party_id', (string) $supplier->getKey())
+                ->value('last_four');
+        }
+
+        $run = app(\App\Tenant\Settlement\Services\PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: $payOn->copy(),
+            userId: $this->actorId(),
+        );
+
+        if ($release) {
+            app(\App\Tenant\Settlement\Services\PaymentRuns::class)->release($run['id'], $this->secondActorId());
+        }
+
+        return [
+            'id' => (string) $run['id'],
+            'number' => (string) $run['number'],
+            'pay_on' => $payOn->toDateString(),
+            'accounts' => $accounts,
+        ];
+    }
+
+    /**
+     * The best candidate of a given type, or null.
+     *
+     * @param  array<string, mixed>  $considered
+     */
+    private function candidateOfType(array $considered, string $type): ?\App\Tenant\Banking\Matching\Candidate
+    {
+        foreach ($considered['candidates'] as $candidate) {
+            if ($candidate->matchedType === $type) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
 
     /**
      * @param  list<\App\Tenant\Banking\Matching\OpenDocument>  $documents
