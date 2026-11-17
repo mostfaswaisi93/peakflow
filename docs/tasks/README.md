@@ -1,6 +1,6 @@
 # The PeakFlow delivery backlog
 
-**246 tasks across 14 phases.** This directory is the authoritative backlog. GitHub Issues mirror it - each issue carries the same `PF-###` id and links back to its phase file - but the file is the source of truth, because an issue tracker is a queue and a specification is a document.
+**267 tasks across 16 phases.** This directory is the authoritative backlog. GitHub Issues mirror it - each issue carries the same `PF-###` id and links back to its phase file - but the file is the source of truth, because an issue tracker is a queue and a specification is a document.
 
 ## Contents
 
@@ -15,12 +15,14 @@
 | [06](phase-06-einvoicing.md) | EN 16931, serializers, validation, jurisdiction profiles | 20 | 116 |
 | [07](phase-07-purchasing.md) | Purchase orders, bills, approvals, three-way match | 15 | 67 |
 | [08](phase-08-banking.md) | Bank accounts, statements, reconciliation | 21 | 109 |
-| [09](phase-09-settlement.md) | 14 / 16 | 72 | 8 |
+| [09](phase-09-settlement.md) | Payment runs, files, direct debit, in-transit | 16 | 81 |
 | [10](phase-10-reporting.md) | Reporting, close, consolidation | 17 | 87 |
-| [11](phase-11-design-system.md) | Design system, data grid, accessibility, RTL | 18 | 99 |
+| [11](phase-11-design-system.md) | Design system, data grid, accessibility, RTL | 20 | 107 |
 | [12](phase-12-api-exchange.md) | REST API, webhooks, the Exchange plane | 14 | 57 |
 | [13](phase-13-hardening.md) | Security, observability, performance, release | 16 | 77 |
-| | **Total** | **246** | **1,188** |
+| [14](phase-14-operations.md) | Stock, serials, returns, sync, payroll | 11 | 58 |
+| [15](phase-15-verticals.md) | The industry verticals - **a scope decision** | 8 | 47 |
+| | **Total** | **267** | **1,301** |
 
 A flat, sortable view of every task is in [`backlog.md`](backlog.md).
 
@@ -41,14 +43,18 @@ A criterion is ticked only when something in `bin/verify` fails if the behaviour
 | [06](phase-06-einvoicing.md) | 6 / 20 | 101 | 43 |
 | [07](phase-07-purchasing.md) | 8 / 15 | 152 | 7 |
 | [08](phase-08-banking.md) | 21 / 21 | 124 | 0 |
-| [09](phase-09-settlement.md) | 0 / 16 | 0 | 72 |
+| [09](phase-09-settlement.md) | 14 / 16 | 72 | 8 |
 | [10](phase-10-reporting.md) | 0 / 17 | 0 | 76 |
-| [11](phase-11-design-system.md) | 0 / 18 | 0 | 92 |
+| [11](phase-11-design-system.md) | 1 / 20 | 5 | 97 |
 | [12](phase-12-api-exchange.md) | 0 / 14 | 0 | 64 |
 | [13](phase-13-hardening.md) | 0 / 16 | 0 | 73 |
-| **all** | **137 / 246** | **1196** | **405** |
+| [14](phase-14-operations.md) | 0 / 11 | 0 | 48 |
+| [15](phase-15-verticals.md) | 0 / 8 | 0 | 36 |
+| **all** | **138 / 267** | **1201** | **494** |
 
-Phases 00 to 07 are the ones that have been worked. An open criterion in a worked phase is one that depends on a later phase and says so in its own task file, with the task that brings it - never one that was skipped.
+Phases 00 to 09 are the ones that have been worked, and Phase 08 is closed. An open criterion in a worked phase is one that depends on a later phase and says so in its own task file, with the task that brings it - never one that was skipped.
+
+**Phases 14 and 15 came later than the rest.** They are the result of a gap analysis against [hawalaty](https://github.com/mostfaswaisi93/hawalaty-laravel), which runs real businesses and therefore knows what an invoicing core alone cannot do. Phase 14 is the part that belongs in a product whose subject is invoices and banks. Phase 15 is **four industry verticals**, and its own file opens by saying that starting it changes what the product is - recorded as a decision to take deliberately rather than a gap to close by default.
 
 ## Task format
 

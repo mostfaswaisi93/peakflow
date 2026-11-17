@@ -83,6 +83,22 @@ final class RepositoryRules
                 'record of what is done'];
         }
 
+        /*
+         | Only the Progress section counts - PF-021.
+         |
+         | This searched the whole file, and the file opens with a Contents
+         | table of the same shape: phase link, then numbers. So a Progress
+         | row accidentally written into Contents satisfied the check while
+         | the Progress table stayed stale AND the Contents row was
+         | destroyed - which is exactly what happened, and the check said
+         | nothing for two commits.
+         |
+         | Measured: with the row in the wrong table the suite was green,
+         | and narrowing the search to the section turned it red on the
+         | same file.
+         */
+        $progress = mb_substr($contents, (int) mb_strpos($contents, '## Progress'));
+
         $files = glob($this->base().'/docs/tasks/phase-*.md') ?: [];
         sort($files);
 
@@ -103,7 +119,7 @@ final class RepositoryRules
                 $number, $name, $phase['complete'], $phase['tasks'], $phase['met'], $phase['open'],
             );
 
-            if (! str_contains($contents, $expected)) {
+            if (! str_contains($progress, $expected)) {
                 $violations[] = sprintf(
                     'the progress table does not hold "%s". Phase %s has %d of %d tasks complete, %d '.
                     'criteria met and %d open, and the table is what people read instead of the file',
@@ -117,7 +133,7 @@ final class RepositoryRules
             $totals['complete'], $totals['tasks'], $totals['met'], $totals['open'],
         );
 
-        if (! str_contains($contents, $expected)) {
+        if (! str_contains($progress, $expected)) {
             $violations[] = sprintf('the progress table\'s total row is not "%s"', $expected);
         }
 
