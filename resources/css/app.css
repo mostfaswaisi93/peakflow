@@ -59,6 +59,13 @@
  * ------------------------------------------------------------------------ */
 @source not inline('animate-ping');
 
+/* Tailwind also detects sources on its own, and that reaches tests/ and docs/:
+   a class name written in a test's comment or a design document was compiled
+   into the stylesheet the browser downloads. Found by `bin/verify design`
+   when a comment describing a forbidden utility made the build contain it. */
+@source not '../../tests';
+@source not '../../docs';
+
 /* ===========================================================================
  *  LAYER 1 - PRIMITIVES ("Summit & Flow" - UX-001)
  * ---------------------------------------------------------------------------

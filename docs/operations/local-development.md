@@ -45,6 +45,25 @@ database, which fails at the first query with a message about a missing
 password - and the developer's first experience of the product is a bug that
 exists only in their seed data.
 
+### Demo books, for a screen with numbers on it
+
+```
+php artisan db:seed --class=DemoTenantSeeder
+```
+
+Five months of a trading company in the DEMO entity: six customers and five
+suppliers, about thirty invoices issued through the real Issuer, about twenty
+bills posted through the real Bills service, receipts and payments recorded
+and allocated through Settlement, a bank account with one statement a month
+imported through the real importer, and every line older than a fortnight
+matched. The VAT return periods are filed up to two months back.
+
+Through the services, never into the tables, so the result reconciles: the sum
+of every posted line is zero, and the bank account's ledger balance equals the
+last statement's closing balance. It refuses outside `local` and `testing`,
+runs in one transaction, and a second run says the books are already there
+rather than doubling them.
+
 ## The commit-message hook
 
 `composer setup` points `core.hooksPath` at `.githooks`, rather than copying

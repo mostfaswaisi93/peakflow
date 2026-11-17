@@ -8,6 +8,7 @@ use App\Platform\Http\Controllers\OpsTenantController;
 use App\Tenant\Banking\Http\Controllers\StatementImportController;
 use App\Tenant\Identity\Http\Controllers\EntitySwitchController;
 use App\Tenant\Identity\Http\Controllers\ThemePreferenceController;
+use App\Tenant\Reporting\Http\Controllers\OverviewController;
 use App\Http\Controllers\LoginController;
 use App\Http\Controllers\AttachmentDownloadController;
 use App\Http\Controllers\PublicQuoteController;
@@ -171,7 +172,7 @@ Route::middleware(['tenant.session', 'auth'])->group(static function (): void {
 });
 
 Route::middleware(['tenant.session', 'auth', 'entity.scope'])->group(static function (): void {
-    Route::view('/overview', 'app.home')->name('overview');
+    Route::get('/overview', OverviewController::class)->name('overview');
 
     /*
     | Importing a statement - PF-154.

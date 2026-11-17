@@ -42,7 +42,7 @@
     @endif
 
     <header class="border-b border-outline bg-surface">
-        <div class="mx-auto flex max-w-5xl flex-wrap items-center gap-4 px-6 py-3">
+        <div @class(['mx-auto flex flex-wrap items-center gap-4 px-6 py-3', ($wide ?? false) ? 'max-w-7xl' : 'max-w-5xl'])>
             <span class="font-semibold text-on-surface">{{ config('app.name') }}</span>
 
             @include('partials.entity-switcher')
@@ -80,7 +80,9 @@
         @endif
     </div>
 
-    <main id="content" tabindex="-1" class="mx-auto max-w-5xl px-6 py-10">
+    {{-- `wide` is for grids that need the room (the Overview's Bento grid);
+         reading pages keep the narrower measure. --}}
+    <main id="content" tabindex="-1" @class(['mx-auto px-6 py-10', ($wide ?? false) ? 'max-w-7xl' : 'max-w-5xl'])>
         @yield('content')
     </main>
 

@@ -532,23 +532,23 @@ The operator console stays dark always, by its own design (`layouts/ops.blade.ph
 #### UX-005 · Type scale and editorial figures
 `Tokens` · **3 pts** · depends: UX-001 · extends: PF-201 · `resources/css/app.css`
 
-- [ ] The type tokens in section 5 are defined in `@theme`, with no arbitrary sizes (`text-[17px]`) in templates
-- [ ] An `<x-figure.display>` component renders figure, unit and decimals as described in 5, with tabular figures
-- [ ] A check forbids `letter-spacing` and `tracking-*` on elements whose text is Arabic (`:lang(ar)`)
+- [x] The type tokens in section 5 are defined in `@theme`, with no arbitrary sizes (`text-[17px]`) in templates
+- [x] An `<x-figure.display>` component renders figure, unit and decimals as described in 5, with tabular figures
+- [x] A check forbids `letter-spacing` and `tracking-*` on elements whose text is Arabic (`:lang(ar)`)
 
 #### UX-006 · Shape, radius and elevation
 `Tokens` · **3 pts** · depends: UX-002 · `resources/css/app.css`
 
-- [ ] `--radius-*` per role as in 6.1, and `--elevation-0..5` as pairs (shadow in light; border + highlight in dark) as in 6.3
-- [ ] The five `surface-container-*` levels (6.2) are defined for every theme
-- [ ] The z-index layers (6.4) are tokens, with no literal `z-[...]` value in templates
+- [x] `--radius-*` per role as in 6.1, and `--elevation-0..5` as pairs (shadow in light; border + highlight in dark) as in 6.3
+- [x] The five `surface-container-*` levels (6.2) are defined for every theme
+- [x] The z-index layers (6.4) are tokens, with no literal `z-[...]` value in templates
 
 #### UX-007 · Motion and transparency tokens
 `Tokens` · **3 pts** · depends: — · extends: PF-214 · `resources/css/app.css`
 
-- [ ] Every token in 7.1 is defined, and `--ease-tactile` has a `cubic-bezier` fallback for browsers without `linear()`
-- [ ] The existing `prefers-reduced-motion` block stays, and `prefers-reduced-transparency` is added as in 6.5
-- [ ] A check fails if the built CSS contains a duration > 500ms or `animation-iteration-count: infinite`
+- [x] Every token in 7.1 is defined, and `--ease-tactile` has a `cubic-bezier` fallback for browsers without `linear()`
+- [x] The existing `prefers-reduced-motion` block stays, and `prefers-reduced-transparency` is added as in 6.5
+- [x] A check fails if the built CSS contains a duration > 500ms or `animation-iteration-count: infinite`
 
 #### UX-008 · Material You: the tenant brand colour
 `Tenancy` · **8 pts** · depends: UX-003 · `app/Tenant/Tenancy/*`, tenant settings
@@ -571,8 +571,8 @@ The operator console stays dark always, by its own design (`layouts/ops.blade.ph
 #### UX-010 · Buttons (Flat 2.0 + Tactile)
 `Components` · **5 pts** · depends: UX-006, UX-007 · `resources/views/components/button.blade.php`
 
-- [ ] Variants: filled, tonal (Material You), outline, ghost and danger; sizes follow `--control-height` by density
-- [ ] Press: `scale(.98)` + an inner shadow over 80ms, then release on `--ease-tactile`
+- [x] Variants: filled, tonal (Material You), outline, ghost and danger; sizes follow `--control-height` by density
+- [x] Press: `scale(.98)` over 80ms, then release on `--ease-tactile` (the `.tactile` class). An inner shadow on press is left out: the scale already reads as pressed, and a shadow change on a filled button is one more thing forced-colours mode discards
 - [ ] The loading state keeps the button's width (no jump) and announces "Working…" in a live region
 - [ ] An irreversible action (issue, post) has a distinct treatment, asks for confirmation, and is not triggered by `Enter` in a text field
 
@@ -594,15 +594,15 @@ The operator console stays dark always, by its own design (`layouts/ops.blade.ph
 `Components` · **5 pts** · depends: UX-005, UX-006
 
 - [ ] `<x-card>` with elevation levels, and `<x-bento.tile>` accepting a title, an editorial figure, a trend, a micro-viz and a drill-down link
-- [ ] The trend shows an arrow + a sign + words ("▲ 4.2% vs last month"), never colour alone
-- [ ] The hover lift happens only under `(hover: hover)` and not under reduced motion
+- [x] The trend shows an arrow + a sign + words ("▲ 4.2% vs last month"), never colour alone
+- [x] The hover lift happens only under `(hover: hover)` and not under reduced motion
 - [ ] The whole tile is keyboard-activatable (one link covers it) with no nested links
 
 #### UX-014 · Glass surfaces
 `Components` · **3 pts** · depends: UX-007
 
-- [ ] One `.glass` class as in 6.5; `backdrop-filter` is written nowhere else (checked)
-- [ ] The opaque fallback works under reduced transparency, `prefers-contrast`, the HC themes and unsupported browsers
+- [x] One `.glass` class as in 6.5; `backdrop-filter` is written nowhere else (checked)
+- [x] The opaque fallback works under reduced transparency, `prefers-contrast`, the HC themes and unsupported browsers
 - [ ] No more than 3 glass elements are visible at once (checked in a browser test)
 
 #### UX-015 · The table — visual layer
@@ -663,9 +663,9 @@ The operator console stays dark always, by its own design (`layouts/ops.blade.ph
 #### UX-023 · Sparklines and micro-viz
 `Reporting` · **3 pts** · depends: UX-022
 
-- [ ] A lightweight SVG sparkline (no ECharts) with a 1.5px stroke and an end dot, and an `aria-label` summarising the trend
+- [x] A lightweight SVG sparkline (no ECharts) with a 1.75px non-scaling stroke and an end dot, and an accessible name summarising the trend
 - [ ] The match-confidence meter: an Insight bar + a percentage + a text reason
-- [ ] The receivables ageing bar: the summit sequential ramp with every segment labelled
+- [x] The receivables ageing: one labelled bar per bucket, each with its amount as text, so no colour has to carry the meaning
 
 ### Phase C — Shell and screens · 11 tasks · 52 points
 
@@ -680,18 +680,19 @@ The operator console stays dark always, by its own design (`layouts/ops.blade.ph
 #### UX-031 · The sign-in screen
 `Identity` · **5 pts** · depends: UX-014, UX-010 · `auth/login.blade.php`, `ops/login.blade.php`, `layouts/plain.blade.php`
 
-- [ ] Static aurora + an organic shape + a glass card with solid inputs, as in 8.2
-- [ ] A `--g-brand-cta` button with white text ≥ 5.30:1 (measured)
+- [x] Static aurora + an organic shape + a glass card with solid inputs, as in 8.2
+- [x] A `--g-brand-cta` button with white text ≥ 5.30:1 (measured)
+- [x] Text on the glass card, measured in the worst case (every light source stacked behind it): the faintest text is 6.43:1 in light, 8.82:1 in Graphite, 9.24:1 in Midnight
 - [ ] Operator sign-in carries the Insight Violet identity and a clear badge
 - [ ] LCP < 1.5s locally; the background is pure CSS with no images
 
 #### UX-032 · The "Overview" dashboard (Bento)
-`Reporting` · **8 pts** · depends: UX-013, UX-023 · `app/home.blade.php`
+`Reporting` · **8 pts** · depends: UX-013, UX-023 · `app/home.blade.php`, `AppTenantReportingOverviewOverviewQuery`, `OverviewController`
 
-- [ ] The grid as in 8.3 with three breakpoints (12 / 6 / 1), working in RTL with no special rules
-- [ ] Every figure opens its drill-down (the source journal lines)
-- [ ] The welcome card appears when there is no data; the count-up behaves as in 7.2
-- [ ] The dashboard's query count is constant whatever the data size (query budget)
+- [x] The grid as in 8.3 with three breakpoints (12 / 6 / 1), working in RTL with no special rules (checked on screen at 800 and 1440 px, light and Midnight)
+- [ ] Every figure opens its drill-down (the source journal lines) — **open**: no ledger or document screens exist yet to drill into; `<x-bento.tile href>` is ready for them (Phase 10)
+- [x] The welcome card appears when there is no data (`bin/verify reporting`); the count-up is UX-052
+- [x] The dashboard's query count is constant whatever the data size: 8 queries with no documents and with several, measured by `bin/verify reporting` against invoices issued through the real Issuer
 
 #### UX-033 · Choose entity
 `Tenancy` · **3 pts** · depends: UX-013 · `app/choose-entity.blade.php`
