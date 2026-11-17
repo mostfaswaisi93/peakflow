@@ -1,6 +1,6 @@
 {
   "key": "ifrs-generic",
-  "version": 6,
+  "version": 7,
   "name_ar": "دليل حسابات عام وفق المعايير الدولية",
   "name_en": "Generic IFRS chart of accounts",
   "countries": [],
@@ -407,6 +407,16 @@
       "name_en": "Bank charges",
       "postable": true,
       "role": "bank_charges",
+      "monetary": false
+    },
+    {
+      "code": "5.8",
+      "parent": "5",
+      "type": "expense",
+      "name_ar": "خسائر ائتمانية متوقعة",
+      "name_en": "Expected credit loss charge",
+      "postable": true,
+      "role": "ecl_charge",
       "monetary": false
     }
   ],

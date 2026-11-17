@@ -64,6 +64,7 @@ final class WriteOffs
         private readonly NumberAllocator $numbers,
         private readonly Allocations $allocations,
         private readonly Payments $payments,
+        private readonly ExpectedCreditLoss $ecl,
     ) {}
 
     /** What one person may write off without a second name on it. */
@@ -231,6 +232,29 @@ final class WriteOffs
                 'updated_at' => now(),
             ]);
 
+            /*
+             | And the provision this document used up - PF-173.
+             |
+             | The estimate was right about this one, so the provision is
+             | released rather than left standing. Without it the period
+             | carries both the estimate and the conclusion: bad debt
+             | takes the full amount while the provision still claims
+             | part of it is coming, and the impairment line reads as
+             | twice the loss that happened.
+             |
+             | Null when nothing was provisioned for it, which is
+             | ordinary - a current invoice, or one issued after the last
+             | recompute.
+             */
+            $release = $this->ecl->releaseFor(
+                $entityId,
+                $id,
+                $documentType,
+                $documentId,
+                $amount,
+                $on,
+            );
+
             $this->audit->record(
                 category: 'settlement',
                 action: 'writeoff.recorded',
@@ -244,6 +268,7 @@ final class WriteOffs
                     'threshold' => (string) $threshold->amount,
                     'approved_by' => $needsASecond ? $approvedBy : null,
                     'journal_entry_id' => (string) $entry->getKey(),
+                    'provision_released' => $release === null ? null : (string) $release['amount']->amount,
                 ],
                 reason: $reason,
                 entityId: $entityId,
@@ -254,6 +279,7 @@ final class WriteOffs
                 'id' => $id,
                 'number' => $number,
                 'journal_entry_id' => (string) $entry->getKey(),
+                'provision_released' => $release === null ? null : $release['amount'],
                 'why' => sprintf(
                     '%s written off as %s. The document is closed, not deleted - and if the money '.
                     'ever arrives it is a new receipt against a recovery account, because the '.

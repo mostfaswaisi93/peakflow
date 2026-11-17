@@ -70,10 +70,10 @@ This phase also contains the single highest-consequence control in the product: 
 ### PF-173 · Expected credit loss
 `Settlement` · **5 pts** · depends: PF-172, PF-062 · standards: IFRS 9 · `type:posting`
 
-- [ ] A provision matrix: loss rate per aging bucket per risk grade, maintained as data
-- [ ] A periodic posting to `ecl_provision`, **reversed and recomputed** each period rather than accumulated
-- [ ] A **provision is an estimate and a write-off is a conclusion** - they live in different accounts and a test asserts a write-off releases the related provision rather than double-charging
-- [ ] A roll-forward report: opening provision, charge, release, utilization, closing
+- [x] A provision matrix: loss rate per aging bucket per risk grade, maintained as data
+- [x] A periodic posting to `ecl_provision`, **reversed and recomputed** each period rather than accumulated
+- [x] A **provision is an estimate and a write-off is a conclusion** - they live in different accounts and a test asserts a write-off releases the related provision rather than double-charging
+- [x] A roll-forward report: opening provision, charge, release, utilization, closing
 
 ### PF-174 · The payment run
 `Settlement` · **8 pts** · depends: PF-144, PF-136 · standards: — · `risk:high`

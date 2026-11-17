@@ -15,6 +15,7 @@ use App\Tenant\Settlement\Services\Allocations;
 use App\Tenant\Settlement\Services\Payments;
 use App\Tenant\Settlement\Services\Refunds;
 use App\Tenant\Settlement\Services\UnappliedCash;
+use App\Tenant\Settlement\Services\ExpectedCreditLoss;
 use App\Tenant\Settlement\Services\WriteOffs;
 use Brick\Math\BigDecimal;
 use Illuminate\Support\Carbon;
@@ -139,6 +140,20 @@ final class SettlementRules
                 'recovering more than was written off is refused' => fn (): array => $this->recoveringTooMuch(),
                 'the report groups by reason, period and customer' => fn (): array => $this->writeOffReport(),
                 'whoever invoiced does not write off' => fn (): array => $this->writeOffSodPairs(),
+
+                // ---- Expected credit loss - PF-173 ---------------------
+                'the matrix is data, per bucket and per grade' => fn (): array => $this->matrixIsData(),
+                'a rate outside nought to one is refused' => fn (): array => $this->rateIsAProportion(),
+                'the provision is the matrix applied to the ageing' => fn (): array => $this->provisionIsComputed(),
+                'ageing runs from the due date the document froze' => fn (): array => $this->ageingFromTheDueDate(),
+                'a graded customer falls back to the ungraded rate' => fn (): array => $this->gradeFallsBack(),
+                'each run reverses the one before it in full' => fn (): array => $this->runReversesTheLast(),
+                'the same period cannot be computed twice' => fn (): array => $this->periodComputedOnce(),
+                'a provision with no matrix is refused' => fn (): array => $this->noMatrix(),
+                'a write-off releases the provision it used up' => fn (): array => $this->writeOffReleasesProvision(),
+                'a provision and a write-off live in different accounts' => fn (): array => $this->estimateAndConclusionAreApart(),
+                'the roll-forward ties, and names all five figures' => fn (): array => $this->rollForwardTies(),
+                'a shrinking provision is a release, not a negative charge' => fn (): array => $this->shrinkingIsARelease(),
 
                 // ---- The property that matters -------------------------
                 'for any sequence, the balance and the control agree' => fn (): array => $this->theProperty(),
@@ -1249,6 +1264,657 @@ final class SettlementRules
         $this->receipt($amount, $partyId);
 
         return $partyId;
+    }
+
+    // ---- Expected credit loss ---------------------------------------------
+
+    /** @return list<string> */
+    private function matrixIsData(): array
+    {
+        app(ExpectedCreditLoss::class)->setRate($this->entityId, null, 'current', '0.005', $this->actorId(), 'three years of loss history');
+        app(ExpectedCreditLoss::class)->setRate($this->entityId, 'D', '90+', '0.600', $this->actorId(), 'graded D customers past ninety days');
+
+        $matrix = app(ExpectedCreditLoss::class)->matrix($this->entityId);
+
+        $failures = [];
+
+        if (\count($matrix) !== 2) {
+            $failures[] = sprintf('two rates were set and the matrix holds %d', \count($matrix));
+        }
+
+        $ungraded = null;
+        $graded = null;
+
+        foreach ($matrix as $row) {
+            if ($row['risk_grade'] === null && $row['bucket'] === 'current') {
+                $ungraded = $row;
+            }
+
+            if ($row['risk_grade'] === 'D' && $row['bucket'] === '90+') {
+                $graded = $row;
+            }
+        }
+
+        if ($ungraded === null) {
+            $failures[] = 'the ungraded row is missing, and most customers in most businesses are ungraded - a matrix without it provisions nothing for the majority of the ledger';
+        }
+
+        if ($graded === null) {
+            $failures[] = 'the per-grade row is missing, so the matrix cannot say that a D customer past ninety days is worse than an A one';
+        }
+
+        /*
+         | The basis is kept beside the rate.
+         |
+         | A rate with no basis is a number somebody picked, and the
+         | question an auditor asks about a provision matrix is where the
+         | rates came from.
+         */
+        if (($ungraded['basis'] ?? null) === null) {
+            $failures[] = 'the rate carries no basis, so where it came from is not recorded';
+        }
+
+        $bad = $this->refusal(fn () => app(ExpectedCreditLoss::class)->setRate(
+            $this->entityId,
+            null,
+            'eventually',
+            '0.100',
+            $this->actorId(),
+        ));
+
+        if ($bad === null) {
+            $failures[] = 'a rate was set against a bucket that does not exist, so it would never be applied to anything';
+        } elseif (! str_contains($bad, 'fixed rather than configurable')) {
+            /*
+             | The service's refusal, not the column's.
+             |
+             | The table refuses an unknown bucket too, which is why it is
+             | there. A person setting a matrix should be told which
+             | buckets exist and why they are not theirs to choose, not
+             | handed the name of a check constraint.
+             */
+            $failures[] = sprintf('the refusal came from the table rather than from setting the rate: %s', $bad);
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function rateIsAProportion(): array
+    {
+        $failures = [];
+
+        foreach (['-0.100', '1.500'] as $rate) {
+            $refusal = $this->refusal(fn () => app(ExpectedCreditLoss::class)->setRate(
+                $this->entityId,
+                null,
+                'current',
+                $rate,
+                $this->actorId(),
+            ));
+
+            if ($refusal === null) {
+                $failures[] = sprintf(
+                    'a loss rate of %s was accepted - above 1 provisions more than is owed, which '.
+                    'puts a negative receivable on the balance sheet',
+                    $rate,
+                );
+            } elseif (! str_contains($refusal, 'negative receivable')) {
+                $failures[] = sprintf(
+                    'the refusal for %s came from the table rather than from setting the rate: %s',
+                    $rate,
+                    $refusal,
+                );
+            }
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function provisionIsComputed(): array
+    {
+        $invoice = $this->issue();
+        $gross = BigDecimal::of((string) $invoice->gross_amount);
+
+        app(ExpectedCreditLoss::class)->setRate($this->entityId, null, 'current', '0.100', $this->actorId());
+
+        $result = app(ExpectedCreditLoss::class)->recompute(
+            $this->entityId,
+            '2026-05',
+            $this->date->copy(),
+            $this->actorId(),
+        );
+
+        $expected = $gross->multipliedBy('0.100')->toScale(4, \Brick\Math\RoundingMode::HalfUp);
+
+        $failures = [];
+
+        if (! $result['provision']->amount->isEqualTo($expected)) {
+            $failures[] = sprintf(
+                'a %s invoice at a 10%% rate provisioned %s rather than %s',
+                (string) $gross,
+                (string) $result['provision']->amount,
+                (string) $expected,
+            );
+        }
+
+        /*
+         | And the line behind it, with the inputs.
+         |
+         | A provision total nobody can decompose is a number somebody has
+         | to defend by re-deriving it, and by then the rates may have
+         | moved.
+         */
+        $line = DB::connection('tenant')->table('ecl_provision_lines')
+            ->where('run_id', (string) $result['id'])
+            ->where('document_id', (string) $invoice->getKey())
+            ->first();
+
+        if ($line === null) {
+            return [...$failures, 'the run recorded no line for the invoice, so the provision cannot be decomposed'];
+        }
+
+        foreach (['bucket', 'rate', 'open_balance', 'provision'] as $column) {
+            if (($line->{$column} ?? null) === null) {
+                $failures[] = sprintf('the line carries no %s', $column);
+            }
+        }
+
+        $onProvision = DB::connection('tenant')->table('journal_lines')
+            ->where('journal_entry_id', (string) $result['journal_entry_id'])
+            ->where('account_id', $this->accountFor(ControlRole::EclProvision))
+            ->value('functional_amount');
+
+        if ($onProvision === null) {
+            $failures[] = 'nothing was posted to the provision account';
+        } elseif (! BigDecimal::of((string) $onProvision)->isEqualTo($expected->negated())) {
+            $failures[] = sprintf(
+                'the provision account moved by %s, which is not a credit of %s - a provision is a '.
+                'contra-asset and a debit there would increase what the ledger claims is owed',
+                (string) $onProvision,
+                (string) $expected,
+            );
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function ageingFromTheDueDate(): array
+    {
+        /*
+         | Issued six weeks ago, on terms that fall due in another month.
+         |
+         | Ageing from the issue date would put it in `1-30`; ageing from
+         | the due date it froze puts it in `current`. That is the whole
+         | point - a customer on ninety-day terms is not overdue on day
+         | thirty-one - and the two buckets carry different rates here so
+         | the wrong clock is visible rather than merely wrong.
+         |
+         | Created issued, with its terms, rather than issued and then
+         | edited: an issued invoice cannot be changed, and the database
+         | is right about that.
+         */
+        $invoice = $this->anIssuedInvoice(
+            'SAR',
+            '1000.0000',
+            issuedOn: $this->date->copy()->subDays(42)->toDateString(),
+            dueOn: $this->date->copy()->addDays(30)->toDateString(),
+        );
+
+        app(ExpectedCreditLoss::class)->setRate($this->entityId, null, 'current', '0.010', $this->actorId());
+        app(ExpectedCreditLoss::class)->setRate($this->entityId, null, '1-30', '0.200', $this->actorId());
+
+        $result = app(ExpectedCreditLoss::class)->recompute(
+            $this->entityId,
+            '2026-05',
+            $this->date->copy(),
+            $this->actorId(),
+        );
+
+        $line = DB::connection('tenant')->table('ecl_provision_lines')
+            ->where('run_id', (string) $result['id'])
+            ->where('document_id', (string) $invoice->getKey())
+            ->first();
+
+        if ($line === null) {
+            return ['nothing was provisioned for the invoice'];
+        }
+
+        return (string) $line->bucket === 'current'
+            ? []
+            : [sprintf(
+                'an invoice due in thirty days landed in the %s bucket, so the ageing is running '.
+                'from the issue date - which provisions the patient customers and excuses the late '.
+                'ones',
+                (string) $line->bucket,
+            )];
+    }
+
+    /** @return list<string> */
+    private function gradeFallsBack(): array
+    {
+        $invoice = $this->issue();
+
+        DB::connection('tenant')->table('parties')
+            ->where('id', (string) $invoice->party_id)
+            ->update(['risk_grade' => 'B']);
+
+        /*
+         | A rate for the bucket but not for the grade.
+         |
+         | The graded customer falls back to the ungraded rate rather than
+         | to zero: being graded is not a reason to provision less for
+         | somebody.
+         */
+        app(ExpectedCreditLoss::class)->setRate($this->entityId, null, 'current', '0.050', $this->actorId());
+
+        $result = app(ExpectedCreditLoss::class)->recompute(
+            $this->entityId,
+            '2026-05',
+            $this->date->copy(),
+            $this->actorId(),
+        );
+
+        $line = DB::connection('tenant')->table('ecl_provision_lines')
+            ->where('run_id', (string) $result['id'])
+            ->where('document_id', (string) $invoice->getKey())
+            ->first();
+
+        if ($line === null) {
+            return ['a graded customer with no rate for their grade was provisioned at nothing, which is a rate nobody set reported as though they had'];
+        }
+
+        return BigDecimal::of((string) $line->rate)->isEqualTo('0.050000')
+            ? []
+            : [sprintf('the fallback rate was %s rather than the ungraded 0.05', (string) $line->rate)];
+    }
+
+    /** @return list<string> */
+    private function runReversesTheLast(): array
+    {
+        /*
+         | Due well after both runs, so the bucket does not move.
+         |
+         | Otherwise the second run would age the invoice into a bucket
+         | the matrix has no rate for and provision nothing - and the
+         | check would pass or fail for a reason that has nothing to do
+         | with whether the first run was reversed.
+         */
+        $invoice = $this->anIssuedInvoice(
+            'SAR',
+            '1150.0000',
+            issuedOn: $this->date->toDateString(),
+            dueOn: $this->date->copy()->addDays(120)->toDateString(),
+        );
+
+        app(ExpectedCreditLoss::class)->setRate($this->entityId, null, 'current', '0.100', $this->actorId());
+
+        $first = app(ExpectedCreditLoss::class)->recompute(
+            $this->entityId,
+            '2026-05',
+            $this->date->copy(),
+            $this->actorId(),
+        );
+
+        /*
+         | The rate doubles, and the next run recomputes rather than tops up.
+         |
+         | Accumulating movements leaves a residue after every rate change,
+         | and four quarters later the provision is the sum of four
+         | approximations nobody can take apart.
+         */
+        app(ExpectedCreditLoss::class)->setRate($this->entityId, null, 'current', '0.200', $this->actorId());
+
+        $this->openThePeriodFor($this->date->copy()->addDays(14)->toDateString());
+
+        $second = app(ExpectedCreditLoss::class)->recompute(
+            $this->entityId,
+            '2026-06',
+            $this->date->copy()->addDays(14),
+            $this->actorId(),
+        );
+
+        $failures = [];
+
+        if (($second['reversal_entry_id'] ?? null) === null) {
+            $failures[] = 'the second run posted no reversal, so the provision is accumulating rather than being recomputed';
+        }
+
+        $expected = BigDecimal::of((string) $invoice->gross_amount)
+            ->multipliedBy('0.200')
+            ->toScale(4, \Brick\Math\RoundingMode::HalfUp);
+
+        if (! $second['provision']->amount->isEqualTo($expected)) {
+            $failures[] = sprintf(
+                'the second run provisioned %s where the matrix at 20%% gives %s - a run that '.
+                'added to the first would give the sum of both',
+                (string) $second['provision']->amount,
+                (string) $expected,
+            );
+        }
+
+        /*
+         | And the account holds the new figure, not the sum.
+         |
+         | This is the assertion that actually catches accumulation: the
+         | run's own total can be right while the ledger carries both
+         | entries.
+         */
+        $balance = $this->balanceOf(ControlRole::EclProvision);
+
+        if (! $balance->amount->isEqualTo($expected->negated())) {
+            $failures[] = sprintf(
+                'the provision account holds %s after two runs, where the current estimate is %s - '.
+                'so the reversal did not happen or did not cover the first run in full',
+                (string) $balance->amount,
+                (string) $expected->negated(),
+            );
+        }
+
+        if (($first['id'] ?? null) === null || ($second['id'] ?? null) === null) {
+            $failures[] = 'a run was not recorded';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function periodComputedOnce(): array
+    {
+        $this->issue();
+        app(ExpectedCreditLoss::class)->setRate($this->entityId, null, 'current', '0.100', $this->actorId());
+
+        app(ExpectedCreditLoss::class)->recompute($this->entityId, '2026-05', $this->date->copy(), $this->actorId());
+
+        $refusal = $this->refusal(fn () => app(ExpectedCreditLoss::class)->recompute(
+            $this->entityId,
+            '2026-05',
+            $this->date->copy(),
+            $this->actorId(),
+        ));
+
+        if ($refusal === null) {
+            return ['one period carries two provisions, so nothing says which is its figure'];
+        }
+
+        /*
+         | The service's refusal, not the unique index's.
+         |
+         | The index refuses it too. A person recomputing a period should
+         | be told when it was first computed and what to do instead -
+         | correct the matrix and compute the period after it - rather
+         | than being handed a constraint name.
+         */
+        return str_contains($refusal, 'already computed')
+            ? []
+            : [sprintf('the refusal came from the index rather than from recomputing: %s', $refusal)];
+    }
+
+    /** @return list<string> */
+    private function noMatrix(): array
+    {
+        $this->issue();
+
+        $refusal = $this->refusal(fn () => app(ExpectedCreditLoss::class)->recompute(
+            $this->entityId,
+            '2026-05',
+            $this->date->copy(),
+            $this->actorId(),
+        ));
+
+        if ($refusal === null) {
+            return ['a provision of nothing was computed with no matrix at all, which reports a ledger with no expected losses rather than one nobody has estimated'];
+        }
+
+        return str_contains($refusal, 'statement rather than an absence')
+            ? []
+            : [sprintf('the refusal does not say why provisioning nothing is worse than refusing: %s', $refusal)];
+    }
+
+    /** @return list<string> */
+    private function writeOffReleasesProvision(): array
+    {
+        $invoice = $this->issue();
+        $gross = BigDecimal::of((string) $invoice->gross_amount);
+
+        app(ExpectedCreditLoss::class)->setRate($this->entityId, null, 'current', '0.400', $this->actorId());
+
+        app(ExpectedCreditLoss::class)->recompute($this->entityId, '2026-05', $this->date->copy(), $this->actorId());
+
+        $provisioned = $gross->multipliedBy('0.400')->toScale(4, \Brick\Math\RoundingMode::HalfUp);
+        $before = $this->balanceOf(ControlRole::EclProvision);
+
+        $result = $this->writeOff($invoice, (string) $gross);
+
+        $failures = [];
+
+        /*
+         | The provision is used up, not left standing.
+         |
+         | Without this the period carries both the estimate and the
+         | conclusion: bad debt takes the full amount while the provision
+         | still claims part of it is coming, and the impairment line
+         | reads as twice the loss that happened.
+         */
+        if (($result['provision_released'] ?? null) === null) {
+            return ['writing off a provisioned invoice released nothing, so the period double-charges the loss'];
+        }
+
+        if (! $result['provision_released']->amount->isEqualTo($provisioned)) {
+            $failures[] = sprintf(
+                '%s was provisioned for this invoice and %s was released',
+                (string) $provisioned,
+                (string) $result['provision_released']->amount,
+            );
+        }
+
+        $after = $this->balanceOf(ControlRole::EclProvision);
+
+        if (! $after->isZero()) {
+            $failures[] = sprintf(
+                'the provision account holds %s after its only document was written off',
+                (string) $after->amount,
+            );
+        }
+
+        if ($before->isZero()) {
+            $failures[] = 'the provision was zero before the write-off, so this check is not reading what it thinks it is';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function estimateAndConclusionAreApart(): array
+    {
+        $invoice = $this->issue();
+        $gross = BigDecimal::of((string) $invoice->gross_amount);
+
+        app(ExpectedCreditLoss::class)->setRate($this->entityId, null, 'current', '0.400', $this->actorId());
+        app(ExpectedCreditLoss::class)->recompute($this->entityId, '2026-05', $this->date->copy(), $this->actorId());
+
+        $this->writeOff($invoice, (string) $gross);
+
+        $failures = [];
+
+        /*
+         | Bad debt carries the conclusion, in full.
+         |
+         | Netting the release against it would leave the write-off
+         | reported at less than it was - and that figure must stay exact,
+         | because it is what the matrix is calibrated against.
+         */
+        $badDebt = $this->balanceOf(ControlRole::BadDebt);
+
+        if (! $badDebt->amount->isEqualTo($gross)) {
+            $failures[] = sprintf(
+                'bad debt holds %s after a %s write-off, so the release has been netted against '.
+                'the conclusion',
+                (string) $badDebt->amount,
+                (string) $gross,
+            );
+        }
+
+        /*
+         | And the charge account carries the estimate, net of the release.
+         |
+         | Charged 40%, released the same 40%, so it nets to nothing - and
+         | that is right: the estimate was made and then used, and the
+         | loss itself is in bad debt.
+         */
+        $charge = $this->balanceOf(ControlRole::EclCharge);
+
+        if (! $charge->isZero()) {
+            $failures[] = sprintf(
+                'the impairment charge holds %s after a provision was charged and released in '.
+                'full, so the period reports an estimate that has already been concluded',
+                (string) $charge->amount,
+            );
+        }
+
+        if ($this->accountFor(ControlRole::EclCharge) === $this->accountFor(ControlRole::BadDebt)) {
+            $failures[] = 'the estimate and the conclusion share one account, so "how much of last year\'s estimate turned out to be real" is unanswerable';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function rollForwardTies(): array
+    {
+        $first = $this->anIssuedInvoice(
+            'SAR',
+            '1000.0000',
+            issuedOn: $this->date->toDateString(),
+            dueOn: $this->date->copy()->addDays(120)->toDateString(),
+        );
+
+        $second = $this->anIssuedInvoice(
+            'SAR',
+            '2000.0000',
+            issuedOn: $this->date->toDateString(),
+            dueOn: $this->date->copy()->addDays(120)->toDateString(),
+        );
+
+        app(ExpectedCreditLoss::class)->setRate($this->entityId, null, 'current', '0.100', $this->actorId());
+        app(ExpectedCreditLoss::class)->recompute($this->entityId, '2026-05', $this->date->copy(), $this->actorId());
+
+        /*
+         | One written off, then the next period computed.
+         |
+         | So the roll-forward has something in every line: an opening
+         | figure, a utilization from the write-off, and a movement from
+         | the document that is left.
+         */
+        $this->writeOff($first, (string) $first->gross_amount);
+
+        app(ExpectedCreditLoss::class)->setRate($this->entityId, null, 'current', '0.300', $this->actorId());
+        $this->openThePeriodFor($this->date->copy()->addDays(14)->toDateString());
+        app(ExpectedCreditLoss::class)->recompute(
+            $this->entityId,
+            '2026-06',
+            $this->date->copy()->addDays(14),
+            $this->actorId(),
+        );
+
+        $roll = app(ExpectedCreditLoss::class)->rollForward($this->entityId, '2026-06');
+
+        $failures = [];
+
+        foreach (['opening', 'charge', 'release', 'utilisation', 'closing'] as $figure) {
+            if (! isset($roll[$figure])) {
+                $failures[] = sprintf('the roll-forward has no %s figure', $figure);
+            }
+        }
+
+        /*
+         | It ties, which is the only thing that makes it a roll-forward.
+         |
+         | Five figures that do not reconcile are five figures, and a
+         | reader cannot tell which of them is wrong.
+         */
+        if (($roll['ties'] ?? false) !== true) {
+            $failures[] = sprintf(
+                'the roll-forward does not tie: %s opening, %s used, %s charged, %s released, %s '.
+                'closing',
+                (string) $roll['opening']->amount,
+                (string) $roll['utilisation']->amount,
+                (string) $roll['charge']->amount,
+                (string) $roll['release']->amount,
+                (string) $roll['closing']->amount,
+            );
+        }
+
+        if (! $roll['utilisation']->isPositive()) {
+            $failures[] = 'the write-off does not appear as utilization, so a provision used up looks like one released';
+        }
+
+        if (! $roll['opening']->isPositive()) {
+            $failures[] = 'the opening figure is nil, so this check is not reading a second period';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function shrinkingIsARelease(): array
+    {
+        $invoice = $this->anIssuedInvoice(
+            'SAR',
+            '1000.0000',
+            issuedOn: $this->date->toDateString(),
+            dueOn: $this->date->copy()->addDays(120)->toDateString(),
+        );
+
+        app(ExpectedCreditLoss::class)->setRate($this->entityId, null, 'current', '0.300', $this->actorId());
+        app(ExpectedCreditLoss::class)->recompute($this->entityId, '2026-05', $this->date->copy(), $this->actorId());
+
+        /*
+         | The rate falls, so the provision shrinks.
+         |
+         | Nothing else in this suite produced a downward movement, so
+         | "charge" and "release" were the same figure in every scenario
+         | and a report that called the whole movement a charge passed.
+         | A negative charge and a release mean opposite things about the
+         | ledger, and a reader cannot tell them apart from one number.
+         */
+        app(ExpectedCreditLoss::class)->setRate($this->entityId, null, 'current', '0.100', $this->actorId());
+        $this->openThePeriodFor($this->date->copy()->addDays(14)->toDateString());
+        app(ExpectedCreditLoss::class)->recompute(
+            $this->entityId,
+            '2026-06',
+            $this->date->copy()->addDays(14),
+            $this->actorId(),
+        );
+
+        $roll = app(ExpectedCreditLoss::class)->rollForward($this->entityId, '2026-06');
+
+        $failures = [];
+
+        if (! $roll['release']->isPositive()) {
+            $failures[] = sprintf(
+                'the provision fell from %s to %s and the release is %s, so a shrinking estimate '.
+                'is being reported as a charge of less',
+                (string) $roll['opening']->amount,
+                (string) $roll['closing']->amount,
+                (string) $roll['release']->amount,
+            );
+        }
+
+        if ($roll['charge']->isPositive()) {
+            $failures[] = sprintf(
+                'a period whose provision shrank reports a charge of %s',
+                (string) $roll['charge']->amount,
+            );
+        }
+
+        if (($roll['ties'] ?? false) !== true) {
+            $failures[] = 'the roll-forward does not tie on a downward movement';
+        }
+
+        return $failures;
     }
 
     // ---- Write-offs -------------------------------------------------------
@@ -2599,14 +3265,34 @@ final class SettlementRules
      */
     private function aForeignInvoice(string $currency, string $gross, ?string $rate): object
     {
+        return $this->anIssuedInvoice($currency, $gross, rate: $rate);
+    }
+
+    /**
+     * An issued invoice written directly, with the columns a check needs.
+     *
+     * Through the model rather than the issuer, because the issuer posts -
+     * and what these checks read is a later entry. The columns that matter
+     * are the ones the settlement path reads: gross, currency, the rate it
+     * was booked at, and the due dates its terms froze.
+     */
+    private function anIssuedInvoice(
+        string $currency,
+        string $gross,
+        ?string $rate = null,
+        ?string $issuedOn = null,
+        ?string $dueOn = null,
+    ): object {
+        $issuedOn ??= '2026-05-01';
+
         $invoice = \App\Tenant\Sales\Models\Invoice::create([
             'entity_id' => $this->entityId,
             'series_key' => 'invoice',
             'document_type' => '380',
             'status' => 'issued',
             'party_id' => (string) $this->party?->getKey(),
-            'issue_date' => '2026-05-01',
-            'tax_point' => '2026-05-01',
+            'issue_date' => $issuedOn,
+            'tax_point' => $issuedOn,
             'currency' => $currency,
             'net_amount' => $gross,
             'tax_amount' => '0.0000',
@@ -2615,8 +3301,11 @@ final class SettlementRules
             'presentation_exponent' => 2,
             'number' => 'FX-'.\Illuminate\Support\Str::upper(\Illuminate\Support\Str::random(8)),
             'fx_rate' => $rate,
-            'fx_rate_date' => $rate === null ? null : '2026-05-01',
+            'fx_rate_date' => $rate === null ? null : $issuedOn,
             'fx_source' => $rate === null ? null : 'manual',
+            'terms_snapshot' => $dueOn === null
+                ? null
+                : ['due_dates' => [['date' => $dueOn, 'amount' => $gross]]],
             /*
              | An issued invoice carries its snapshots, and the database
              | says so.
@@ -2628,7 +3317,7 @@ final class SettlementRules
              | it - a check standing on a state the system refuses is a
              | check standing on nothing.
              */
-            'issued_at' => '2026-05-01 09:00:00',
+            'issued_at' => $issuedOn.' 09:00:00',
             'supplier_snapshot' => ['legal_name' => 'Peakflow Trading Co.', 'country' => 'SA'],
             'customer_snapshot' => ['legal_name' => 'Acme Industrial LLC', 'country' => 'SA'],
             'tax_decision_snapshot' => ['treatment' => 'out_of_scope', 'why' => 'a settlement fixture, where the tax decision is not what is being checked'],
@@ -2793,6 +3482,31 @@ final class SettlementRules
             userId: $this->actorId(),
             bankAccountId: (string) $this->bank()->getKey(),
             partyId: $partyId,
+        );
+    }
+
+    /**
+     * Open the period a date falls in, if it is not open already.
+     *
+     * A generated calendar's periods start `future`, and `future` does not
+     * accept postings - which is right, and is what stops December being
+     * posted into in March. A check that spans two periods opens the
+     * second rather than pretending a posting can land in one nobody
+     * opened.
+     */
+    private function openThePeriodFor(string $date): void
+    {
+        $period = app(\App\Tenant\Ledger\Services\FiscalCalendarGenerator::class)
+            ->periodFor($this->entityId, Carbon::parse($date));
+
+        if ($period === null || $period->state === \App\Tenant\Ledger\Enums\PeriodState::Open) {
+            return;
+        }
+
+        app(\App\Tenant\Ledger\Services\PeriodStateMachine::class)->transition(
+            $period,
+            \App\Tenant\Ledger\Enums\PeriodState::Open,
+            'opened so a second period can be computed in this check',
         );
     }
 

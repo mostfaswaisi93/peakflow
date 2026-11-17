@@ -49,5 +49,17 @@ final class SettlementServiceProvider extends ServiceProvider
          */
         $registry->register(new \App\Tenant\Settlement\Posting\Rules\WriteOffPostedRule());
         $registry->register(new \App\Tenant\Settlement\Posting\Rules\RecoveryPostedRule());
+
+        /*
+         | And the two halves of the estimate - PF-173.
+         |
+         | Charged when a provision is computed, released when a write-off
+         | uses one up. Separate from the write-off rules because a
+         | provision is an estimate and a write-off is a conclusion, and
+         | sharing an account would destroy the figure that calibrates the
+         | matrix: how much of last year's estimate turned out to be real.
+         */
+        $registry->register(new \App\Tenant\Settlement\Posting\Rules\EclProvisionChargedRule());
+        $registry->register(new \App\Tenant\Settlement\Posting\Rules\EclProvisionReleasedRule());
     }
 }

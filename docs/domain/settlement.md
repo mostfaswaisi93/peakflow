@@ -176,3 +176,45 @@ What a document still owes is its gross, less credit notes, less allocations, le
 They were kept in step by hand, and PF-171 showed what that costs — the difference term reached two of the three, and the one it missed reported a penny still owed on an invoice the ledger had settled.
 
 So it is a SQL function and the three callers ask it. In SQL because one of them is a trigger and a trigger cannot call PHP; the other arrangement — PHP as the definition, the trigger trusting it — is the one that failed, since a service is one code path and an import is another. A term added later is a one-line change in one place, which is the only arrangement under which "they agree" is a property rather than a hope.
+
+## Expected credit loss
+
+IFRS 9's simplified approach, and the distinction everything here turns on:
+
+**A provision is an estimate; a write-off is a conclusion.** One says a portion of what is owed probably will not arrive and is revised every period. The other says a particular debt will not, and is final.
+
+They post to different accounts — `ecl_charge` against `ecl_provision`, versus `bad_debt` against receivables — so "how much of last year's estimate turned out to be real" stays answerable. That comparison is the only thing that calibrates the matrix, and a matrix nobody can calibrate is one somebody picked once.
+
+### The matrix is data
+
+A loss rate per ageing bucket per risk grade, with the **basis** beside it. A rate with no basis is a number somebody picked, and where the rates came from is the question an auditor asks about a provision.
+
+Buckets are `current`, `1-30`, `31-60`, `61-90`, `90+` — fixed rather than configurable, for the same reason suspense ageing is: a matrix whose buckets differ between two entities cannot be added up, and a group provision is the figure most of this exists to produce.
+
+A grade with no row falls back to the **ungraded** rate, not to zero. Most customers are ungraded in most businesses, so that row does the work — and being graded is not a reason to provision less for somebody. A bucket with no rate at all is **skipped and counted**, because zero would be a rate nobody set, reported as though they had.
+
+### Ageing runs from the due date the document froze
+
+Not its issue date. A customer on ninety-day terms is not overdue on day thirty-one, and a matrix keyed on the wrong clock provisions the patient customers while excusing the late ones. The due dates come from the terms snapshot taken at issue, so changing a party's terms later does not restate a provision already reported.
+
+### Reversed and recomputed, never accumulated
+
+Each run reverses the previous one **in full** and posts a fresh figure. Accumulating movements is the arrangement that drifts: a rate change, a regraded customer or a corrected invoice each leave a residue, and four quarters later the provision is the sum of four approximations nobody can take apart.
+
+It costs more journal entries. It buys a provision that is one entry derived from one matrix and one set of open documents — re-performable rather than merely accepted. Every run also writes the figure it computed **per document**, with the grade, bucket, rate and balance behind it, so the total can be decomposed instead of re-derived.
+
+### A write-off releases the provision it used up
+
+The estimate was right about this one, so the provision is **utilized** rather than charged again. Without the release the period carries both: bad debt takes the full amount while the provision still claims part of it is coming, and the impairment line reads as twice the loss that happened — then recovers by itself next period, looking like a credit nobody can explain.
+
+The release credits `ecl_charge`, never `bad_debt`. What is being undone is the estimate; netting it against the conclusion would leave the write-off reported at less than it was, and that figure must stay exact because it is what the matrix is calibrated against.
+
+A partial write-off releases a part — releasing the whole provision would leave the remaining receivable unprovisioned until the next recompute, which is the opposite error and just as invisible.
+
+### The roll-forward: five figures, and it ties
+
+Opening, charge, release, utilization, closing. All five, because the closing figure alone says nothing about how it got there and "the provision went from 40,000 to 45,000" has four explanations that mean different things.
+
+**Utilization is counted by the run it consumed, not by date.** A write-off on the same day the opening provision was computed is genuinely ambiguous on dates alone: the document was open when the figure was computed and written off afterwards, so the release belongs to the next period — and `released_on > previous.as_of` excludes it while `>=` would wrongly swallow releases the opening figure already reflects. The release records which run's provision it ate into, which is exact and independent of ordering within a day.
+
+> A check caught that. The write-off vanished from the roll-forward and the five figures still tied, because a utilization counted nowhere is indistinguishable from one that never happened.

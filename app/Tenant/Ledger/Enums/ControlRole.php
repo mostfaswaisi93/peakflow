@@ -127,6 +127,23 @@ enum ControlRole: string
     case EclProvision = 'ecl_provision';
 
     /**
+     * The impairment charge, which is where an estimate lands - PF-173.
+     *
+     * Its own expense account, apart from `bad_debt`. The two are the
+     * difference between an **estimate** and a **conclusion**: a provision
+     * says a portion of what is owed probably will not arrive, and a
+     * write-off says a particular debt will not. One is revised every
+     * period; the other is final.
+     *
+     * Sharing an account would make the P&L line a mixture of the two and
+     * destroy the figure anybody actually wants - how much of last year's
+     * impairment charge turned out to be real. That figure is what
+     * calibrates the matrix, and a matrix nobody can calibrate is a
+     * matrix somebody picked once.
+     */
+    case EclCharge = 'ecl_charge';
+
+    /**
      * Is there one of these per jurisdiction rather than one per entity? - PF-084
      *
      * An entity registered in two jurisdictions files two returns, and each
@@ -205,7 +222,7 @@ enum ControlRole: string
             self::VatInput => AccountType::Asset,
 
             self::FxGainLoss, self::FxRevaluation, self::RoundingDifference,
-            self::BadDebt, self::BankCharges => AccountType::Expense,
+            self::BadDebt, self::BankCharges, self::EclCharge => AccountType::Expense,
 
             /*
              | A recovery is income, not a negative expense.
