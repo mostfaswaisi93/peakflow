@@ -171,6 +171,63 @@ return [
 
     /*
     |---------------------------------------------------------------------------
+    | Direct debit schemes
+    |---------------------------------------------------------------------------
+    |
+    | What a collection scheme demands - PF-177.
+    |
+    | `lead_days` is the pre-notification the scheme requires: the debtor
+    | must be told this many days before money is taken. It is not paperwork.
+    | A collection without it is one the debtor can reverse without giving a
+    | reason, for `refund_months` afterwards - thirteen months under SDD Core,
+    | which is a liability nobody budgets for.
+    |
+    | `presentation_days` is how far ahead the bank wants the file. Miss it
+    | and the collection moves to the next cycle, which the customer notices
+    | because the money leaves on a different day from the one they were
+    | promised.
+    |
+    */
+
+    'collection_schemes' => [
+
+        'sepa_core' => [
+            'label' => 'SEPA Direct Debit Core',
+            'format' => 'pain.008.001.08',
+            'namespace' => 'urn:iso:std:iso:20022:tech:xsd:pain.008.001.08',
+            'currency' => 'EUR',
+            'local_instrument' => 'CORE',
+            'lead_days' => 14,
+            'presentation_days' => ['FRST' => 1, 'RCUR' => 1, 'OOFF' => 1, 'FNAL' => 1],
+            'refund_months' => 13,
+            'character_set' => 'epc_restricted_latin',
+            'limits' => ['remittance' => 140, 'name' => 70, 'reference' => 35],
+        ],
+
+        /*
+         | B2B: no refund right, and the mandate is registered with the
+         | debtor's bank in advance.
+         |
+         | Which is why the two cannot be mixed on one mandate - a Core
+         | collection under a B2B mandate is refused by the debtor's bank
+         | because they hold a registration that says otherwise.
+         */
+        'sepa_b2b' => [
+            'label' => 'SEPA Direct Debit B2B',
+            'format' => 'pain.008.001.08',
+            'namespace' => 'urn:iso:std:iso:20022:tech:xsd:pain.008.001.08',
+            'currency' => 'EUR',
+            'local_instrument' => 'B2B',
+            'lead_days' => 14,
+            'presentation_days' => ['FRST' => 1, 'RCUR' => 1, 'OOFF' => 1, 'FNAL' => 1],
+            'refund_months' => 0,
+            'character_set' => 'epc_restricted_latin',
+            'limits' => ['remittance' => 140, 'name' => 70, 'reference' => 35],
+        ],
+    ],
+
+    /*
+    |---------------------------------------------------------------------------
     | The default scheme for an account that declares none
     |---------------------------------------------------------------------------
     |

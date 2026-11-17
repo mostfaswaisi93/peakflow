@@ -420,3 +420,43 @@ The first hand-over is recorded and the database refuses a second — including 
 > **A control that would have created the hole it guards.** Reading a beneficiary's IBAN went through `BankDetailDisclosure`, which requires `bank.manage` — and that is the permission that lets somebody **change** supplier bank details. Requiring it to produce a payment file would have handed it to every treasury clerk who needs to send one, and `beneficiary_then_release` would have started firing on people doing their jobs. A payment file is not a disclosure to a person: the number goes into a machine-readable instruction, and the producer has already been through maker-checker, step-up and a review of what changed. So the file path asks for `payment.release` — the duty that already governs money leaving — and records the read under `party.bank_account.instructed`, so an investigation can tell "somebody looked at this account" from "this account went into a file".
 
 > **And the fixtures had to become three people.** The first draft of the file checks signed one user in to do everything, and `beneficiary_then_release` refused every release. The second separated the supplier maintainer and was refused by `prepare_then_release`. The third needed a real enrolled factor on top. The product requires three people and a second factor to send money, so a fixture that wanted a file had to supply all of it — which is the controls working on the checks written to exercise them.
+
+## Direct debit — PF-177
+
+### The sequence type is the whole of this task
+
+SEPA distinguishes the **first** collection under a mandate (`FRST`) from every one after it (`RCUR`), and getting it wrong is a scheme-level rejection rather than a warning: a second `FRST` is refused because the debtor's bank has already seen the mandate, and an `RCUR` before any `FRST` because it has not.
+
+So it is **derived** from the mandate's own collection history and is not a column anybody can set. A field would be edited, and the first edit produces a file the bank rejects for a reason that reads as our bug. A partial unique index makes a second `FRST` impossible even by direct insert.
+
+**A returned first collection still counts as seen.** The debtor's bank holds the mandate either way — the collection failed, the registration did not. Presenting a second `FRST` after a return is the commonest way a business earns a scheme-level rejection on top of the one it already had.
+
+### Pre-notification is a promise with a figure on it
+
+The scheme requires the debtor be told a set number of days before money is taken. That is not paperwork: a collection without it is one they can reverse **without giving a reason**, for thirteen months under SDD Core, which is a liability nobody budgets for.
+
+And the notice has to cover *this* collection. It promised an amount, so collecting more than was promised is not covered by it — that is the half a product skips, and the symptom is a refund thirteen months later nobody can explain. Collecting **less** is allowed, because nobody disputes being charged less than they were told, and refusing it would make every customer who gets a credit note before the collection need re-notifying.
+
+### Cancellation stops collections here, not at the bank
+
+A collection against a revoked mandate is returned days later with a reason code, after the customer has seen it on their statement and complained. The refusal is in the service *and* in a trigger, because an import and a queued job are other doors to the same table — and it carries the reason the mandate was withdrawn, so whoever hits it is not sent to the audit log to read a sentence.
+
+### Returns: the reason code decides what happens next
+
+| Code | Means | Response |
+|---|---|---|
+| `AM04` | Insufficient balance | The mandate **stands** — the collection failed, the authority did not |
+| `MD01`, `MD02` | The debtor denies the mandate | The mandate is **cancelled** |
+| `MD06`, `MD07` | Disputed, or the debtor is deceased | The mandate is **cancelled** |
+
+Cancelling on a disputed-mandate code matters because presenting again would be returned again, and that looks — to the debtor's bank — like a business that does not read its returns, which is how a creditor identifier gets suspended. Cancelling on an insufficient balance would be the opposite error: one short week ends an arrangement somebody then has to ask the customer to sign again.
+
+### The file groups by sequence type as well as date
+
+PAIN.001 groups by debtor account and date. PAIN.008 groups by those **and by sequence type**, because `SeqTp` sits on the `PmtInf` block rather than on the transaction — so a block holding both a first and a recurring collection cannot say which it is, and the scheme refuses it.
+
+Core and B2B cannot share a file either. B2B has no refund right and the mandate is registered with the debtor's bank in advance, so a bank holding a B2B registration refuses a Core collection against it.
+
+The mandate's reference and signature date travel with every transaction in `MndtRltdInf`: the debtor's bank matches on them, and a collection whose reference they do not recognise is returned, as is one whose signature date disagrees with their registration. Both are facts we hold, so neither should ever be the reason.
+
+> **The near-miss the checks caught.** The creditor's own IBAN was briefly in the *debtor's* account element. The two have the same shape in the schema — `Id` then `IBAN` — and a substitution landed on the wrong one. The file would have instructed the bank to collect money from our own account. The check that walks the produced document and asserts what each element holds caught it on the first run; nothing about the file would have looked wrong until the bank acted on it.

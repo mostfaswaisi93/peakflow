@@ -277,6 +277,7 @@ if ($only === 'all' || $only === 'banking') {
 if ($only === 'all' || $only === 'settlement') {
     $suites['Payments, unapplied cash and allocations'] = $suite(static fn (): array => (new Tests\Support\SettlementRules())->all());
     $suites['The payment instruction file'] = $suite(static fn (): array => (new Tests\Support\PaymentFileRules())->all());
+    $suites['Mandates and collections'] = $suite(static fn (): array => (new Tests\Support\MandateRules())->all());
 }
 
 if ($only === 'all' || $only === 'sod') {

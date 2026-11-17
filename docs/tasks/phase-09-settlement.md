@@ -112,11 +112,13 @@ The single highest-consequence control in the product.
 ### PF-177 · Direct debit
 `Settlement` · **5 pts** · depends: PF-176 · standards: ISO 20022 PAIN.008, EPC SEPA SDD
 
-- [ ] Mandate management: reference, signature date, scheme, sequence type, and the first-versus-recurring distinction
-- [ ] PAIN.008 collection files with the correct sequence type per mandate, since getting it wrong is a scheme-level rejection
-- [ ] Pre-notification lead times enforced per scheme
-- [ ] Mandate cancellation and expiry stop collections rather than failing them at the bank
-- [ ] Returns and refunds ingested and posted, with the reason code retained
+- [x] Mandate management: reference, signature date, scheme, sequence type, and the first-versus-recurring distinction. The sequence type is **derived** from the mandate's own collection history and is not a column anybody can set - a field would be edited, and the first edit produces a file the bank rejects at the scheme level
+- [x] PAIN.008 collection files with the correct sequence type per mandate, since getting it wrong is a scheme-level rejection. The file groups by sequence type **as well as** date, because `SeqTp` sits on the block and a block holding both `FRST` and `RCUR` cannot say so - and a unique index makes a second `FRST` impossible even by direct insert
+- [x] Pre-notification lead times enforced per scheme - and the notification has to cover *this* collection: collecting more than was notified is refused, because the notice promised a figure and the debtor's refund right runs for thirteen months either way. Less is allowed, since nobody disputes being charged less than they were told
+- [x] Mandate cancellation and expiry stop collections rather than failing them at the bank - in the service and in a trigger, because a collection against a revoked mandate comes back days later after the customer has seen it on their statement
+- [x] Returns and refunds ingested with the reason code retained, and a disputed-mandate code (`MD01`, `MD02`, `MD06`, `MD07`) cancels the mandate, because presenting again would be returned again and a creditor that does not read its returns is one whose identifier gets suspended. An insufficient balance deliberately does **not** cancel it: one short week should not end an arrangement somebody has to ask the customer to sign again
+  - The **posting** half of this criterion lands with PF-179, which defines the in-transit account a presented collection sits in. Posting it here would mean inventing that account twice.
+- [x] **Found while checking this task:** the creditor's own IBAN was briefly in the debtor's account element - the two have the same shape in the schema, and a substitution landed on the wrong one. The file would have collected money from our own account. The check that walks the produced document caught it on the first run
 
 ### PF-178 · PAIN.002 status ingestion
 `Settlement` · **5 pts** · depends: PF-176 · standards: ISO 20022 PAIN.002
