@@ -25,13 +25,21 @@
     --}}
     <title>{{ $title ?? config('app.name') }}</title>
 
+    @include('partials.brand-meta')
     @include('partials.theme-boot')
     @vite(['resources/css/app.css'])
 </head>
 {{-- `aurora` is the sign-in page's backdrop (UX-031): static light sources
-     that follow the theme, and a plain page in the high-contrast themes. --}}
+     that follow the theme, and a plain page in the high-contrast themes.
+
+     `brand` (default on) puts the logo above the page. Off where the page
+     carries it itself (sign-in), and off on a customer's document, which is
+     the ISSUER'S document - the platform signs it in a footer, not a header. --}}
 <body @class(['min-h-dvh bg-background text-on-background antialiased', 'aurora' => $aurora ?? false])>
     <main class="mx-auto flex min-h-dvh max-w-xl flex-col justify-center px-6 py-16">
+        @if ($brand ?? true)
+            <x-brand.logo size="small" class="mb-10 h-8 self-center"/>
+        @endif
         {{ $slot ?? '' }}
         @yield('content')
     </main>

@@ -9,6 +9,7 @@
     <meta name="color-scheme" content="{{ $theme->colorScheme() }}">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{{ isset($title) ? $title . ' · ' . config('app.name') : config('app.name') }}</title>
+    @include('partials.brand-meta')
     @include('partials.theme-boot')
     @vite(['resources/css/app.css'])
 </head>
@@ -43,7 +44,13 @@
 
     <header class="border-b border-outline bg-surface">
         <div @class(['mx-auto flex flex-wrap items-center gap-4 px-6 py-3', ($wide ?? false) ? 'max-w-7xl' : 'max-w-5xl'])>
-            <span class="font-semibold text-on-surface">{{ config('app.name') }}</span>
+            {{-- The small logo: 32 px high is about 172 px wide in English and
+                 122 px in Arabic - both inside the kit's 120-200 px band for
+                 the small artwork. The link is the way home from anywhere. --}}
+            <a href="{{ route('overview') }}"
+               class="-my-1 rounded-lg py-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
+                <x-brand.logo size="small" class="h-8"/>
+            </a>
 
             @include('partials.entity-switcher')
 

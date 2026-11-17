@@ -47,7 +47,7 @@
 
 @if ($count >= 2)
     <svg viewBox="0 0 {{ $width }} {{ $height }}" preserveAspectRatio="none" role="img" aria-label="{{ $label }}"
-         {{ $attributes->class(['block h-10 w-full overflow-visible text-tertiary']) }}>
+         {{ $attributes->class(['block h-10 w-full overflow-visible text-accent']) }}>
         @if ($area)
             <polygon points="0,{{ $height }} {{ $line }} {{ $width }},{{ $height }}" class="fill-current opacity-15"/>
         @endif

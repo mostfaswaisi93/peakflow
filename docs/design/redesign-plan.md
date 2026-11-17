@@ -88,6 +88,23 @@ Tables, forms and reports — 80% of an accountant's day — are built on **Swis
 
 ## 4. Colour system "Summit & Flow"
 
+### 4.0 Superseded by the PeakFlow brand kit (2026-11-17)
+
+> **The brand kit decides the colours, the type and the logo; this section's indigo "Summit" palette was a proposal made before the kit existed.** What shipped is built on the kit, with the METHOD of this section unchanged: fixed lightness per step, roles rather than colours, every pair measured. `resources/css/app.css` is the source of truth for the values; `php bin/verify design` holds them.
+
+| Kit colour | Hex | Where it lives now |
+|---|---|---|
+| Midnight Navy | `#0F1E3D` | `--p-brand-navy`. Ink and the primary action in the light theme; the sidebar in every theme but high contrast; the `navy` ramp is built on its hue (263°) |
+| Flow Teal | `#0E9C8F` | `--p-brand-teal`. The `accent` role on light - graphics, indicators, the sparkline. White on it is 3.40:1, so it is never a text colour or a fill under text; links and `tertiary` use a deeper step of its hue (184.4°). Step 500 of the `flow` ramp IS the brand teal |
+| Glacier Teal | `#2DD4BF` | `--p-brand-glacier`. Primary action, accent and focus in the dark themes, with navy ink on it (8.86:1); the sidebar's "you are here" marker |
+| Summit Amber | `#FFB547` | `--p-brand-amber`. The logo's summit dot, a faint glow in the aurora, and the high-contrast-dark focus ring - nothing else, because amber also means "warning" |
+| Mist | `#F3F6FA` | `--p-brand-mist`. The page background in the light theme; the neutral ramp is built on its hue (255.5°) |
+
+- **All five convert back to their exact hex**, and `bin/verify design` fails if one is "adjusted".
+- **Type:** Plus Jakarta Sans for Latin (Medium 500 body, Bold 700 headings) and Readex Pro for Arabic, self-hosted at build time. **Figures stay in IBM Plex Sans**: measured, Plus Jakarta Sans has no tabular figures - with `tabular-nums` on, "1111111" set 131 px and "8888888" 140 px - and a figure column whose digits differ in width cannot be scanned.
+- **Logo:** `<x-brand.logo>` (`resources/views/components/brand/logo.blade.php`) applies the kit's rules - full from 200 px, small from 120 to 200 px, the PF monogram under 120 px, the Arabic artwork for Arabic pages, and one artwork per theme (colour on light, colour on dark, black and white for high contrast), never recoloured. Masters are in `public/brand/`; favicons, the touch icon and `site.webmanifest` in `public/`.
+- **Contrast after the change:** 57 pairs (43 text, 14 control/graphic) × 5 themes = 285 measurements, all passing. The tables in 4.3–4.4 below record the earlier proposal and are kept for the reasoning, not the values.
+
 ### 4.1 The story
 
 | Role | Name | Hue | Meaning | Why this choice |

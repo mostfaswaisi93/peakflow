@@ -41,25 +41,36 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
     <title>{{ $title }}</title>
+    {{-- Static files only - no manifest read, no database - so the icon and
+         logo survive the failures this page explains. --}}
+    @include('partials.brand-meta')
     <style>
+        /*
+         | The brand palette as plain hex, because this page cannot rely on the
+         | compiled stylesheet. The values are the same roles app.css gives the
+         | light and dark themes: Mist and Midnight Navy, the deep brand teal for
+         | links on light, Glacier Teal on dark.
+         */
         :root {
             color-scheme: light dark;
-            --bg: #fbfaf8;
-            --fg: #1c1b19;
-            --muted: #6b6761;
-            --line: #e4e0da;
-            --accent: #1f6f5c;
+            --bg: #F3F6FA;
+            --fg: #0F1E3D;
+            --muted: #525A65;
+            --line: #D8DDE3;
+            --accent: #01665D;
         }
 
         @media (prefers-color-scheme: dark) {
             :root {
-                --bg: #16151a;
-                --fg: #ecebe8;
-                --muted: #9b968e;
-                --line: #2e2c33;
-                --accent: #6ec3aa;
+                --bg: #04070B;
+                --fg: #EBEFF3;
+                --muted: #BFC5CD;
+                --line: #242B33;
+                --accent: #2DD4BF;
             }
         }
+
+        .brand { display: block; block-size: 2rem; inline-size: auto; margin-block-end: 2.5rem; }
 
         * { box-sizing: border-box; }
 
@@ -131,6 +142,14 @@
 </head>
 <body>
 <main>
+    {{-- The small logo, light or dark by the system preference this page
+         follows; the Arabic artwork for an Arabic page. --}}
+    @php($brandBase = str_starts_with($locale, 'ar') ? 'logo-ar' : 'logo-small')
+    <picture>
+        <source srcset="{{ asset('brand/'.$brandBase.'-color-on-dark.svg') }}" media="(prefers-color-scheme: dark)">
+        <img class="brand" src="{{ asset('brand/'.$brandBase.'-color-on-light.svg') }}" alt="{{ __('بيك فلو') }}">
+    </picture>
+
     <p class="code">{{ $status }}</p>
     <h1>{{ $title }}</h1>
     <p>{{ $body }}</p>

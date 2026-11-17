@@ -41,7 +41,7 @@
 
     <div class="flex flex-wrap items-end justify-between gap-4">
         <div>
-            <h1 class="text-headline font-semibold text-on-surface">{{ __('نظرة عامة') }}</h1>
+            <h1 class="text-headline font-bold text-on-surface">{{ __('نظرة عامة') }}</h1>
             <p class="mt-1 text-label text-on-surface-muted">
                 {{ __('أنت تعمل الآن في :entity.', ['entity' => $entity?->legal_name]) }}
             </p>
@@ -64,12 +64,13 @@
         {{-- Nothing has happened yet: the welcome. --}}
         <section class="aurora relative mt-8 overflow-hidden rounded-tile border border-outline p-8 sm:p-12">
             <svg aria-hidden="true" focusable="false" viewBox="0 0 200 200"
-                 class="pointer-events-none absolute -top-16 -end-16 size-72 text-tertiary opacity-20">
+                 class="pointer-events-none absolute -top-16 -end-16 size-72 text-accent opacity-20">
                 <path fill="currentColor" transform="translate(100 100)"
                       d="M43.6-58.4C56.3-50.8 66.1-37.4 70.9-22.4 75.7-7.4 75.4 9.2 69.3 23 63.3 36.8 51.4 47.8 37.9 56.2 24.4 64.6 9.2 70.4-6.6 71.9-22.4 73.3-38.8 70.4-51.3 61.4-63.8 52.4-72.4 37.3-75.4 21.2-78.4 5.1-75.8-12-68.3-26.2-60.8-40.4-48.3-51.6-34.6-58.7-20.9-65.9-6-69 8.6-70.6 23.2-72.2 30.9-66 43.6-58.4Z"/>
             </svg>
             <div class="glass relative max-w-xl rounded-card p-6 sm:p-8">
-                <h2 class="text-headline font-semibold text-on-surface">{{ __('مرحبًا بك في :app', ['app' => config('app.name')]) }}</h2>
+                <x-brand.logo size="mark" decorative class="mb-5 h-10"/>
+                <h2 class="text-headline font-bold text-on-surface">{{ __('مرحبًا بك في :app', ['app' => __('بيك فلو')]) }}</h2>
                 <p class="mt-3 text-body text-on-surface-muted">
                     {{ __('لا توجد حركات لهذه الشركة بعد. حين تبدأ القيود والفواتير وكشوف البنك بالوصول، تمتلئ هذه الصفحة بالمركز النقدي والذمم والمطابقة.') }}
                 </p>
