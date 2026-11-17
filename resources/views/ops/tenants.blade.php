@@ -37,7 +37,7 @@
                     <label for="new-name" class="block text-sm font-medium text-on-surface">{{ __('اسم العميل') }}</label>
                     <input id="new-name" name="name" required minlength="2" maxlength="160" value="{{ old('name') }}"
                            @error('name') aria-invalid="true" @enderror
-                           class="mt-1.5 block w-full rounded-lg border border-outline bg-surface-sunken px-3 py-2 text-on-surface
+                           class="mt-1.5 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-on-surface
                                   focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                     @error('name')
                         <p role="alert" class="mt-1.5 text-xs text-on-danger-subtle">{{ $message }}</p>
@@ -47,7 +47,7 @@
                 <div>
                     <label for="new-plan" class="block text-sm font-medium text-on-surface">{{ __('الخطة') }}</label>
                     <select id="new-plan" name="plan" required
-                            class="mt-1.5 block w-full rounded-lg border border-outline bg-surface-sunken px-3 py-2 text-on-surface
+                            class="mt-1.5 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-on-surface
                                    focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                         @foreach ($plans as $plan)
                             <option value="{{ $plan->key }}" @selected(old('plan') === $plan->key)>{{ $plan->name() }}</option>
@@ -65,7 +65,7 @@
                     --}}
                     <input id="new-slug" name="slug" dir="ltr" value="{{ old('slug') }}"
                            pattern="[a-z0-9][a-z0-9-]*[a-z0-9]" maxlength="40"
-                           class="mt-1.5 block w-full rounded-lg border border-outline bg-surface-sunken px-3 py-2 text-on-surface
+                           class="mt-1.5 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-on-surface
                                   focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                     <p class="mt-1.5 text-xs text-on-surface-subtle">{{ __('اختياري. يُشتق من الاسم إن تُرك فارغاً، ويصبح اسم قاعدة البيانات.') }}</p>
                 </div>
@@ -73,7 +73,7 @@
                 <div>
                     <label for="new-reason" class="block text-sm font-medium text-on-surface">{{ __('السبب') }}</label>
                     <input id="new-reason" name="reason" required minlength="8" maxlength="500" value="{{ old('reason') }}"
-                           class="mt-1.5 block w-full rounded-lg border border-outline bg-surface-sunken px-3 py-2 text-on-surface
+                           class="mt-1.5 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-on-surface
                                   focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                     <p class="mt-1.5 text-xs text-on-surface-subtle">{{ __('يُسجَّل في سجل النشاط. الشخص الذي يقرأه بعد ستة أشهر ليس من كتبه.') }}</p>
                 </div>
@@ -91,7 +91,7 @@
     <form method="GET" class="mt-6">
         <label for="q" class="sr-only">{{ __('بحث') }}</label>
         <input id="q" name="q" type="search" value="{{ request('q') }}" placeholder="{{ __('بحث') }}"
-               class="w-full max-w-sm rounded-lg border border-outline bg-surface-sunken px-3 py-2 text-on-surface
+               class="w-full max-w-sm rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-on-surface
                       focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
     </form>
 
@@ -136,7 +136,7 @@
                                 <label for="reason-{{ $tenant->id }}" class="sr-only">{{ __('السبب') }}</label>
                                 <input id="reason-{{ $tenant->id }}" name="reason" required minlength="8"
                                        placeholder="{{ __('السبب') }}"
-                                       class="w-44 rounded-lg border border-outline bg-surface-sunken px-2 py-1 text-xs text-on-surface
+                                       class="w-44 rounded-lg border border-outline-control bg-surface-sunken px-2 py-1 text-xs text-on-surface
                                               focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                                 <button type="submit"
                                         class="rounded-lg border border-outline px-3 py-1 text-xs font-medium text-on-surface
@@ -161,7 +161,7 @@
                                 <label for="expire-reason-{{ $tenant->id }}" class="sr-only">{{ __('سبب الإنهاء') }}</label>
                                 <input id="expire-reason-{{ $tenant->id }}" name="reason" required minlength="8"
                                        placeholder="{{ __('سبب الإنهاء') }}"
-                                       class="w-44 rounded-lg border border-outline bg-surface-sunken px-2 py-1 text-xs text-on-surface
+                                       class="w-44 rounded-lg border border-outline-control bg-surface-sunken px-2 py-1 text-xs text-on-surface
                                               focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                                 <button type="submit"
                                         class="rounded-lg border border-outline px-3 py-1 text-xs font-medium text-on-surface
