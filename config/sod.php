@@ -137,9 +137,10 @@ return [
          |
          | Creating and updating a party write no audit record today, so the
          | "whoever creates a supplier" half of `supplier_then_release` is
-         | blind. That rule's other duty is `payment.release`, which arrives
-         | in Phase 09, and the gap is recorded under `declared_gaps` so the
-         | day the payment run lands this is not discovered by an auditor.
+         | still blind on that side. The other duty is `payment.release`,
+         | which PF-174 now records, so the pair fires for a party that was
+         | merged or had a credit override granted - and the remaining gap
+         | is party creation itself rather than the whole rule.
          */
         'party.manage' => ['party.merged', 'credit.override.granted'],
 
@@ -175,6 +176,23 @@ return [
          */
         'expense_claim.submit' => ['expense_claim.submitted'],
         'expense_claim.approve' => ['expense_claim.approved'],
+
+        /*
+         | The payment run - PF-174.
+         |
+         | `prepare_then_release` is one of the two pairs that can never be
+         | overridden, and until this task it enforced nothing: both duties
+         | were declared gaps, because no code recorded either act. Now
+         | `PaymentRuns::prepare()` records `payment_run.prepared` and
+         | `release()` records `payment_run.released`, so the rule matches.
+         |
+         | Object-scoped, so preparing one run does not bar somebody from
+         | releasing another. The conflict is one person arranging where
+         | money goes and then sending it - which is this run, not every
+         | run.
+         */
+        'payment.prepare' => ['payment_run.prepared'],
+        'payment.release' => ['payment_run.released'],
     ],
 
     /*
@@ -214,10 +232,6 @@ return [
     ],
 
     'declared_gaps' => [
-        'payment.prepare' => 'Phase 09 - the payment run',
-        'payment.release' => 'Phase 09 - the payment run',
-
-
         /*
          | Built, and not recorded.
          |

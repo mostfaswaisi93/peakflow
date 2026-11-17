@@ -15,7 +15,7 @@
 | [06](phase-06-einvoicing.md) | EN 16931, serializers, validation, jurisdiction profiles | 20 | 116 |
 | [07](phase-07-purchasing.md) | Purchase orders, bills, approvals, three-way match | 15 | 67 |
 | [08](phase-08-banking.md) | Bank accounts, statements, reconciliation | 21 | 109 |
-| [09](phase-09-settlement.md) | 8 / 16 | 35 | 37 |
+| [09](phase-09-settlement.md) | 9 / 16 | 40 | 32 |
 | [10](phase-10-reporting.md) | Reporting, close, consolidation | 17 | 87 |
 | [11](phase-11-design-system.md) | Design system, data grid, accessibility, RTL | 18 | 99 |
 | [12](phase-12-api-exchange.md) | REST API, webhooks, the Exchange plane | 14 | 57 |
@@ -46,7 +46,7 @@ A criterion is ticked only when something in `bin/verify` fails if the behaviour
 | [11](phase-11-design-system.md) | 0 / 18 | 0 | 92 |
 | [12](phase-12-api-exchange.md) | 0 / 14 | 0 | 64 |
 | [13](phase-13-hardening.md) | 0 / 16 | 0 | 73 |
-| **all** | **130 / 246** | **1158** | **435** |
+| **all** | **131 / 246** | **1163** | **430** |
 
 Phases 00 to 07 are the ones that have been worked. An open criterion in a worked phase is one that depends on a later phase and says so in its own task file, with the task that brings it - never one that was skipped.
 

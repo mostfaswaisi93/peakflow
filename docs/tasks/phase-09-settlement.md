@@ -78,11 +78,11 @@ This phase also contains the single highest-consequence control in the product: 
 ### PF-174 · The payment run
 `Settlement` · **8 pts** · depends: PF-144, PF-136 · standards: — · `risk:high`
 
-- [ ] States: `draft` → `prepared` → `released`, with a defined set of allowed transitions and nothing else
-- [ ] Selection from approved payables by due date, supplier, entity, currency and discount opportunity, with a preview of the cash impact
-- [ ] Grouping per beneficiary where the beneficiary accepts it, and splitting where a limit requires it
-- [ ] **Immutable once released**; a mistake is corrected by a new run and a recall request, never by editing
-- [ ] Early-settlement discounts evaluated and shown, since taking them is usually the run's whole purpose
+- [x] States: `draft` → `prepared` → `released`, with a defined set of allowed transitions and nothing else - as a trigger, so a single `UPDATE` cannot walk past it
+- [x] Selection from approved payables by due date, supplier, entity, currency and discount opportunity, with a preview of the cash impact that writes nothing
+- [x] Grouping per beneficiary where the beneficiary accepts it (`group_payments`), and splitting where a limit requires it, with `sequence`, `of` and the reason recorded
+- [x] **Immutable once released**; a mistake is corrected by a new run and a recall request, never by editing - the header and both line tables are frozen against insert, update and delete
+- [x] Early-settlement discounts evaluated and shown, frozen at preparation so release pays what was approved; an expired window is **not** taken and the item says why
 
 ### PF-175 · Maker-checker and step-up
 `Settlement` · **5 pts** · depends: PF-174, PF-032, PF-033 · standards: OWASP ASVS 5.0, SOC 2 · `risk:high` `type:security`

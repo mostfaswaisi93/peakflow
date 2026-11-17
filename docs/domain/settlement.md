@@ -218,3 +218,60 @@ Opening, charge, release, utilization, closing. All five, because the closing fi
 **Utilization is counted by the run it consumed, not by date.** A write-off on the same day the opening provision was computed is genuinely ambiguous on dates alone: the document was open when the figure was computed and written off afterwards, so the release belongs to the next period — and `released_on > previous.as_of` excludes it while `>=` would wrongly swallow releases the opening figure already reflects. The release records which run's provision it ate into, which is exact and independent of ordering within a day.
 
 > A check caught that. The write-off vanished from the roll-forward and the five figures still tied, because a utilization counted nowhere is indistinguishable from one that never happened.
+
+## The payment run — PF-174
+
+The largest single movement of money most businesses make in a week, and the place where a mistake leaves the building.
+
+### Three states, and exactly three transitions
+
+```
+draft → prepared     somebody selected what to pay
+prepared → draft     the selection was wrong, and is being redone
+prepared → released  somebody else sent it
+```
+
+Nothing else. There is no way out of `released`: a mistake is corrected by a new run and a recall request, because the money has left and an edited instruction would describe a payment the bank never made.
+
+All of it is enforced in the database — the transition set as a trigger, the attribution of both acts as column constraints, and the lines of a released run frozen against insert, update and delete. A state machine that lives only in the service is a state machine a single `UPDATE` walks past, and this is the one table where that matters most.
+
+### Selection: due by the pay date, or offering a discount that expires
+
+A run pays what is due by the day it pays. That default is stated rather than inherited: paying ahead of the due date is an ordinary thing to want, so it is asked for by name (`horizon_days`, or `due_by`), because a default horizon of a fortnight would move cash out early on every run nobody thought about.
+
+The second arm of the selection is why a payment run exists at all in most businesses. A bill not due until August that offers 1.5% until the twenty-second is the highest-return decision a finance team makes in a week, and a selection that only looked at due dates would miss every one of them. So a discount whose window closes by the pay date pulls its bill into the run — while a bill that is neither due nor discounted stays out, since paying it early costs cash for nothing.
+
+Only approved payables, always. The approval is the whole control on the purchasing side, and a run that could reach past it pays what nobody checked.
+
+### The preview writes nothing
+
+Somebody has to see the figure before they commit to it, and seeing it afterwards is not the same thing. So `preview()` returns the items, the instructions, the cash impact and the payables it could **not** pay — and creates no run, because a preview that wrote rows would hand a releasable instruction to anybody who asked a question.
+
+### Discounts are evaluated at preparation and then left alone
+
+A run prepared on Tuesday and released on Thursday pays what Tuesday's evaluation said. Recomputing on release would quietly change the amount the releaser approved, which is the one thing maker-checker exists to prevent.
+
+A discount whose window has closed by the pay date is **not taken**, and the item says so in a sentence. Deducting it anyway is the mistake that turns a supplier relationship into a dispute over a figure nobody can explain — and the supplier is right.
+
+### Grouping and splitting answer different questions
+
+**Grouping** is the beneficiary's call. Four bills to one supplier normally become one transfer: four transfers cost four fees and arrive as four lines the supplier has to match against four invoices. But some counterparties reconcile per invoice and cannot match a lump sum to anything — a factored receivable, a franchise accounting per branch, a utility whose system keys on the account rather than the payer. For them one transfer is worse than four, and the only party who knows which kind they are is the supplier. So it is a stored preference, `group_payments`, defaulting to grouping.
+
+**Splitting** is a fact about the rails. Where a beneficiary's bank, scheme or own mandate caps a single credit, the instruction is split at the cap and every part records `sequence`, `of` and the reason. A rejected file is worse than two transfers: the bank returns the whole batch, the supplier is paid nothing, and it is discovered when they chase. A limit is recorded only when somebody knows one — and with the basis beside it, because a bare number is a figure whose origin is lost the week after it was typed.
+
+### A supplier with nowhere to pay is reported, not dropped
+
+Two cases, and they are told apart:
+
+- **No account, or none active in the run's currency.** There is nowhere to send the money.
+- **Details changed and nobody re-verified them.** This is the invoice-fraud path: an invoice arrives with new bank details, somebody updates the supplier, and the next run pays a stranger. So `requires_reverification` is an **exclusion**, not a warning on a screen somebody may not read.
+
+Either way the payable appears in `blocked` with its reason, and the run's summary says how many were left out. A payable that was silently omitted is one whose author discovers the omission when the supplier chases.
+
+### The duty pair that can never be overridden
+
+`prepare_then_release`. Arranging where money goes and then sending it is the highest-value fraud in the product, so it is one of the two rules the override mechanism cannot touch.
+
+Until this task it enforced nothing: both duties were declared gaps, because no code recorded either act. `prepare()` now records `payment_run.prepared` and `release()` records `payment_run.released`, so the rule matches — and the refusal is also a column constraint, because an import or a repaired row is a second door into the same table.
+
+> **A latent defect this work surfaced.** `bills.status` was `varchar(16)` while its own check constraint permitted `'awaiting_approval'` — seventeen characters. The state between entering a bill and approving it could never be stored: the constraint called it legal and the column refused it, with the error arriving as a string-length complaint rather than anything about approval. Nothing had noticed because nothing wrote it, and `DuplicateBillDetector` had been filtering on a value no row could hold. `purchase_orders.status` had the same pair of facts. Both are now 24, matching `expense_claims` and `purchase_requisitions`.

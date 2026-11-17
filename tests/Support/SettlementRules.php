@@ -12,6 +12,7 @@ use App\Tenant\Ledger\Models\AccountRole;
 use App\Tenant\Settlement\Enums\PaymentDirection;
 use App\Tenant\Settlement\Enums\PaymentMethod;
 use App\Tenant\Settlement\Services\Allocations;
+use App\Tenant\Settlement\Services\PaymentRuns;
 use App\Tenant\Settlement\Services\Payments;
 use App\Tenant\Settlement\Services\Refunds;
 use App\Tenant\Settlement\Services\UnappliedCash;
@@ -52,6 +53,8 @@ final class SettlementRules
 {
     use \Tests\Support\Concerns\OpensBankAccounts;
     use \Tests\Support\Concerns\ProvesTheLedger;
+
+    private int $ibanCounter = 0;
 
     /** @return array<string, list<string>> */
     public function all(): array
@@ -154,6 +157,30 @@ final class SettlementRules
                 'a provision and a write-off live in different accounts' => fn (): array => $this->estimateAndConclusionAreApart(),
                 'the roll-forward ties, and names all five figures' => fn (): array => $this->rollForwardTies(),
                 'a shrinking provision is a release, not a negative charge' => fn (): array => $this->shrinkingIsARelease(),
+
+                // ---- The payment run - PF-174 --------------------------
+                'a run moves draft to prepared to released, and nowhere else' => fn (): array => $this->runMovesLawfully(),
+                'a released run is frozen, header and lines alike' => fn (): array => $this->releasedIsFrozen(),
+                'a prepared run names who prepared it, a released one both' => fn (): array => $this->runsAreAttributable(),
+                'a line\'s own figures agree with each other' => fn (): array => $this->linesAreCoherent(),
+                'only approved payables are selected' => fn (): array => $this->selectionTakesApprovedOnly(),
+                'a settled payable is not paid again' => fn (): array => $this->settledPayablesAreNotPaidAgain(),
+                'verified and needing verification are one fact, not two' => fn (): array => $this->verificationStateIsCoherent(),
+                'a discount inside its window is taken' => fn (): array => $this->discountInsideTheWindow(),
+                'a discount whose window closed is not taken' => fn (): array => $this->discountOutsideTheWindow(),
+                'a discount pulls a bill that is not yet due into the run' => fn (): array => $this->discountPullsABillForward(),
+                'a preview shows the cash impact and writes nothing' => fn (): array => $this->previewWritesNothing(),
+                'several bills to one supplier become one transfer' => fn (): array => $this->grouping(),
+                'a supplier who reconciles per invoice gets one each' => fn (): array => $this->groupingIsTheBeneficiarysCall(),
+                'a limit splits the instruction, and the split says why' => fn (): array => $this->splittingAtALimit(),
+                'a supplier with nowhere to pay is reported, not dropped' => fn (): array => $this->noVerifiedAccountIsReported(),
+                'details changed and never re-verified take them out' => fn (): array => $this->unverifiedDetailsTakeThemOut(),
+                'whoever prepared a run does not release it' => fn (): array => $this->preparerDoesNotRelease(),
+                'a run with nothing to pay is not prepared' => fn (): array => $this->emptyRunIsRefused(),
+                'the stored totals are the ones the instructions carry' => fn (): array => $this->totalsTie(),
+                'what was prepared is what is released' => fn (): array => $this->preparationIsFrozen(),
+                'withdrawing a preparation needs a reason, and blocks release' => fn (): array => $this->unprepare(),
+                'the duty pair over outgoing funds now fires' => fn (): array => $this->paymentRunSod(),
 
                 // ---- The property that matters -------------------------
                 'for any sequence, the balance and the control agree' => fn (): array => $this->theProperty(),
@@ -3443,6 +3470,1295 @@ final class SettlementRules
             )];
     }
 
+
+    // ---- The payment run - PF-174 -----------------------------------------
+
+    /**
+     * Three states, and exactly three transitions.
+     *
+     * @return list<string>
+     */
+    private function runMovesLawfully(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $this->anApprovedBill($supplier, '4000.0000', '2026-05-18');
+
+        $run = app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse('2026-05-19'),
+            userId: $this->actorId(),
+        );
+
+        $failures = [];
+
+        if ($run['state'] !== 'prepared') {
+            $failures[] = 'preparing a run did not leave it prepared, so nothing can be released';
+        }
+
+        /*
+         | The three the state machine allows, and everything else.
+         |
+         | Straight at the table, because the service is one code path and
+         | an import, a retried job or a repaired row is another. A state
+         | machine that lives only in the service is a state machine a
+         | single UPDATE walks past.
+         |
+         | Each attempt is its own savepoint, so a refusal rolls back to a
+         | prepared run rather than leaving the next attempt to fail with
+         | "current transaction is aborted" and the report blaming the
+         | wrong transition.
+         */
+        foreach ([
+            ['prepared', 'released', true],
+            ['prepared', 'draft', true],
+            ['draft', 'prepared', true],
+            ['prepared', 'cancelled', false],
+            ['prepared', 'sent', false],
+            ['draft', 'released', false],
+        ] as [$from, $to, $allowed]) {
+            $refusal = $this->refusal(function () use ($run, $from, $to): void {
+                if ($from !== 'prepared') {
+                    DB::connection('tenant')->table('payment_runs')->where('id', $run['id'])->update([
+                        'state' => $from,
+                        'prepared_by' => null,
+                        'prepared_at' => null,
+                    ]);
+                }
+
+                DB::connection('tenant')->table('payment_runs')->where('id', $run['id'])->update([
+                    'state' => $to,
+                    /*
+                     | Attributable either way, so the state machine is what
+                     | is being exercised.
+                     |
+                     | A run moved to `prepared` with no preparer is refused
+                     | by a different constraint, and a check that tripped
+                     | that one would report the state machine as broken
+                     | when it is the attribution talking.
+                     */
+                    'prepared_by' => \in_array($to, ['prepared', 'released'], true) ? $this->actorId() : null,
+                    'prepared_at' => \in_array($to, ['prepared', 'released'], true) ? $this->date->copy() : null,
+                    'released_by' => $to === 'released' ? $this->secondActorId() : null,
+                    'released_at' => $to === 'released' ? $this->date->copy() : null,
+                ]);
+            });
+
+            if ($allowed && $refusal !== null) {
+                $failures[] = sprintf(
+                    'the database refused %s to %s, which a run is supposed to do: %s',
+                    $from,
+                    $to,
+                    $refusal,
+                );
+            }
+
+            if (! $allowed && $refusal === null) {
+                $failures[] = sprintf(
+                    'the database moved a run from %s to %s, which is not one of the three transitions '.
+                    'a run has - so an import or a repaired row can put a run in a state nothing in the '.
+                    'product knows how to read',
+                    $from,
+                    $to,
+                );
+            }
+
+            /*
+             | And it is refused in the state machine's own words.
+             |
+             | A constraint name is not an answer: the person who hits this
+             | through an import needs to be told which move was attempted
+             | and what the three legal ones are, which is what the trigger
+             | says and what a column constraint cannot.
+             */
+            if (! $allowed && $refusal !== null
+                && ! str_contains($refusal, sprintf('cannot go from %s to %s', $from, $to))) {
+                $failures[] = sprintf(
+                    'moving %s to %s was refused by something that does not name the move it refused: %s',
+                    $from,
+                    $to,
+                    $refusal,
+                );
+            }
+        }
+
+        return $failures;
+    }
+
+    /**
+     * A released run is frozen, header and lines alike.
+     *
+     * @return list<string>
+     */
+    private function releasedIsFrozen(): array
+    {
+        $run = $this->aReleasedRun();
+        $failures = [];
+
+        foreach ([
+            [['net_total' => '1.0000'], 'the amount a released run paid'],
+            [['pay_on' => '2026-06-01'], 'the date a released run paid on'],
+            [['bank_account_id' => (string) $this->bank()->getKey()], 'the account a released run paid from'],
+        ] as [$change, $what]) {
+            $refusal = $this->refusal(fn () => DB::connection('tenant')
+                ->table('payment_runs')
+                ->where('id', $run['id'])
+                ->update($change));
+
+            if ($refusal === null) {
+                $failures[] = sprintf(
+                    '%s can be changed after release, so the record can be made to describe a payment '.
+                    'the bank never made',
+                    $what,
+                );
+            } elseif (! str_contains($refusal, 'released')) {
+                $failures[] = sprintf('changing %s was refused for some other reason: %s', $what, $refusal);
+            }
+        }
+
+        /*
+         | And the lines, which is where the beneficiary lives.
+         |
+         | A frozen header with editable lines is the worse of the two: the
+         | total still reads as approved while the account the money went
+         | to has been changed underneath it.
+         */
+        foreach ([
+            ['payment_run_instructions', ['amount' => '1.0000'], 'an instruction'],
+            ['payment_run_items', ['net_amount' => '1.0000'], 'an item'],
+        ] as [$table, $change, $what]) {
+            $id = (string) DB::connection('tenant')->table($table)->where('run_id', $run['id'])->value('id');
+
+            $changed = $this->refusal(fn () => DB::connection('tenant')
+                ->table($table)
+                ->where('id', $id)
+                ->update($change));
+
+            if ($changed === null) {
+                $failures[] = sprintf(
+                    'changing %s after release was accepted, so the instruction can be rewritten while '.
+                    'the total still reads as the one somebody approved',
+                    $what,
+                );
+            } elseif (! str_contains($changed, 'released')) {
+                $failures[] = sprintf('changing %s was refused for some other reason: %s', $what, $changed);
+            }
+
+            $deleted = $this->refusal(fn () => DB::connection('tenant')
+                ->table($table)
+                ->where('id', $id)
+                ->delete());
+
+            if ($deleted === null) {
+                $failures[] = sprintf(
+                    '%s of a released run can be deleted, so a payment can be made to disappear from '.
+                    'the run that sent it',
+                    $what,
+                );
+            } elseif (! str_contains($deleted, 'released')) {
+                $failures[] = sprintf('deleting %s was refused for some other reason: %s', $what, $deleted);
+            }
+        }
+
+        return $failures;
+    }
+
+    /**
+     * Only approved payables are selected.
+     *
+     * @return list<string>
+     */
+    private function selectionTakesApprovedOnly(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $approved = $this->anApprovedBill($supplier, '4000.0000', '2026-05-18');
+        $awaiting = $this->anApprovedBill($supplier, '7000.0000', '2026-05-18');
+
+        DB::connection('tenant')->table('bills')->where('id', $awaiting)->update([
+            'status' => 'awaiting_approval',
+            'approved_at' => null,
+            'approved_by' => null,
+        ]);
+
+        $later = $this->anApprovedBill($supplier, '9000.0000', '2026-06-30');
+
+        $preview = app(PaymentRuns::class)->preview(
+            $this->entityId,
+            (string) $this->bank()->getKey(),
+            Carbon::parse('2026-05-19'),
+        );
+
+        $selected = array_column($preview['items'], 'bill_id');
+        $failures = [];
+
+        if (! \in_array($approved, $selected, true)) {
+            $failures[] = 'an approved payable due before the pay date was not selected, so the run pays nothing';
+        }
+
+        if (\in_array($awaiting, $selected, true)) {
+            $failures[] = 'a payable nobody has approved was selected for payment, which pays what was never checked - '.
+                'and the approval is the whole control on the purchasing side';
+        }
+
+        /*
+         | And the horizon, which is the pay date unless asked otherwise.
+         |
+         | A stated default rather than an accident: a run pays what is due
+         | by the day it pays. Paying ahead of the due date is an ordinary
+         | thing to want and is asked for by name, because a default
+         | horizon of a fortnight would move cash out early on every run
+         | nobody thought about.
+         */
+        if (\in_array($later, $selected, true)) {
+            $failures[] = 'a payable due at the end of June was selected by a run paying on 19 May with no '.
+                'horizon asked for, so cash leaves six weeks before it had to';
+        }
+
+        $reaching = app(PaymentRuns::class)->preview(
+            $this->entityId,
+            (string) $this->bank()->getKey(),
+            Carbon::parse('2026-05-19'),
+            ['horizon_days' => 60],
+        );
+
+        if (! \in_array($later, array_column($reaching['items'], 'bill_id'), true)) {
+            $failures[] = 'asking for a 60-day horizon did not reach a payable due at the end of June, so a '.
+                'run cannot be made to cover the period until the next one';
+        }
+
+        return $failures;
+    }
+
+    /**
+     * The invariant the run's one condition leans on.
+     *
+     * `beneficiaryFor()` excludes an account on `requires_reverification`
+     * alone, because the table holds that flag and `verified_at` to a
+     * single meaning. That is the table's invariant rather than
+     * Settlement's - but the payment run is what would pay a stranger if
+     * it stopped holding, so it is asserted beside the code that trusts
+     * it rather than left as a comment pointing at a migration.
+     *
+     * @return list<string>
+     */
+    private function verificationStateIsCoherent(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $accountId = (string) DB::connection('tenant')->table('party_bank_accounts')
+            ->where('party_id', (string) $supplier->getKey())
+            ->value('id');
+
+        $failures = [];
+
+        foreach ([
+            [
+                ['requires_reverification' => true],
+                'an account that needs verifying kept the timestamp that says it was verified',
+            ],
+            [
+                ['requires_reverification' => false, 'verified_at' => null],
+                'an account was marked as needing no verification having never been verified, which is '.
+                'what somebody clearing the flag by hand to get a payment out of the door would leave',
+            ],
+        ] as [$change, $what]) {
+            $refusal = $this->refusal(fn () => DB::connection('tenant')
+                ->table('party_bank_accounts')
+                ->where('id', $accountId)
+                ->update($change));
+
+            if ($refusal === null) {
+                $failures[] = $what.' - so the payment run\'s one condition is not enough and two '.
+                    'readers of this row can reach different answers';
+            } elseif (! str_contains($refusal, 'verification_state_is_coherent')) {
+                $failures[] = 'the incoherent row was refused by something else: '.$refusal;
+            }
+        }
+
+        return $failures;
+    }
+
+    /**
+     * A prepared run names who prepared it, and a released one both.
+     *
+     * "Released by nobody" is the state an import leaves behind, and it
+     * is the one state that makes the maker-checker comparison vacuous:
+     * there is no preparer to compare the releaser against, so the pair
+     * that can never be overridden has nothing to work on.
+     *
+     * @return list<string>
+     */
+    private function runsAreAttributable(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $this->anApprovedBill($supplier, '4000.0000', '2026-05-18');
+
+        $run = app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse('2026-05-19'),
+            userId: $this->actorId(),
+        );
+
+        $failures = [];
+
+        foreach ([
+            [
+                ['prepared_by' => null],
+                'payment_runs_prepared_is_attributable',
+                'a prepared run with no preparer, so the release check has nobody to compare against',
+            ],
+            [
+                ['prepared_at' => null],
+                'payment_runs_prepared_is_attributable',
+                'a prepared run with no time of preparation, so "what changed since it was prepared" has no clock',
+            ],
+            [
+                ['state' => 'released', 'released_at' => $this->date->copy()],
+                'payment_runs_released_is_attributable',
+                'a released run with no releaser, which is money out of the door attributable to nobody',
+            ],
+            [
+                ['state' => 'released', 'released_by' => $this->secondActorId()],
+                'payment_runs_released_is_attributable',
+                'a released run with no time of release, so it cannot be matched to a bank line by date',
+            ],
+        ] as [$change, $constraint, $what]) {
+            $refusal = $this->refusal(fn () => DB::connection('tenant')
+                ->table('payment_runs')
+                ->where('id', $run['id'])
+                ->update($change));
+
+            if ($refusal === null) {
+                $failures[] = 'the database accepted '.$what;
+            } elseif (! str_contains($refusal, $constraint)) {
+                $failures[] = sprintf('%s was refused by something other than %s: %s', $what, $constraint, $refusal);
+            }
+        }
+
+        return $failures;
+    }
+
+    /**
+     * A line's own figures agree with each other.
+     *
+     * The run's total is the sum of its lines, so a line whose net
+     * disagrees with its gross and its discount makes the total
+     * unexplainable - and the explanation is what somebody releasing it
+     * is being asked to approve.
+     *
+     * @return list<string>
+     */
+    private function linesAreCoherent(): array
+    {
+        $supplier = $this->aPayableSupplier(limit: '3000.0000');
+        $this->anApprovedBill($supplier, '7000.0000', '2026-06-15', '2.000', '2026-05-25');
+
+        $run = app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse('2026-05-19'),
+            userId: $this->actorId(),
+        );
+
+        $itemId = (string) DB::connection('tenant')->table('payment_run_items')
+            ->where('run_id', $run['id'])->value('id');
+        /*
+         | The last part of the split, so `of = 1` really does contradict
+         | it.
+         |
+         | Part 1 of 3 is still a valid part 1 of 1, and a check that
+         | picked whichever row came first would have asserted nothing -
+         | which is what the bite sweep reported.
+         */
+        $instructionId = (string) DB::connection('tenant')->table('payment_run_instructions')
+            ->where('run_id', $run['id'])
+            ->orderByDesc('sequence')
+            ->value('id');
+
+        $failures = [];
+
+        foreach ([
+            [
+                'payment_run_items', $itemId,
+                ['discount_amount' => '50.0000'],
+                'payment_run_items_net_is_gross_less_discount',
+                'an item whose net no longer equals its gross less its discount',
+            ],
+            [
+                'payment_run_items', $itemId,
+                ['discount_amount' => '100.0000', 'net_amount' => '6900.0000', 'discount_percent' => null, 'discount_until' => null],
+                'payment_run_items_discounts_name_their_terms',
+                'a deduction with no terms behind it, which is money kept from a supplier for no stated reason',
+            ],
+            [
+                'payment_run_items', $itemId,
+                ['gross_amount' => '0.0000', 'net_amount' => '0.0000', 'discount_amount' => '0.0000'],
+                'payment_run_items_amounts_are_not_negative',
+                'an item for nothing, which is a bill the run claims to settle with no money',
+            ],
+            [
+                'payment_run_instructions', $instructionId,
+                ['of' => 1],
+                'payment_run_instructions_sequence_is_within_its_set',
+                'a part 3 of 1, so the supplier cannot tell how many transfers to expect',
+            ],
+            [
+                'payment_run_instructions', $instructionId,
+                ['amount' => '0.0000'],
+                'payment_run_instructions_amount_is_positive',
+                'an instruction for nothing, which is a transfer fee and no payment',
+            ],
+        ] as [$table, $id, $change, $constraint, $what]) {
+            $refusal = $this->refusal(fn () => DB::connection('tenant')
+                ->table($table)
+                ->where('id', $id)
+                ->update($change));
+
+            if ($refusal === null) {
+                $failures[] = 'the database accepted '.$what;
+            } elseif (! str_contains($refusal, $constraint)) {
+                $failures[] = sprintf('%s was refused by something other than %s: %s', $what, $constraint, $refusal);
+            }
+        }
+
+        /*
+         | And a split with no reason, which is the one of these that a
+         | reader asks about.
+         |
+         | A supplier who received three transfers instead of one wants to
+         | know why, and `of > 1` with nothing beside it is the run
+         | admitting it does not know either.
+         */
+        $reasonless = $this->refusal(fn () => DB::connection('tenant')
+            ->table('payment_run_instructions')
+            ->where('id', $instructionId)
+            ->update(['split_reason' => null]));
+
+        if ($reasonless === null) {
+            $failures[] = 'the database accepted a split instruction with no reason recorded, so a supplier '.
+                'who received three transfers asks a question the run cannot answer';
+        } elseif (! str_contains($reasonless, 'payment_run_instructions_splits_say_why')) {
+            $failures[] = 'a reasonless split was refused by something else: '.$reasonless;
+        }
+
+        return $failures;
+    }
+
+    /**
+     * A settled payable is not paid again; a part-settled one for what is left.
+     *
+     * @return list<string>
+     */
+    private function settledPayablesAreNotPaidAgain(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $settled = $this->anApprovedBill($supplier, '4000.0000', '2026-05-18');
+        $partly = $this->anApprovedBill($supplier, '6000.0000', '2026-05-18');
+
+        $this->settle($settled, '4000.0000');
+        $this->settle($partly, '2000.0000');
+
+        $preview = app(PaymentRuns::class)->preview(
+            $this->entityId,
+            (string) $this->bank()->getKey(),
+            Carbon::parse('2026-05-19'),
+        );
+
+        $failures = [];
+
+        if ($this->itemFor($preview, $settled) !== null) {
+            $failures[] = 'a payable that has already been paid in full was selected for payment again, '.
+                'which is how a supplier is paid twice and nobody notices until they say so';
+        }
+
+        $item = $this->itemFor($preview, $partly);
+
+        if ($item === null) {
+            return [...$failures, 'a payable with 4,000 still owed on it was not selected, so a part payment '.
+                'leaves the rest unpayable by a run'];
+        }
+
+        if (! $item['gross']->equals(Money::of('4000.0000', 'SAR'))) {
+            $failures[] = sprintf(
+                'a 6,000 bill with 2,000 already paid was selected for %s rather than the 4,000 still '.
+                'owed, so the run pays what has been paid once already',
+                (string) $item['gross']->amount,
+            );
+        }
+
+        return $failures;
+    }
+
+    /**
+     * A discount inside its window is taken; one outside it is not.
+     *
+     * @return list<string>
+     */
+    private function discountInsideTheWindow(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $bill = $this->anApprovedBill($supplier, '10000.0000', '2026-06-15', '2.000', '2026-05-25');
+
+        $preview = app(PaymentRuns::class)->preview(
+            $this->entityId,
+            (string) $this->bank()->getKey(),
+            Carbon::parse('2026-05-19'),
+        );
+
+        $item = $this->itemFor($preview, $bill);
+
+        if ($item === null) {
+            return [
+                'a bill offering 2% until 25 May was not selected for a run paying on 19 May, so the '.
+                'run misses the decision it exists to make - paying early to take the discount',
+            ];
+        }
+
+        $failures = [];
+
+        if (! $item['discount']->equals(Money::of('200.0000', 'SAR'))) {
+            $failures[] = sprintf(
+                '2%% of 10,000 was evaluated as %s rather than 200',
+                (string) $item['discount']->amount,
+            );
+        }
+
+        if (! $item['net']->equals(Money::of('9800.0000', 'SAR'))) {
+            $failures[] = sprintf('the net to pay is %s rather than 9,800', (string) $item['net']->amount);
+        }
+
+        if (! str_contains((string) $item['why'], '2.000%') || ! str_contains((string) $item['why'], '2026-05-25')) {
+            $failures[] = 'the item does not say what discount was taken or until when, so the figure '.
+                'cannot be checked against the supplier\'s terms: '.(string) $item['why'];
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function discountOutsideTheWindow(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $bill = $this->anApprovedBill($supplier, '10000.0000', '2026-05-18', '2.000', '2026-05-10');
+
+        $preview = app(PaymentRuns::class)->preview(
+            $this->entityId,
+            (string) $this->bank()->getKey(),
+            Carbon::parse('2026-05-19'),
+        );
+
+        $item = $this->itemFor($preview, $bill);
+
+        if ($item === null) {
+            return ['a payable due on 20 May was not selected for a run paying on 19 May'];
+        }
+
+        $failures = [];
+
+        /*
+         | Nothing deducted, and a sentence saying why.
+         |
+         | Taking a discount whose window closed is the mistake that turns
+         | a supplier relationship into a dispute over a figure nobody can
+         | explain - and the supplier is right.
+         */
+        if (! $item['discount']->isZero()) {
+            $failures[] = sprintf(
+                'a discount that expired on 10 May was deducted anyway on a run paying 19 May (%s), '.
+                'so the supplier is short-paid and will be right to dispute it',
+                (string) $item['discount']->amount,
+            );
+        }
+
+        if (! $item['net']->equals(Money::of('10000.0000', 'SAR'))) {
+            $failures[] = sprintf('the net to pay is %s rather than the full 10,000', (string) $item['net']->amount);
+        }
+
+        if (! str_contains((string) $item['why'], 'expired')) {
+            $failures[] = 'the item does not say the discount window had closed, so a reader sees a '.
+                'full payment on terms that offered 2% and cannot tell whether it was missed: '.(string) $item['why'];
+        }
+
+        return $failures;
+    }
+
+    /**
+     * A discount opportunity is selected even though the bill is not due.
+     *
+     * @return list<string>
+     */
+    private function discountPullsABillForward(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $notDue = $this->anApprovedBill($supplier, '6000.0000', '2026-08-31', '1.500', '2026-05-22');
+        $neither = $this->anApprovedBill($supplier, '3000.0000', '2026-08-31');
+
+        $preview = app(PaymentRuns::class)->preview(
+            $this->entityId,
+            (string) $this->bank()->getKey(),
+            Carbon::parse('2026-05-19'),
+        );
+
+        $selected = array_column($preview['items'], 'bill_id');
+        $failures = [];
+
+        if (! \in_array($notDue, $selected, true)) {
+            $failures[] = 'a bill not due until August, offering 1.5% until 22 May, was not selected for a '.
+                'run paying on 19 May - so the run would have to be built by hand to take the discount, '.
+                'which is the highest-return decision a finance team makes in a week';
+        }
+
+        if (\in_array($neither, $selected, true)) {
+            $failures[] = 'a bill not due until August and offering nothing was selected anyway, so the run '.
+                'pays early for no reason and the cash leaves months before it had to';
+        }
+
+        if (\in_array($notDue, $selected, true) && ! $preview['discount']->equals(Money::of('90.0000', 'SAR'))) {
+            $failures[] = sprintf(
+                '1.5%% of 6,000 came out as %s rather than 90',
+                (string) $preview['discount']->amount,
+            );
+        }
+
+        return $failures;
+    }
+
+    /**
+     * A preview writes nothing.
+     *
+     * @return list<string>
+     */
+    private function previewWritesNothing(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $this->anApprovedBill($supplier, '4000.0000', '2026-05-18');
+
+        $before = [
+            DB::connection('tenant')->table('payment_runs')->count(),
+            DB::connection('tenant')->table('payment_run_instructions')->count(),
+            DB::connection('tenant')->table('payment_run_items')->count(),
+        ];
+
+        $preview = app(PaymentRuns::class)->preview(
+            $this->entityId,
+            (string) $this->bank()->getKey(),
+            Carbon::parse('2026-05-19'),
+        );
+
+        $after = [
+            DB::connection('tenant')->table('payment_runs')->count(),
+            DB::connection('tenant')->table('payment_run_instructions')->count(),
+            DB::connection('tenant')->table('payment_run_items')->count(),
+        ];
+
+        $failures = [];
+
+        if ($before !== $after) {
+            $failures[] = 'previewing a run wrote rows, so somebody asking "what would this pay?" has '.
+                'created a run that another person can release';
+        }
+
+        if ($preview['items'] === []) {
+            $failures[] = 'the preview found nothing to pay, so it is not previewing the run that would be prepared';
+        }
+
+        if (! str_contains((string) $preview['why'], 'leaves the account')) {
+            $failures[] = 'the preview does not state the cash impact in a sentence, which is the thing '.
+                'somebody has to see before committing to the largest payment of the week';
+        }
+
+        return $failures;
+    }
+
+    /**
+     * Several bills to one supplier become one instruction.
+     *
+     * @return list<string>
+     */
+    private function grouping(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $this->anApprovedBill($supplier, '4000.0000', '2026-05-18');
+        $this->anApprovedBill($supplier, '2500.0000', '2026-05-18');
+        $this->anApprovedBill($supplier, '1500.0000', '2026-05-18');
+
+        $preview = app(PaymentRuns::class)->preview(
+            $this->entityId,
+            (string) $this->bank()->getKey(),
+            Carbon::parse('2026-05-19'),
+        );
+
+        $mine = array_values(array_filter(
+            $preview['instructions'],
+            static fn (array $i): bool => $i['party_id'] === (string) $supplier->getKey(),
+        ));
+
+        if (\count($mine) !== 1) {
+            return [sprintf(
+                'three bills to one supplier produced %d instructions rather than one, so the supplier '.
+                'pays three transfer fees and receives three lines to match against three invoices',
+                \count($mine),
+            )];
+        }
+
+        return $mine[0]['amount']->equals(Money::of('8000.0000', 'SAR'))
+            ? []
+            : [sprintf(
+                'the grouped instruction is %s rather than the 8,000 the three bills total',
+                (string) $mine[0]['amount']->amount,
+            )];
+    }
+
+    /**
+     * A supplier who reconciles per invoice gets one transfer each.
+     *
+     * @return list<string>
+     */
+    private function groupingIsTheBeneficiarysCall(): array
+    {
+        $supplier = $this->aPayableSupplier(groups: false);
+        $this->anApprovedBill($supplier, '4000.0000', '2026-05-18');
+        $this->anApprovedBill($supplier, '2500.0000', '2026-05-18');
+
+        $preview = app(PaymentRuns::class)->preview(
+            $this->entityId,
+            (string) $this->bank()->getKey(),
+            Carbon::parse('2026-05-19'),
+        );
+
+        $mine = array_values(array_filter(
+            $preview['instructions'],
+            static fn (array $i): bool => $i['party_id'] === (string) $supplier->getKey(),
+        ));
+
+        if (\count($mine) !== 2) {
+            return [sprintf(
+                'a supplier whose settings say not to group received %d instruction(s) for two bills, so '.
+                'a lump sum arrives at a counterparty whose system cannot match it to anything',
+                \count($mine),
+            )];
+        }
+
+        $amounts = array_map(static fn (array $i): string => (string) $i['amount']->amount, $mine);
+        sort($amounts);
+
+        return $amounts === ['2500.0000', '4000.0000']
+            ? []
+            : ['the two ungrouped instructions are '.implode(' and ', $amounts).' rather than 2,500 and 4,000'];
+    }
+
+    /**
+     * A limit splits the instruction, and the split says why.
+     *
+     * @return list<string>
+     */
+    private function splittingAtALimit(): array
+    {
+        $supplier = $this->aPayableSupplier(limit: '3000.0000');
+        $this->anApprovedBill($supplier, '7000.0000', '2026-05-18');
+
+        $preview = app(PaymentRuns::class)->preview(
+            $this->entityId,
+            (string) $this->bank()->getKey(),
+            Carbon::parse('2026-05-19'),
+        );
+
+        $mine = array_values(array_filter(
+            $preview['instructions'],
+            static fn (array $i): bool => $i['party_id'] === (string) $supplier->getKey(),
+        ));
+
+        if (\count($mine) !== 3) {
+            return [sprintf(
+                '7,000 to a beneficiary capped at 3,000 produced %d instruction(s) rather than three, so '.
+                'the bank returns the file and the supplier is paid nothing - which is discovered when they chase',
+                \count($mine),
+            )];
+        }
+
+        $failures = [];
+        $total = Money::zero('SAR');
+
+        foreach ($mine as $instruction) {
+            $total = $total->plus($instruction['amount']);
+
+            if ($instruction['amount']->amount->isGreaterThan('3000.0000')) {
+                $failures[] = sprintf(
+                    'a split instruction is %s, above the 3,000 limit that caused the split',
+                    (string) $instruction['amount']->amount,
+                );
+            }
+
+            if ($instruction['of'] !== 3) {
+                $failures[] = 'a split instruction does not say how many parts it is one of, so the supplier '.
+                    'cannot tell whether they have received all of them';
+            }
+
+            if ($instruction['split_reason'] === null) {
+                $failures[] = 'a split instruction records no reason, so a supplier who received three transfers '.
+                    'instead of one asks a question the run cannot answer';
+            }
+        }
+
+        if (! $total->equals(Money::of('7000.0000', 'SAR'))) {
+            $failures[] = sprintf(
+                'the split instructions total %s rather than the 7,000 owed, so splitting changed what is paid',
+                (string) $total->amount,
+            );
+        }
+
+        $sequences = array_map(static fn (array $i): int => $i['sequence'], $mine);
+        sort($sequences);
+
+        if ($sequences !== [1, 2, 3]) {
+            $failures[] = 'the split parts are not numbered 1, 2, 3, so two transfers could claim to be the same part';
+        }
+
+        return $failures;
+    }
+
+    /**
+     * A supplier with nowhere to pay is reported, not dropped.
+     *
+     * @return list<string>
+     */
+    private function noVerifiedAccountIsReported(): array
+    {
+        $supplier = $this->aPayableSupplier(withAnAccount: false);
+        $bill = $this->anApprovedBill($supplier, '4000.0000', '2026-05-18');
+
+        $preview = app(PaymentRuns::class)->preview(
+            $this->entityId,
+            (string) $this->bank()->getKey(),
+            Carbon::parse('2026-05-19'),
+        );
+
+        $failures = [];
+
+        if (\in_array($bill, array_column($preview['items'], 'bill_id'), true)) {
+            return ['a payable to a supplier with no bank account was selected for payment, so the run '.
+                'carries an instruction with nowhere to send the money'];
+        }
+
+        $blocked = array_column($preview['blocked'], 'bill_id');
+
+        if (! \in_array($bill, $blocked, true)) {
+            $failures[] = 'a payable that could not be paid was left out of the run silently, so its author '.
+                'discovers the omission when the supplier chases';
+        }
+
+        if (! str_contains((string) $preview['why'], 'verified account')) {
+            $failures[] = 'the run\'s summary does not mention that payables were left out for want of an account';
+        }
+
+        return $failures;
+    }
+
+    /**
+     * Details that changed and were never re-verified take the supplier out.
+     *
+     * @return list<string>
+     */
+    private function unverifiedDetailsTakeThemOut(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $bill = $this->anApprovedBill($supplier, '4000.0000', '2026-05-18');
+
+        /*
+         | The account changed, and nobody confirmed the change.
+         |
+         | This is the fraud the whole area is built against: an invoice
+         | arrives with new bank details, somebody updates the supplier,
+         | and the next run pays a stranger. So it is an exclusion, not a
+         | warning on a screen somebody may not read.
+         */
+        DB::connection('tenant')->table('party_bank_accounts')
+            ->where('party_id', (string) $supplier->getKey())
+            ->update(['bic' => 'SABBSARI']);
+
+        $preview = app(PaymentRuns::class)->preview(
+            $this->entityId,
+            (string) $this->bank()->getKey(),
+            Carbon::parse('2026-05-19'),
+        );
+
+        $failures = [];
+
+        if (\in_array($bill, array_column($preview['items'], 'bill_id'), true)) {
+            return ['a supplier whose bank details changed without re-verification was still paid, which '.
+                'is the invoice-fraud path the verification exists to close'];
+        }
+
+        $reason = (string) ($preview['blocked'][0]['why'] ?? '');
+
+        if (! str_contains($reason, 're-verif')) {
+            $failures[] = 'the payable was left out, but not for a reason that names the unverified change - so '.
+                'whoever reads the run cannot tell this from a supplier with no account at all: '.$reason;
+        }
+
+        return $failures;
+    }
+
+    /**
+     * The person who prepared a run does not release it.
+     *
+     * @return list<string>
+     */
+    private function preparerDoesNotRelease(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $this->anApprovedBill($supplier, '4000.0000', '2026-05-18');
+
+        $run = app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse('2026-05-19'),
+            userId: $this->actorId(),
+        );
+
+        $failures = [];
+
+        try {
+            app(PaymentRuns::class)->release($run['id'], $this->actorId());
+
+            $failures[] = 'the person who prepared a run released it, so one person chose where the money '.
+                'goes and then sent it - which is the highest-value fraud in the product';
+        } catch (\Throwable $e) {
+            if (! str_contains($e->getMessage(), 'cannot release it')) {
+                $failures[] = 'self-release was refused by something that does not explain the duty: '.$e->getMessage();
+            }
+        }
+
+        /*
+         | And the database, which the service is only one door to.
+         |
+         | A maker-checker rule that lives in a service is a rule an
+         | import or a repaired row walks past.
+         */
+        $refusal = $this->refusal(fn () => DB::connection('tenant')
+            ->table('payment_runs')
+            ->where('id', $run['id'])
+            ->update([
+                'state' => 'released',
+                'released_by' => $this->actorId(),
+                'released_at' => $this->date->copy(),
+            ]));
+
+        if ($refusal === null) {
+            $failures[] = 'the database accepted a release by the preparer, so a single UPDATE walks past '.
+                'the one duty pair that can never be overridden';
+        } elseif (! str_contains($refusal, 'self')) {
+            $failures[] = 'the database refused a self-release without naming the duty, so whoever hits it '.
+                'through an import sees a constraint name rather than the reason: '.$refusal;
+        }
+
+        $second = app(PaymentRuns::class)->release($run['id'], $this->secondActorId());
+
+        if ($second['state'] !== 'released') {
+            $failures[] = 'a second person could not release the run either, so nothing can ever be paid';
+        }
+
+        return $failures;
+    }
+
+    /**
+     * An empty run is not prepared.
+     *
+     * @return list<string>
+     */
+    private function emptyRunIsRefused(): array
+    {
+        try {
+            app(PaymentRuns::class)->prepare(
+                entityId: $this->entityId,
+                bankAccountId: (string) $this->bank()->getKey(),
+                payOn: Carbon::parse('2026-01-02'),
+                userId: $this->actorId(),
+            );
+
+            return [
+                'a run with nothing to pay was prepared, and somebody will release it - an instruction '.
+                'for nothing that still needs two people and a place in the audit trail',
+            ];
+        } catch (\Throwable $e) {
+            return str_contains($e->getMessage(), 'nothing to pay')
+                ? []
+                : ['an empty run was refused for some other reason: '.$e->getMessage()];
+        }
+    }
+
+    /**
+     * The stored totals are the ones the instructions carry.
+     *
+     * @return list<string>
+     */
+    private function totalsTie(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $this->anApprovedBill($supplier, '10000.0000', '2026-06-15', '2.000', '2026-05-25');
+        $this->anApprovedBill($supplier, '5000.0000', '2026-05-18');
+
+        $run = app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse('2026-05-19'),
+            userId: $this->actorId(),
+        );
+
+        $shown = app(PaymentRuns::class)->show($run['id']);
+        $failures = [];
+
+        if (! $shown['gross']->minus($shown['discount'])->equals($shown['net'])) {
+            $failures[] = sprintf(
+                'the run stored %s gross less %s discount as a net of %s, which does not subtract',
+                (string) $shown['gross']->amount,
+                (string) $shown['discount']->amount,
+                (string) $shown['net']->amount,
+            );
+        }
+
+        $instructed = Money::zero('SAR');
+
+        foreach ($shown['instructions'] as $instruction) {
+            $instructed = $instructed->plus($instruction['amount']);
+        }
+
+        if (! $instructed->equals($shown['net'])) {
+            $failures[] = sprintf(
+                'the instructions total %s and the run says it pays %s, so the file and the figure '.
+                'somebody approved disagree',
+                (string) $instructed->amount,
+                (string) $shown['net']->amount,
+            );
+        }
+
+        $items = Money::zero('SAR');
+
+        foreach ($shown['items'] as $item) {
+            $items = $items->plus($item['net']);
+        }
+
+        if (! $items->equals($shown['net'])) {
+            $failures[] = sprintf(
+                'the items net to %s and the run pays %s, so a payable was counted twice or not at all',
+                (string) $items->amount,
+                (string) $shown['net']->amount,
+            );
+        }
+
+        /*
+         | And every item belongs to an instruction.
+         |
+         | An item with no instruction is a bill the run claims to settle
+         | with money it never sent - which is found by the supplier, not
+         | by the run.
+         */
+        $orphans = DB::connection('tenant')->table('payment_run_items')
+            ->where('run_id', $run['id'])
+            ->whereNull('instruction_id')
+            ->count();
+
+        if ($orphans > 0) {
+            $failures[] = sprintf(
+                '%d item(s) belong to no instruction, so the run says it settles a bill with money it never sent',
+                $orphans,
+            );
+        }
+
+        return $failures;
+    }
+
+    /**
+     * What was prepared is what is released, even if the terms move.
+     *
+     * @return list<string>
+     */
+    private function preparationIsFrozen(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $bill = $this->anApprovedBill($supplier, '10000.0000', '2026-06-15', '2.000', '2026-05-25');
+
+        $run = app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse('2026-05-19'),
+            userId: $this->actorId(),
+        );
+
+        $prepared = app(PaymentRuns::class)->show($run['id'])['net'];
+
+        /*
+         | The terms change between preparation and release.
+         |
+         | A supplier renegotiates, an import corrects a snapshot, somebody
+         | fixes a typo. If release recomputed, the releaser would send an
+         | amount nobody approved - which is the one thing maker-checker
+         | exists to prevent.
+         */
+        DB::connection('tenant')->table('bills')->where('id', $bill)->update([
+            'terms_snapshot' => json_encode([
+                'due_dates' => [['date' => '2026-06-15', 'amount' => '10000.0000']],
+                'discount' => ['percent' => '9.000', 'until' => '2026-05-25'],
+            ], JSON_THROW_ON_ERROR),
+        ]);
+
+        app(PaymentRuns::class)->release($run['id'], $this->secondActorId());
+
+        $released = app(PaymentRuns::class)->show($run['id'])['net'];
+        $failures = [];
+
+        if (! $released->equals($prepared)) {
+            $failures[] = sprintf(
+                'the run paid %s having been prepared at %s, so changing the terms after preparation '
+                .'changed what the releaser sent without their knowing',
+                (string) $released->amount,
+                (string) $prepared->amount,
+            );
+        }
+
+        if (! $prepared->equals(Money::of('9800.0000', 'SAR'))) {
+            $failures[] = sprintf('the prepared net was %s rather than 9,800', (string) $prepared->amount);
+        }
+
+        return $failures;
+    }
+
+    /**
+     * Withdrawing a preparation needs a reason, and clears the preparer.
+     *
+     * @return list<string>
+     */
+    private function unprepare(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $this->anApprovedBill($supplier, '4000.0000', '2026-05-18');
+
+        $run = app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse('2026-05-19'),
+            userId: $this->actorId(),
+        );
+
+        $failures = [];
+
+        try {
+            app(PaymentRuns::class)->unprepare($run['id'], $this->actorId(), 'wrong');
+
+            $failures[] = 'a preparation was withdrawn with no reason, so the releaser is shown a different '.
+                'selection with nothing saying what changed';
+        } catch (\Throwable $e) {
+            if (! str_contains($e->getMessage(), 'reason')) {
+                $failures[] = 'a reasonless withdrawal was refused for some other reason: '.$e->getMessage();
+            }
+        }
+
+        app(PaymentRuns::class)->unprepare(
+            $run['id'],
+            $this->actorId(),
+            'the wrong bank account was selected and the whole run has to be rebuilt',
+        );
+
+        $row = DB::connection('tenant')->table('payment_runs')->where('id', $run['id'])->first();
+
+        if ((string) $row->state !== 'draft') {
+            $failures[] = 'withdrawing a preparation left the run '.(string) $row->state.', so it can still be released';
+        }
+
+        if ($row->prepared_by !== null) {
+            $failures[] = 'the withdrawn run still names a preparer, so the release check would compare '.
+                'against a preparation that no longer stands';
+        }
+
+        try {
+            app(PaymentRuns::class)->release($run['id'], $this->secondActorId());
+
+            $failures[] = 'a run whose preparation was withdrawn was released anyway, so withdrawing it '.
+                'protects nothing';
+        } catch (\Throwable $e) {
+            /*
+             | In the service's own words, not the database's.
+             |
+             | The state machine also refuses draft to released, and its
+             | message happens to contain the word "draft" - so a check
+             | that looked for that passed with the service's guard
+             | removed. What the person needs is the sentence that says
+             | which states can be released and why, which is this one.
+             */
+            if (! str_contains($e->getMessage(), 'Only a prepared run can be released')) {
+                $failures[] = 'releasing a draft was refused, but not by the operation explaining itself - '.
+                    'so whoever hits it is shown a trigger\'s complaint rather than a reason: '.$e->getMessage();
+            }
+        }
+
+        return $failures;
+    }
+
+    /**
+     * The duty pair that can never be overridden, and it now fires.
+     *
+     * @return list<string>
+     */
+    private function paymentRunSod(): array
+    {
+        $failures = [];
+        $map = (array) config('sod.performed_as');
+
+        foreach ([
+            ['payment.prepare', 'payment_run.prepared'],
+            ['payment.release', 'payment_run.released'],
+        ] as [$duty, $action]) {
+            if (! \in_array($action, (array) ($map[$duty] ?? []), true)) {
+                $failures[] = sprintf(
+                    '%s maps to no audit action for %s, so prepare_then_release sees nothing happen and '.
+                    'the pair that can never be overridden enforces nothing',
+                    $duty,
+                    $action,
+                );
+            }
+
+            if (\array_key_exists($duty, (array) config('sod.declared_gaps'))) {
+                $failures[] = sprintf(
+                    '%s is still recorded as a declared gap although PF-174 records it, so the coverage '.
+                    'report excuses a rule that now works',
+                    $duty,
+                );
+            }
+        }
+
+        $rule = \App\Tenant\Identity\Models\SodRule::query()->where('key', 'prepare_then_release')->first();
+
+        if ($rule === null) {
+            return [...$failures, 'nothing pairs preparing a payment run against releasing it'];
+        }
+
+        if ($rule->overridable) {
+            $failures[] = 'prepare_then_release is overridable, so a one-person finance function can send '.
+                'money it alone selected - and this is the pair where that can never be allowed';
+        }
+
+        $supplier = $this->aPayableSupplier();
+        $this->anApprovedBill($supplier, '4000.0000', '2026-05-18');
+
+        $run = app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse('2026-05-19'),
+            userId: $this->actorId(),
+        );
+
+        $recorded = DB::connection('tenant')->table('audit_log')
+            ->where('action', 'payment_run.prepared')
+            ->where('subject_id', $run['id'])
+            ->exists();
+
+        if (! $recorded) {
+            $failures[] = 'preparing a run wrote no audit event, so the rule has nothing to compare a '.
+                'release against however it is configured';
+        }
+
+        return $failures;
+    }
     // ---- Helpers ----------------------------------------------------------
 
     /** @return array<string, mixed>|null */
@@ -3528,5 +4844,210 @@ final class SettlementRules
         SQL, [$this->entityId, $this->accountFor($role)]);
 
         return Money::of((string) ($row->balance ?? '0'), 'SAR');
+    }
+
+    // ---- The payment run - helpers ----------------------------------------
+
+    /**
+     * A supplier the run can pay: verified details, and its preferences.
+     *
+     * The verification is done by a second person, because the registry
+     * refuses a verifier who was the one that entered the details - which
+     * is the control, and a fixture that worked round it would be standing
+     * on a state the system refuses.
+     */
+    private function aPayableSupplier(
+        bool $groups = true,
+        ?string $limit = null,
+        bool $withAnAccount = true,
+    ): \App\Tenant\Parties\Models\Party {
+        $party = \App\Tenant\Parties\Models\Party::create([
+            'code' => 'PAY-S-'.\Illuminate\Support\Str::upper(\Illuminate\Support\Str::random(6)),
+            'legal_name' => 'Probe Supplier '.bin2hex(random_bytes(3)),
+            'is_supplier' => true,
+            'country' => 'SA',
+            'default_currency' => 'SAR',
+            'active' => true,
+        ]);
+
+        if ($withAnAccount) {
+            $account = app(\App\Tenant\Parties\Services\BankDetailRegistry::class)->record(
+                $party,
+                iban: $this->anUnusedIban(),
+                bic: 'RIBLSARI',
+            );
+
+            app(\App\Tenant\Parties\Services\BankDetailRegistry::class)->verify(
+                $account->fresh(),
+                $this->secondActorId(),
+                'callback',
+            );
+        }
+
+        DB::connection('tenant')->table('party_entity_settings')->insert([
+            'id' => (string) \Illuminate\Support\Str::ulid(),
+            'entity_id' => $this->entityId,
+            'party_id' => (string) $party->getKey(),
+            'group_payments' => $groups,
+            'payment_limit' => $limit,
+            'payment_limit_basis' => $limit === null
+                ? null
+                : 'their bank caps a single incoming credit, confirmed with their treasury on 2026-04-02',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $party;
+    }
+
+    /**
+     * An approved payable, written at the table.
+     *
+     * Entering and approving a bill through the services is Phase 06's
+     * subject and needs an approval chain, a tax decision and a posting.
+     * What a payment run depends on is narrower - approved, unpaid, with
+     * terms - so the fixture writes that state and satisfies every
+     * constraint the table has rather than reaching past them.
+     */
+    private function anApprovedBill(
+        \App\Tenant\Parties\Models\Party $supplier,
+        string $gross,
+        string $dueOn,
+        ?string $discountPercent = null,
+        ?string $discountUntil = null,
+    ): string {
+        $id = (string) \Illuminate\Support\Str::ulid();
+        $number = 'SUP-'.\Illuminate\Support\Str::upper(\Illuminate\Support\Str::random(8));
+
+        $terms = ['due_dates' => [['date' => $dueOn, 'amount' => $gross]]];
+
+        if ($discountPercent !== null && $discountUntil !== null) {
+            $terms['discount'] = ['percent' => $discountPercent, 'until' => $discountUntil];
+        }
+
+        DB::connection('tenant')->table('bills')->insert([
+            'id' => $id,
+            'entity_id' => $this->entityId,
+            'document_type' => '380',
+            'status' => 'approved',
+            'party_id' => (string) $supplier->getKey(),
+            'supplier_document_number' => $number,
+            'supplier_document_key' => (string) $supplier->getKey().'|'.$number,
+            'supplier_document_date' => '2026-05-01',
+            'tax_point' => '2026-05-01',
+            'posting_date' => '2026-05-01',
+            'currency' => 'SAR',
+            'net_amount' => $gross,
+            'tax_amount' => '0.0000',
+            'gross_amount' => $gross,
+            'recoverable_tax_amount' => '0.0000',
+            'non_recoverable_tax_amount' => '0.0000',
+            'payable_amount' => $gross,
+            'paid_amount' => '0.0000',
+            'terms_snapshot' => json_encode($terms, JSON_THROW_ON_ERROR),
+            'source' => 'manual',
+            'match_status' => 'not_applicable',
+            'created_by' => $this->actorId(),
+            'approved_at' => '2026-05-02 10:00:00',
+            'approved_by' => $this->secondActorId(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $id;
+    }
+
+    /**
+     * Settle part of a payable, so its open balance moves.
+     *
+     * Through a disbursement and an allocation rather than by writing
+     * `paid_amount`: the open balance is one function over allocations,
+     * credits, differences and write-offs, and a fixture that set a column
+     * the function does not read would prove nothing.
+     */
+    private function settle(string $billId, string $amount): void
+    {
+        $payment = app(Payments::class)->record(
+            entityId: $this->entityId,
+            direction: PaymentDirection::Disbursement,
+            method: PaymentMethod::CreditTransfer,
+            amount: Money::of($amount, 'SAR'),
+            valueDate: $this->date->copy(),
+            userId: $this->actorId(),
+            bankAccountId: (string) $this->bank()->getKey(),
+            partyId: (string) DB::connection('tenant')->table('bills')->where('id', $billId)->value('party_id'),
+        );
+
+        app(Allocations::class)->allocate(
+            (string) $payment['id'],
+            'bill',
+            $billId,
+            Money::of($amount, 'SAR'),
+            $this->actorId(),
+            on: $this->date->copy(),
+        );
+    }
+
+    /** A prepared and released run, for the immutability checks. @return array<string, mixed> */
+    private function aReleasedRun(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $this->anApprovedBill($supplier, '4000.0000', '2026-05-18');
+
+        $run = app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse('2026-05-19'),
+            userId: $this->actorId(),
+        );
+
+        app(PaymentRuns::class)->release($run['id'], $this->secondActorId());
+
+        return $run;
+    }
+
+    /**
+     * An IBAN no other supplier in this run has, with real check digits.
+     *
+     * The model validates the check digit on the way in, which is right -
+     * so the fixture computes one rather than disabling the validation it
+     * would otherwise be testing against.
+     */
+    private function anUnusedIban(): string
+    {
+        $this->ibanCounter++;
+        $bban = sprintf('80000000%012d', $this->ibanCounter);
+
+        /*
+         | ISO 13616: rearrange, letters to digits, 98 minus mod 97.
+         |
+         | 'S' is 28 and 'A' is 10, so SA becomes 2810, and the two zeroes
+         | stand in for the check digits being computed.
+         */
+        $rearranged = $bban.'281000';
+        $remainder = 0;
+
+        foreach (str_split($rearranged) as $digit) {
+            $remainder = (int) (($remainder.$digit) % 97);
+        }
+
+        return sprintf('SA%02d%s', 98 - $remainder, $bban);
+    }
+
+    /**
+     * The previewed item for a bill, if the run selected it.
+     *
+     * @param  array<string, mixed>  $preview
+     * @return array<string, mixed>|null
+     */
+    private function itemFor(array $preview, string $billId): ?array
+    {
+        foreach ($preview['items'] as $item) {
+            if ($item['bill_id'] === $billId) {
+                return $item;
+            }
+        }
+
+        return null;
     }
 }
