@@ -78,6 +78,17 @@ final class PlatformCeilings implements Ceilings
         'ceiling.difference_overpayment' => '25.00',
         'ceiling.difference_rounding' => '1.00',
         'ceiling.difference_withholding' => '0.00',
+
+        /*
+         | How much one person may write off alone - PF-172.
+         |
+         | A write-off is the one act in the product that destroys value
+         | on purpose, so the ceiling on "no second signature needed" is
+         | the tightest of any amount here. A tenant may set it lower and
+         | many should; nobody may set it so high that one person can lose
+         | a material sum without a second name on the row.
+         */
+        'ceiling.write_off_single_approver' => '5000.00',
         'ceiling.dunning_escalations' => '8',
         'ceiling.fx_fallback_window_days' => '90',
         'ceiling.period_reopen_days' => '365',

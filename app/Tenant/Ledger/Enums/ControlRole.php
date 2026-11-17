@@ -84,6 +84,21 @@ enum ControlRole: string
     case BadDebt = 'bad_debt';
 
     /**
+     * Money that arrived after it had been written off - PF-172.
+     *
+     * Its own account, because a recovery is **not** an un-write-off. The
+     * conclusion that a debt would not be collected was right on the day
+     * it was made, with what was known then; crediting bad debt back would
+     * say otherwise and would make the two figures net to something that
+     * describes neither.
+     *
+     * Kept apart, "we wrote off 400,000 and recovered 30,000" is a
+     * sentence about how good the write-off decisions were - which is the
+     * only question that improves them.
+     */
+    case BadDebtRecovery = 'bad_debt_recovery';
+
+    /**
      * Cash received that no document has claimed yet - PF-167.
      *
      * A **liability**, and that is the whole point of naming it. Money a
@@ -191,6 +206,15 @@ enum ControlRole: string
 
             self::FxGainLoss, self::FxRevaluation, self::RoundingDifference,
             self::BadDebt, self::BankCharges => AccountType::Expense,
+
+            /*
+             | A recovery is income, not a negative expense.
+             |
+             | Typing it as an expense would let it net against bad debt
+             | in every report that groups by type - which is exactly the
+             | netting this role exists to prevent.
+             */
+            self::BadDebtRecovery => AccountType::Revenue,
         };
     }
 

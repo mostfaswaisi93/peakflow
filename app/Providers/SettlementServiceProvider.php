@@ -38,5 +38,16 @@ final class SettlementServiceProvider extends ServiceProvider
 
         $registry->register(new PaymentRecordedRule());
         $registry->register(new AllocationPostedRule());
+
+        /*
+         | And the two halves of a write-off - PF-172.
+         |
+         | Two rules, because a recovery is not an un-write-off. The
+         | conclusion that a debt would not be collected was right on the
+         | day it was made; crediting bad debt back would say otherwise
+         | and would net the two figures into one that describes neither.
+         */
+        $registry->register(new \App\Tenant\Settlement\Posting\Rules\WriteOffPostedRule());
+        $registry->register(new \App\Tenant\Settlement\Posting\Rules\RecoveryPostedRule());
     }
 }

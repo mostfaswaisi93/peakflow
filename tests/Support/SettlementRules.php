@@ -15,6 +15,7 @@ use App\Tenant\Settlement\Services\Allocations;
 use App\Tenant\Settlement\Services\Payments;
 use App\Tenant\Settlement\Services\Refunds;
 use App\Tenant\Settlement\Services\UnappliedCash;
+use App\Tenant\Settlement\Services\WriteOffs;
 use Brick\Math\BigDecimal;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -123,6 +124,21 @@ final class SettlementRules
                 'a foreign receipt posts what it is worth' => fn (): array => $this->foreignReceiptIsTranslated(),
                 'realized and unrealized never share an account' => fn (): array => $this->realizedIsNotRevaluation(),
                 'a payment with no rate cannot be allocated' => fn (): array => $this->allocatingWithoutARate(),
+
+                // ---- Write-offs - PF-172 -------------------------------
+                'a write-off posts to bad debt and closes the document' => fn (): array => $this->writeOffPosts(),
+                'a write-off needs a reason code that exists' => fn (): array => $this->writeOffNeedsACode(),
+                'a write-off needs a sentence beside the code' => fn (): array => $this->writeOffNeedsASentence(),
+                'above the threshold it needs a second name' => fn (): array => $this->writeOffNeedsASecondApprover(),
+                'the approver is not the person who recorded it' => fn (): array => $this->writeOffIsNotSelfApproved(),
+                'the database refuses an unapproved write-off' => fn (): array => $this->databaseRefusesUnapprovedWriteOff(),
+                'the threshold that applied is stored' => fn (): array => $this->writeOffThresholdIsStored(),
+                'writing off more than is owed is refused' => fn (): array => $this->writeOffBeyondTheDocument(),
+                'a written-off document is closed, not deleted' => fn (): array => $this->writtenOffIsClosedNotDeleted(),
+                'a recovery is a new receipt, not an un-write-off' => fn (): array => $this->recoveryIsNotAnUnWriteOff(),
+                'recovering more than was written off is refused' => fn (): array => $this->recoveringTooMuch(),
+                'the report groups by reason, period and customer' => fn (): array => $this->writeOffReport(),
+                'whoever invoiced does not write off' => fn (): array => $this->writeOffSodPairs(),
 
                 // ---- The property that matters -------------------------
                 'for any sequence, the balance and the control agree' => fn (): array => $this->theProperty(),
@@ -1233,6 +1249,590 @@ final class SettlementRules
         $this->receipt($amount, $partyId);
 
         return $partyId;
+    }
+
+    // ---- Write-offs -------------------------------------------------------
+
+    /** @return list<string> */
+    private function writeOffPosts(): array
+    {
+        $invoice = $this->issue();
+        $gross = (string) $invoice->gross_amount;
+
+        $result = $this->writeOff($invoice, $gross);
+
+        $lines = DB::connection('tenant')->table('journal_lines')
+            ->where('journal_entry_id', (string) $result['journal_entry_id'])
+            ->get();
+
+        $failures = [];
+
+        $onBadDebt = $lines->firstWhere('account_id', $this->accountFor(ControlRole::BadDebt));
+        $onReceivable = $lines->firstWhere('account_id', $this->accountFor(ControlRole::AccountsReceivable));
+
+        if ($onBadDebt === null) {
+            $failures[] = 'a write-off did not reach bad debt, so a credit loss is somewhere else in the accounts';
+        } elseif (! BigDecimal::of((string) $onBadDebt->functional_amount)->isEqualTo($gross)) {
+            $failures[] = sprintf('bad debt took %s rather than %s', (string) $onBadDebt->functional_amount, $gross);
+        }
+
+        if ($onReceivable === null) {
+            return [...$failures, 'the receivable was not relieved, so the invoice stays open for money nobody is chasing'];
+        }
+
+        /*
+         | The party is on the receivable line.
+         |
+         | Without it the control moves and the customer's own balance
+         | does not, so the first symptom is a statement chasing money
+         | somebody already decided to lose.
+         */
+        if ($onReceivable->party_id === null) {
+            $failures[] = 'the receivable line carries no party, so the control moved and the customer balance did not';
+        }
+
+        /*
+         | And it is not an adjustment to revenue.
+         |
+         | The sale happened at the invoiced figure and it is still that.
+         | Restating revenue would make the margin look correct while the
+         | cash never arrived.
+         */
+        if ($lines->firstWhere('account_id', $this->revenueAccountId) !== null) {
+            $failures[] = 'a write-off moved revenue, so the margin on that sale will look correct although the cash never arrived';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function writeOffNeedsACode(): array
+    {
+        $invoice = $this->issue();
+
+        $refusal = $this->refusal(fn () => app(WriteOffs::class)->record(
+            entityId: $this->entityId,
+            documentType: 'invoice',
+            documentId: (string) $invoice->getKey(),
+            amount: Money::of('100.0000', 'SAR'),
+            reasonCode: 'because_i_said_so',
+            reason: 'a reason code nobody has ever defined, which should not be accepted here',
+            userId: $this->actorId(),
+            partyId: (string) $invoice->party_id,
+            on: $this->date->copy(),
+        ));
+
+        if ($refusal === null) {
+            return ['a write-off was recorded against a reason code nobody defined, so "which kinds of debt fail" is unanswerable'];
+        }
+
+        /*
+         | And the refusal lists the codes that do exist.
+         |
+         | "Unknown code" leaves somebody guessing. The list is what lets
+         | them pick the right one, or decide none fits and add it.
+         */
+        return str_contains($refusal, 'insolvency')
+            ? []
+            : [sprintf('the refusal does not say which codes are in use: %s', $refusal)];
+    }
+
+    /** @return list<string> */
+    private function writeOffNeedsASentence(): array
+    {
+        $invoice = $this->issue();
+
+        $refusal = $this->refusal(fn () => app(WriteOffs::class)->record(
+            entityId: $this->entityId,
+            documentType: 'invoice',
+            documentId: (string) $invoice->getKey(),
+            amount: Money::of('100.0000', 'SAR'),
+            reasonCode: 'insolvency',
+            reason: 'gone bust',
+            userId: $this->actorId(),
+            partyId: (string) $invoice->party_id,
+            on: $this->date->copy(),
+        ));
+
+        if ($refusal === null) {
+            return ['a write-off was recorded with "gone bust" beside it, which says nothing about which customer or which conversation'];
+        }
+
+        return str_contains($refusal, 'length of a sentence')
+            ? []
+            : [sprintf('the refusal came from the table rather than from recording: %s', $refusal)];
+    }
+
+    /** @return list<string> */
+    private function writeOffNeedsASecondApprover(): array
+    {
+        $invoice = $this->issue();
+        $threshold = app(WriteOffs::class)->threshold($this->entityId);
+
+        /*
+         | Above the threshold, with nobody else's name on it.
+         |
+         | The default threshold is 1,000 and the fixture invoice is
+         | 1,150, which is deliberately just over - a check whose
+         | scenario is ten times the threshold would also pass if the
+         | comparison were written the wrong way round.
+         */
+        if (! BigDecimal::of((string) $invoice->gross_amount)->isGreaterThan($threshold->amount)) {
+            return [sprintf(
+                'this check needs an amount above the %s threshold and the fixture invoice is %s',
+                (string) $threshold->amount,
+                (string) $invoice->gross_amount,
+            )];
+        }
+
+        $refusal = $this->refusal(fn () => app(WriteOffs::class)->record(
+            entityId: $this->entityId,
+            documentType: 'invoice',
+            documentId: (string) $invoice->getKey(),
+            amount: Money::of((string) $invoice->gross_amount, 'SAR'),
+            reasonCode: 'insolvency',
+            reason: 'the liquidator confirmed there will be no distribution to unsecured creditors',
+            userId: $this->actorId(),
+            partyId: (string) $invoice->party_id,
+            on: $this->date->copy(),
+        ));
+
+        if ($refusal === null) {
+            return ['a write-off above the threshold went through on one signature'];
+        }
+
+        if (! str_contains($refusal, 'second name')) {
+            return [sprintf('the refusal does not say a second approver is needed: %s', $refusal)];
+        }
+
+        /*
+         | And below the threshold it does not.
+         |
+         | An approval step on every small write-off is a step people
+         | click through, and the habit carries to the ones that matter.
+         */
+        $small = $this->refusal(fn () => app(WriteOffs::class)->record(
+            entityId: $this->entityId,
+            documentType: 'invoice',
+            documentId: (string) $invoice->getKey(),
+            amount: Money::of('50.0000', 'SAR'),
+            reasonCode: 'uneconomic_to_pursue',
+            reason: 'fifty riyals outstanding on a closed account, not worth the cost of a letter',
+            userId: $this->actorId(),
+            partyId: (string) $invoice->party_id,
+            on: $this->date->copy(),
+        ));
+
+        return $small === null
+            ? []
+            : [sprintf('a small write-off demanded an approver, which trains people to approve without reading: %s', $small)];
+    }
+
+    /** @return list<string> */
+    private function writeOffIsNotSelfApproved(): array
+    {
+        $invoice = $this->issue();
+
+        $refusal = $this->refusal(fn () => app(WriteOffs::class)->record(
+            entityId: $this->entityId,
+            documentType: 'invoice',
+            documentId: (string) $invoice->getKey(),
+            amount: Money::of((string) $invoice->gross_amount, 'SAR'),
+            reasonCode: 'insolvency',
+            reason: 'the liquidator confirmed there will be no distribution to unsecured creditors',
+            userId: $this->actorId(),
+            approvedBy: $this->actorId(),
+            partyId: (string) $invoice->party_id,
+            on: $this->date->copy(),
+        ));
+
+        if ($refusal === null) {
+            return ['somebody approved their own write-off, which is the control performed by the person it exists to check'];
+        }
+
+        /*
+         | The service's refusal, not the table's.
+         |
+         | The constraint refuses a self-approval too, which is why it is
+         | there. A person recording one should be told what is wrong with
+         | it in a sentence, not handed the name of a check constraint on
+         | a control that exists to check them.
+         */
+        return str_contains($refusal, 'cannot be the person who recorded it')
+            ? []
+            : [sprintf('the refusal came from the table rather than from recording: %s', $refusal)];
+    }
+
+    /** @return list<string> */
+    private function databaseRefusesUnapprovedWriteOff(): array
+    {
+        $invoice = $this->issue();
+
+        /*
+         | Written straight to the table, past the service.
+         |
+         | This is the control that stops one person moving money out of
+         | a business, and a service is one code path while an import, a
+         | correction script and a bulk tool are three others.
+         */
+        $refusal = $this->refusal(fn () => DB::connection('tenant')->table('write_offs')->insert([
+            'id' => (string) \Illuminate\Support\Str::ulid(),
+            'entity_id' => $this->entityId,
+            'number' => 'WOF-RAW-'.\Illuminate\Support\Str::upper(\Illuminate\Support\Str::random(6)),
+            'document_type' => 'invoice',
+            'document_id' => (string) $invoice->getKey(),
+            'party_id' => (string) $invoice->party_id,
+            'amount' => '9000.0000',
+            'currency' => 'SAR',
+            'written_off_on' => $this->date->toDateString(),
+            'reason_code_id' => (string) DB::connection('tenant')->table('write_off_reason_codes')->value('id'),
+            'reason' => 'nine thousand written off with nobody having approved it, straight into the table',
+            'recorded_by' => $this->actorId(),
+            'recorded_at' => now(),
+            'threshold' => '1000.0000',
+            'approved_by' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]));
+
+        return $refusal !== null
+            ? []
+            : ['the table accepted a write-off above its own threshold with no approver, so the control is only as good as one code path'];
+    }
+
+    /** @return list<string> */
+    private function writeOffThresholdIsStored(): array
+    {
+        $invoice = $this->issue();
+        $result = $this->writeOff($invoice, '50.0000', 'uneconomic_to_pursue');
+
+        $row = DB::connection('tenant')->table('write_offs')->where('id', (string) $result['id'])->first();
+        $threshold = app(WriteOffs::class)->threshold($this->entityId);
+
+        if ($row === null) {
+            return ['the write-off was posted and not recorded'];
+        }
+
+        /*
+         | The figure, not just the verdict.
+         |
+         | A tenant who raises the threshold next week would otherwise
+         | make every past write-off look as though it had always been
+         | within one signature.
+         */
+        return BigDecimal::of((string) $row->threshold)->isEqualTo($threshold->amount)
+            ? []
+            : [sprintf(
+                'the write-off stored a threshold of %s against an actual %s, so the evidence does '.
+                'not match the claim',
+                (string) $row->threshold,
+                (string) $threshold->amount,
+            )];
+    }
+
+    /** @return list<string> */
+    private function writeOffBeyondTheDocument(): array
+    {
+        $invoice = $this->issue();
+        $twice = (string) BigDecimal::of((string) $invoice->gross_amount)->multipliedBy(2);
+
+        $refusal = $this->refusal(fn () => app(WriteOffs::class)->record(
+            entityId: $this->entityId,
+            documentType: 'invoice',
+            documentId: (string) $invoice->getKey(),
+            amount: Money::of($twice, 'SAR'),
+            reasonCode: 'insolvency',
+            reason: 'writing off twice what the customer was ever invoiced for, to see whether it is caught',
+            userId: $this->actorId(),
+            approvedBy: $this->secondActorId(),
+            partyId: (string) $invoice->party_id,
+            on: $this->date->copy(),
+        ));
+
+        if ($refusal === null) {
+            return ['more was written off than the document was worth, taking it below zero'];
+        }
+
+        return str_contains($refusal, 'below zero')
+            ? []
+            : [sprintf('the refusal does not say what it would do to the document: %s', $refusal)];
+    }
+
+    /** @return list<string> */
+    private function writtenOffIsClosedNotDeleted(): array
+    {
+        $invoice = $this->issue();
+        $this->writeOff($invoice, (string) $invoice->gross_amount);
+
+        $failures = [];
+
+        /*
+         | Closed: the open balance is nil.
+         |
+         | Through the one shared definition, so this also proves the
+         | write-off term reached the trigger and the strategy query and
+         | not only the report.
+         */
+        $open = app(Allocations::class)->openBalance('invoice', (string) $invoice->getKey(), 'SAR');
+
+        if (! $open->isZero()) {
+            $failures[] = sprintf('the invoice still shows %s open after being written off in full', (string) $open->amount);
+        }
+
+        /*
+         | Not deleted.
+         |
+         | A written-off invoice is still the document the customer holds
+         | and the tax return reported. Deleting it would make the sale
+         | disappear along with the loss.
+         */
+        $still = DB::connection('tenant')->table('invoices')->where('id', (string) $invoice->getKey())->exists();
+
+        if (! $still) {
+            $failures[] = 'the invoice was deleted, so the sale disappeared along with the loss';
+        }
+
+        $payment = $this->receipt('10.0000', (string) $invoice->party_id);
+
+        $refusal = $this->refusal(fn () => app(Allocations::class)->allocate(
+            (string) $payment['id'],
+            'invoice',
+            (string) $invoice->getKey(),
+            Money::of('10.0000', 'SAR'),
+            $this->actorId(),
+            on: $this->date->copy(),
+        ));
+
+        if ($refusal === null) {
+            $failures[] = 'money was allocated to a document that had been written off in full, so it reports settled twice';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function recoveryIsNotAnUnWriteOff(): array
+    {
+        $invoice = $this->issue();
+        $gross = (string) $invoice->gross_amount;
+
+        $writeOff = $this->writeOff($invoice, $gross);
+
+        $badDebtBefore = $this->balanceOf(ControlRole::BadDebt);
+
+        $result = app(WriteOffs::class)->recover(
+            (string) $writeOff['id'],
+            Money::of('300.0000', 'SAR'),
+            (string) $this->bank()->getKey(),
+            $this->actorId(),
+            'the liquidator made an unexpected distribution eighteen months later',
+            $this->date->copy(),
+        );
+
+        $failures = [];
+
+        $lines = DB::connection('tenant')->table('journal_lines')
+            ->where('journal_entry_id', (string) $result['journal_entry_id'])
+            ->get();
+
+        /*
+         | Income of its own, never a credit back to bad debt.
+         |
+         | The conclusion was right on the day it was made. Netting the
+         | two destroys the only question that improves those decisions:
+         | whether the business writes off too eagerly or too late.
+         */
+        if ($lines->firstWhere('account_id', $this->accountFor(ControlRole::BadDebtRecovery)) === null) {
+            $failures[] = 'a recovery did not reach the recovery account, so it has been netted against something';
+        }
+
+        $badDebtAfter = $this->balanceOf(ControlRole::BadDebt);
+
+        if (! $badDebtBefore->equals($badDebtAfter)) {
+            $failures[] = sprintf(
+                'bad debt moved from %s to %s when money was recovered, so the write-off is being '.
+                'treated as having been wrong',
+                (string) $badDebtBefore->amount,
+                (string) $badDebtAfter->amount,
+            );
+        }
+
+        /*
+         | And the document stays closed.
+         |
+         | Reopening it would make the same invoice appear twice in every
+         | report that counts what was collected.
+         */
+        $open = app(Allocations::class)->openBalance('invoice', (string) $invoice->getKey(), 'SAR');
+
+        if (! $open->isZero()) {
+            $failures[] = sprintf('the invoice reopened to %s when money was recovered', (string) $open->amount);
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function recoveringTooMuch(): array
+    {
+        $invoice = $this->issue();
+        $writeOff = $this->writeOff($invoice, '100.0000', 'uneconomic_to_pursue');
+
+        $refusal = $this->refusal(fn () => app(WriteOffs::class)->recover(
+            (string) $writeOff['id'],
+            Money::of('400.0000', 'SAR'),
+            (string) $this->bank()->getKey(),
+            $this->actorId(),
+            'recovering four times what was written off',
+            $this->date->copy(),
+        ));
+
+        if ($refusal === null) {
+            return ['more was recovered than was ever written off, which credits income for money that may be owed back'];
+        }
+
+        return str_contains($refusal, 'payment on account')
+            ? []
+            : [sprintf('the refusal does not say what the excess actually is: %s', $refusal)];
+    }
+
+    /** @return list<string> */
+    private function writeOffReport(): array
+    {
+        $first = $this->issue();
+        $second = $this->issue();
+
+        $this->writeOff($first, '200.0000', 'insolvency');
+        $written = $this->writeOff($second, '150.0000', 'uneconomic_to_pursue');
+
+        app(WriteOffs::class)->recover(
+            (string) $written['id'],
+            Money::of('50.0000', 'SAR'),
+            (string) $this->bank()->getKey(),
+            $this->actorId(),
+            'a partial payment arrived after the account was closed',
+            $this->date->copy(),
+        );
+
+        $report = app(WriteOffs::class)->report($this->entityId);
+
+        $failures = [];
+
+        /*
+         | All three groupings, because each answers a different question.
+         |
+         | By reason: which kinds of debt fail, which is what a provision
+         | matrix is built from. By period: whether it is getting worse.
+         | By customer: whether it is one relationship or a pattern.
+         */
+        foreach (['by_reason', 'by_period', 'by_customer'] as $grouping) {
+            if (($report[$grouping] ?? []) === []) {
+                $failures[] = sprintf('the report has nothing %s', str_replace('_', ' ', $grouping));
+            }
+        }
+
+        if (! isset($report['by_reason']['insolvency'], $report['by_reason']['uneconomic_to_pursue'])) {
+            $failures[] = 'two different reason codes are not reported separately, so the report cannot say which kinds of debt fail';
+        }
+
+        if ($report['total'] === null || ! $report['total']->amount->isEqualTo('350.0000')) {
+            $failures[] = sprintf('two write-offs of 200 and 150 total %s', (string) ($report['total']?->amount ?? 'nothing'));
+        }
+
+        /*
+         | And recoveries are reported beside, not netted in.
+         |
+         | Netted, nobody can tell a business that writes off too eagerly
+         | from one that writes off too late.
+         */
+        if ($report['recovered'] === null || ! $report['recovered']->amount->isEqualTo('50.0000')) {
+            $failures[] = sprintf(
+                'the recovery is reported as %s rather than 50, or is netted into the write-off total',
+                (string) ($report['recovered']?->amount ?? 'nothing'),
+            );
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function writeOffSodPairs(): array
+    {
+        $failures = [];
+
+        foreach ([
+            ['invoice_then_write_off', 'invoice.issue'],
+            ['reconcile_then_write_off', 'bank.reconcile'],
+        ] as [$key, $other]) {
+            $rule = \App\Tenant\Identity\Models\SodRule::query()->where('key', $key)->first();
+
+            if ($rule === null) {
+                $failures[] = sprintf('nothing pairs %s against writing a debt off', $other);
+
+                continue;
+            }
+
+            $duties = [(string) $rule->duty_a, (string) $rule->duty_b];
+            sort($duties);
+            $expected = [$other, 'writeoff.record'];
+            sort($expected);
+
+            if ($duties !== $expected) {
+                $failures[] = sprintf('%s pairs %s rather than %s', $key, implode(' and ', $duties), implode(' and ', $expected));
+            }
+        }
+
+        $map = (array) config('sod.performed_as');
+
+        if (($map['writeoff.record'] ?? []) === []) {
+            $failures[] = 'the write-off duty maps to no audit action, so the rules cannot see it happen';
+        }
+
+        /*
+         | And it is a different duty from absorbing a difference.
+         |
+         | Concluding money is not coming and absorbing a rounding unit
+         | on money that did arrive are different decisions. Mapping them
+         | to one duty would bar somebody who absorbed a penny this
+         | morning from concluding a liquidation this afternoon.
+         */
+        if (\in_array('difference.written_off', (array) ($map['writeoff.record'] ?? []), true)) {
+            $failures[] = 'absorbing a reconciliation difference counts as writing a debt off, so two different decisions share one approver';
+        }
+
+        return $failures;
+    }
+
+    /** @return array<string, mixed> */
+    private function writeOff(object $invoice, string $amount, string $code = 'insolvency'): array
+    {
+        $threshold = app(WriteOffs::class)->threshold($this->entityId);
+        $needsASecond = BigDecimal::of($amount)->isGreaterThan($threshold->amount);
+
+        return app(WriteOffs::class)->record(
+            entityId: $this->entityId,
+            documentType: 'invoice',
+            documentId: (string) $invoice->getKey(),
+            amount: Money::of($amount, 'SAR'),
+            reasonCode: $code,
+            reason: 'the liquidator confirmed there will be no distribution to unsecured creditors of this customer',
+            userId: $this->actorId(),
+            approvedBy: $needsASecond ? $this->secondActorId() : null,
+            partyId: (string) $invoice->party_id,
+            on: $this->date->copy(),
+        );
+    }
+
+    /**
+     * A second person, for the approvals that need one.
+     *
+     * A fixed id rather than a real user: what is being checked is that
+     * the approver is somebody else, and the identity machinery has its
+     * own suite for whether that somebody may approve.
+     */
+    private function secondActorId(): string
+    {
+        return str_repeat('1', 26);
     }
 
     // ---- Rounding differences ---------------------------------------------

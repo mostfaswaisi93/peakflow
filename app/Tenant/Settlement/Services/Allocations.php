@@ -514,68 +514,32 @@ final class Allocations
         return Money::of((string) $left, (string) $row->currency);
     }
 
-    /** What is left of a document to settle. */
+    /**
+     * What is left of a document to settle.
+     *
+     * Asked of `peakflow_document_open_balance`, which is also what the
+     * allocation trigger asks - PF-172. The formula existed three times
+     * and was kept in step by hand, until PF-171 added a term that
+     * reached two of the three and left an invoice reported as settled by
+     * the ledger and a penny short by the subledger.
+     */
     public function openBalance(string $documentType, string $documentId, string $currency): Money
     {
-        $sql = $documentType === 'invoice'
-            ? <<<'SQL'
-                SELECT i.gross_amount
-                     - coalesce((
-                         SELECT sum(c.gross_amount)
-                         FROM invoices c
-                         JOIN invoice_references r ON r.invoice_id = c.id
-                         WHERE r.referenced_invoice_id = i.id
-                           AND c.document_type = '381'
-                           AND c.status = 'issued'
-                       ), 0)
-                     - coalesce((
-                         SELECT sum(a.amount)
-                         FROM allocations a
-                         WHERE a.document_type = 'invoice'
-                           AND a.document_id = i.id
-                           AND a.reversed_at IS NULL
-                       ), 0)
-                     - coalesce((
-                         SELECT sum(d.amount)
-                         FROM reconciliation_differences d
-                         WHERE d.subject_type = ?
-                           AND d.subject_id = ?
-                       ), 0) AS open_balance
-                FROM invoices i
-                WHERE i.id = ?
-            SQL
-            : <<<'SQL'
-                SELECT b.gross_amount
-                     - coalesce((
-                         SELECT sum(a.amount)
-                         FROM allocations a
-                         WHERE a.document_type = 'bill'
-                           AND a.document_id = b.id
-                           AND a.reversed_at IS NULL
-                       ), 0)
-                     - coalesce((
-                         SELECT sum(d.amount)
-                         FROM reconciliation_differences d
-                         WHERE d.subject_type = ?
-                           AND d.subject_id = ?
-                       ), 0) AS open_balance
-                FROM bills b
-                WHERE b.id = ?
-            SQL;
+        $row = DB::connection('tenant')->selectOne(
+            'SELECT peakflow_document_open_balance(?, ?::char(26))::text AS open_balance',
+            [$documentType, $documentId],
+        );
 
-        /*
-         | Less what a difference already relieved - PF-171.
-         |
-         | A rounding unit, a written-off shortfall, tax withheld at
-         | source: each posts against the document and relieves the
-         | control account. A subledger that did not subtract them would
-         | say a penny was still owed on an invoice the ledger reports as
-         | settled - which is the divergence this phase exists to prevent,
-         | arriving by a route nobody was watching.
-         */
-        $row = DB::connection('tenant')->selectOne($sql, [$documentType, $documentId, $documentId]);
+        if ($row === null || $row->open_balance === null) {
+            throw PaymentRefused::because(sprintf(
+                'There is no %s with that id, or its open balance is not something this system '.
+                'knows how to compute. Reading it as zero would report a document as settled '.
+                'because nothing could be found out about it.',
+                $documentType,
+            ));
+        }
 
-        return Money::of((string) ($row->open_balance ?? '0'), $currency);
+        return Money::of((string) $row->open_balance, $currency);
     }
 
     /**
@@ -714,22 +678,13 @@ final class Allocations
                    i.number,
                    i.currency,
                    i.issue_date AS document_date,
-                   (i.gross_amount
-                     - coalesce((
-                         SELECT sum(c.gross_amount)
-                         FROM invoices c
-                         JOIN invoice_references r ON r.invoice_id = c.id
-                         WHERE r.referenced_invoice_id = i.id
-                           AND c.document_type = '381'
-                           AND c.status = 'issued'
-                       ), 0)
-                     - coalesce((
-                         SELECT sum(a.amount)
-                         FROM allocations a
-                         WHERE a.document_type = 'invoice'
-                           AND a.document_id = i.id
-                           AND a.reversed_at IS NULL
-                       ), 0))::text AS open_balance
+                   /*
+                    | The same function the trigger asks - PF-172.
+                    |
+                    | This query used to restate the formula, and it was
+                    | the copy PF-171's difference term never reached.
+                    */
+                   peakflow_document_open_balance('invoice', i.id)::text AS open_balance
             FROM invoices i
             WHERE i.entity_id = ?
               AND i.currency = ?

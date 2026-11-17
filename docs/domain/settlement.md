@@ -132,3 +132,47 @@ This closed a real divergence. A difference posts against a document and relieve
 It was found by a check asserting the document **closes**, not one asserting the posting happened — the difference between checking the consequence and checking the act.
 
 The allocation guard had the same hole: a document part-relieved by a write-off could still absorb an allocation for its full gross, reaching the over-application the guard exists to refuse by a route it was not watching. Both now subtract what a difference already relieved.
+
+## Write-offs
+
+The one act in this module that destroys value on purpose. Every other path moves money between accounts or names a difference; this one says a receivable is not going to be collected and the money is gone.
+
+That is why it is permissioned, reasoned by code, approved above a threshold and separated by duty from both invoicing and reconciliation — not because writing off is rare (it is ordinary) but because **a person who can raise an invoice and then write it off can move money out of a business with two clicks and leave nothing for a reader to find**.
+
+### A code and a sentence, not one or the other
+
+A sentence is read once, by the person who approved it. A code is countable: "how much did we write off after liquidation this year, and how does that compare with last" is the question a provision matrix is calibrated from, and prose cannot answer it.
+
+The sentence is kept because a code cannot say which customer and which conversation. Without both, the report is either uncountable or unexplained. The refusal for an unknown code lists the ones in use, so somebody can pick the right one or decide none fits and add it.
+
+Codes are **tenant-wide and carry no `entity_id`**. A reason code is vocabulary, not money: a tenant database is one customer, and the list of ways their debts fail is theirs rather than each legal entity's. The first version had a nullable `entity_id` meaning "a code the platform ships", and two checks refused it — a nullable `entity_id` under row-level security is invisible to everybody, and a table with the column and no policy crosses an entity boundary the moment anybody queries it. Neither wanted a cleverer policy; both were pointing at the column.
+
+### It is a credit loss, not an adjustment to revenue
+
+The sale happened at the invoiced figure and it is still that. What changed is that the money is not coming — a cost of having extended credit, which is IFRS 9's view and the useful one. Restating revenue would make the margin on that sale look correct while the cash never arrived, and it would spread the pattern of which customers do not pay across the revenue accounts where nobody can see it.
+
+### A second name above a threshold, and not below it
+
+The threshold is a tenant setting under a platform ceiling, and it is **not zero** on purpose: an approval step on every small write-off is a step people click through, and the habit carries to the ones that matter.
+
+The approver cannot be the person who recorded it, and the threshold **that applied** is stored on the row — a tenant who raises it next week would otherwise make every past write-off look as though it had always been within one signature. Both are enforced in the table as well as in the service, because this is the control that stops one person moving money out of a business and a service is one code path.
+
+### A recovery is not an un-write-off
+
+Money that arrives afterwards is a **new receipt against a recovery account**. Reversing the write-off would say the conclusion had been wrong, and it was not: on the day it was made, with what was known, it was right. A customer who pays eighteen months after liquidation proceedings closed has not made the earlier decision a mistake.
+
+Netting the two also destroys the only question that improves those decisions. "We wrote off 400,000 and recovered 30,000" is a sentence about how good the write-offs were; netted into one account it is a sentence about nothing, and nobody can tell a business that writes off too eagerly from one that writes off too late.
+
+The document stays closed, and the recovery account is typed as **revenue** rather than a negative expense — an expense would let it net against bad debt in every report that groups by account type.
+
+### A report by reason, period and customer
+
+All three, because each answers a different question and only the three together are worth reading. By reason: which kinds of debt fail. By period: whether it is getting worse. By customer: whether it is one relationship or a pattern.
+
+## One definition of an open balance
+
+What a document still owes is its gross, less credit notes, less allocations, less what a difference relieved, less what was written off. Each term arrived with a task, and by PF-171 the formula existed **three times**: in the trigger that refuses an over-allocation, in the service that reports a balance, and in the query that lists open documents for a strategy.
+
+They were kept in step by hand, and PF-171 showed what that costs — the difference term reached two of the three, and the one it missed reported a penny still owed on an invoice the ledger had settled.
+
+So it is a SQL function and the three callers ask it. In SQL because one of them is a trigger and a trigger cannot call PHP; the other arrangement — PHP as the definition, the trigger trusting it — is the one that failed, since a service is one code path and an import is another. A term added later is a one-line change in one place, which is the only arrangement under which "they agree" is a property rather than a hope.

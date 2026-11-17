@@ -85,6 +85,18 @@ return [
         'reconciliation.write_off' => ['difference.written_off'],
 
         /*
+         | Writing off a debt - PF-172.
+         |
+         | Distinct from `reconciliation.write_off`, which absorbs a
+         | difference on a payment that did arrive. This one concludes
+         | that money is not coming at all, and the two are different
+         | decisions with different approvers - so a person who absorbed
+         | a rounding unit this morning is not thereby barred from
+         | concluding a liquidation this afternoon.
+         */
+        'writeoff.record' => ['writeoff.recorded'],
+
+        /*
          | Posting, through the paths that record one.
          |
          | A posting made BY a document is attributed to that document's own

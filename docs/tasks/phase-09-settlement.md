@@ -61,11 +61,11 @@ This phase also contains the single highest-consequence control in the product: 
 ### PF-172 · Write-offs
 `Settlement` · **5 pts** · depends: PF-168, PF-033 · standards: IFRS 9 · `risk:high` `type:posting` `type:security`
 
-- [ ] Permissioned, with a mandatory reason code, posting to `bad_debt`
-- [ ] Separated by SoD from both invoicing and reconciliation
-- [ ] Above a threshold it requires a second approver
-- [ ] A written-off document is closed, not deleted, and a later recovery is a new receipt against a recovery account - not an un-write-off
-- [ ] A write-off report by reason, period and customer
+- [x] Permissioned, with a mandatory reason code, posting to `bad_debt`
+- [x] Separated by SoD from both invoicing and reconciliation
+- [x] Above a threshold it requires a second approver
+- [x] A written-off document is closed, not deleted, and a later recovery is a new receipt against a recovery account - not an un-write-off
+- [x] A write-off report by reason, period and customer
 
 ### PF-173 · Expected credit loss
 `Settlement` · **5 pts** · depends: PF-172, PF-062 · standards: IFRS 9 · `type:posting`

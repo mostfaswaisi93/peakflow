@@ -1,6 +1,6 @@
 {
   "key": "jordan",
-  "version": 5,
+  "version": 6,
   "name_ar": "دليل حسابات للمملكة الأردنية الهاشمية",
   "name_en": "Jordan chart of accounts",
   "countries": [
@@ -393,6 +393,16 @@
       "name_en": "Other income",
       "postable": true,
       "role": null,
+      "monetary": false
+    },
+    {
+      "code": "4.3",
+      "parent": "4",
+      "type": "revenue",
+      "name_ar": "متحصلات ديون معدومة",
+      "name_en": "Bad debt recovered",
+      "postable": true,
+      "role": "bad_debt_recovery",
       "monetary": false
     },
     {

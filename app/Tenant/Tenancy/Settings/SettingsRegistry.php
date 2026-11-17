@@ -193,6 +193,26 @@ final class SettingsRegistry
                 min: '0',
             ),
 
+            /*
+             | Above this, a write-off needs a second name - PF-172.
+             |
+             | Not zero, deliberately. An approval step on every small
+             | write-off is a step people click through, and the habit
+             | carries to the ones that matter - so the threshold exists
+             | to keep the control meaningful rather than constant.
+             */
+            new SettingDefinition(
+                key: 'settlement.write_off_second_approver_above',
+                type: 'decimal',
+                scope: 'entity',
+                default: '1000.00',
+                descriptionAr: 'أكبر مبلغ يمكن لشخص واحد إعدامه دون موافقة ثانية.',
+                descriptionEn: 'The largest debt one person may write off without a second approver.',
+                ceilingKey: 'ceiling.write_off_single_approver',
+                ceilingDirection: 'at_most',
+                min: '0',
+            ),
+
             new SettingDefinition(
                 key: 'money.rounding_mode',
                 type: 'string',
