@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tenant\Settlement\Services;
 
 use App\Support\Audit\AuditTrail;
+use App\Support\Authorization\RequiresStepUp;
 use App\Support\Money\Money;
 use App\Tenant\Banking\Models\BankAccount;
 use App\Tenant\Identity\Services\SodEngine;
@@ -61,6 +62,8 @@ final class PaymentRuns
         private readonly AuditTrail $audit,
         private readonly NumberAllocator $numbers,
         private readonly SodEngine $sod,
+        private readonly ReleaseReview $review,
+        private readonly RequiresStepUp $stepUp,
     ) {}
 
     /**
@@ -119,6 +122,7 @@ final class PaymentRuns
                 'party_id' => (string) $bill->party_id,
                 'party_name' => $bill->party_name === null ? null : (string) $bill->party_name,
                 'party_bank_account_id' => $beneficiary['account_id'],
+                'account_fingerprint' => $beneficiary['fingerprint'],
                 'groups' => $beneficiary['groups'],
                 'limit' => $beneficiary['limit'],
                 'due_on' => $evaluated['due_on'],
@@ -246,6 +250,14 @@ final class PaymentRuns
                     'sequence' => (int) $instruction['sequence'],
                     'of' => (int) $instruction['of'],
                     'split_reason' => $instruction['split_reason'],
+                    /*
+                     | What the destination looked like, now - PF-175.
+                     |
+                     | So the releaser can be told whether it has moved
+                     | since, by content rather than by a clock that only
+                     | counts seconds.
+                     */
+                    'account_fingerprint' => $instruction['account_fingerprint'],
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
@@ -327,12 +339,30 @@ final class PaymentRuns
     }
 
     /**
-     * Send the run.
+     * Send the run - the highest-consequence act in the product - PF-175.
      *
-     * PF-175 hardens this: step-up at the moment of the act, a diff of
-     * what changed since preparation, a block where a beneficiary account
-     * changed, and the hash of the file. What is here is the transition
-     * and the duty that separates the two people.
+     * Five controls, in the order they are cheapest to explain:
+     *
+     * 1. The run is prepared. A draft has nothing anybody checked.
+     * 2. The releaser is not the preparer - by the column AND against the
+     *    audit trail, because a column is one row somebody can repair.
+     * 3. The duty pairs, which can never be overridden - per
+     *    beneficiary, because one of them is scoped to the party.
+     * 4. A fresh factor, now, for this run. A stolen session passes every
+     *    check that looks at the session and fails this one.
+     * 5. Nothing has moved since preparation. What the releaser approves
+     *    has to be what was prepared, or maker-checker is two people
+     *    clicking the same button a day apart.
+     *
+     * The order is not arbitrary. Everything that answers "you may not do
+     * this at all" comes before the factor, because asking somebody to
+     * re-prove themselves for an act they can never perform wastes a code
+     * and reads as the system not knowing its own rules. The review comes
+     * after, because it names what the run is paying and whoever holds
+     * the session has not yet shown they are the account's owner.
+     *
+     * Then the hash of what was authorised, so the file PF-176 generates
+     * can be held against it.
      *
      * @return array<string, mixed>
      *
@@ -361,25 +391,112 @@ final class PaymentRuns
         }
 
         /*
-         | And the duty, against the audit trail.
+         | And against the audit trail, which the column is not - PF-175.
          |
-         | The column check above catches the same user id. This catches
-         | the same person having prepared it under a path that did not
-         | set the column - and it is scoped to this run, so preparing
-         | one run does not bar somebody from releasing another.
+         | `prepared_by` is one column on one row. A repaired row, a
+         | restored backup or an import that cleared it would leave the
+         | check above comparing against null and passing - and the trail
+         | is the record that says what actually happened, in a hash
+         | chain nobody can quietly edit.
+         |
+         | Scoped to this run. Preparing one run does not bar somebody
+         | from releasing another, and a control that did would stop a
+         | two-person finance team working at all.
          */
-        $this->sod->assert(
-            duty: 'payment.release',
-            subjectType: 'payment_run',
-            subjectId: $runId,
-            subjectLabel: (string) $run->number,
-        );
+        $prepared = DB::connection('tenant')->table('audit_log')
+            ->where('actor_user_id', $userId)
+            ->where('action', 'payment_run.prepared')
+            ->where('subject_type', 'payment_run')
+            ->where('subject_id', $runId)
+            ->where('category', '!=', 'sod')
+            ->orderByDesc('created_at')
+            ->first();
 
-        return DB::connection('tenant')->transaction(function () use ($run, $runId, $userId, $note): array {
+        if ($prepared !== null) {
+            throw PaymentRefused::because(sprintf(
+                'The audit trail records you preparing run %s on %s, so you cannot be the one to '.
+                'release it. Maker-checker on outgoing funds is two people, not one - and this is '.
+                'the pair that can never be overridden, because arranging where money goes and then '.
+                'sending it is the highest-value fraud in the product.',
+                (string) $run->number,
+                (string) $prepared->created_at,
+            ));
+        }
+
+        /*
+         | The duties - once per beneficiary, not once for the run.
+         |
+         | Two rules sit on `payment.release` and they are scoped
+         | differently. `prepare_then_release` is scoped to the OBJECT:
+         | did you prepare this run. `beneficiary_then_release` is scoped
+         | to the PARTY: did you change this supplier's bank details -
+         | which is the pair PF-061 exists for, and the other one that can
+         | never be overridden.
+         |
+         | A run pays many beneficiaries, so there is no single party id
+         | for it. Asserting once with none left the engine unable to
+         | evaluate the party-scoped rule at all: it refused outright
+         | rather than skipping, which is the right behaviour and is how
+         | this was found - by the first check that signed a real user in.
+         |
+         | So the assertion runs per distinct beneficiary, carrying both
+         | keys, and both rules can see what they are scoped to.
+         */
+        $beneficiaries = DB::connection('tenant')->table('payment_run_instructions')
+            ->where('run_id', $runId)
+            ->distinct()
+            ->pluck('party_id');
+
+        foreach ($beneficiaries as $partyId) {
+            $this->sod->assert(
+                duty: 'payment.release',
+                subjectType: 'payment_run',
+                subjectId: $runId,
+                partyId: (string) $partyId,
+                subjectLabel: (string) $run->number,
+            );
+        }
+
+        /*
+         | A fresh factor, now, for this run - PF-032, PF-175.
+         |
+         | Asserted here rather than on a route, because this method is
+         | reached from a console command, a queued job and an API
+         | endpoint that does not exist yet - each of which is a route a
+         | middleware does not protect. Object-scoped, so re-proving
+         | yourself to release Tuesday's run does not authorise releasing
+         | Thursday's in the same five minutes.
+         */
+        $this->stepUp->assert('payment.release', $runId, (string) $run->number);
+
+        /*
+         | And nothing has moved since it was prepared - PF-175.
+         |
+         | After step-up, deliberately: a stale run is a thing the
+         | releaser needs to be told about, and telling them before they
+         | have proved who they are would leak what a run is paying to
+         | whoever holds the session.
+         */
+        $review = $this->review->of($runId);
+
+        if ($review['blocks']) {
+            throw PaymentRefused::because($review['why']);
+        }
+
+        return DB::connection('tenant')->transaction(function () use ($run, $runId, $userId, $note, $review): array {
             DB::connection('tenant')->table('payment_runs')->where('id', $runId)->update([
                 'state' => 'released',
                 'released_by' => $userId,
                 'released_at' => now(),
+                /*
+                 | What was authorised, hashed - PF-175.
+                 |
+                 | Written in the same statement as the release, so there
+                 | is no instant in which a released run has no hash. The
+                 | run is frozen immediately afterwards, which makes this
+                 | the last moment the figure can be recorded at all.
+                 */
+                'released_hash' => $review['hash'],
                 'updated_at' => now(),
             ]);
 
@@ -394,6 +511,7 @@ final class PaymentRuns
                     'state' => 'released',
                     'net' => (string) $run->net_total,
                     'instructions' => (int) $run->instruction_count,
+                    'released_hash' => $review['hash'],
                 ],
                 reason: $note,
                 entityId: (string) $run->entity_id,
@@ -403,11 +521,15 @@ final class PaymentRuns
                 'id' => $runId,
                 'number' => (string) $run->number,
                 'state' => 'released',
+                'released_hash' => $review['hash'],
                 'why' => sprintf(
-                    '%s released. It is frozen now, lines and all: a mistake is corrected by a new '.
-                    'run and a recall request, because the money has left and an edited '.
-                    'instruction would describe a payment the bank never made.',
+                    '%s released, and recorded under %s - the hash of what was authorised, so the '.
+                    'file generated from it can be held against this. It is frozen now, lines and '.
+                    'all: a mistake is corrected by a new run and a recall request, because the '.
+                    'money has left and an edited instruction would describe a payment the bank '.
+                    'never made.',
                     (string) $run->number,
+                    mb_substr($review['hash'], 0, 12),
                 ),
             ];
         });
@@ -468,6 +590,51 @@ final class PaymentRuns
                     'shown a preparation nobody has touched since.',
             ];
         });
+    }
+
+    /**
+     * What a releaser is about to approve - PF-175.
+     *
+     * The run, what changed since it was prepared, and whether a factor
+     * is needed before the button does anything. For a screen that asks
+     * the question before somebody commits rather than after: a release
+     * refused at the last step is a release somebody has already decided
+     * to make, and the diff arriving then reads as an obstacle rather
+     * than as information.
+     *
+     * @return array<string, mixed>
+     */
+    public function beforeRelease(string $runId, string $userId): array
+    {
+        $run = $this->runOr404($runId);
+        $review = $this->review->of($runId);
+
+        $prepared = DB::connection('tenant')->table('audit_log')
+            ->where('actor_user_id', $userId)
+            ->where('action', 'payment_run.prepared')
+            ->where('subject_type', 'payment_run')
+            ->where('subject_id', $runId)
+            ->where('category', '!=', 'sod')
+            ->exists();
+
+        $isThePreparer = $prepared || (string) $run->prepared_by === $userId;
+
+        return [
+            ...$this->show($runId),
+            'changes' => $review['changes'],
+            'blocks' => $review['blocks'],
+            'hash' => $review['hash'],
+            'is_the_preparer' => $isThePreparer,
+            'needs_a_factor' => ! $this->stepUp->isSatisfied('payment.release', $runId),
+            'releasable' => ! $review['blocks'] && ! $isThePreparer && (string) $run->state === 'prepared',
+            'why' => $isThePreparer
+                ? sprintf(
+                    'You prepared %s, so you cannot release it. Somebody else has to look at what '.
+                    'you selected - which is the whole of the control.',
+                    (string) $run->number,
+                )
+                : $review['why'],
+        ];
     }
 
     /** A run and what it will pay. @return array<string, mixed> */
@@ -718,7 +885,7 @@ final class PaymentRuns
     /**
      * Who to pay, and how the beneficiary wants it.
      *
-     * @return array{account_id: string|null, groups: bool, limit: string|null, why: string}
+     * @return array{account_id: string|null, fingerprint: string|null, groups: bool, limit: string|null, why: string}
      */
     private function beneficiaryFor(string $entityId, string $partyId, string $currency): array
     {
@@ -757,6 +924,7 @@ final class PaymentRuns
 
             return [
                 'account_id' => null,
+                'fingerprint' => null,
                 'groups' => false,
                 'limit' => null,
                 'why' => $any === null
@@ -776,6 +944,7 @@ final class PaymentRuns
 
         return [
             'account_id' => (string) $account->id,
+            'fingerprint' => ReleaseReview::fingerprintOf($account),
             /*
              | Grouping is the beneficiary's preference, not ours.
              |
@@ -814,6 +983,7 @@ final class PaymentRuns
             $byBeneficiary[$key] ??= [
                 'party_id' => $item['party_id'],
                 'party_bank_account_id' => $item['party_bank_account_id'],
+                'account_fingerprint' => $item['account_fingerprint'],
                 'limit' => $item['limit'],
                 'amount' => Money::zero($currency),
                 'bill_ids' => [],

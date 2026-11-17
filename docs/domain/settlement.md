@@ -275,3 +275,79 @@ Either way the payable appears in `blocked` with its reason, and the run's summa
 Until this task it enforced nothing: both duties were declared gaps, because no code recorded either act. `prepare()` now records `payment_run.prepared` and `release()` records `payment_run.released`, so the rule matches — and the refusal is also a column constraint, because an import or a repaired row is a second door into the same table.
 
 > **A latent defect this work surfaced.** `bills.status` was `varchar(16)` while its own check constraint permitted `'awaiting_approval'` — seventeen characters. The state between entering a bill and approving it could never be stored: the constraint called it legal and the column refused it, with the error arriving as a string-length complaint rather than anything about approval. Nothing had noticed because nothing wrote it, and `DuplicateBillDetector` had been filtering on a value no row could hold. `purchase_orders.status` had the same pair of facts. Both are now 24, matching `expense_claims` and `purchase_requisitions`.
+
+## Maker-checker and step-up — PF-175
+
+The single highest-consequence control in the product: the last gate before money leaves the business.
+
+### Five controls, in the order they run
+
+| | | |
+|---|---|---|
+| 1 | The run is prepared | A draft has nothing anybody checked |
+| 2 | The releaser is not the preparer | By the column **and** against the audit trail |
+| 3 | The duty pairs | Per beneficiary, because one of them is scoped to the party |
+| 4 | A fresh factor, now, for this run | A stolen session passes every check that looks at the session |
+| 5 | Nothing has moved since preparation | Or maker-checker is two people clicking the same button a day apart |
+
+**The order is not arbitrary.** Everything that answers "you may not do this at all" comes before the factor: asking somebody to re-prove themselves for an act they can never perform wastes a code and reads as the system not knowing its own rules. The review comes after, because it names what the run is paying and whoever holds the session has not yet shown they are the account's owner.
+
+### The audit trail, not the column
+
+`prepared_by` is one column on one row. A repaired row, a restored backup or an import that cleared it leaves the obvious check comparing against null and passing.
+
+So the control reads the trail, which is a hash chain nobody can quietly edit and the record that says what actually happened. Scoped to this run: preparing one run does not bar somebody from releasing another, and a control that did would stop a two-person finance team working at all.
+
+### Two pairs, scoped differently
+
+`prepare_then_release` is scoped to the **object** — did you prepare this run. `beneficiary_then_release` is scoped to the **party** — did you change this supplier's bank details, which is the pair PF-061 exists for. A person who can point a supplier's account at their own and then send the payment needs no accomplice.
+
+A run pays many beneficiaries, so there is no single party id for it. The assertion therefore runs **once per distinct beneficiary**, carrying both keys, so each rule can see what it is scoped to.
+
+> **A defect the first authenticated check found.** `release()` asserted the duty once for the run with no party id, and the engine refused outright — a party-scoped rule cannot be evaluated without one, and skipping it would silently disable the control. The engine was right to refuse. Nothing had noticed because no check had signed a real user in, so the assertion had only ever run in the path where the engine returns early for want of an actor.
+
+### Step-up: a stolen session is not enough
+
+Asserted inside the service, not on a route: this method is reached from a console command, a queued job and an API endpoint that does not exist yet, each of which is a route a middleware does not protect.
+
+**Object-scoped**, so re-proving yourself to release Tuesday's run does not authorise releasing Thursday's in the same five minutes. That is the half that gets dropped, because an unscoped assertion makes every test pass.
+
+### Any change invalidates the preparation
+
+Somebody prepared this run against a state of the world: these payables approved, these beneficiaries verified, these accounts on file. If anything in it has moved, what the releaser approves is not what was prepared.
+
+So the run goes back for re-preparation. Re-preparing costs minutes; releasing a stale run moves money to a destination nobody checked.
+
+What counts as a change:
+
+- **A beneficiary's details changed and nobody re-verified them.** The invoice-fraud path: new details arrive, the supplier record is updated, and the pending run pays whoever sent them.
+- **A beneficiary's account changed and *was* re-verified.** Still a change. The colleague who verified it knew nothing of this pending run — everybody did their job and the money would go somewhere the approver never saw.
+- **A beneficiary account withdrawn or gone.** The transfer has nowhere to go.
+- **A payable no longer approved.** The run would pay what nobody currently stands behind.
+- **A payable worth less than when it was selected.** A credit note, a write-off or somebody else's payment landed in between, and paying the prepared figure would over-settle it. *More* owed is not a change that invalidates anything: the run pays what it prepared and the rest waits for the next one.
+
+### "Has the destination changed" is a question about content, not a clock
+
+The first implementation compared the account's `updated_at` against the run's `prepared_at`. Both are stored to the second, so an account changed in the same second as the preparation compared equal and reported nothing. In production the gap is days and it would have worked for years; the check that exercised it found the hole on the first run.
+
+And a timestamp is the wrong question anyway. "Was this row written after that one" is not "is the money still going where somebody checked": a row rewritten with the same content has changed nothing, and a row changed and changed back is also nothing.
+
+So each instruction stores `account_fingerprint` — a hash of the destination's tail, BIC, country and active flag as they stood at preparation. The review recomputes and compares. Clock-free, survives a replica read, and silent about a bookkeeping column being touched. Deliberately **not** over `verified_at`: an account re-verified with no change to where the money goes is not a change to where the money goes, and blocking on it would be noise.
+
+The column is nullable, because a run prepared before it existed has nothing to compare — and "we cannot tell" reported as "it changed" would block every release across the deploy with a reason nobody can act on.
+
+### The hash is of what was authorised, not of a file
+
+PF-175 asks that the released file be identifiable afterwards. PF-176 is what generates the file, so what `released_hash` holds is the **content the file will be built from**: the run's identity and every instruction's beneficiary, account, amount and position, in a fixed order, canonicalised.
+
+That is the better control either way. A hash of a file proves which bytes went out; a hash of the instruction set proves **what was authorised**, and the file must then match it — which PF-176 can assert and could not against a hash of itself.
+
+Ordered by instruction id, because two instructions can share a party, an amount and a sequence — a split to one beneficiary in a run that also pays them separately — and a hash whose input order depends on how a query happened to return rows is a hash that changes without the content changing.
+
+It is written in the same statement as the release, so there is no instant in which a released run has no hash, and the run is frozen immediately afterwards — which makes that the last moment the figure can be recorded at all. It also goes into the audit trail, because the row is frozen and the trail is what survives a restore.
+
+### The screen asks before the button is pressed
+
+`beforeRelease()` returns the run, the changes, the hash, whether the viewer is the preparer and whether a factor is needed. A release refused at the last step is a release somebody has already decided to make, and the diff arriving then reads as an obstacle rather than as information.
+
+> **What the bite sweep took three attempts to catch.** Removing `orderBy('id')` from the hash input — leaving the order to whatever a query returned — fired no check twice over. The first version of the check rewrote every instruction in one statement, giving them all the same timestamp so any ordering agreed by accident; the second touched the row that was *already first* by id, which a descending timestamp order also puts first. Only moving the row that is **last** by id to the front of a timestamp order tells the two apart. A hash that moved there would stop matching the file after a vacuum, an index rebuild or a replica read, for reasons nobody could explain.

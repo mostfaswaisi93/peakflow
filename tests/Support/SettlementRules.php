@@ -15,6 +15,7 @@ use App\Tenant\Settlement\Services\Allocations;
 use App\Tenant\Settlement\Services\PaymentRuns;
 use App\Tenant\Settlement\Services\Payments;
 use App\Tenant\Settlement\Services\Refunds;
+use App\Tenant\Settlement\Services\ReleaseReview;
 use App\Tenant\Settlement\Services\UnappliedCash;
 use App\Tenant\Settlement\Services\ExpectedCreditLoss;
 use App\Tenant\Settlement\Services\WriteOffs;
@@ -182,6 +183,20 @@ final class SettlementRules
                 'what was prepared is what is released' => fn (): array => $this->preparationIsFrozen(),
                 'withdrawing a preparation needs a reason, and blocks release' => fn (): array => $this->unprepare(),
                 'the duty pair over outgoing funds now fires' => fn (): array => $this->paymentRunSod(),
+
+                // ---- Maker-checker and step-up - PF-175 ----------------
+                'a stolen session is not enough to send money' => fn (): array => $this->releaseNeedsAFreshFactor(),
+                'the audit trail enforces the duty, not the column' => fn (): array => $this->theTrailEnforcesTheDuty(),
+                'whoever changed the bank details does not release it' => fn (): array => $this->theBeneficiaryPairFires(),
+                'a beneficiary whose details changed blocks release' => fn (): array => $this->changedBeneficiaryBlocksRelease(),
+                'changed and re-verified is still a change' => fn (): array => $this->reVerifiedIsStillAChange(),
+                'a withdrawn account and a withdrawn approval block too' => fn (): array => $this->theOtherChangesBlockRelease(),
+                'a payable that shrank under the run blocks release' => fn (): array => $this->aShrunkPayableBlocksRelease(),
+                'a run nothing happened to still goes' => fn (): array => $this->anUnchangedRunReleases(),
+                'the release records the hash of what it authorised' => fn (): array => $this->releaseIsHashed(),
+                'the hash is stable, and covers the instruction' => fn (): array => $this->theHashIsStable(),
+                'the duty pair cannot be overridden at all' => fn (): array => $this->thePairCannotBeOverridden(),
+                'the screen answers before the button is pressed' => fn (): array => $this->theScreenAsksFirst(),
 
                 // ---- The property that matters -------------------------
                 'for any sequence, the balance and the control agree' => fn (): array => $this->theProperty(),
@@ -4840,7 +4855,932 @@ final class SettlementRules
 
         return $failures;
     }
+
+    // ---- Maker-checker and step-up - PF-175 -------------------------------
+
+    /**
+     * A stolen session is not enough to send money.
+     *
+     * The highest-consequence control in the product, and the one that
+     * cannot be asserted without a real factor: a check that called a
+     * back door into the guard would be proving that the back door
+     * works.
+     *
+     * @return list<string>
+     */
+    private function releaseNeedsAFreshFactor(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $this->anApprovedBill($supplier, '9000.0000', '2026-05-18');
+
+        $run = app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse('2026-05-19'),
+            userId: $this->actorId(),
+        );
+
+        $before = auth()->guard('web')->user();
+        $failures = [];
+
+        try {
+            $releaser = $this->aUserWithRole('controller');
+            auth()->guard('web')->setUser($releaser);
+
+            /*
+             | A real TOTP enrolment, and codes from explicit steps.
+             |
+             | Confirming the enrolment consumes the code for the current
+             | step, and a used code is refused - so the assertion is
+             | recorded with the next step's code, which the drift window
+             | still accepts.
+             */
+            $enrolment = app(\App\Tenant\Identity\Services\MfaService::class)
+                ->beginTotpEnrolment($releaser, 'Check authenticator');
+            $secret = (string) $enrolment['secret'];
+            $step = \App\Support\Mfa\Totp::stepAt(time());
+
+            app(\App\Tenant\Identity\Services\MfaService::class)->confirmTotpEnrolment(
+                $enrolment['authenticator'],
+                \App\Support\Mfa\Totp::at($secret, $step * 30),
+            );
+
+            auth()->guard('web')->setUser($releaser->refresh());
+            session(['factor_asserted_at' => now()->toIso8601String()]);
+
+            /*
+             | No assertion yet, so the release must be refused.
+             |
+             | This is the whole criterion: the session is legitimate, the
+             | user holds the permission, and it is still not enough.
+             */
+            $refusal = $this->refusal(fn () => app(PaymentRuns::class)->release(
+                $run['id'],
+                (string) $releaser->getKey(),
+            ));
+
+            if ($refusal === null) {
+                $failures[] = 'a payment run was released with no fresh factor, so a stolen session carries '.
+                    'every payment the account could ever make - and the password that protected it may '.
+                    'have been phished weeks ago';
+            } elseif (! str_contains(mb_strtolower($refusal), 'step')
+                && ! str_contains(mb_strtolower($refusal), 'factor')
+                && ! str_contains(mb_strtolower($refusal), 'تحقّق')) {
+                $failures[] = 'the release was refused for some other reason, so nothing here is testing '.
+                    'step-up: '.$refusal;
+            }
+
+            /*
+             | Now with an assertion for THIS run, and another run still refused.
+             |
+             | The half that gets dropped. An unscoped assertion makes the
+             | first case pass and leaves a five-minute licence to release
+             | anything, which no test would notice.
+             */
+            $guard = app(\App\Tenant\Identity\Services\StepUpGuard::class);
+
+            $recorded = $guard->recordAssertion(
+                $releaser->refresh(),
+                'payment.release',
+                $run['id'],
+                \App\Support\Mfa\Totp::at($secret, ($step + 1) * 30),
+            );
+
+            if ($recorded === null) {
+                return [...$failures, 'a valid code from the next time step was not accepted, so nothing '.
+                    'below is testing a satisfied assertion'];
+            }
+
+            auth()->guard('web')->setUser($releaser->refresh());
+            session(['factor_asserted_at' => now()->toIso8601String()]);
+
+            if (! $guard->isSatisfied('payment.release', $run['id'])) {
+                $failures[] = 'an assertion recorded for this run does not satisfy releasing it, so the '.
+                    'subject is not being matched at all';
+            }
+
+            $other = $this->aPayableSupplier();
+            $this->anApprovedBill($other, '3000.0000', '2026-05-18');
+
+            $second = app(PaymentRuns::class)->prepare(
+                entityId: $this->entityId,
+                bankAccountId: (string) $this->bank()->getKey(),
+                payOn: Carbon::parse('2026-05-19'),
+                userId: $this->actorId(),
+            );
+
+            if ($guard->isSatisfied('payment.release', $second['id'])) {
+                $failures[] = 'an assertion recorded for one run also authorises releasing another, which '.
+                    'is a five-minute licence to send any payment rather than a factor re-proved for one act';
+            }
+
+            /*
+             | And the assertion actually lets this run go.
+             |
+             | Without this the check would pass with a guard that refused
+             | everything, which is the failure that looks like security.
+             */
+            $released = app(PaymentRuns::class)->release($run['id'], (string) $releaser->getKey());
+
+            if (($released['state'] ?? '') !== 'released') {
+                $failures[] = 'a run could not be released even with a factor re-proved for it, so nothing '.
+                    'can ever be paid';
+            }
+
+            return $failures;
+        } finally {
+            $this->signInAs($before);
+        }
+    }
+
+    /**
+     * The preparer is refused by the audit trail, not only by the column.
+     *
+     * @return list<string>
+     */
+    private function theTrailEnforcesTheDuty(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $this->anApprovedBill($supplier, '9000.0000', '2026-05-18');
+
+        $before = auth()->guard('web')->user();
+
+        try {
+            /*
+             | A real signed-in preparer, because the trail records the
+             | actor from the auth guard.
+             |
+             | The service takes a `$userId` and writes it to
+             | `prepared_by`; the audit trail asks who is signed in. In
+             | production they are the same person - the controller passes
+             | the authenticated user's id - and a check that only passed
+             | the id would leave the trail naming nobody, which is how
+             | the first draft of this check ended up proving that
+             | step-up fires rather than that the trail does.
+             */
+            $preparer = $this->aUserWithRole('controller');
+            $this->signInAs($preparer);
+
+            $run = app(PaymentRuns::class)->prepare(
+                entityId: $this->entityId,
+                bankAccountId: (string) $this->bank()->getKey(),
+                payOn: Carbon::parse('2026-05-19'),
+                userId: (string) $preparer->getKey(),
+            );
+
+            /*
+             | The column pointed elsewhere, as a repaired row or a
+             | restored backup would leave it.
+             |
+             | `prepared_by` is one column on one row. The audit trail is
+             | a hash chain nobody can quietly edit, and it is the record
+             | that says what actually happened - so it is what the
+             | control reads.
+             */
+            DB::connection('tenant')->table('payment_runs')->where('id', $run['id'])->update([
+                'prepared_by' => $this->secondActorId(),
+            ]);
+
+            $refusal = $this->refusal(fn () => app(PaymentRuns::class)->release(
+                $run['id'],
+                (string) $preparer->getKey(),
+            ));
+
+            if ($refusal === null) {
+                return [
+                    'with `prepared_by` pointing at somebody else, the person the audit trail records as '.
+                    'having prepared the run released it - so repairing one column is enough to defeat the '.
+                    'pair that can never be overridden',
+                ];
+            }
+
+            return str_contains($refusal, 'audit trail records you preparing')
+                ? []
+                : ['the release was refused, but not by the trail - so the control is still the column: '.$refusal];
+        } finally {
+            $this->signInAs($before);
+        }
+    }
+
+    /**
+     * Whoever changed the supplier's bank details does not release the run.
+     *
+     * `beneficiary_then_release` - the other pair that can never be
+     * overridden, and the one PF-061 exists for. A person who can point a
+     * supplier's account at their own and then send the payment needs no
+     * accomplice.
+     *
+     * Found by signing a real user in: `release()` asserted the duty once
+     * for the run with no party id, and the engine refused outright
+     * because a party-scoped rule cannot be evaluated without one. It was
+     * right to refuse. A run pays many beneficiaries, so the assertion
+     * belongs per beneficiary.
+     *
+     * @return list<string>
+     */
+    private function theBeneficiaryPairFires(): array
+    {
+        $before = auth()->guard('web')->user();
+
+        try {
+            $meddler = $this->aUserWithRole('controller');
+            $failures = [];
+
+            /*
+             | The supplier's account entered by the person who will try
+             | to release.
+             |
+             | `record()` is what writes `supplier.bank_details.update`
+             | to the trail, so signing them in is what makes the trail
+             | name them.
+             */
+            $this->signInAs($meddler);
+            $supplier = $this->aPayableSupplier();
+            $this->signInAs($before);
+
+            $this->anApprovedBill($supplier, '9000.0000', '2026-05-18');
+
+            $run = app(PaymentRuns::class)->prepare(
+                entityId: $this->entityId,
+                bankAccountId: (string) $this->bank()->getKey(),
+                payOn: Carbon::parse('2026-05-19'),
+                userId: $this->actorId(),
+            );
+
+            $this->signInAs($meddler);
+
+            $refusal = $this->refusal(fn () => app(PaymentRuns::class)->release(
+                $run['id'],
+                (string) $meddler->getKey(),
+            ));
+
+            if ($refusal === null) {
+                $failures[] = 'the person who entered this supplier\'s bank details released the payment to '.
+                    'them, so one person can point an account at their own and send the money - which needs '.
+                    'no accomplice and is the pair PF-061 exists for';
+            } elseif (! str_contains(mb_strtolower($refusal), 'bank details')
+                && ! str_contains(mb_strtolower($refusal), 'segregation')
+                && ! str_contains(mb_strtolower($refusal), 'duties')
+                && ! str_contains(mb_strtolower($refusal), 'فصل')) {
+                $failures[] = 'the release was refused, but not for the conflict - so nothing here is '.
+                    'testing the beneficiary pair: '.$refusal;
+            }
+
+            /*
+             | And it is scoped to the party, not to everything.
+             |
+             | Somebody who entered one supplier's details must still be
+             | able to release a run paying a different supplier. A rule
+             | that barred them from every run would be turned off within
+             | a week.
+             */
+            $this->signInAs($before);
+            $other = $this->aPayableSupplier();
+            $this->anApprovedBill($other, '3000.0000', '2026-05-18');
+
+            $clean = app(PaymentRuns::class)->prepare(
+                entityId: $this->entityId,
+                bankAccountId: (string) $this->bank()->getKey(),
+                payOn: Carbon::parse('2026-05-19'),
+                userId: $this->actorId(),
+            );
+
+            $this->signInAs($meddler);
+            $second = $this->refusal(fn () => app(PaymentRuns::class)->release(
+                $clean['id'],
+                (string) $meddler->getKey(),
+            ));
+
+            if ($second !== null
+                && (str_contains(mb_strtolower($second), 'bank details')
+                    || str_contains(mb_strtolower($second), 'segregation'))) {
+                $failures[] = 'somebody who entered one supplier\'s details cannot release a run paying a '.
+                    'different supplier, so the rule is scoped to the person rather than to the party and '.
+                    'would be turned off within a week: '.$second;
+            }
+
+            return $failures;
+        } finally {
+            $this->signInAs($before);
+        }
+    }
+
+    /**
+     * A beneficiary whose details changed blocks the release.
+     *
+     * @return list<string>
+     */
+    private function changedBeneficiaryBlocksRelease(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $this->anApprovedBill($supplier, '9000.0000', '2026-05-18');
+
+        $run = app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse('2026-05-19'),
+            userId: $this->actorId(),
+        );
+
+        /*
+         | The invoice-fraud path, exactly.
+         |
+         | New bank details arrive on an invoice, somebody updates the
+         | supplier, and the pending run pays whoever sent them. PF-174
+         | keeps an unverified account out of a run at selection; this is
+         | the hole after selection.
+         */
+        DB::connection('tenant')->table('party_bank_accounts')
+            ->where('party_id', (string) $supplier->getKey())
+            ->update(['bic' => 'SABBSARI']);
+
+        $failures = [];
+        $review = app(ReleaseReview::class)->of($run['id']);
+
+        if (! $review['blocks']) {
+            $failures[] = 'a beneficiary whose bank details changed after the run was prepared does not '.
+                'block the release, which is the invoice-fraud path this control exists for';
+        }
+
+        $what = implode(' ', array_column($review['changes'], 'why'));
+
+        /*
+         | The wording of THIS case, not of any case.
+         |
+         | The fingerprint comparison also catches a changed account, and
+         | its message mentions re-verification too - so a check that
+         | looked for the word passed with this branch removed. What the
+         | releaser needs is the actionable sentence: nobody has verified
+         | the change, so somebody must.
+         */
+        if (! str_contains($what, 'nobody has re-verified them')) {
+            $failures[] = 'the review does not say that nobody has re-verified the change, so the releaser '.
+                'is told something moved and not the one thing they can act on: '.$what;
+        }
+
+        if (! str_contains($what, 'invoice-fraud')) {
+            $failures[] = 'the review does not name what this is - new details arrive, the supplier record '.
+                'is updated, the pending run pays whoever sent them - so it reads as a process obstacle '.
+                'rather than as the fraud it is: '.$what;
+        }
+
+        $refusal = $this->refusal(fn () => app(PaymentRuns::class)->release($run['id'], $this->secondActorId()));
+
+        if ($refusal === null) {
+            $failures[] = 'the review reported the change and the release went through anyway, so the '.
+                'review is a screen rather than a control';
+        }
+
+        return $failures;
+    }
+
+    /**
+     * A beneficiary account changed and re-verified still invalidates it.
+     *
+     * @return list<string>
+     */
+    private function reVerifiedIsStillAChange(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $this->anApprovedBill($supplier, '9000.0000', '2026-05-18');
+
+        $run = app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse('2026-05-19'),
+            userId: $this->actorId(),
+        );
+
+        $account = \App\Tenant\Parties\Models\PartyBankAccount::query()
+            ->where('party_id', (string) $supplier->getKey())
+            ->firstOrFail();
+
+        DB::connection('tenant')->table('party_bank_accounts')
+            ->where('id', (string) $account->getKey())
+            ->update(['bic' => 'SABBSARI']);
+
+        /*
+         | And a colleague re-verifies it, knowing nothing of this run.
+         |
+         | Everybody did their job: the change was made, a second person
+         | confirmed it. And the money would go to an account the person
+         | who prepared the run never saw.
+         */
+        app(\App\Tenant\Parties\Services\BankDetailRegistry::class)->verify(
+            $account->fresh(),
+            str_repeat('2', 26),
+            'callback',
+        );
+
+        $review = app(ReleaseReview::class)->of($run['id']);
+
+        if (! $review['blocks']) {
+            return [
+                'a beneficiary account changed and re-verified after preparation does not invalidate the '.
+                'preparation, so the run was built against the old account and whoever re-verified the new '.
+                'one knew nothing of this pending payment',
+            ];
+        }
+
+        $what = implode(' ', array_column($review['changes'], 'why'));
+
+        return str_contains($what, 'knew nothing of this pending payment')
+            ? []
+            : ['the review blocks, but does not explain why a re-verified change still matters: '.$what];
+    }
+
+    /**
+     * The other two ways the world moves under a prepared run.
+     *
+     * A beneficiary account deactivated, and a payable whose approval was
+     * withdrawn. Both were branches in the review that nothing exercised
+     * - which a bite sweep reported by removing each and watching every
+     * check stay green.
+     *
+     * @return list<string>
+     */
+    private function theOtherChangesBlockRelease(): array
+    {
+        $failures = [];
+
+        /*
+         | The account deactivated after the run was prepared.
+         |
+         | Not a fraud case - a supplier closing an account, or somebody
+         | tidying a duplicate. The transfer still has nowhere to go, and
+         | a bank returns the whole file rather than the one line.
+         */
+        $supplier = $this->aPayableSupplier();
+        $this->anApprovedBill($supplier, '9000.0000', '2026-05-18');
+
+        $run = app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse('2026-05-19'),
+            userId: $this->actorId(),
+        );
+
+        DB::connection('tenant')->table('party_bank_accounts')
+            ->where('party_id', (string) $supplier->getKey())
+            ->update(['active' => false]);
+
+        $review = app(ReleaseReview::class)->of($run['id']);
+
+        if (! $review['blocks']) {
+            $failures[] = 'a beneficiary account deactivated after the run was prepared does not block the '.
+                'release, so the file goes out with a transfer that has nowhere to go - and the bank '.
+                'returns the whole batch rather than the one line';
+        } elseif (! str_contains(implode(' ', array_column($review['changes'], 'why')), 'deactivated')) {
+            $failures[] = 'the review blocks on a deactivated account without saying that is what happened: '
+                .implode(' ', array_column($review['changes'], 'why'));
+        }
+
+        /*
+         | And a payable whose approval was withdrawn.
+         |
+         | The approval is the whole control on the purchasing side. A run
+         | that paid past a withdrawn one would pay what nobody currently
+         | stands behind - and the person who withdrew it would have no
+         | way to know the payment was already in flight.
+         */
+        $other = $this->aPayableSupplier();
+        $bill = $this->anApprovedBill($other, '5000.0000', '2026-05-18');
+
+        $second = app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse('2026-05-19'),
+            userId: $this->actorId(),
+        );
+
+        DB::connection('tenant')->table('bills')->where('id', $bill)->update([
+            'approved_at' => null,
+            'approved_by' => null,
+        ]);
+
+        $withdrawn = app(ReleaseReview::class)->of($second['id']);
+
+        if (! $withdrawn['blocks']) {
+            $failures[] = 'a payable whose approval was withdrawn after the run was prepared does not block '.
+                'the release, so the run pays what nobody currently stands behind and whoever withdrew the '.
+                'approval never learns the payment was in flight';
+        } elseif (! str_contains(implode(' ', array_column($withdrawn['changes'], 'why')), 'approval has gone')) {
+            $failures[] = 'the review blocks on an unapproved payable without saying the approval went: '
+                .implode(' ', array_column($withdrawn['changes'], 'why'));
+        }
+
+        $refusal = $this->refusal(fn () => app(PaymentRuns::class)->release($second['id'], $this->secondActorId()));
+
+        if ($refusal === null) {
+            $failures[] = 'the run was released although a payable under it was no longer approved';
+        }
+
+        return $failures;
+    }
+
+    /**
+     * A payable worth less than when it was selected invalidates it.
+     *
+     * @return list<string>
+     */
+    private function aShrunkPayableBlocksRelease(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $bill = $this->anApprovedBill($supplier, '9000.0000', '2026-05-18');
+
+        $run = app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse('2026-05-19'),
+            userId: $this->actorId(),
+        );
+
+        /*
+         | Somebody else settles part of it in between.
+         |
+         | A credit note, a write-off, or a payment made from another
+         | screen. Paying the prepared figure would over-settle the bill
+         | and leave the supplier holding money against nothing.
+         */
+        $this->settle($bill, '2000.0000');
+
+        $review = app(ReleaseReview::class)->of($run['id']);
+        $failures = [];
+
+        if (! $review['blocks']) {
+            $failures[] = 'a payable part-settled between preparation and release does not invalidate the '.
+                'preparation, so the run over-pays it and the supplier holds money against nothing';
+        }
+
+        $refusal = $this->refusal(fn () => app(PaymentRuns::class)->release($run['id'], $this->secondActorId()));
+
+        if ($refusal === null) {
+            $failures[] = 'the run was released although a payable had shrunk under it';
+        }
+
+        return $failures;
+    }
+
+    /**
+     * Nothing changed means nothing is reported, and the run goes.
+     *
+     * @return list<string>
+     */
+    private function anUnchangedRunReleases(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $this->anApprovedBill($supplier, '9000.0000', '2026-05-18');
+
+        $run = app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse('2026-05-19'),
+            userId: $this->actorId(),
+        );
+
+        $review = app(ReleaseReview::class)->of($run['id']);
+        $failures = [];
+
+        /*
+         | The one that stops this being security theatre.
+         |
+         | A review that reported a change on every run would block every
+         | release, and the first thing a business would do is turn it
+         | off. The ordinary case has to pass.
+         */
+        if ($review['changes'] !== []) {
+            $failures[] = 'a run nothing has happened to reports changes anyway, so every release is blocked '.
+                'and the control is the first thing a business turns off: '
+                .implode(' ', array_column($review['changes'], 'why'));
+        }
+
+        if (! str_contains((string) $review['why'], 'Nothing has moved')) {
+            $failures[] = 'the review does not say plainly that nothing moved, which is what a releaser '.
+                'needs to read before sending the largest payment of the week';
+        }
+
+        $released = app(PaymentRuns::class)->release($run['id'], $this->secondActorId());
+
+        if (($released['state'] ?? '') !== 'released') {
+            $failures[] = 'an unchanged run could not be released, so nothing can ever be paid';
+        }
+
+        return $failures;
+    }
+
+    /**
+     * The release records the hash of what was authorised.
+     *
+     * @return list<string>
+     */
+    private function releaseIsHashed(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $this->anApprovedBill($supplier, '9000.0000', '2026-05-18');
+
+        $run = app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse('2026-05-19'),
+            userId: $this->actorId(),
+        );
+
+        $expected = app(ReleaseReview::class)->hash($run['id']);
+        app(PaymentRuns::class)->release($run['id'], $this->secondActorId());
+
+        $stored = (string) DB::connection('tenant')->table('payment_runs')
+            ->where('id', $run['id'])
+            ->value('released_hash');
+
+        $failures = [];
+
+        if ($stored === '') {
+            return ['a released run records no hash, so the file generated from it cannot be held against '.
+                'what was authorised'];
+        }
+
+        if ($stored !== $expected) {
+            $failures[] = 'the stored hash is not the hash of the run\'s own instruction set, so it '.
+                'identifies something other than what was released';
+        }
+
+        if (mb_strlen($stored) !== 64) {
+            $failures[] = 'the stored hash is not a sha-256 digest: '.$stored;
+        }
+
+        /*
+         | And it is in the audit trail, not only on the row.
+         |
+         | The row is frozen, which is good - and the trail is the record
+         | that survives a restore, so the figure belongs in both.
+         */
+        $audited = DB::connection('tenant')->table('audit_log')
+            ->where('action', 'payment_run.released')
+            ->where('subject_id', $run['id'])
+            ->value('after_state');
+
+        if ($audited === null || ! str_contains((string) $audited, $stored)) {
+            $failures[] = 'the hash is on the run and not in the audit trail, so a restore from backup '.
+                'loses the only record of what was authorised';
+        }
+
+        /*
+         | Changing an instruction changes the hash.
+         |
+         | A hash that did not would identify every run equally, which is
+         | the failure that looks exactly like success.
+         */
+        $other = $this->aPayableSupplier();
+        $this->anApprovedBill($other, '7000.0000', '2026-05-18');
+
+        $second = app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse('2026-05-19'),
+            userId: $this->actorId(),
+        );
+
+        if (app(ReleaseReview::class)->hash($second['id']) === $expected) {
+            $failures[] = 'two runs paying different beneficiaries different amounts hash the same, so the '.
+                'hash identifies nothing';
+        }
+
+        return $failures;
+    }
+
+    /**
+     * The hash is stable across reads and independent of row order.
+     *
+     * @return list<string>
+     */
+    private function theHashIsStable(): array
+    {
+        $first = $this->aPayableSupplier(limit: '3000.0000');
+        $this->anApprovedBill($first, '7000.0000', '2026-05-18');
+        $second = $this->aPayableSupplier();
+        $this->anApprovedBill($second, '2000.0000', '2026-05-18');
+
+        $run = app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse('2026-05-19'),
+            userId: $this->actorId(),
+        );
+
+        $once = app(ReleaseReview::class)->hash($run['id']);
+        $failures = [];
+
+        if ($once !== app(ReleaseReview::class)->hash($run['id'])) {
+            $failures[] = 'hashing the same run twice gave two answers, so the hash depends on something '.
+                'other than the run - and nothing can ever be held against it';
+        }
+
+        $instructions = DB::connection('tenant')->table('payment_run_instructions')
+            ->where('run_id', $run['id'])
+            ->orderBy('id')
+            ->pluck('id')
+            ->all();
+
+        if (\count($instructions) < 3) {
+            return [...$failures, sprintf(
+                'the fixture produced %d instruction(s), so neither the ordering nor the content of the '.
+                'hash input is being exercised',
+                \count($instructions),
+            )];
+        }
+
+        /*
+         | The LAST row touched, so a timestamp ordering really differs.
+         |
+         | Two drafts got this wrong. The first rewrote every instruction
+         | in one statement, which gave them all the same timestamp and
+         | left any ordering agreeing by accident. The second touched the
+         | first row by id - which a descending timestamp order also puts
+         | first, so the two orderings still agreed and the bite slipped
+         | through again.
+         |
+         | Moving the row that is LAST by id to the front of a timestamp
+         | order is what tells them apart. A hash that moved here would
+         | stop matching the file after a vacuum, an index rebuild or a
+         | replica read, for reasons nobody could explain.
+         */
+        DB::connection('tenant')->table('payment_run_instructions')
+            ->where('id', $instructions[\count($instructions) - 1])
+            ->update(['updated_at' => now()->addHour()]);
+
+        if (app(ReleaseReview::class)->hash($run['id']) !== $once) {
+            $failures[] = 'rewriting one row without changing what it says moved the hash, so the hash '.
+                'covers bookkeeping columns or an unstable row order rather than the instruction';
+        }
+
+        /*
+         | And changing an instruction MUST move it.
+         |
+         | The header alone - number, totals, pay date - already differs
+         | between any two runs, so a hash that covered only the header
+         | would look like it was working. This is the half that proves
+         | the instructions are in it: same run, same header, one amount
+         | changed.
+         */
+        DB::connection('tenant')->table('payment_run_instructions')
+            ->where('id', $instructions[0])
+            ->update(['amount' => '2999.0000']);
+
+        if (app(ReleaseReview::class)->hash($run['id']) === $once) {
+            $failures[] = 'changing what an instruction pays did not change the hash, so the hash covers '.
+                'the run\'s header and not where the money is going - which is the half that matters';
+        }
+
+        /*
+         | And so must the beneficiary, with the amount put back.
+         |
+         | An amount is the obvious field. The account is the one a
+         | fraudulent change would move, and a hash that covered the
+         | figures and not the destination would sign off a redirected
+         | payment as unchanged.
+         */
+        DB::connection('tenant')->table('payment_run_instructions')
+            ->where('id', $instructions[0])
+            ->update(['amount' => '3000.0000', 'party_bank_account_id' => null]);
+
+        if (app(ReleaseReview::class)->hash($run['id']) === $once) {
+            $failures[] = 'changing the account an instruction pays into did not change the hash, so a '.
+                'redirected payment would be signed off as the one that was authorised';
+        }
+
+        return $failures;
+    }
+
+    /**
+     * The duty pair cannot be overridden, and granting one is refused.
+     *
+     * @return list<string>
+     */
+    private function thePairCannotBeOverridden(): array
+    {
+        $rule = \App\Tenant\Identity\Models\SodRule::query()->where('key', 'prepare_then_release')->first();
+
+        if ($rule === null) {
+            return ['nothing pairs preparing a payment run against releasing it'];
+        }
+
+        $failures = [];
+
+        if ($rule->overridable) {
+            $failures[] = 'prepare_then_release is overridable, so a one-person finance function can send '.
+                'money it alone selected';
+        }
+
+        $before = auth()->guard('web')->user();
+
+        try {
+            $beneficiary = $this->aUserWithRole('controller');
+            $approver = $this->aUserWithRole('controller');
+
+            $refusal = $this->refusal(fn () => app(\App\Tenant\Identity\Services\SodEngine::class)->grantOverride(
+                $rule,
+                $beneficiary,
+                $approver,
+                'a check asking for the one exception that must not exist',
+                Carbon::now()->addDay(),
+            ));
+
+            if ($refusal === null) {
+                $failures[] = 'an override was granted for prepare_then_release, so the pair that can never '.
+                    'be overridden can be - and the control is a setting rather than a rule';
+            }
+
+            return $failures;
+        } finally {
+            $this->signInAs($before);
+        }
+    }
+
+    /**
+     * The releaser's screen answers the question before they commit.
+     *
+     * @return list<string>
+     */
+    private function theScreenAsksFirst(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $this->anApprovedBill($supplier, '9000.0000', '2026-05-18');
+
+        $run = app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse('2026-05-19'),
+            userId: $this->actorId(),
+        );
+
+        $asThePreparer = app(PaymentRuns::class)->beforeRelease($run['id'], $this->actorId());
+        $asTheReleaser = app(PaymentRuns::class)->beforeRelease($run['id'], $this->secondActorId());
+
+        $failures = [];
+
+        if (($asThePreparer['is_the_preparer'] ?? false) !== true) {
+            $failures[] = 'the screen does not tell the preparer that they prepared it, so they find out by '.
+                'pressing the button - and a refusal at that point reads as an obstacle rather than as the '.
+                'control working';
+        }
+
+        if (($asThePreparer['releasable'] ?? true) !== false) {
+            $failures[] = 'the screen offers the preparer a release it will refuse';
+        }
+
+        if (($asTheReleaser['releasable'] ?? false) !== true) {
+            $failures[] = 'the screen tells a second person an unchanged, prepared run is not releasable, so '.
+                'nothing would ever be sent';
+        }
+
+        if (($asTheReleaser['hash'] ?? '') === '') {
+            $failures[] = 'the screen does not show what would be authorised, so nobody can record it before '.
+                'pressing the button';
+        }
+
+        return $failures;
+    }
+
     // ---- Helpers ----------------------------------------------------------
+    /**
+     * Sign a user in, or sign out when there was nobody.
+     *
+     * `setUser(null)` is a TypeError, and the first draft of these checks
+     * restored the guard that way in a `finally` - so the exception
+     * replaced the check's own result AND left the releaser signed in for
+     * every check after it. Three unrelated checks then failed demanding
+     * a second factor, which is a confusing way to be told about a leak.
+     */
+    private function signInAs(?\App\Tenant\Identity\Models\User $user): void
+    {
+        if ($user === null) {
+            auth()->guard('web')->logout();
+            session()->forget('factor_asserted_at');
+
+            return;
+        }
+
+        auth()->guard('web')->setUser($user);
+    }
+
+    /** A real user holding a role, for the checks that need a person. */
+    private function aUserWithRole(string $role): \App\Tenant\Identity\Models\User
+    {
+        $user = \App\Tenant\Identity\Models\User::create([
+            'name' => 'Check '.$role,
+            'email' => $role.random_int(100000, 999999).'@check.test',
+            'password' => 'x-not-a-real-password',
+            'active' => true,
+        ]);
+
+        \App\Tenant\Identity\Models\UserEntityRole::create([
+            'user_id' => $user->getKey(),
+            'entity_id' => $this->entityId,
+            'role_id' => \App\Tenant\Identity\Models\Role::query()->where('key', $role)->firstOrFail()->getKey(),
+        ]);
+
+        return $user;
+    }
 
     /** @return array<string, mixed>|null */
     private function tryAllocate(string $paymentId, object $invoice, string $amount): ?array

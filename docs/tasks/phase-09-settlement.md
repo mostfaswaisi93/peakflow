@@ -89,12 +89,14 @@ This phase also contains the single highest-consequence control in the product: 
 
 The single highest-consequence control in the product.
 
-- [ ] The preparer and the releaser must be different users, enforced against the audit trail rather than against a role list
-- [ ] Release requires **step-up re-authentication at the moment of the act**, so a stolen session is not enough
-- [ ] The releaser is shown exactly what changed since preparation, and any change invalidates the preparation
-- [ ] A beneficiary account changed since the payable was approved **blocks the release** until re-verified (`PF-061`)
-- [ ] Release is audited with the file hash, so the file that was released is identifiable afterwards
-- [ ] This pair cannot be overridden by the SoD override mechanism
+- [x] The preparer and the releaser must be different users, enforced against the audit trail rather than against a role list - `prepared_by` is one column on one row, and a repaired row or a restored backup leaves the obvious check comparing against null and passing
+- [x] Release requires **step-up re-authentication at the moment of the act**, so a stolen session is not enough. Asserted inside the service, because this method is reached from a console command, a queued job and an API endpoint that does not exist yet; and **object-scoped**, so re-proving yourself to release Tuesday's run does not authorise releasing Thursday's in the same five minutes
+- [x] The releaser is shown exactly what changed since preparation, and any change invalidates the preparation. `beforeRelease()` answers before the button is pressed, because a release refused at the last step is one somebody has already decided to make
+- [x] A beneficiary account changed since the payable was approved **blocks the release** until re-verified (`PF-061`) - and changed *and re-verified* still invalidates the preparation, because the colleague who verified it knew nothing of this pending run
+- [x] Release is audited with the file hash, so the file that was released is identifiable afterwards - the hash is of the **instruction set** rather than of a file PF-176 has not generated yet, which proves what was authorised and is what the file must then match
+- [x] This pair cannot be overridden by the SoD override mechanism, and granting one is refused outright
+- [x] **Found while checking this task:** `release()` asserted the duty once for the run with no party id, so the party-scoped `beneficiary_then_release` pair - the one PF-061 exists for - could not be evaluated at all. The engine refused outright rather than skipping, which is right; nothing had noticed because no check had signed a real user in. The assertion now runs per distinct beneficiary, carrying both keys
+- [x] **And:** "has the destination changed" was a clock comparison, and both timestamps are stored to the second, so an account changed in the same second as the preparation reported nothing. Each instruction now stores a fingerprint of the destination's content
 
 ### PF-176 · PAIN.001 generation
 `Settlement` · **8 pts** · depends: PF-175 · standards: ISO 20022 PAIN.001.001.09, EPC SEPA SCT · `risk:high`
