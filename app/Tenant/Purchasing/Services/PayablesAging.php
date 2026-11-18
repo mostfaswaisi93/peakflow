@@ -215,8 +215,8 @@ final class PayablesAging
     /**
      * Days payable outstanding.
      *
-     * `(payables / purchases in the window) x days`. The window matters and
-     * is stated: DPO over a quarter and DPO over a year are different
+     * `(payables / net purchases in the window) x days`. The window matters
+     * and is stated: DPO over a quarter and DPO over a year are different
      * numbers, and a ratio quoted without its window is a ratio nobody can
      * reproduce.
      *
@@ -224,54 +224,115 @@ final class PayablesAging
      * zero reads as "we pay immediately", which is the opposite of what an
      * empty window means.
      *
+     * ## One currency, named, and the rest counted out
+     *
+     * This used to sum `bills.net_amount` across every currency a supplier
+     * had ever billed in. A thousand dollars and a thousand riyals made two
+     * thousand of nothing, divided into a control-account balance that was
+     * itself adding currencies, and the quotient printed to one decimal
+     * place - which is what makes a ratio like this dangerous. It looks
+     * precise. Nobody reads a number with a decimal point and wonders
+     * whether its two halves were denominated in the same thing.
+     *
+     * The books are kept in the functional currency and the control account
+     * is in it, so that is the only currency the ratio can honestly be taken
+     * in. Documents in others are counted OUT and the count is reported,
+     * rather than converted at today's rate - a rate today has nothing to do
+     * with how long a bill from March took to pay, and converting would
+     * replace a figure the reader can check with one they cannot.
+     *
+     * The mirror of {@see \App\Tenant\Reporting\Services\AgingReport::daysSalesOutstanding()},
+     * deliberately: DSO and DPO sit beside each other on a page and get
+     * subtracted from one another, so two ratios taken on different bases
+     * would be worse than either one alone.
+     *
      * @return array<string, mixed>
      */
     public function daysPayableOutstanding(string $entityId, Carbon $from, Carbon $to): array
     {
         $days = (int) $from->diffInDays($to, absolute: true) + 1;
 
-        $purchases = BigDecimal::of((string) (DB::connection('tenant')->table('bills')
-            ->where('entity_id', $entityId)
-            ->where('document_type', '380')
-            ->whereIn('status', ['approved', 'posted'])
-            ->whereBetween('posting_date', [$from->toDateString(), $to->toDateString()])
-            ->sum('net_amount') ?? '0'));
+        $currency = (string) DB::connection('tenant')->table('entities')
+            ->where('id', $entityId)
+            ->value('functional_currency');
 
-        $credits = BigDecimal::of((string) (DB::connection('tenant')->table('bills')
-            ->where('entity_id', $entityId)
-            ->where('document_type', '381')
-            ->whereIn('status', ['approved', 'posted'])
-            ->whereBetween('posting_date', [$from->toDateString(), $to->toDateString()])
-            ->sum('net_amount') ?? '0'));
+        $currency = $currency === '' ? 'SAR' : $currency;
 
-        $net = $purchases->minus($credits);
+        $purchases = DB::connection('tenant')->selectOne(<<<'SQL'
+            SELECT
+                coalesce(sum(net_amount) FILTER (WHERE document_type = '380' AND currency = ?), 0)::text AS billed,
+                coalesce(sum(net_amount) FILTER (WHERE document_type = '381' AND currency = ?), 0)::text AS credited,
+                count(*) FILTER (WHERE currency <> ?) AS other_currency
+            FROM bills
+            WHERE entity_id = cast(? AS char(26))
+              AND status IN ('approved', 'posted')
+              AND document_type IN ('380', '381')
+              AND posting_date BETWEEN cast(? AS date) AND cast(? AS date)
+        SQL, [
+            $currency,
+            $currency,
+            $currency,
+            $entityId,
+            $from->toDateString(),
+            $to->toDateString(),
+        ]);
+
+        $net = BigDecimal::of((string) ($purchases->billed ?? '0'))
+            ->minus((string) ($purchases->credited ?? '0'));
+
+        $window = [
+            'from' => $from->toDateString(),
+            'to' => $to->toDateString(),
+            'days' => $days,
+            'currency' => $currency,
+            'formula' => 'payables / net purchases in the window x days in the window',
+            'purchases' => (string) $net,
+        ];
+
+        /*
+         | Stated whenever it is not zero, and only then.
+         |
+         | A reader who sees no such line can take the figure as covering
+         | everything in the window. A reader who sees "4 bills in another
+         | currency are not in this figure" knows what they are looking at
+         | and can go and look at them. The silent version of this is the
+         | one that gets quoted in a board pack.
+         */
+        if ((int) ($purchases->other_currency ?? 0) > 0) {
+            $window['excluded_other_currency'] = (int) $purchases->other_currency;
+        }
 
         if (! $net->isPositive()) {
-            return [
-                'from' => $from->toDateString(),
-                'to' => $to->toDateString(),
-                'days' => $days,
-                'purchases' => (string) $net,
+            return array_merge($window, [
                 'dpo' => null,
-                'why' => 'No purchases in the window, so there is nothing to divide by. A DPO of zero '.
-                    'would read as "we pay immediately", which is the opposite of what an empty window '.
-                    'means.',
-            ];
+                'why' => sprintf(
+                    'No net purchases in %s in this window, so there is nothing to divide by. A DPO of '.
+                    'zero would read as "we pay immediately", which is the opposite of what an empty '.
+                    'window means.',
+                    $currency,
+                ),
+            ]);
         }
 
         $payables = $this->controlAccountBalance($entityId, $to);
 
-        return [
-            'from' => $from->toDateString(),
-            'to' => $to->toDateString(),
-            'days' => $days,
-            'purchases' => (string) $net,
+        return array_merge($window, [
             'payables' => (string) $payables->amount,
             'dpo' => (string) BigDecimal::of((string) $payables->amount)
                 ->dividedBy($net, 6, RoundingMode::HalfUp)
                 ->multipliedBy((string) $days)
                 ->toScale(1, RoundingMode::HalfUp),
-        ];
+            'why' => sprintf(
+                'The payables balance on %s divided by %s of net purchases over %d days. The balance '.
+                'is the control account\'s and the purchases are the bills approved or posted in the '.
+                'window, both in %s - a ratio taken across currencies would print to one decimal place '.
+                'and mean nothing.',
+                $to->toDateString(),
+                (string) $net,
+                $days,
+                $currency,
+            ),
+        ]);
     }
 
     /**
@@ -637,7 +698,34 @@ final class PayablesAging
         ];
     }
 
-    /** The accounts-payable control account's balance, as a positive amount owed. */
+    /**
+     * The accounts-payable control account's balance, as a positive amount owed.
+     *
+     * ## Two things this used to get wrong, and both were invisible
+     *
+     * It summed `l.amount`, which is the line's amount in the DOCUMENT's
+     * currency, and labelled the result with the entity's functional
+     * currency. One foreign bill and the figure added 1,000 USD to 1,000 SAR
+     * and called the total riyals. The aging path was saved from it by
+     * {@see self::reconcile()}, which refuses a foreign currency outright -
+     * but {@see self::daysPayableOutstanding()} divides by this figure and
+     * had no such guard, so DPO was quietly wrong for any entity that buys
+     * abroad. `functional_amount` is the column that is denominated in the
+     * currency this method claims to be returning.
+     *
+     * And it filtered no status, so a DRAFT entry counted. A draft is
+     * somebody's unfinished work: it has no period, it has not been posted,
+     * and nothing downstream treats it as a balance. Counting it made the
+     * control account disagree with the aging total, and the report then
+     * announced that one of them was wrong and offered three causes, none of
+     * which was "somebody has a journal open". The report accused the ledger
+     * of an error it had not made - which is worse than a wrong number,
+     * because somebody acts on it.
+     *
+     * `reversed` is included with `posted`: a reversal is itself a posted
+     * entry carrying the opposite lines, so both sides are already in the
+     * sum and excluding the reversal would leave only the original.
+     */
     private function controlAccountBalance(string $entityId, Carbon $asOf): Money
     {
         $currency = (string) DB::connection('tenant')->table('entities')
@@ -649,8 +737,9 @@ final class PayablesAging
             ->join('account_roles as r', 'r.account_id', '=', 'l.account_id')
             ->where('e.entity_id', $entityId)
             ->where('r.role', ControlRole::AccountsPayable->value)
+            ->whereIn('e.status', ['posted', 'reversed'])
             ->where('e.accounting_date', '<=', $asOf->toDateString())
-            ->sum('l.amount');
+            ->sum('l.functional_amount');
 
         /*
          | Negated, because a payable is a credit balance.

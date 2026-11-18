@@ -67,6 +67,7 @@ final class SalesCurrencyRules
                 'the receivable is the document translated, not its face value' => fn (): array => $this->theReceivableIsTranslated(),
                 'and every foreign line says which rate produced it' => fn (): array => $this->linesCarryTheRate(),
                 'a document in the books\' own currency carries no rate' => fn (): array => $this->functionalCarriesNoRate(),
+                'and a ratio over these books counts one currency, and says what it left out' => fn (): array => $this->dsoIsOneCurrency(),
             ]));
         } catch (Throwable $e) {
             return ['a foreign-currency invoice could not be checked' => [
@@ -201,6 +202,81 @@ final class SalesCurrencyRules
         }
 
         return [];
+    }
+
+    /**
+     * DSO is a ratio, so both its halves must be in the same currency - PF-190.
+     *
+     * The receivables side already restricted its denominator to the
+     * functional currency, so this is not the defect the rest of this suite
+     * is about. What was wrong was the counter beside it.
+     *
+     * `daysSalesOutstanding()` selected `count(*) FILTER (WHERE currency <>
+     * ?)` to report how many documents it had left out - and put `currency =
+     * ?` in the WHERE clause as well, so the rows that counter would have
+     * counted were gone before it ran. It could never be anything but zero.
+     * The result was then dropped on the floor: selected, never read, never
+     * returned. Two failures in one line, and both are the same failure as a
+     * check that cannot fail, which is that they look like coverage.
+     *
+     * It matters because the alternative to saying so is saying nothing. A
+     * reader who sees no exclusion line takes the figure as covering the
+     * whole window. That is the number that ends up in a board pack.
+     *
+     * @return list<string>
+     */
+    private function dsoIsOneCurrency(): array
+    {
+        $this->issue();
+
+        $alone = $this->dso();
+
+        if (($alone['dso'] ?? null) === null) {
+            return ['an invoice in the books\' own currency was issued inside the window and DSO came '.
+                'back null, so the denominator did not see it and this check proves nothing'];
+        }
+
+        $problems = [];
+
+        if (\array_key_exists('excluded_other_currency', $alone)) {
+            $problems[] = 'DSO reports documents excluded for their currency when there are none, so '.
+                'the line is noise and a reader learns to skip it';
+        }
+
+        if ($this->issueInEuros() === null) {
+            return [...$problems, 'the euro invoice could not be issued, so the exclusion half of this '.
+                'check saw nothing: '.(string) $this->lastRefusal];
+        }
+
+        $withForeign = $this->dso();
+
+        if ((string) $withForeign['sales'] !== (string) $alone['sales']) {
+            $problems[] = sprintf(
+                'a euro invoice changed the sales denominator from %s to %s. Its face value was added '.
+                'to a figure in the books\' own currency, so the ratio divides one currency by two.',
+                (string) $alone['sales'],
+                (string) $withForeign['sales'],
+            );
+        }
+
+        if ((int) ($withForeign['excluded_other_currency'] ?? 0) < 1) {
+            $problems[] = 'a euro invoice was left out of DSO and the report does not say so. A figure '.
+                'that silently covers part of a window is the one that gets quoted without its '.
+                'caveat, because there was no caveat to carry.';
+        }
+
+        return $problems;
+    }
+
+    /** @return array<string, mixed> */
+    private function dso(): array
+    {
+        return app(\App\Tenant\Reporting\Services\AgingReport::class)->daysSalesOutstanding(
+            $this->entityId,
+            'SAR',
+            $this->date->copy()->subDays(89),
+            $this->date->copy(),
+        );
     }
 
     private function issueInEuros(): ?object

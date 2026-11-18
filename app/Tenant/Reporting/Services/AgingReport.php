@@ -385,27 +385,28 @@ final class AgingReport
             'unapplied_cash' => $unappliedPayments['stated'],
             'reconciliation' => $reconciliation,
             /*
-             | DPO is PF-144's, so there is one of it - and it is NOT the
+             | DPO is PF-144's, so there is one of it - and it IS now the
              | mirror of the DSO above.
              |
-             | {@see PayablesAging::daysPayableOutstanding()} sums
-             | `bills.net_amount` across every currency and reads the
-             | control account from `journal_lines.amount`, which is the
-             | document-currency column. On single-currency books the two
-             | ratios are comparable; on books with a foreign-currency
-             | bill, DPO adds 1,000 USD to 1,000 SAR and DSO refuses to.
+             | It was not. It summed `bills.net_amount` across every
+             | currency and read the control account from
+             | `journal_lines.amount`, the document-currency column, so with
+             | one foreign bill DPO added 1,000 USD to 1,000 SAR while DSO
+             | refused to. The two sit beside each other on this page and
+             | get subtracted from one another, which is exactly why that
+             | could not be left standing with a comment.
              |
-             | Not corrected here, because a second DPO in the reporting
-             | module would be a second answer to "how long do we take to
-             | pay" and both would be quoted. It belongs in PF-144's
-             | service, with its own check, and it is recorded here rather
-             | than left for whoever first compares the two numbers.
+             | Corrected in PF-144's own service rather than here, so there
+             | is still ONE answer to "how long do we take to pay". It
+             | states its own currency, its own formula and the count of
+             | documents it left out, so this report does not have to add
+             | any of the three on its behalf.
              */
             'dpo' => $this->payables->daysPayableOutstanding(
                 $entityId,
                 $day->copy()->subDays(89),
                 $day,
-            ) + ['formula' => 'payables / net purchases in the window x days in the window'],
+            ),
             'declaration' => $this->declare(
                 'payable',
                 $basis,
@@ -450,20 +451,33 @@ final class AgingReport
          | honestly be taken in - and documents in others are counted out
          | and reported rather than converted at today's rate.
          */
+        /*
+         | The currency restriction is in the aggregate FILTERs, NOT in the
+         | WHERE clause, and that is the whole point of the shape.
+         |
+         | It used to be in both. With `currency = ?` in the WHERE, the
+         | `count(*) FILTER (WHERE currency <> ?)` beside it could never be
+         | anything but zero, because the rows it would have counted were
+         | already gone - and the result was selected and then dropped on the
+         | floor, never reaching the returned array. A counter that cannot
+         | count, whose answer nobody reads: the same failure as a check that
+         | cannot fail, and for the same reason it survives, which is that it
+         | looks like coverage.
+         */
         $sales = DB::connection('tenant')->selectOne(<<<'SQL'
             SELECT
-                coalesce(sum(net_amount) FILTER (WHERE document_type <> '381'), 0)::text AS invoiced,
-                coalesce(sum(net_amount) FILTER (WHERE document_type = '381'), 0)::text AS credited,
+                coalesce(sum(net_amount) FILTER (WHERE document_type <> '381' AND currency = ?), 0)::text AS invoiced,
+                coalesce(sum(net_amount) FILTER (WHERE document_type = '381' AND currency = ?), 0)::text AS credited,
                 count(*) FILTER (WHERE currency <> ?) AS other_currency
             FROM invoices
             WHERE entity_id = cast(? AS char(26))
               AND status = 'issued'
-              AND currency = ?
               AND issue_date BETWEEN cast(? AS date) AND cast(? AS date)
         SQL, [
             $functionalCurrency,
-            $entityId,
             $functionalCurrency,
+            $functionalCurrency,
+            $entityId,
             $from->toDateString(),
             $to->toDateString(),
         ]);
@@ -479,6 +493,19 @@ final class AgingReport
             'formula' => 'receivables / credit sales in the window x days in the window',
             'sales' => (string) $net,
         ];
+
+        /*
+         | Stated whenever it is not zero, and only then.
+         |
+         | A reader who sees no such line can take the figure as covering
+         | everything in the window. A reader who sees "4 invoices in another
+         | currency are not in this figure" knows what they are looking at,
+         | and can go and look at them. The silent version is the one that
+         | gets quoted in a board pack.
+         */
+        if ((int) ($sales->other_currency ?? 0) > 0) {
+            $window['excluded_other_currency'] = (int) $sales->other_currency;
+        }
 
         if (! $net->isPositive()) {
             return array_merge($window, [
@@ -518,12 +545,17 @@ final class AgingReport
     /**
      * Days payable outstanding - PF-144's, so there is one of it.
      *
+     * A pass-through and nothing more. It used to add the formula on the way
+     * past, which meant the formula was stated by whoever happened to be
+     * asking rather than by the thing that computes the ratio - so the
+     * service's own callers got a figure with no formula at all. It states
+     * its own now.
+     *
      * @return array<string, mixed>
      */
     public function daysPayableOutstanding(string $entityId, Carbon $from, Carbon $to): array
     {
-        return $this->payables->daysPayableOutstanding($entityId, $from, $to)
-            + ['formula' => 'payables / net purchases in the window x days in the window'];
+        return $this->payables->daysPayableOutstanding($entityId, $from, $to);
     }
 
     /**

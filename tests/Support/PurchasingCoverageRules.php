@@ -11,6 +11,7 @@ use App\Tenant\Catalog\Services\ExchangeRates;
 use App\Tenant\Purchasing\Exceptions\BillRefused;
 use App\Tenant\Purchasing\Models\Bill;
 use App\Tenant\Purchasing\Services\Bills;
+use App\Tenant\Purchasing\Services\PayablesAging;
 use Brick\Math\BigDecimal;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -104,6 +105,8 @@ final class PurchasingCoverageRules
                 'a bill in the books\' own currency carries no rate at all' => fn (): array => $this->functionalBillsAreNotTranslated(),
                 'a missing rate does not stop the bill being recorded' => fn (): array => $this->entryIsNotBlocked(),
                 'but it refuses the posting, rather than booking the face value' => fn (): array => $this->postingIsRefused(),
+                'the payables figure is the ledger\'s posted balance, in the books\' currency' => fn (): array => $this->theControlBalanceIsFunctionalAndPosted(),
+                'and DPO is one currency, named, with what it left out counted' => fn (): array => $this->dpoIsOneCurrency(),
                 'and the ledger still proves its own invariants' => fn (): array => [],
             ]), $this->entityId);
         } finally {
@@ -635,6 +638,284 @@ final class PurchasingCoverageRules
      * and a check against it would pass with the lookup pointed at the
      * posting date, at the document date or at today.
      */
+    /**
+     * What the accounts-payable control account is worth - PF-144.
+     *
+     * ## Two defects, and the second one accused the ledger
+     *
+     * `PayablesAging::controlAccountBalance()` summed `journal_lines.amount`
+     * - the line's amount in the DOCUMENT's currency - and labelled the
+     * total with the entity's functional currency. The ageing path was saved
+     * from it by `reconcile()`, which refuses a foreign currency outright,
+     * so nothing in a single-currency fixture could see it; `daysPayable\
+     * Outstanding()` divides by the same figure and had no such guard.
+     *
+     * And it filtered no entry status, so a DRAFT counted. A draft is
+     * somebody's unfinished work - no period of its own, nothing posted -
+     * and counting it made the control account disagree with the ageing
+     * total. The report then announced that one of the two was wrong and
+     * offered three causes, none of which was "somebody has a journal open".
+     * That is worse than a wrong number, because it names a culprit.
+     *
+     * The check reads the ledger directly and asks the report to agree with
+     * it, which is the only form this assertion can take: a hard-coded
+     * figure would have to be rederived every time the fixture's bill
+     * changed, and the point is not the number but which column it came
+     * from.
+     *
+     * @return list<string>
+     */
+    private function theControlBalanceIsFunctionalAndPosted(): array
+    {
+        $this->recordBothRates();
+
+        /*
+         | One bill in each currency, and the home one is not decoration.
+         |
+         | DPO returns early with no `payables` key when the window holds no
+         | purchases in the functional currency - correctly, because there is
+         | nothing to divide by - and the figure under test is only reached
+         | on the other branch. A fixture with the euro bill alone would have
+         | asserted against an absent key and passed whatever the production
+         | code did.
+         */
+        $this->post($this->enterBill(
+            number: 'HOME-'.Str::upper(Str::random(6)),
+            documentDate: Carbon::parse(self::TAX_POINT),
+            taxPoint: Carbon::parse(self::TAX_POINT),
+            postingDate: $this->date->copy(),
+            currency: $this->entity()->functional_currency,
+        ));
+
+        $this->postForeignBill();
+
+        $control = $this->controlAccountId();
+
+        $posted = $this->sumOnAccount($control, 'functional_amount', ['posted', 'reversed']);
+        $inDocumentCurrency = $this->sumOnAccount($control, 'amount', ['posted', 'reversed']);
+
+        $problems = [];
+
+        if (BigDecimal::of($posted)->isEqualTo($inDocumentCurrency)) {
+            return ['the fixture posted nothing foreign to the payables control account, so this '.
+                'check cannot tell the document column from the functional one and proves nothing'];
+        }
+
+        $reported = (string) ($this->dpo()['payables'] ?? '');
+        $expected = BigDecimal::of($posted)->negated();
+
+        if (! BigDecimal::of($reported === '' ? '0' : $reported)->isEqualTo($expected)) {
+            $problems[] = sprintf(
+                'the payables figure is %s and the ledger\'s posted payables are %s. The document-'.
+                'currency column would have given %s - a thousand euros read as a thousand riyals, '.
+                'which is the figure a DPO then divides by.',
+                $reported === '' ? '(absent)' : $reported,
+                (string) $expected,
+                (string) BigDecimal::of($inDocumentCurrency)->negated(),
+            );
+        }
+
+        /*
+         | And a draft does not move it.
+         |
+         | Written straight onto the table, because there is no service that
+         | will put a draft on a control account - which is the point: the
+         | row exists in the wild (an import halfway through, a screen
+         | somebody left open) and the report has to ignore it.
+         */
+        $this->aDraftOnTheControlAccount($control);
+
+        $afterTheDraft = (string) ($this->dpo()['payables'] ?? '');
+
+        if ($afterTheDraft !== $reported) {
+            $problems[] = sprintf(
+                'a DRAFT entry on the payables control account moved the reported balance from %s to '.
+                '%s. The ageing total does not count it, so the report would declare a difference and '.
+                'blame a bill approved and never posted, a journal posted straight to the control '.
+                'account, or a payment recorded against the ledger - and it is none of those.',
+                $reported,
+                $afterTheDraft,
+            );
+        }
+
+        return $problems;
+    }
+
+    /**
+     * DPO is a ratio, so both its halves must be in the same currency.
+     *
+     * It summed `bills.net_amount` across every currency a supplier had ever
+     * billed in. A thousand dollars and a thousand riyals made two thousand
+     * of nothing, divided into a balance that was itself adding currencies,
+     * and the quotient printed to one decimal place - which is what makes a
+     * ratio like this dangerous. It looks precise, and nobody reads a number
+     * with a decimal point and wonders whether its halves were denominated
+     * in the same thing.
+     *
+     * DSO on the receivables side already refused to, and the two sit beside
+     * each other on a page and get subtracted from one another.
+     *
+     * @return list<string>
+     */
+    private function dpoIsOneCurrency(): array
+    {
+        $this->recordBothRates();
+
+        $functional = $this->post($this->enterBill(
+            number: 'HOME-'.Str::upper(Str::random(6)),
+            documentDate: Carbon::parse(self::TAX_POINT),
+            taxPoint: Carbon::parse(self::TAX_POINT),
+            postingDate: $this->date->copy(),
+            currency: $this->entity()->functional_currency,
+        ));
+
+        $alone = $this->dpo();
+
+        if (($alone['purchases'] ?? '0') === '0' || ($alone['dpo'] ?? null) === null) {
+            return ['a bill in the books\' own currency was posted inside the window and DPO came '.
+                'back empty, so the denominator did not see it and this check proves nothing'];
+        }
+
+        $problems = [];
+
+        if (($alone['currency'] ?? null) !== $functional->currency) {
+            $problems[] = sprintf(
+                'DPO does not name the currency it was taken in (it says %s). A reader comparing it '.
+                'with DSO has no way to know the two were taken on the same basis.',
+                (string) ($alone['currency'] ?? '(nothing)'),
+            );
+        }
+
+        if (! str_contains((string) ($alone['formula'] ?? ''), 'purchases')) {
+            $problems[] = 'DPO is reported without its formula, so two people comparing their figures '.
+                'cannot tell whether they computed the same ratio';
+        }
+
+        if (\array_key_exists('excluded_other_currency', $alone)) {
+            $problems[] = 'DPO reports documents excluded for their currency when there are none, so '.
+                'the line is noise and a reader learns to skip it';
+        }
+
+        // Now a euro bill in the same window. The denominator must not move.
+        $this->postForeignBill();
+
+        $withForeign = $this->dpo();
+
+        if ((string) $withForeign['purchases'] !== (string) $alone['purchases']) {
+            $problems[] = sprintf(
+                'a euro bill changed the purchases denominator from %s to %s. Its face value was added '.
+                'to a figure in %s, so the ratio divides one currency by two.',
+                (string) $alone['purchases'],
+                (string) $withForeign['purchases'],
+                $functional->currency,
+            );
+        }
+
+        if ((int) ($withForeign['excluded_other_currency'] ?? 0) < 1) {
+            $problems[] = 'a euro bill was left out of DPO and the report does not say so. A figure '.
+                'that silently covers part of the window is the one that gets quoted in a board pack.';
+        }
+
+        return $problems;
+    }
+
+    /** @return array<string, mixed> */
+    private function dpo(): array
+    {
+        return app(PayablesAging::class)->daysPayableOutstanding(
+            $this->entityId,
+            $this->date->copy()->subDays(89),
+            $this->date->copy(),
+        );
+    }
+
+    /** The accounts-payable control account's id. */
+    private function controlAccountId(): string
+    {
+        return (string) $this->connection->table('account_roles')
+            ->where('role', \App\Tenant\Ledger\Enums\ControlRole::AccountsPayable->value)
+            ->value('account_id');
+    }
+
+    /**
+     * One column of one account, over the entry statuses given.
+     *
+     * @param  list<string>  $statuses
+     */
+    private function sumOnAccount(string $accountId, string $column, array $statuses): string
+    {
+        return (string) ($this->connection->table('journal_lines as l')
+            ->join('journal_entries as e', 'e.id', '=', 'l.journal_entry_id')
+            ->where('l.account_id', $accountId)
+            ->where('e.entity_id', $this->entityId)
+            ->whereIn('e.status', $statuses)
+            ->sum('l.'.$column) ?? '0');
+    }
+
+    /**
+     * A balanced draft entry touching the control account.
+     *
+     * Balanced so that nothing else in the suite has an opinion about it -
+     * the global ledger proof is about what posted, and a draft that did not
+     * balance would be a second thing for a reader of a failure to wonder
+     * about.
+     */
+    private function aDraftOnTheControlAccount(string $controlAccountId): void
+    {
+        $entryId = (string) Str::ulid();
+
+        $periodId = (string) $this->connection->table('journal_entries')
+            ->where('entity_id', $this->entityId)
+            ->orderByDesc('accounting_date')
+            ->value('period_id');
+
+        $this->connection->table('journal_entries')->insert([
+            'id' => $entryId,
+            'entity_id' => $this->entityId,
+            'journal_id' => (string) $this->connection->table('journals')
+                ->where('entity_id', $this->entityId)
+                ->where('code', 'GEN')
+                ->value('id'),
+            'period_id' => $periodId,
+            'number' => 'DRAFT-'.Str::upper(Str::random(5)),
+            'accounting_date' => $this->date->toDateString(),
+            'narration' => 'Half-finished, and no report may count it',
+            'status' => 'draft',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $currency = (string) $this->entity()->functional_currency;
+
+        foreach ([[$controlAccountId, '-500.0000'], [$this->expenseAccountId, '500.0000']] as [$accountId, $amount]) {
+            $this->connection->table('journal_lines')->insert([
+                'id' => (string) Str::ulid(),
+                'journal_entry_id' => $entryId,
+                'entity_id' => $this->entityId,
+                'account_id' => $accountId,
+                /*
+                 | Supplied, although the trigger overwrites them.
+                 |
+                 | `journal_lines` is RANGE-partitioned on
+                 | `accounting_date`, and PostgreSQL routes the row to a
+                 | partition BEFORE the trigger runs: left out, the row is
+                 | routed to the default partition and the trigger's
+                 | assignment then has to move it, which PostgreSQL refuses
+                 | outright. The real poster supplies them for the same
+                 | reason.
+                 */
+                'accounting_date' => $this->date->toDateString(),
+                'period_id' => $periodId,
+                'amount' => $amount,
+                'currency' => $currency,
+                'functional_amount' => $amount,
+                'narration' => 'A draft line',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+    }
+
     private function recordBothRates(): void
     {
         $rates = app(ExchangeRates::class);
