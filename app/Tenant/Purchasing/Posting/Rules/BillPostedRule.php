@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace App\Tenant\Purchasing\Posting\Rules;
 
 use App\Support\Money\Money;
+use App\Support\Money\Rate;
+use App\Support\Money\RoundingPolicy;
+use App\Support\Money\Scale;
 use App\Tenant\Ledger\Enums\ControlRole;
 use App\Tenant\Ledger\Posting\PostingContext;
 use App\Tenant\Ledger\Posting\PostingLine;
@@ -56,6 +59,38 @@ use App\Tenant\Purchasing\Exceptions\BillRefused;
  * difference is found during an audit by somebody who did not put it there.
  * The expense it belongs to is the line's own, because the whole point is
  * that the cost of the purchase includes tax that cannot be recovered.
+ *
+ * ## A foreign-currency bill is translated line by line, at one rate
+ *
+ * The event's figures are the supplier's, and the rate is the one the bill
+ * froze on its tax point. Every line is translated through
+ * {@see PostingLine::translated()}, which converts here rather than
+ * accepting a functional amount somebody worked out elsewhere - so the rate
+ * and the figure on each journal line cannot disagree, which is what a wrong
+ * rate looks like in the books.
+ *
+ * The alternative, and what this rule did before PF-133's rate arrived, is
+ * to label the document's own amounts with the entity's currency. That posts
+ * a 150,000 JPY bill as 150,000 of the functional currency: the entry
+ * balances, the database's translation trigger sees a functional-currency
+ * line and has nothing to object to, and the expense is wrong by the whole
+ * exchange difference with nothing anywhere recording that a currency was
+ * involved.
+ *
+ * ## And the rounding residual is a line of its own
+ *
+ * Rounding each line to the functional scale does not generally add up to
+ * the rounded total: three lines of 1.03 at 0.2750 are 0.28 each where the
+ * 3.09 they come to is 0.85. The difference cannot be hidden inside a
+ * translated line, because `journal_lines` re-derives every functional
+ * amount from its own rate and refuses a line that does not follow from it -
+ * deliberately, since a fudged line is a rate nobody can reproduce.
+ *
+ * So it posts to `rounding_difference`, in the functional currency and with
+ * no rate, which is what it is: an amount that exists only because the books
+ * are kept to four places. Keeping it visible in one reconcilable account is
+ * also the only way anybody notices if it stops being pennies - which is how
+ * a wrong rate announces itself.
  */
 final class BillPostedRule implements PostingRule
 {
@@ -77,6 +112,7 @@ final class BillPostedRule implements PostingRule
                 ['Dr', 'vat_input (per jurisdiction)', 'the recoverable tax, and the reverse-charge input'],
                 ['Cr', 'vat_output (per jurisdiction)', 'the reverse-charge output - the half most systems forget'],
                 ['Cr', 'accounts_payable', 'the gross the supplier is owed'],
+                ['Dr/Cr', 'rounding_difference', 'the residual from translating a foreign-currency bill'],
             ],
         );
     }
@@ -86,6 +122,8 @@ final class BillPostedRule implements PostingRule
      *     bill_id: string,
      *     party_id: string,
      *     payable: string,
+     *     currency?: string,
+     *     rate?: Rate|null,
      *     narration?: string|null,
      *     expense: list<array{account_id: string, amount: string, tax_code_id?: string|null, tax_point?: string|null, dimensions?: array<int, string|null>}>,
      *     recoverable_tax: list<array{jurisdiction: string, amount: string, tax_code_id?: string|null, tax_point?: string|null}>,
@@ -95,9 +133,43 @@ final class BillPostedRule implements PostingRule
      */
     public function lines(array $event, PostingContext $context): array
     {
-        $currency = $context->functionalCurrency;
+        $functional = $context->functionalCurrency;
         $party = (string) $event['party_id'];
         $narration = $event['narration'] ?? null;
+
+        /*
+         | The document's currency, not the entity's.
+         |
+         | Absent for a bill entered before the rate arrived, and the
+         | functional currency is the right reading of that absence: those
+         | documents were in it, because nothing else could be posted.
+         */
+        $currency = (string) ($event['currency'] ?? $functional);
+        $rate = $event['rate'] ?? null;
+        $policy = RoundingPolicy::halfUp(Scale::Amount);
+
+        if ($currency !== $functional && ! $rate instanceof Rate) {
+            throw BillRefused::noRateToPostAt($currency, $functional);
+        }
+
+        /*
+         | And a rate on a bill already in the functional currency is
+         | refused rather than ignored.
+         |
+         | It asserts a translation that did not happen, and `journal_lines`
+         | refuses that on every line; catching it here says which document
+         | carries the contradiction instead of naming a line id.
+         */
+        if ($currency === $functional && $rate instanceof Rate) {
+            throw BillRefused::because(sprintf(
+                'This bill is in %s, which is the currency the books are kept in, and it carries a '.
+                'rate of %s. A rate asserts that a translation happened and came out even, which is '.
+                'a different claim from no translation at all - and afterwards the two cannot be '.
+                'told apart.',
+                $currency,
+                (string) $rate->value,
+            ));
+        }
 
         $payable = Money::of((string) $event['payable'], $currency);
 
@@ -114,15 +186,29 @@ final class BillPostedRule implements PostingRule
                 throw BillRefused::aLineWithNoAccount();
             }
 
-            $lines[] = PostingLine::toAccount(
-                accountId: $account,
-                amount: Money::of((string) $expense['amount'], $currency),
-                partyId: $party,
-                narration: $narration,
-                taxCodeId: $expense['tax_code_id'] ?? null,
-                dimensions: $expense['dimensions'] ?? [],
-                taxPoint: $expense['tax_point'] ?? null,
-            );
+            $amount = Money::of((string) $expense['amount'], $currency);
+
+            $lines[] = $rate instanceof Rate
+                ? PostingLine::translated(
+                    accountId: $account,
+                    original: $amount,
+                    rate: $rate,
+                    policy: $policy,
+                    partyId: $party,
+                    narration: $narration,
+                    taxCodeId: $expense['tax_code_id'] ?? null,
+                    dimensions: $expense['dimensions'] ?? [],
+                    taxPoint: $expense['tax_point'] ?? null,
+                )
+                : PostingLine::toAccount(
+                    accountId: $account,
+                    amount: $amount,
+                    partyId: $party,
+                    narration: $narration,
+                    taxCodeId: $expense['tax_code_id'] ?? null,
+                    dimensions: $expense['dimensions'] ?? [],
+                    taxPoint: $expense['tax_point'] ?? null,
+                );
         }
 
         foreach ($event['recoverable_tax'] as $tax) {
@@ -134,14 +220,14 @@ final class BillPostedRule implements PostingRule
                 continue;
             }
 
-            $lines[] = PostingLine::toRoleIn(
+            $lines[] = $this->taxLine(
                 ControlRole::VatInput,
-                (string) $tax['jurisdiction'],
+                $tax,
                 $amount,
                 $party,
                 $narration,
-                $tax['tax_code_id'] ?? null,
-                $tax['tax_point'] ?? null,
+                $rate,
+                $policy,
             );
         }
 
@@ -160,35 +246,142 @@ final class BillPostedRule implements PostingRule
                 continue;
             }
 
-            $lines[] = PostingLine::toRoleIn(
+            /*
+             | Translated from the SAME original on both sides.
+             |
+             | Negating the original rather than the translated figure would
+             | round the two sides independently, and a 0.01 that lands on
+             | the input and not on the output is an input box and an output
+             | box that no longer agree - the exact discrepancy the
+             | authority compares.
+             */
+            $input = $this->taxLine(
                 ControlRole::VatInput,
-                (string) $tax['jurisdiction'],
+                $tax,
                 $amount,
                 $party,
                 $narration,
-                $tax['tax_code_id'] ?? null,
-                $tax['tax_point'] ?? null,
+                $rate,
+                $policy,
             );
 
-            $lines[] = PostingLine::toRoleIn(
-                ControlRole::VatOutput,
-                (string) $tax['jurisdiction'],
-                $amount->negated(),
-                $party,
-                $narration,
-                $tax['tax_code_id'] ?? null,
-                $tax['tax_point'] ?? null,
-            );
+            $lines[] = $input;
+
+            $lines[] = $rate instanceof Rate
+                ? PostingLine::translatedToRoleIn(
+                    role: ControlRole::VatOutput,
+                    jurisdiction: (string) $tax['jurisdiction'],
+                    original: $amount->negated(),
+                    rate: $rate,
+                    policy: $policy,
+                    partyId: $party,
+                    narration: $narration,
+                    taxCodeId: $tax['tax_code_id'] ?? null,
+                    taxPoint: $tax['tax_point'] ?? null,
+                )
+                : PostingLine::toRoleIn(
+                    ControlRole::VatOutput,
+                    (string) $tax['jurisdiction'],
+                    $amount->negated(),
+                    $party,
+                    $narration,
+                    $tax['tax_code_id'] ?? null,
+                    $tax['tax_point'] ?? null,
+                );
         }
 
         if (! $payable->isZero()) {
-            $lines[] = PostingLine::toRole(
-                ControlRole::AccountsPayable,
-                $payable->negated(),
-                $party,
-                $narration,
+            $lines[] = $rate instanceof Rate
+                ? PostingLine::translatedToRole(
+                    role: ControlRole::AccountsPayable,
+                    original: $payable->negated(),
+                    rate: $rate,
+                    policy: $policy,
+                    partyId: $party,
+                    narration: $narration,
+                )
+                : PostingLine::toRole(
+                    ControlRole::AccountsPayable,
+                    $payable->negated(),
+                    $party,
+                    $narration,
+                );
+        }
+
+        return $this->balanced($lines, $context);
+    }
+
+    /**
+     * A tax control line, translated or not.
+     *
+     * @param  array{jurisdiction: string, amount: string, tax_code_id?: string|null, tax_point?: string|null}  $tax
+     */
+    private function taxLine(
+        ControlRole $role,
+        array $tax,
+        Money $amount,
+        string $party,
+        ?string $narration,
+        ?Rate $rate,
+        RoundingPolicy $policy,
+    ): PostingLine {
+        if ($rate instanceof Rate) {
+            return PostingLine::translatedToRoleIn(
+                role: $role,
+                jurisdiction: (string) $tax['jurisdiction'],
+                original: $amount,
+                rate: $rate,
+                policy: $policy,
+                partyId: $party,
+                narration: $narration,
+                taxCodeId: $tax['tax_code_id'] ?? null,
+                taxPoint: $tax['tax_point'] ?? null,
             );
         }
+
+        return PostingLine::toRoleIn(
+            $role,
+            (string) $tax['jurisdiction'],
+            $amount,
+            $party,
+            $narration,
+            $tax['tax_code_id'] ?? null,
+            $tax['tax_point'] ?? null,
+        );
+    }
+
+    /**
+     * The translation residual, where rounding each line left one.
+     *
+     * Nothing is added in the single-currency case, where the figures came
+     * from a document that already totals exactly. In the translated case
+     * this is the only line the Poster's balance check can be satisfied by:
+     * every other line's functional amount is re-derived from its own rate
+     * by a database trigger, so the difference cannot be absorbed into one
+     * of them, and an unbalanced entry is refused outright - which would
+     * make a foreign-currency bill unpostable for the sake of a penny.
+     *
+     * @param  list<PostingLine>  $lines
+     * @return list<PostingLine>
+     */
+    private function balanced(array $lines, PostingContext $context): array
+    {
+        $residual = $context->zero();
+
+        foreach ($lines as $line) {
+            $residual = $residual->plus($line->amount);
+        }
+
+        if ($residual->isZero()) {
+            return $lines;
+        }
+
+        $lines[] = PostingLine::toRole(
+            ControlRole::RoundingDifference,
+            $residual->negated(),
+            null,
+            'Rounding on translating the bill at its tax-point rate',
+        );
 
         return $lines;
     }

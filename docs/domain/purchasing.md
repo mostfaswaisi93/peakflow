@@ -241,6 +241,24 @@ It also means reverse-charge tax is **not part of the payable**. The supplier is
 
 **Non-recoverable tax goes to expense, not to the input account** - and to the line's own expense account, because the cost of a purchase includes tax that cannot be recovered and it belongs to the cost centre that bought it. Recovery is a percentage rather than a flag: partial recovery is the normal case for entertainment, fuel and mixed-use assets, and a boolean would force the business to split a line the supplier did not split.
 
+### A bill in a foreign currency
+
+**It books at the rate on its tax point date** (PF-133, IAS 21). Every line above is denominated in the supplier's currency and carries that one rate, so `journal_lines.amount` is what the document says and `functional_amount` is what the books carry. The rate is taken when the bill is entered and frozen on it as `fx_rate`, `fx_source` and `fx_rate_date` - the rate's **own** date, which an effective-dated lookup can legitimately put earlier than the tax point.
+
+The tax point rather than the posting date, because that is when the transaction happened; the posting date is only when we wrote it down. A bill dated 28 March that arrives on 3 April belongs to our April and to March's rate.
+
+**A missing rate does not stop the bill being recorded, and does stop it posting.** Entering a supplier's invoice is writing down something that has already happened, and a feed that has not run is our problem rather than theirs. The posting is where there is no safe answer: a rate of 1 asserts the two currencies are worth the same and balances while doing it, and today's rate values the purchase at a figure the document cannot explain. So the posting refuses and names the date a rate has to be loaded for.
+
+Rounding each line to four places does not generally add up to the rounded total, and the difference cannot be hidden inside a translated line - `journal_lines` re-derives every functional amount from that line's own rate and refuses one that does not follow from it. So the residual is a line of its own:
+
+```
+Dr/Cr  rounding_difference    the residual from translating at the tax point's rate
+```
+
+in the functional currency and with no rate, because that is what it is: an amount that exists only because the books are kept to four places. Keeping it in one reconcilable account is also the only way anybody notices if it stops being pennies, which is how a wrong rate announces itself.
+
+What this replaces is worth stating, because it was invisible: the rule previously labelled the document's own amounts with the entity's functional currency. A 1,000 EUR purchase posted 1,000 to expense and credited the supplier 1,150. The entry balanced - every line was wrong by the same factor - and the translation trigger on `journal_lines`, which refuses a foreign line with no rate, saw lines claiming to be functional and had nothing to object to.
+
 ### Duplicates: a hard half and a soft half
 
 The **hard** half is the same supplier sending the same number twice, and it is a unique index on `(entity, supplier, normalised number)`. In the database rather than the application because an import, a second worker or a retried job does not go through the form, and because this is the most expensive error in accounts payable: it is usually discovered by the supplier, after the money has gone.
@@ -480,8 +498,7 @@ A line over its ceiling is **flagged with the figures, not refused** — a hotel
 | Orders sent as a PDF, or by Peppol | The PDF toolchain (Gotenberg, Ghostscript, veraPDF) is not installable in this environment; Peppol transport needs the AS4 access point and SMP lookup of PF-121 and PF-122. The order document is a UBL `Order`, a different document type from the invoice the Exchange plane serializes today |
 | An OCR engine. The pipeline around one is built: a proposal is not a value, a confidence belongs to a guess, a field below the threshold is flagged, no extracted bill posts without a confirmation, and a misread format is visible. The engine itself is a declared absence (PF-142) |
 | Receiving a document over the network: the AS4 transport and SMP lookup | PF-121 and PF-122, which need an accredited access point. What happens after delivery is built |
-| Reimbursing a claim through a payment run | The claim's balance sits in a control account a payment run can read; the run itself is Phase 09 |
-| A bill in a foreign currency booking at its tax point's rate | The columns exist; the rate service call site arrives with PF-138 |
+| Reimbursing a claim through a payment run | The claim's balance sits in a control account a payment run can read, and the run exists (PF-174). What is missing is on the Settlement side: `PaymentRuns::selectPayables()` reads `bills` only and `payment_run_items` names a `bill_id`, so selecting a claim is a schema and selection change there rather than here |
 | The receive-then-approve segregation-of-duties pair | Whoever confirms a delivery should not approve the bill for it, and the fictitious-receipt fraud is to confirm a delivery that never came and approve the invoice for it. But the two duties sit on different objects linked by an order, and the engine's scopes are the same document, the same counterparty or the same period. Closing it means a **chain** scope that expands a bill into the receipts behind it, which is a change to PF-033 rather than to this module |
 
 See [`tasks/phase-07-purchasing.md`](../tasks/phase-07-purchasing.md) for the criterion-by-criterion state.

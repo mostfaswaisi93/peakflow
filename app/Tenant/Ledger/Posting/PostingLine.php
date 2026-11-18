@@ -147,6 +147,13 @@ final readonly class PostingLine
      * exactly what a wrong rate looks like in the books: a plausible
      * functional amount beside a rate that does not produce it.
      *
+     * The tax point travels with the tax code, exactly as it does on
+     * {@see toAccount()}. A translated line that dropped it would be refused
+     * by `journal_lines` - the column is paired with the tax code there - so
+     * a foreign-currency expense line carrying a code could not post at all
+     * without this parameter, and the first symptom would be a constraint
+     * violation rather than a missing figure.
+     *
      * @param  array<int, string|null>  $dimensions
      *
      * @throws \App\Support\Money\Exceptions\RateDirectionMismatch if the rate does not go this way
@@ -160,6 +167,7 @@ final readonly class PostingLine
         ?string $narration = null,
         ?string $taxCodeId = null,
         array $dimensions = [],
+        ?string $taxPoint = null,
     ): self {
         $translation = Translation::of($original, $rate, $policy);
 
@@ -172,6 +180,9 @@ final readonly class PostingLine
             $taxCodeId,
             $dimensions,
             $translation,
+            null,
+            null,
+            $taxPoint,
         );
     }
 
@@ -202,6 +213,51 @@ final readonly class PostingLine
             [],
             $translation,
             $interEntityTransactionId,
+        );
+    }
+
+    /**
+     * A tax control line in a foreign currency - PF-133.
+     *
+     * {@see translatedToRole()} with the two things a tax line cannot do
+     * without: the jurisdiction, because an entity registered in two of them
+     * would otherwise post one authority's VAT to the other's account, and
+     * the tax code with its tax point, because `journal_lines` pairs the two
+     * and a tax figure that cannot be attributed to a code is a figure in a
+     * return nobody can trace.
+     *
+     * A foreign-currency bill needs this for its input tax. Without it the
+     * only translated control-account factory drops both, and the resulting
+     * line is either refused by the database or lands in the wrong
+     * jurisdiction's account with a plausible figure on it.
+     *
+     * @throws \App\Support\Money\Exceptions\RateDirectionMismatch if the rate does not go this way
+     */
+    public static function translatedToRoleIn(
+        ControlRole $role,
+        string $jurisdiction,
+        Money $original,
+        Rate $rate,
+        RoundingPolicy $policy,
+        ?string $partyId = null,
+        ?string $narration = null,
+        ?string $taxCodeId = null,
+        ?string $taxPoint = null,
+    ): self {
+        $translation = Translation::of($original, $rate, $policy);
+
+        return new self(
+            $translation->functional,
+            $role,
+            null,
+            $partyId,
+            $narration,
+            $taxCodeId,
+            [],
+            $translation,
+            null,
+            $jurisdiction,
+            $taxPoint,
         );
     }
 

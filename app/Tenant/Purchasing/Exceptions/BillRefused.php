@@ -75,6 +75,64 @@ final class BillRefused extends \RuntimeException
         ));
     }
 
+    /**
+     * A foreign-currency bill with no rate on its tax point - PF-133.
+     *
+     * Refused at entry rather than at posting, and refused rather than
+     * booked at a rate chosen here. The alternatives are both worse than a
+     * refusal: a rate of 1 asserts that two currencies are worth the same
+     * and balances perfectly while doing it, and today's rate values a
+     * January purchase at March's figure and leaves an exchange difference
+     * nobody can derive from the document.
+     *
+     * The tax point is named because that is the date a rate has to be
+     * found for - IAS 21 books a transaction at the rate on the date of the
+     * transaction - and it is the date whoever fixes this has to load.
+     */
+    public static function noRateOnTheTaxPoint(
+        string $currency,
+        string $functional,
+        string $taxPoint,
+        string $underlying,
+    ): self {
+        return new self(sprintf(
+            'This bill is in %s, the books are kept in %s, and there is no %s rate on or before its '.
+            'tax point (%s). A purchase is booked at the rate on the date of the transaction, and for '.
+            'a bill that date is the tax point - so the rate is loaded first rather than chosen here: '.
+            'a rate of 1 would assert the two currencies are worth the same and balance while doing '.
+            'it, and today\'s rate would value this purchase at today\'s figure and leave a '.
+            'difference nobody can derive from the document. (%s)',
+            $currency,
+            $functional,
+            $currency,
+            $taxPoint,
+            $underlying,
+        ));
+    }
+
+    /**
+     * A bill the posting rule was asked to translate without a rate - PF-133.
+     *
+     * The service fetches the rate at entry and freezes it on the document,
+     * so reaching this means the stored rate went missing between entry and
+     * posting. It refuses rather than falling back to the document's own
+     * figures: those are the foreign-currency amounts, and posting them
+     * under the functional currency's name balances and misstates the books
+     * by the whole exchange difference.
+     */
+    public static function noRateToPostAt(string $currency, string $functional): self
+    {
+        return new self(sprintf(
+            'This bill is in %s and the books are in %s, and the rate it was entered at is no longer '.
+            'on the document. Posting the figures as they stand would record %s amounts as though '.
+            'they were %s - which balances, so nothing would look wrong.',
+            $currency,
+            $functional,
+            $currency,
+            $functional,
+        ));
+    }
+
     public static function taxDoesNotTie(string $stated, string $computed): self
     {
         return new self(sprintf(

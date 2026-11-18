@@ -6,7 +6,10 @@ namespace App\Tenant\Purchasing\Services;
 
 use App\Support\Audit\AuditTrail;
 use App\Support\Money\Money;
+use App\Support\Money\Rate;
+use App\Tenant\Catalog\Exceptions\RateNotAvailable;
 use App\Tenant\Catalog\Services\DueDateCalculator;
+use App\Tenant\Catalog\Services\ExchangeRates;
 use App\Tenant\Ledger\Services\Poster;
 use App\Tenant\Purchasing\Exceptions\BillRefused;
 use App\Tenant\Purchasing\Models\Bill;
@@ -56,6 +59,7 @@ final class Bills
         private readonly DuplicateBillDetector $duplicates,
         private readonly ThreeWayMatch $match,
         private readonly AuditTrail $audit,
+        private readonly ExchangeRates $rates,
     ) {}
 
     /**
@@ -99,6 +103,28 @@ final class Bills
         $entityId = (string) $entity->getKey();
         $key = Bill::normaliseDocumentNumber($supplierDocumentNumber);
 
+        /*
+         | The rate, taken here and frozen on the document - PF-133.
+         |
+         | Frozen rather than looked up again at posting for the same reason
+         | the payment terms are frozen: the rate on file is the one the
+         | approver's limit was tested against and the one the document will
+         | be explained by, and a second lookup days later can legitimately
+         | find a different answer - a rate recorded late for a date in
+         | between, or a correction - which would make the posting disagree
+         | with the document it came from and with the approval that let it
+         | through.
+         |
+         | And null where there is no rate yet, rather than a refusal.
+         | Entering a supplier's invoice is recording something that has
+         | already happened, and a feed that has not run is not a reason the
+         | business cannot record it - the same reasoning as PF-069's
+         | "a feed outage does not stop the business trading". The refusal
+         | belongs at posting, where an untranslated line cannot be written
+         | and the ledger says so itself.
+         */
+        $rate = $this->rateIfOnFile($entity, $currency, $taxPoint);
+
         $existing = $this->duplicates->existingWithNumber($entityId, $partyId, $supplierDocumentNumber);
 
         if ($existing !== null) {
@@ -113,7 +139,7 @@ final class Bills
             $entity, $entityId, $partyId, $supplierDocumentNumber, $key,
             $supplierDocumentDate, $taxPoint, $postingDate, $currency, $lines,
             $createdBy, $source, $paymentTermId, $note, $documentType,
-            $creditsBillId, $creditReference,
+            $creditsBillId, $creditReference, $rate,
         ): Bill {
             $computed = $this->compute($lines, $currency);
 
@@ -129,6 +155,21 @@ final class Bills
                     'tax_point' => $taxPoint->toDateString(),
                     'posting_date' => $postingDate->toDateString(),
                     'currency' => $currency,
+                    /*
+                     | All three together, or all three null.
+                     |
+                     | The value alone cannot answer "was it current" or
+                     | "which feed said so", and looking it up again later
+                     | cannot either: a rate may since have been superseded,
+                     | and two feeds can send the same figure for different
+                     | days. `fx_rate_date` is the rate's OWN date rather
+                     | than the tax point, because an effective-dated lookup
+                     | legitimately answers a Saturday with Friday's rate
+                     | and the document has to say which one it booked at.
+                     */
+                    'fx_rate' => $rate === null ? null : (string) $rate->value,
+                    'fx_source' => $rate?->provider,
+                    'fx_rate_date' => $rate?->date->format('Y-m-d'),
                     'net_amount' => (string) $computed['net']->amount,
                     'tax_amount' => (string) $computed['tax']->amount,
                     'gross_amount' => (string) $computed['gross']->amount,
@@ -308,7 +349,7 @@ final class Bills
                 ));
             }
 
-            $event = $this->event($bill);
+            $event = $this->event($bill, $entity);
 
             $entry = $this->poster->post(
                 entity: $entity,
@@ -374,11 +415,23 @@ final class Bills
      * expense the purchase was for - so a cost centre that bought
      * entertainment carries the whole cost of it.
      *
+     * ## The figures are the DOCUMENT's, and the currency travels with them
+     *
+     * Every amount here is in the supplier's currency, because that is what
+     * the document says and what the supplier will be paid. The posting rule
+     * is told which currency that is and the rate to translate it at, rather
+     * than being left to assume the entity's own: that assumption is what
+     * posts a 150,000 JPY bill as 150,000 of the functional currency, which
+     * balances and is wrong by the whole exchange difference.
+     *
      * @return array<string, mixed>
+     *
+     * @throws BillRefused
      */
-    public function event(Bill $bill): array
+    public function event(Bill $bill, Entity $entity): array
     {
         $currency = (string) $bill->currency;
+        $rate = $this->rateToPostAt($bill, $entity);
         $expense = [];
         $recoverable = [];
         $reverseCharge = [];
@@ -438,11 +491,109 @@ final class Bills
             'bill_id' => (string) $bill->getKey(),
             'party_id' => (string) $bill->party_id,
             'payable' => (string) $bill->payable_amount,
+            'currency' => $currency,
+            'rate' => $rate,
             'narration' => null,
             'expense' => $expense,
             'recoverable_tax' => $recoverable,
             'reverse_charge' => $reverseCharge,
         ];
+    }
+
+    /**
+     * The rate a bill in a foreign currency books at - PF-133, PF-068.
+     *
+     * Null when the bill is already in the entity's own currency, which is
+     * the common case and is NOT a rate of 1: a stored 1 asserts that a
+     * translation happened and came out even, and afterwards it cannot be
+     * told from a document that never needed one. The database refuses both
+     * halves of that mistake on `journal_lines`, and this is the service
+     * side of the same rule.
+     *
+     * Null too when no rate is on file, so that entering the document is
+     * never blocked by a feed; {@see rateToPostAt()} is where the absence
+     * becomes a refusal.
+     *
+     * The tax point rather than today or the posting date. IAS 21 books a
+     * transaction at the rate on the date of the transaction, and for a
+     * purchase that date is the one the jurisdiction fixed: a bill dated 28
+     * March that arrives on 3 April belongs to our April and to March's
+     * rate, and using April's would move the expense and leave an exchange
+     * difference that cannot be derived from the document.
+     */
+    private function rateIfOnFile(Entity $entity, string $currency, Carbon $taxPoint): ?Rate
+    {
+        $functional = (string) $entity->functional_currency;
+
+        if ($currency === $functional) {
+            return null;
+        }
+
+        try {
+            return $this->rates->rateFor($currency, $functional, $taxPoint);
+        } catch (RateNotAvailable) {
+            return null;
+        }
+    }
+
+    /**
+     * The rate this bill posts at, and the refusal when there is none.
+     *
+     * The frozen one wins: rebuilt from the document's own columns rather
+     * than fetched again, so the posting books at the rate the approval was
+     * tested against. The set is the market one because that is the only
+     * set {@see rateIfOnFile()} asks for - a purchase is a transaction at
+     * the rate of the day, and the monthly-average and statutory sets exist
+     * for revaluation and for returns.
+     *
+     * Where the document carries none - entered while the feed was behind -
+     * the rate is fetched now and still **on the tax point**, never on
+     * today, and written back so the document records what it booked at.
+     *
+     * @throws BillRefused
+     */
+    private function rateToPostAt(Bill $bill, Entity $entity): ?Rate
+    {
+        $functional = (string) $entity->functional_currency;
+        $currency = (string) $bill->currency;
+
+        if ($currency === $functional) {
+            return null;
+        }
+
+        if ($bill->fx_rate !== null && $bill->fx_rate_date !== null) {
+            return new Rate(
+                from: $currency,
+                to: $functional,
+                value: (string) $bill->fx_rate,
+                date: $bill->fx_rate_date->toDateTimeImmutable(),
+                provider: (string) ($bill->fx_source ?? ExchangeRates::PROVIDER_MANUAL),
+                rateSet: Rate::SET_MARKET,
+            );
+        }
+
+        try {
+            $rate = $this->rates->rateFor(
+                $currency,
+                $functional,
+                Carbon::parse($bill->tax_point->toDateString()),
+            );
+        } catch (RateNotAvailable $e) {
+            throw BillRefused::noRateOnTheTaxPoint(
+                $currency,
+                $functional,
+                $bill->tax_point->toDateString(),
+                $e->getMessage(),
+            );
+        }
+
+        $bill->update([
+            'fx_rate' => (string) $rate->value,
+            'fx_source' => $rate->provider,
+            'fx_rate_date' => $rate->date->format('Y-m-d'),
+        ]);
+
+        return $rate;
     }
 
     /**
