@@ -134,6 +134,7 @@ final class IsoRegistryRules
                 'every unusual exponent is named, not derived' => $this->theUnusualExponentsAreNamed(),
                 'the two base-5 subunits are not computed from a power of ten' => $this->baseFiveIsNotComputed(),
                 'every code is one ICU also knows' => $this->everyCodeIsKnownToIcu(),
+                'a currency is named, not described' => $this->currenciesAreNamed(),
                 'where CLDR disagrees with ISO 4217, the disagreement is known' => $this->cldrDivergencesAreKnown(),
                 'money renders the ISO exponent, never CLDR\'s' => $this->moneyRendersTheIsoExponent(),
                 'a malformed row makes the file unusable rather than the data wrong' => $this->theLoaderRefusesBadRows(),
@@ -335,6 +336,85 @@ final class IsoRegistryRules
         }
 
         return $problems;
+    }
+
+    /**
+     * The name of a currency, and not the description of a locale.
+     *
+     * ## The bug this exists to stop coming back
+     *
+     * `CurrencyRegistry::name()` asked ICU for the display name of the
+     * locale `@currency=ILS`. That is a real question with a correct
+     * answer - "Unknown language (Currency=Israeli New Shekel)" - and it
+     * contains the right words in the right language, so it reviewed
+     * fine, passed every check that looked for a non-empty string, and
+     * shipped. It was found by a page that put it in a column eight rows
+     * deep, where every row began "unknown language".
+     *
+     * ## So the check is about what the name must NOT contain
+     *
+     * A currency's name is a noun phrase. It never carries a locale
+     * description, a keyword or an equals sign, and in no language does
+     * it begin by apologising for an unknown one. Asserting a non-empty
+     * string is what let this through; asserting the shape is what
+     * catches it.
+     *
+     * @return list<string>
+     */
+    private function currenciesAreNamed(): array
+    {
+        $violations = [];
+
+        /*
+         | Four currencies that this product actually trades in, in both
+         | languages. Not every code: ICU names them from one bundle, so a
+         | sample that spans two scripts and two exponents exercises the
+         | lookup, and iterating 180 of them would only make the failure
+         | longer to read.
+         */
+        foreach (['ILS', 'JOD', 'USD', 'SAR'] as $code) {
+            foreach (['ar', 'en'] as $locale) {
+                $name = CurrencyRegistry::name($code, $locale);
+
+                foreach (['=', 'Currency', 'Unknown', 'العملة=', 'غير معروفة'] as $tell) {
+                    if (str_contains($name, $tell)) {
+                        $violations[] = sprintf(
+                            'the %s name of %s is "%s", which contains "%s". That is a LOCALE being '.
+                            'described, not a currency being named - and it reads as a bug in the '.
+                            'product to everybody who sees it.',
+                            $locale,
+                            $code,
+                            $name,
+                            $tell,
+                        );
+
+                        continue 2;
+                    }
+                }
+
+                if ($name === $code) {
+                    $violations[] = sprintf(
+                        'the %s name of %s fell back to its own code. ICU names all four of these, so '.
+                        'the lookup is reaching the wrong bundle rather than finding nothing.',
+                        $locale,
+                        $code,
+                    );
+                }
+            }
+        }
+
+        /*
+         | And the two languages differ.
+         |
+         | A lookup that ignored the locale would return the English name
+         | for both and satisfy every assertion above.
+         */
+        if (CurrencyRegistry::name('ILS', 'ar') === CurrencyRegistry::name('ILS', 'en')) {
+            $violations[] = 'the Arabic and English names of ILS are identical, so the locale is being '.
+                'ignored and every Arabic reader gets English';
+        }
+
+        return $violations;
     }
 
     /** @return list<string> */

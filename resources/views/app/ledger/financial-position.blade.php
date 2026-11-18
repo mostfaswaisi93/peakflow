@@ -30,7 +30,7 @@
     where two adjacent lines differ by one word is how a figure gets read
     against the wrong label.
 
-    ## Every heading is a heading, and the accounts are inside the line
+    ## The accounts live inside the line, not in rows of their own
 
     A reader who disagrees with a line needs the accounts that made it, and
     `<details>` gives them that with no JavaScript and no second request. They

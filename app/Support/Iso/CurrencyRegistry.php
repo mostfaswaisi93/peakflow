@@ -171,15 +171,45 @@ final class CurrencyRegistry
         return self::exponent($code) === 0;
     }
 
+    /**
+     * The currency's own name, in the reader's language.
+     *
+     * ## Why not `Locale::getDisplayName('@currency=ILS')`
+     *
+     * Because that answers a different question. It names a LOCALE which
+     * happens to carry a currency keyword, so what comes back is
+     * "Unknown language (Currency=Israeli New Shekel)" in English and the
+     * same shape in Arabic. It is not nonsense - it is a correct answer to
+     * "describe this locale" - and it looked plausible enough to ship,
+     * until a currencies page put it in a column eight rows deep and every
+     * row began with the words "unknown language".
+     *
+     * ICU keeps currency names in their own resource bundle, where each
+     * entry is a pair: the symbol and then the name. That is what this
+     * reads.
+     *
+     * ## And why it falls back to the code
+     *
+     * A currency ICU has no name for still has to render as something a
+     * person can act on, and its three-letter code is the thing an
+     * accountant already knows. Printing an empty cell would make the row
+     * look broken rather than merely untranslated.
+     */
     public static function name(string $code, ?string $locale = null): string
     {
         $code = self::assertExists($code);
 
-        // ICU exposes the localized currency name through the locale display
-        // API, keyed by a `@currency=` keyword on the locale.
-        $display = \Locale::getDisplayName('@currency='.$code, $locale ?? self::locale());
+        $bundle = \ResourceBundle::create($locale ?? self::locale(), 'ICUDATA-curr');
 
-        return is_string($display) && $display !== '' ? $display : $code;
+        if (! $bundle instanceof \ResourceBundle) {
+            return $code;
+        }
+
+        $currencies = $bundle['Currencies'] ?? null;
+        $entry = $currencies === null ? null : ($currencies[$code] ?? null);
+        $name = $entry === null ? null : ($entry[1] ?? null);
+
+        return is_string($name) && $name !== '' ? $name : $code;
     }
 
     public static function symbol(string $code, ?string $locale = null): string
