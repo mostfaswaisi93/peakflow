@@ -49,6 +49,7 @@ final class Stock
         private readonly AuditTrail $audit,
         private readonly Poster $poster,
         private readonly Batches $batches,
+        private readonly OpenCount $openCount,
     ) {}
 
     /**
@@ -314,6 +315,38 @@ final class Stock
             batchId: $batchId,
             serialId: $serialId,
             narration: sprintf('%s returned to stock', (string) $item->code),
+        );
+    }
+
+    /**
+     * What one unit of this item costs on this shelf, by its own method.
+     *
+     * Public because a count needs it to value a variance before any
+     * movement exists - PF-253. The quantity matters because FIFO
+     * consumes layers: the cost of taking five out is not the cost of
+     * taking fifty, and asking for a "unit cost" without saying how many
+     * is a question with no answer under FIFO.
+     *
+     * `permitShortfall` is on, because a count asks about a quantity
+     * that may be larger than the shelf holds - that IS the finding.
+     *
+     * @throws StockRefused
+     */
+    public function costOnRecord(
+        string $entityId,
+        string $itemId,
+        string $locationId,
+        string $quantity,
+        string $currency,
+    ): BigDecimal {
+        return $this->costFor(
+            $entityId,
+            $itemId,
+            $locationId,
+            $quantity,
+            $currency,
+            $this->stockedItem($itemId),
+            permitShortfall: true,
         );
     }
 
@@ -586,6 +619,23 @@ final class Stock
         $movementId = (string) Str::ulid();
         $entity = Entity::query()->findOrFail($entityId);
 
+        /*
+         | The count open over this shelf, if one is - PF-253.
+         |
+         | Read HERE, at insert time, and not derived from dates
+         | afterwards. `moved_on` is a date: a movement dated inside the
+         | count window but keyed in two days later cannot be told apart
+         | by date from one keyed in at the time, and a count that
+         | guessed would explain its variance with a movement that had
+         | nothing to do with it.
+         |
+         | A count freezes nothing, which is the point. This is what
+         | makes that affordable: the movements are listed against the
+         | count, so the person deciding reads them instead of being
+         | told the warehouse held still.
+         */
+        $countId = $this->openCount->over($entityId, $locationId);
+
         return DB::connection('tenant')->transaction(function () use (
             $entityId,
             $entity,
@@ -607,6 +657,7 @@ final class Stock
             $expiryAcceptedBy,
             $expiryAcceptedReason,
             $serialId,
+            $countId,
             $movementId,
         ): array {
             DB::connection('tenant')->table('stock_movements')->insert([
@@ -623,6 +674,7 @@ final class Stock
                 'source_id' => $sourceId,
                 'batch_id' => $batchId,
                 'serial_id' => $serialId,
+                'count_id' => $countId,
                 'reason' => $reason,
                 'expiry_accepted_by' => $expiryAcceptedBy,
                 'expiry_accepted_reason' => $expiryAcceptedReason,

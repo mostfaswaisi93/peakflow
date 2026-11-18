@@ -125,13 +125,51 @@ this task first shipped was unreachable, and was removed. The bite
 sweep found it: dropping it changed nothing. The readable sentence
 lives in `chargeRestocking`, where somebody will see it.
 
-### PF-253 · Stock counts
-`Catalog` · **3 pts** · depends: PF-248 · standards: — · `type:posting`
+### PF-253 · Stock counts — done
+`Inventory` · **3 pts** · depends: PF-248 · standards: — · `type:posting`
 
-- [ ] A count is a document with a scope, a state and two people where the variance is material - and counting against a figure the counter can see is not a count, so the expected quantity is hidden until the count is entered
-- [ ] The variance posts as an adjustment with its reason, per line, because one total write-off tells nobody which items go missing
-- [ ] A count in progress freezes nothing and blocks nothing: movements during a count are recorded against it, since stopping a business to count is how counts stop happening
-- [ ] The variance report is by value and by quantity, and names the items that account for most of it
+- [x] A count is a document with a scope, a state and two people where the variance is material - and counting against a figure the counter can see is not a count, so the expected quantity is hidden until the count is entered
+- [x] The variance posts as an adjustment with its reason, per line, because one total write-off tells nobody which items go missing
+- [x] A count in progress freezes nothing and blocks nothing: movements during a count are recorded against it, since stopping a business to count is how counts stop happening
+- [x] The variance report is by value and by quantity, and names the items that account for most of it
+
+`stock_counts`, `stock_count_lines`, `stock_movements.count_id` ·
+`App\Tenant\Inventory\Services\StockCounts` · `config/inventory.php` ·
+`bin/verify stock`
+
+**The expected figure is hidden by two constraints, not by a method.**
+`expected_quantity` cannot exist on a line that has not been counted, so
+the sheet cannot be printed with the answer on it; and
+`counted_quantity` is write-once, so a counter cannot enter a number,
+read what it reveals and then revise it. Both are the database's,
+because the person doing this at six in the evening is not going through
+a service method. A check also reads the sheet query at source and
+refuses an aggregate over quantity in it — the leak is one added key
+away, and the first version of that check matched the comment warning
+against it rather than the code.
+
+**Each line is measured as of when it was ENTERED, not when the count
+opened.** So a delivery that arrived while the counters walked is
+already in the expected figure and the count does not report a variance
+that is really a delivery. What remains — goods that moved between the
+counter looking and the keying — is why every movement recorded while a
+count is open is tagged with it. The tag is written at insert time and
+never derived from dates afterwards, because `moved_on` is a DATE: a
+movement dated inside the window but keyed in two days later cannot be
+told apart by date from one keyed in at the time.
+
+**Materiality is copied onto the count, not read at approval time**, so
+a count approved under last year's threshold stays explainable under it.
+Below the threshold there is no second signature, deliberately:
+requiring two on a cycle count of one shelf is how the second signature
+becomes a rubber stamp, and then it is worth nothing on the count where
+a five-figure difference is being written off.
+
+**The report gives net and gross, by value and by quantity.** Net alone
+reads a count where 500 is missing from one shelf and 500 too many is on
+another as clean, and it is two serious errors. The two orderings
+disagree and the disagreement is the finding: a hundred missing screws
+and one missing laptop are the same money and not the same problem.
 
 ### PF-254 · Price history, and the price somebody was quoted
 `Catalog` · **3 pts** · depends: PF-074 · standards: — · `risk:high`

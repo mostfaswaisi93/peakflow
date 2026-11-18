@@ -122,6 +122,18 @@ final class StockRules
                 'the fee, the goods and the credit are three figures' => fn (): array => $this->theFeeIsItsOwnFigure(),
                 'a return credits cost of sales, not a supplier gap' => fn (): array => $this->aReturnCreditsCostOfSales(),
 
+                // ---- Stock counts - PF-253 -----------------------------
+                'the count sheet carries no expected figure' => fn (): array => $this->theSheetDoesNotCarryTheExpectedFigure(),
+                'a counted figure is entered once' => fn (): array => $this->aCountIsEnteredOnce(),
+                'a difference says why, and agreement need not' => fn (): array => $this->aDifferenceSaysWhy(),
+                'a count freezes nothing and blocks nothing' => fn (): array => $this->aCountFreezesNothing(),
+                'a material variance needs a second name' => fn (): array => $this->aMaterialVarianceNeedsASecondName(),
+                'and an immaterial one does not' => fn (): array => $this->anImmaterialVarianceNeedsNoSecondName(),
+                'the variance posts per line, with its reason' => fn (): array => $this->theVariancePostsPerLine(),
+                'the variance report names the worst by both measures' => fn (): array => $this->theVarianceReportNamesTheWorst(),
+                'one count per shelf at a time' => fn (): array => $this->oneCountPerShelf(),
+                'a count with a line nobody reached cannot finish' => fn (): array => $this->anUncountedLineStopsTheCount(),
+
                 // ---- The tie --------------------------------------------
                 'the inventory account equals its movements' => fn (): array => $this->inventoryReconciles(),
                 'and the check notices when it does not' => fn (): array => $this->inventoryDriftIsCaught(),
@@ -2470,7 +2482,880 @@ final class StockRules
         return $failures;
     }
 
+
+    // ---- Stock counts - PF-253 --------------------------------------------
+
+    /** @return list<string> */
+    private function theSheetDoesNotCarryTheExpectedFigure(): array
+    {
+        $item = $this->aStockedItem();
+        $this->receive($item, '40', '4.0000');
+
+        $counts = app(\App\Tenant\Inventory\Services\StockCounts::class);
+        $count = $this->aCount($counts);
+
+        $failures = [];
+        $sheet = $counts->sheet($count);
+
+        if ($sheet === []) {
+            return ['the count sheet names nothing, so there is nothing to count'];
+        }
+
+        /*
+         | No figure anywhere in the sheet.
+         |
+         | Asserted over the whole structure rather than by naming the
+         | keys I happen to have written, because the way this leaks is
+         | somebody adding `sum(m.quantity)` to the query and a helpful
+         | key alongside it.
+         */
+        foreach ($sheet as $row) {
+            foreach ($row as $key => $value) {
+                if (\is_string($value) && preg_match('/^-?\d+(\.\d+)?$/', $value) === 1) {
+                    $failures[] = sprintf(
+                        'the count sheet carries a number under "%s" (%s) - a counter who can see what '.
+                        'the system expects writes it down, and the count becomes a transcription of '.
+                        'the thing it was meant to check',
+                        (string) $key,
+                        $value,
+                    );
+                }
+            }
+        }
+
+        /*
+         | And the query behind it sums nothing.
+         |
+         | Read from the source, because the mapping below it builds its
+         | own array: a `sum(m.quantity)` added to the SELECT does not
+         | reach the result until somebody also adds a key for it, and
+         | by then the sheet has the answer on it. The bite sweep found
+         | that - adding the column alone changed nothing the returned
+         | rows could see.
+         */
+        $source = (string) file_get_contents(
+            (new \ReflectionClass(\App\Tenant\Inventory\Services\StockCounts::class))->getFileName(),
+        );
+        $sheetSql = (string) (explode('SQL, [$countId', $source, 2)[0] ?? '');
+
+        /*
+         | Comments stripped first, both kinds.
+         |
+         | The method's own comment explains what must never be added to
+         | the query by naming it, so a check that read the prose matched
+         | the warning rather than the code. It did, on the first run -
+         | the same shape as a build check that was satisfied by the
+         | example in its own docblock.
+         */
+        $sheetSql = (string) preg_replace(['~/\*.*?\*/~s', '~//[^\n]*~'], '', $sheetSql);
+
+        if (preg_match('/sum\s*\(\s*\w*\.?quantity/i', $sheetSql) === 1) {
+            $failures[] = 'the count sheet\'s query sums a quantity, which is one key away from a sheet '.
+                'printed with the answer on it';
+        }
+
+        /*
+         | And the column it would come from is empty until entered.
+         |
+         | The constraint, not the method, is the control: a sheet
+         | printed with the expected quantity on it happens when a query
+         | fills that column in advance.
+         */
+        $early = $this->refusal(fn () => DB::connection('tenant')->table('stock_count_lines')->insert([
+            'id' => (string) Str::ulid(),
+            'entity_id' => $this->entityId,
+            'count_id' => $count,
+            'item_id' => $item,
+            'expected_quantity' => '40',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]));
+
+        if ($early === null) {
+            $failures[] = 'an expected quantity was written onto a line nobody has counted, so the sheet '.
+                'can be printed with the answer on it';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function aCountIsEnteredOnce(): array
+    {
+        $item = $this->aStockedItem();
+        $this->receive($item, '40', '4.0000');
+
+        $counts = app(\App\Tenant\Inventory\Services\StockCounts::class);
+        $count = $this->aCount($counts);
+
+        $entered = $counts->enter(
+            countId: $count,
+            itemId: $item,
+            quantity: '38',
+            userId: $this->actorId(),
+            reason: 'two units are not on the shelf and no paperwork explains them',
+        );
+
+        $failures = [];
+
+        /*
+         | Compared as numbers, not as strings.
+         |
+         | The column is `numeric(21, 6)` and hands back "40.000000",
+         | which is the same quantity and a different string. A check
+         | that compared text would be asserting the column's scale.
+         */
+        foreach ([['expected', '40'], ['variance', '-2']] as [$key, $expected]) {
+            if (BigDecimal::of((string) ($entered[$key] ?? '0'))->compareTo($expected) !== 0) {
+                $failures[] = sprintf(
+                    '38 found on a shelf of 40 reports %s as %s rather than %s',
+                    $key,
+                    (string) ($entered[$key] ?? '-'),
+                    $expected,
+                );
+            }
+        }
+
+        /*
+         | And the figure cannot be revised now that it has revealed one.
+         |
+         | Which is the door the "expected follows counted" constraint
+         | leaves open: enter a number, read what it reveals, then
+         | "correct" the number. A recount is a new count.
+         */
+        $line = DB::connection('tenant')->table('stock_count_lines')
+            ->where('count_id', $count)
+            ->value('id');
+
+        $revised = $this->refusal(fn () => DB::connection('tenant')->table('stock_count_lines')
+            ->where('id', $line)
+            ->update(['counted_quantity' => '40']));
+
+        if ($revised === null) {
+            $failures[] = 'a counted figure was revised after the expected quantity it revealed, which '.
+                'is the one thing a count exists to prevent';
+        } elseif (! str_contains($revised, 'Recount the shelf as a new count')) {
+            $failures[] = 'the refusal does not say what to do instead: '.$revised;
+        }
+
+        /*
+         | The rest of the row still moves, though.
+         |
+         | A trigger that froze the whole line would stop the service
+         | writing `movement_id` when the count posts, and the symptom
+         | would be a posted count whose lines name no adjustment.
+         */
+        if ($this->refusal(fn () => DB::connection('tenant')->table('stock_count_lines')
+            ->where('id', $line)
+            ->update(['reason' => 'two units are not on the shelf, and the CCTV shows nothing'])) !== null) {
+            $failures[] = 'nothing on a counted line can be changed, so the count cannot record the '.
+                'adjustment it posted';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function aDifferenceSaysWhy(): array
+    {
+        $item = $this->aStockedItem();
+        $this->receive($item, '40', '4.0000');
+
+        $counts = app(\App\Tenant\Inventory\Services\StockCounts::class);
+        $count = $this->aCount($counts);
+
+        $failures = [];
+
+        $silent = $this->refusal(fn () => $counts->enter(
+            countId: $count,
+            itemId: $item,
+            quantity: '38',
+            userId: $this->actorId(),
+        ));
+
+        if ($silent === null) {
+            $failures[] = 'two units went missing and the line says nothing about it - one total '.
+                'write-off tells nobody which items go missing';
+        } elseif (! str_contains($silent, 'which items go missing')) {
+            /*
+             | And the sentence is the service's, not the column's.
+             |
+             | The constraint refuses a silent variance too, which is the
+             | control - but "violates check constraint
+             | stock_count_lines_a_difference_says_why" is read by
+             | somebody holding a clipboard, and it tells them nothing to
+             | type.
+             */
+            $failures[] = 'a silent variance is refused by the column rather than explained by the '.
+                'service, so the counter is shown a constraint name: '.$silent;
+        }
+
+        /*
+         | And a negative count is a typo, not a finding.
+         |
+         | The variance may be negative - that is the whole point - but
+         | what was found is a number of things somebody looked at.
+         */
+        $negative = $this->refusal(fn () => $counts->enter(
+            countId: $count,
+            itemId: $this->anotherCountedItem('4'),
+            quantity: '-4',
+            userId: $this->actorId(),
+            reason: 'the shelf was empty and then some',
+        ));
+
+        if ($negative === null) {
+            $failures[] = 'a count of -4 was accepted as what was on a shelf';
+        } elseif (! str_contains($negative, 'does not hold a negative quantity')) {
+            $failures[] = 'a negative count is refused by the column rather than explained by the '.
+                'service: '.$negative;
+        }
+
+        /*
+         | And agreement needs no sentence - on a second item, because
+         | the first one's figure is write-once.
+         |
+         | Asking for a reason on every line of a count that agreed is
+         | how a count of two hundred lines gets "ok" typed two hundred
+         | times - and then the four that mattered say "ok" too.
+         */
+        if ($this->refusal(fn () => $counts->enter(
+            countId: $count,
+            itemId: $this->anotherCountedItem('12'),
+            quantity: '12',
+            userId: $this->actorId(),
+        )) !== null) {
+            $failures[] = 'a line that agreed with the books was refused for having no reason, which is '.
+                'how every line ends up saying "ok"';
+        }
+
+        /*
+         | And the column refuses all four directly.
+         |
+         | The service's sentences above are for a person with a
+         | clipboard. These are for the import, the second screen and
+         | the fixture - none of which calls `enter()`, and all of which
+         | write count lines. The bite sweep found them unexercised:
+         | dropping each constraint changed nothing, because the service
+         | got there first every time.
+         */
+        $direct = $this->anotherCountedItem('9');
+
+        foreach ([
+            ['a silent variance', ['counted_quantity' => '7', 'expected_quantity' => '9', 'variance_quantity' => '-2', 'unit_cost' => '4.00000000', 'variance_value' => '-8.0000']],
+            ['a negative count', ['counted_quantity' => '-7', 'expected_quantity' => '9', 'variance_quantity' => '-16', 'unit_cost' => '4.00000000', 'variance_value' => '-64.0000', 'reason' => 'the shelf was empty and then some']],
+            ['a variance that is not the difference', ['counted_quantity' => '7', 'expected_quantity' => '9', 'variance_quantity' => '-1', 'unit_cost' => '4.00000000', 'variance_value' => '-4.0000', 'reason' => 'one unit short, or so the figure claims']],
+            ['a value that is not the arithmetic', ['counted_quantity' => '7', 'expected_quantity' => '9', 'variance_quantity' => '-2', 'unit_cost' => '4.00000000', 'variance_value' => '-99.0000', 'reason' => 'two units short at a cost nobody can derive']],
+        ] as [$label, $columns]) {
+            $refused = $this->refusal(fn () => DB::connection('tenant')->table('stock_count_lines')->insert(
+                array_merge([
+                    'id' => (string) Str::ulid(),
+                    'entity_id' => $this->entityId,
+                    'count_id' => $count,
+                    'item_id' => $direct,
+                    'counted_at' => now(),
+                    'counted_by' => $this->actorId(),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ], $columns),
+            ));
+
+            if ($refused === null) {
+                $failures[] = sprintf(
+                    'the database accepted %s written straight onto a count line, so an import or a '.
+                    'second screen puts it there',
+                    $label,
+                );
+            }
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function aCountFreezesNothing(): array
+    {
+        $item = $this->aStockedItem();
+        $this->receive($item, '40', '4.0000');
+
+        /*
+         | A second item, stocked BEFORE the count opens.
+         |
+         | So that one line has a mid-count movement against it and one
+         | does not, and the note each gets can be told apart. Stocking
+         | it afterwards tags its receipt with the count too, and then
+         | both lines report a movement - which is what the first draft
+         | of this fixture did.
+         */
+        $quiet = $this->aStockedItem();
+        $this->receive($quiet, '5', '4.0000');
+
+        $counts = app(\App\Tenant\Inventory\Services\StockCounts::class);
+        $count = $this->aCount($counts);
+
+        $failures = [];
+
+        /*
+         | Ten more arrive while the counters are walking.
+         |
+         | Performed, not probed: `refusal()` rolls back whatever it
+         | runs, so using it here would undo the delivery and the tag on
+         | it, and the check would then be measuring a warehouse that
+         | did hold still. It cost a debugging session to notice.
+         |
+         | Stopping a business to count is how counts stop happening, so
+         | this has to work - and it has to be visible afterwards.
+         */
+        try {
+            $this->receive($item, '10', '4.0000');
+        } catch (\Throwable $e) {
+            return [
+                'a delivery was refused because a count was open, which is how counting stops happening '.
+                'at all: '.$e->getMessage(),
+            ];
+        }
+
+        $moved = $counts->movementsDuring($count, $item);
+
+        if (\count($moved) !== 1) {
+            $failures[] = sprintf(
+                '%d movement(s) are recorded against the count rather than the one delivery that '.
+                'arrived while it was open, so the variance cannot be explained by reading them',
+                \count($moved),
+            );
+        }
+
+        /*
+         | And the line is measured against 50, not 40.
+         |
+         | The expected figure is as of the moment the line is ENTERED,
+         | so the delivery is already in it and the count does not
+         | report a variance that is really a delivery.
+         */
+        $entered = $counts->enter(
+            countId: $count,
+            itemId: $item,
+            quantity: '50',
+            userId: $this->actorId(),
+        );
+
+        if (BigDecimal::of((string) ($entered['expected'] ?? '0'))->compareTo('50') !== 0) {
+            $failures[] = sprintf(
+                'a shelf holding 50 after a mid-count delivery was measured against %s, so the count '.
+                'reports a variance that is really the delivery',
+                (string) ($entered['expected'] ?? '-'),
+            );
+        }
+
+        /*
+         | And the movements that were recorded are named in the answer.
+         */
+        $zero = $counts->enter(
+            countId: $count,
+            itemId: $quiet,
+            quantity: '3',
+            userId: $this->actorId(),
+            reason: 'two are missing from the second shelf and nothing explains them',
+        );
+
+        if (! str_contains((string) $zero['why'], 'Nothing moved on this item')) {
+            $failures[] = 'a variance on an item that did not move does not say so, so somebody will '.
+                'go looking for a delivery that is not there: '.(string) $zero['why'];
+        }
+
+        /*
+         | And the item that DID move says so.
+         |
+         | Both halves, because a note that always said the same thing
+         | would pass one of these two checks and tell nobody anything.
+         */
+        $busy = $counts->enter(
+            countId: $count,
+            itemId: $this->anotherCountedItem('7'),
+            quantity: '4',
+            userId: $this->actorId(),
+            reason: 'three are missing from the third shelf and nothing explains them',
+        );
+
+        if (! str_contains((string) $busy['why'], 'movement(s) of this item were recorded')) {
+            $failures[] = 'a variance on an item whose goods moved mid-count does not say so, so the '.
+                'difference will be written off without anybody reading the movement: '.(string) $busy['why'];
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function aMaterialVarianceNeedsASecondName(): array
+    {
+        $item = $this->aStockedItem();
+        $this->receive($item, '1000', '4.0000');
+
+        $counts = app(\App\Tenant\Inventory\Services\StockCounts::class);
+        $count = $this->aCount($counts);
+
+        /*
+         | 200 units at 4.0000 is 800, over the 500 materiality.
+         */
+        $counts->enter(
+            countId: $count,
+            itemId: $item,
+            quantity: '800',
+            userId: $this->actorId(),
+            reason: 'two hundred units are not on the shelf and no paperwork explains them',
+        );
+
+        $failures = [];
+        $finished = $counts->finish($count, $this->actorId());
+
+        if (($finished['needs_approval'] ?? false) !== true) {
+            $failures[] = 'a variance of 800 against a materiality of 500 does not ask for a second '.
+                'name, so the write-off that matters is the one nobody else sees';
+        }
+
+        $unapproved = $this->refusal(fn () => $counts->post(
+            $count,
+            Carbon::parse('2026-05-18'),
+            $this->actorId(),
+        ));
+
+        if ($unapproved === null) {
+            $failures[] = 'a material variance posted with nobody approving it';
+        } elseif (! str_contains($unapproved, 'the moment the books change')) {
+            $failures[] = 'posting a material variance unapproved is refused by the column rather than '.
+                'explained by the service: '.$unapproved;
+        }
+
+        /*
+         | And the counter cannot approve their own.
+         |
+         | A counter who can do both can make missing stock disappear
+         | from the books by typing a reason.
+         */
+        $self = $this->refusal(fn () => $counts->approve(
+            $count,
+            'I counted it myself and I am sure',
+            $this->actorId(),
+        ));
+
+        if ($self === null) {
+            $failures[] = 'the person who counted approved their own write-off';
+        } elseif (! str_contains($self, 'typing a reason')) {
+            $failures[] = 'self-approval is refused by the column rather than explained by the service, '.
+                'so the person is shown a constraint name: '.$self;
+        }
+
+        $counts->approve($count, 'the stock room was reorganised and the shortfall is real', $this->secondActorId());
+        $counts->post($count, Carbon::parse('2026-05-18'), $this->secondActorId());
+
+        $state = DB::connection('tenant')->table('stock_counts')->where('id', $count)->value('state');
+
+        if ((string) $state !== 'posted') {
+            $failures[] = sprintf('an approved count is %s rather than posted', (string) $state);
+        }
+
+        /*
+         | And the database refuses the pair directly.
+         |
+         | The service's sentence is for a person; the constraint is for
+         | the import, the fixture and the second screen.
+         */
+        $direct = $this->refusal(fn () => DB::connection('tenant')->table('stock_counts')
+            ->where('id', $count)
+            ->update(['approved_by' => $this->actorId()]));
+
+        if ($direct === null) {
+            $failures[] = 'the database accepts a count whose counter is also its approver';
+        }
+
+        /*
+         | And a material variance cannot be marked posted with nobody
+         | named against it.
+         |
+         | Written straight to the row, because the state column is what
+         | "this is in the books" means, and a repair script is exactly
+         | the thing that sets it.
+         */
+        $unnamed = $this->aCount($counts, $this->quarantineId);
+
+        DB::connection('tenant')->table('stock_counts')->where('id', $unnamed)->update([
+            'state' => 'counted',
+            'counted_at' => now(),
+            'counted_by' => $this->actorId(),
+            'variance_value' => '-800.0000',
+            'updated_at' => now(),
+        ]);
+
+        $forced = $this->refusal(fn () => DB::connection('tenant')->table('stock_counts')
+            ->where('id', $unnamed)
+            ->update(['state' => 'posted', 'posted_at' => now()]));
+
+        if ($forced === null) {
+            $failures[] = 'a count with an 800 variance was marked posted with nobody approving it, so '.
+                'a repair script can write off whatever it likes';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function anImmaterialVarianceNeedsNoSecondName(): array
+    {
+        $item = $this->aStockedItem();
+        $this->receive($item, '40', '4.0000');
+
+        $counts = app(\App\Tenant\Inventory\Services\StockCounts::class);
+        $count = $this->aCount($counts);
+
+        /*
+         | Two units at 4.0000 is 8, well under the 500 materiality.
+         |
+         | Requiring two signatures on a cycle count of one shelf is how
+         | the second signature becomes a rubber stamp - and then it is
+         | worth nothing on the count where a five-figure difference is
+         | being written off.
+         */
+        $counts->enter(
+            countId: $count,
+            itemId: $item,
+            quantity: '38',
+            userId: $this->actorId(),
+            reason: 'two units are not on the shelf and no paperwork explains them',
+        );
+
+        $failures = [];
+        $finished = $counts->finish($count, $this->actorId());
+
+        if (($finished['needs_approval'] ?? true) !== false) {
+            $failures[] = 'a variance of 8 against a materiality of 500 demands a second signature, '.
+                'which is how the second signature stops meaning anything';
+        }
+
+        if ($this->refusal(fn () => $counts->post($count, Carbon::parse('2026-05-18'), $this->actorId())) !== null) {
+            $failures[] = 'an immaterial variance could not post without a second name';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function theVariancePostsPerLine(): array
+    {
+        $before = $this->balanceOf(ControlRole::CostOfSales);
+
+        $short = $this->aStockedItem();
+        $over = $this->aStockedItem();
+
+        $this->receive($short, '40', '4.0000');
+        $this->receive($over, '40', '4.0000');
+
+        $counts = app(\App\Tenant\Inventory\Services\StockCounts::class);
+        $count = $this->aCount($counts);
+
+        $counts->enter(
+            countId: $count,
+            itemId: $short,
+            quantity: '38',
+            userId: $this->actorId(),
+            reason: 'two units are not on the shelf and no paperwork explains them',
+        );
+
+        $counts->enter(
+            countId: $count,
+            itemId: $over,
+            quantity: '41',
+            userId: $this->actorId(),
+            reason: 'one more than the books say, probably a receipt booked to the wrong item',
+        );
+
+        $counts->finish($count, $this->actorId());
+        $posted = $counts->post($count, Carbon::parse('2026-05-18'), $this->secondActorId());
+
+        $failures = [];
+
+        /*
+         | Two adjustments, not one.
+         |
+         | "Shrinkage, 4,200" is a figure somebody approves once a
+         | quarter and nobody acts on. Two lines each naming an item and
+         | a reason is a list somebody can do something about.
+         */
+        if (\count((array) $posted['adjustments']) !== 2) {
+            $failures[] = sprintf(
+                'a count with two differing lines posted %d adjustment(s) - one total write-off tells '.
+                'nobody which items go missing',
+                \count((array) $posted['adjustments']),
+            );
+        }
+
+        $movements = DB::connection('tenant')->table('stock_movements')
+            ->whereIn('id', (array) $posted['adjustments'])
+            ->get();
+
+        foreach ($movements as $movement) {
+            if ((string) $movement->kind !== 'count') {
+                $failures[] = sprintf(
+                    'the adjustment is a %s rather than a count, so "how much did counts write off this '.
+                    'year" cannot be answered',
+                    (string) $movement->kind,
+                );
+            }
+
+            if (! str_contains((string) $movement->reason, 'CNT-')) {
+                $failures[] = 'the adjustment does not name the count it came from: '.(string) $movement->reason;
+            }
+        }
+
+        /*
+         | Net: two short and one over, at 4.0000, is 4 of cost.
+         */
+        $moved = $this->balanceOf(ControlRole::CostOfSales)->minus($before);
+
+        if (! $moved->equals(Money::of('4.0000', 'SAR'))) {
+            $failures[] = sprintf(
+                'two short and one over at 4.0000 moved cost of sales by %s rather than 4',
+                (string) $moved->amount,
+            );
+        }
+
+        /*
+         | And the posted count is history.
+         */
+        $line = DB::connection('tenant')->table('stock_count_lines')->where('count_id', $count)->value('id');
+        $edited = $this->refusal(fn () => DB::connection('tenant')->table('stock_count_lines')
+            ->where('id', $line)
+            ->update(['reason' => 'actually it was fine']));
+
+        if ($edited === null) {
+            $failures[] = 'a line of a posted count can be edited, leaving a journal entry describing a '.
+                'difference nobody can recompute';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function theVarianceReportNamesTheWorst(): array
+    {
+        $screws = $this->aStockedItem();
+        $laptop = $this->aStockedItem();
+
+        $this->receive($screws, '1000', '0.1000');
+        $this->receive($laptop, '10', '400.0000');
+
+        $counts = app(\App\Tenant\Inventory\Services\StockCounts::class);
+        $count = $this->aCount($counts);
+
+        /*
+         | A hundred missing screws and one missing laptop.
+         |
+         | 10 of value against 400 of value, and 100 of quantity against
+         | 1. The two orderings disagree, and the disagreement is the
+         | finding: they are not the same problem, and a report with
+         | only one of them sends somebody to count screws.
+         */
+        $counts->enter(
+            countId: $count,
+            itemId: $screws,
+            quantity: '900',
+            userId: $this->actorId(),
+            reason: 'a hundred screws unaccounted for, probably issued without paperwork',
+        );
+
+        $counts->enter(
+            countId: $count,
+            itemId: $laptop,
+            quantity: '9',
+            userId: $this->actorId(),
+            reason: 'one laptop is not in the cupboard and nobody has signed for it',
+        );
+
+        $report = $counts->variance($count);
+        $failures = [];
+
+        if (($report['by_value'][0]['code'] ?? '') !== (string) DB::connection('tenant')->table('items')->where('id', $laptop)->value('code')) {
+            $failures[] = 'the laptop is not the first line by value, so the report does not say where '.
+                'the money went';
+        }
+
+        if (($report['by_quantity'][0]['code'] ?? '') !== (string) DB::connection('tenant')->table('items')->where('id', $screws)->value('code')) {
+            $failures[] = 'the screws are not the first line by quantity, so the report does not say '.
+                'what is walking out of the door';
+        }
+
+        /*
+         | And net is not the whole story.
+         |
+         | A count where 500 is missing from one shelf and 500 too many
+         | is on another nets to zero - which reads as a clean count and
+         | is two serious errors.
+         */
+        foreach (['net_value' => '-410.0000', 'gross_value' => '410.0000'] as $key => $expected) {
+            if (BigDecimal::of((string) $report[$key])->compareTo($expected) !== 0) {
+                $failures[] = sprintf('%s reads %s rather than %s', $key, (string) $report[$key], $expected);
+            }
+        }
+
+        if (($report['lines_differing'] ?? 0) !== 2) {
+            $failures[] = sprintf(
+                'the report counts %d differing line(s) of 2',
+                (int) ($report['lines_differing'] ?? 0),
+            );
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function oneCountPerShelf(): array
+    {
+        $counts = app(\App\Tenant\Inventory\Services\StockCounts::class);
+        $this->aCount($counts);
+
+        $failures = [];
+        $second = $this->refusal(fn () => $this->aCount($counts));
+
+        if ($second === null) {
+            $failures[] = 'two counts were opened over one shelf, which produces two expected figures '.
+                'for the same goods and two adjustments for one difference';
+        } elseif (! str_contains($second, 'is already open over')) {
+            $failures[] = 'a second count is refused by the index rather than explained by the service, '.
+                'so nobody is told which count already has the shelf: '.$second;
+        }
+
+        /*
+         | And the index refuses it, not only the service.
+         |
+         | Two people opening a count on the same shelf in the same
+         | second is a race the service cannot see.
+         */
+        $direct = $this->refusal(fn () => DB::connection('tenant')->table('stock_counts')->insert([
+            'id' => (string) Str::ulid(),
+            'entity_id' => $this->entityId,
+            'number' => 'CNT-'.Str::upper(Str::random(8)),
+            'location_id' => $this->locationId,
+            'state' => 'counting',
+            'reason' => 'a second count of the same shelf, opened by a second person',
+            'opened_at' => now(),
+            'opened_by' => $this->actorId(),
+            'materiality' => '500.0000',
+            'currency' => 'SAR',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]));
+
+        if ($direct === null) {
+            $failures[] = 'the database accepted a second open count over one shelf, so two people '.
+                'opening one at the same moment both succeed';
+        }
+
+        /*
+         | A finished one leaves the shelf free.
+         */
+        $count = DB::connection('tenant')->table('stock_counts')
+            ->where('entity_id', $this->entityId)
+            ->where('location_id', $this->locationId)
+            ->value('id');
+
+        app(\App\Tenant\Inventory\Services\StockCounts::class)
+            ->cancel((string) $count, 'the stock room was not ready and the count was abandoned', $this->actorId());
+
+        if ($this->refusal(fn () => $this->aCount($counts)) !== null) {
+            $failures[] = 'a cancelled count still holds the shelf, so an abandoned count blocks the '.
+                'next one for ever';
+        }
+
+        /*
+         | And a count cannot be abandoned silently.
+         |
+         | A count that was started and dropped is the one somebody asks
+         | about at year end, and "cancelled" with no sentence is an
+         | answer nobody can use. Asserted against the row, because the
+         | way a count gets abandoned quietly is a status update.
+         */
+        $quiet = $this->aCount($counts, $this->quarantineId);
+
+        $silent = $this->refusal(fn () => DB::connection('tenant')->table('stock_counts')
+            ->where('id', $quiet)
+            ->update(['state' => 'cancelled']));
+
+        if ($silent === null) {
+            $failures[] = 'a count was cancelled with no reason on the row, so an abandoned count is '.
+                'unexplainable at year end';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function anUncountedLineStopsTheCount(): array
+    {
+        $item = $this->aStockedItem();
+        $this->receive($item, '40', '4.0000');
+
+        $counts = app(\App\Tenant\Inventory\Services\StockCounts::class);
+        $count = $this->aCount($counts);
+
+        $failures = [];
+
+        /*
+         | A line on the sheet with nothing against it.
+         |
+         | Which is what a half-done count looks like: the shelf nobody
+         | reached. Finishing anyway would post the difference between
+         | what was found and what the system says for shelves nobody
+         | looked at.
+         */
+        DB::connection('tenant')->table('stock_count_lines')->insert([
+            'id' => (string) Str::ulid(),
+            'entity_id' => $this->entityId,
+            'count_id' => $count,
+            'item_id' => $item,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $early = $this->refusal(fn () => $counts->finish($count, $this->actorId()));
+
+        if ($early === null) {
+            $failures[] = 'a count finished with a line nobody had counted, so a shelf nobody reached '.
+                'was written off as if it had been';
+        }
+
+        $empty = $this->refusal(fn () => app(\App\Tenant\Inventory\Services\StockCounts::class)->finish(
+            $this->aCount($counts, $this->quarantineId),
+            $this->actorId(),
+        ));
+
+        if ($empty === null) {
+            $failures[] = 'a count with no lines at all could be finished, which posts nothing and '.
+                'records that the shelf was checked';
+        }
+
+        return $failures;
+    }
+
     // ---- Helpers ----------------------------------------------------------
+    private function aCount(object $counts, ?string $locationId = null): string
+    {
+        return (string) $counts->open(
+            entityId: $this->entityId,
+            locationId: $locationId ?? $this->locationId,
+            reason: 'the quarterly cycle count of the main warehouse',
+            on: Carbon::parse('2026-05-18'),
+            userId: $this->actorId(),
+        )['id'];
+    }
+
+    /** A second stocked item with stock on the same shelf. */
+    private function anotherCountedItem(string $quantity): string
+    {
+        $item = $this->aStockedItem();
+        $this->receive($item, $quantity, '4.0000');
+
+        return $item;
+    }
+
     // ---- Serial, warranty and return helpers ------------------------------
 
     private function aSerialItem(): string
