@@ -87,6 +87,11 @@ deptrac:
         - type: directory
           value: app/Tenant/Settlement/.*
 
+    - name: Sync
+      collectors:
+        - type: directory
+          value: app/Tenant/Sync/.*
+
     - name: Reporting
       collectors:
         - type: directory
@@ -191,6 +196,21 @@ deptrac:
       - Purchasing
       - Banking
 
+    # Writes from a device, applied exactly once - PF-255.
+    #
+    # Deliberately thin: Support for the audit trail, Tenancy for the
+    # entity, and nothing else. Sync does not know what a sale IS - the
+    # work is handed to it as a closure by whichever module owns the
+    # document, so the idempotency ledger cannot grow a second
+    # implementation of selling something.
+    #
+    # Which is also why nothing here reaches Ledger. A submission that
+    # could post would be a second posting path, and the first thing to
+    # follow would be a till that posts without a journal rule.
+    Sync:
+      - Support
+      - Tenancy
+
     # Reads everything. Nothing reads it.
     Reporting:
       - Support
@@ -204,6 +224,7 @@ deptrac:
       - Purchasing
       - Banking
       - Settlement
+      - Sync
 
     Exchange:
       - Support

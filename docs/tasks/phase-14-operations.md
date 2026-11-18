@@ -233,14 +233,64 @@ percentage and the word "off" in front of a sentence that was not a
 discount. The check that was supposed to catch the second one passed on
 it, because the note it looked for was in there somewhere.
 
-### PF-255 · Offline-first sync and devices
+### PF-255 · Offline-first sync and devices — done
 `Platform` · **8 pts** · depends: PF-010, PF-035 · standards: — · `risk:high` `type:security`
 
-- [ ] A device is registered, named and revocable, and its token is scoped to one tenant - a till that keeps working after it is stolen is the whole risk here
-- [ ] Writes made offline carry a client-generated id, so replaying them twice creates one record. **Idempotency is the contract**, because a network that drops a response is indistinguishable from one that drops a request
-- [ ] Conflicts are **surfaced, never merged silently**: two tills selling the last unit is a fact somebody has to decide about, and a last-write-wins rule decides it by latency
-- [ ] A sync event log says what each device sent and when, because "the till says 400 and the server says 380" is otherwise unanswerable
-- [ ] Clock skew is handled by ordering on the server's receipt, not on the device's clock - a till with the wrong date must not be able to post into a closed period
+- [x] A device is registered, named and revocable, and its token is scoped to one tenant - a till that keeps working after it is stolen is the whole risk here
+- [x] Writes made offline carry a client-generated id, so replaying them twice creates one record. **Idempotency is the contract**, because a network that drops a response is indistinguishable from one that drops a request
+- [x] Conflicts are **surfaced, never merged silently**: two tills selling the last unit is a fact somebody has to decide about, and a last-write-wins rule decides it by latency
+- [x] A sync event log says what each device sent and when, because "the till says 400 and the server says 380" is otherwise unanswerable
+- [x] Clock skew is handled by ordering on the server's receipt, not on the device's clock - a till with the wrong date must not be able to post into a closed period
+
+`devices` (operator plane) · `sync_submissions`, `sync_conflicts`
+(tenant) · `App\Platform\Services\Devices` ·
+`App\Tenant\Sync\Services\Submissions` · `bin/verify sync`
+
+**Devices live in the operator's database.** A token has to resolve to a
+tenant *before* any tenant connection is opened — the same reason
+`tenants` lives there — and a revocation has to be enforced in exactly
+one place. A device row per tenant database means a stolen till is
+revoked in one and still working in another, and nobody finds out until
+the till turns up.
+
+The secret is `sha256`, not bcrypt, and that is deliberate: this is
+verified on every request a shop makes, and a work factor in the tens of
+milliseconds would make the shop feel broken. What bcrypt buys is
+protection against a weak secret, and a 32-byte random token has no weak
+secret to protect. There is no "show me the token again", because a
+product that could show it has stored it, and one that has stored it has
+it in its backups.
+
+**The row is claimed before the work runs.** That ordering is what lets
+the unique index on `client_id` serialise two attempts that are both in
+flight — the case a read-then-write check cannot see, and the one that
+happens when a till retries while the first attempt is still going. A
+check asserts it from *inside* the work, because both orders end with
+one row and the difference is invisible from outside.
+
+**The stored answer matters as much as the stored id.** A row recording
+only "we have seen this" makes the second attempt answerable with
+nothing, and the till either shows an error for a sale that went through
+or retries forever. So a replay returns the *original* result, and the
+check's fixture returns a different receipt number each time it runs —
+otherwise it would pass whether the answer was stored or recomputed.
+
+**Nothing is ordered or dated by the device's clock.** `occurred_at` is
+recorded so the skew is visible and used for nothing else. A tablet that
+spent a month in a drawer comes back with last month's date; a product
+that dated postings by it would post into a closed period.
+
+**A conflict carries both sides, or it is a rejection.** That is what
+`SyncRefused::aConflict()` exists for: if the code raising the refusal
+cannot name what the device said and what the server says, there is
+nothing for a person to decide, and recording it as a conflict would
+build a queue nobody can work.
+
+One defect the checks found: `client_id` was `char(64)`, and `char` is
+blank-padded in PostgreSQL — a 20-character id came back as 20
+characters and 44 spaces, so the till could not match our answer to its
+own queue entry, which is the one thing the column exists for. Found by
+a check comparing the log's order against the ids it sent.
 
 ### PF-256 · Payroll payments
 `Settlement` · **5 pts** · depends: PF-174, PF-141 · standards: — · `risk:high`
