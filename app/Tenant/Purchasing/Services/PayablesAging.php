@@ -53,7 +53,13 @@ use Illuminate\Support\Facades\DB;
  */
 final class PayablesAging
 {
-    /** The bucket boundaries, in days past the basis date. */
+    /**
+     * The DEFAULT bucket boundaries, in days past the basis date.
+     *
+     * The ones `Ageing`, `ExpectedCreditLoss` and the Overview tile already
+     * use, so that an entity which has not decided means the same thing by
+     * "61-90" on all four.
+     */
     public const BUCKETS = [30, 60, 90];
 
     public function __construct(private readonly Settings $settings) {}
@@ -61,7 +67,20 @@ final class PayablesAging
     /**
      * The aging report.
      *
+     * ## Why the boundaries are a parameter - PF-190
+     *
+     * Thirty, sixty and ninety suit a business on thirty-day terms and
+     * suit nobody on fourteen: every balance lands in `1-30` and the
+     * report says nothing. The boundaries are read from the entity's own
+     * setting by the report that presents them, and passed in here, so
+     * this service is not the place that decides and the AR and AP sides
+     * of one report cannot bucket differently.
+     *
+     * The default is {@see BUCKETS}, which is what every caller before
+     * PF-190 gets.
+     *
      * @param  'due_date'|'document_date'|null  $basis  null reads the entity's setting
+     * @param  list<int>|null  $boundaries  days past the basis date; null is the default
      * @return array<string, mixed>
      */
     public function report(
@@ -69,9 +88,11 @@ final class PayablesAging
         ?Carbon $asOf = null,
         ?string $basis = null,
         ?string $partyId = null,
+        ?array $boundaries = null,
     ): array {
         $day = ($asOf ?? Carbon::now())->copy()->startOfDay();
         $basis ??= (string) $this->settings->get('aging.basis', $entityId);
+        $boundaries ??= self::BUCKETS;
 
         $bills = Bill::query()
             ->where('entity_id', $entityId)
@@ -103,7 +124,7 @@ final class PayablesAging
                 }
 
                 $age = (int) Carbon::parse($instalment['aged_from'])->diffInDays($day, absolute: false);
-                $bucket = $this->bucketFor($age);
+                $bucket = $this->bucketFor($age, $boundaries);
                 $currency = (string) $bill->currency;
                 $party = (string) $bill->party_id;
                 $currencies[$currency] = true;
@@ -123,7 +144,7 @@ final class PayablesAging
                     'outstanding' => (string) $instalment['outstanding']->amount,
                 ];
 
-                $buckets[$currency] ??= $this->emptyBuckets($currency);
+                $buckets[$currency] ??= $this->emptyBuckets($currency, $boundaries);
                 $buckets[$currency][$bucket] = $buckets[$currency][$bucket]->plus($instalment['outstanding']);
 
                 $totals[$currency] = ($totals[$currency] ?? Money::zero($currency))
@@ -135,7 +156,7 @@ final class PayablesAging
                     'totals' => [],
                 ];
 
-                $bySupplier[$party]['buckets'][$currency] ??= $this->emptyBuckets($currency);
+                $bySupplier[$party]['buckets'][$currency] ??= $this->emptyBuckets($currency, $boundaries);
                 $bySupplier[$party]['buckets'][$currency][$bucket] =
                     $bySupplier[$party]['buckets'][$currency][$bucket]->plus($instalment['outstanding']);
 
@@ -156,6 +177,14 @@ final class PayablesAging
              | due and skips one that is.
              */
             'basis' => $basis,
+            /*
+             | The boundaries, on the output - PF-190.
+             |
+             | "1-30" means nothing without them: an entity that moved the
+             | boundaries to 14/30/60 produces a report whose bucket names
+             | read the same and whose figures are a different question.
+             */
+            'boundaries' => $boundaries,
             'basis_label' => $basis === 'due_date'
                 ? 'aged from each instalment\'s due date'
                 : 'aged from the supplier\'s document date',
@@ -633,13 +662,16 @@ final class PayablesAging
         return Money::of((string) ($sum ?? '0'), $currency === '' ? 'SAR' : $currency)->negated();
     }
 
-    /** @return array<string, Money> */
-    private function emptyBuckets(string $currency): array
+    /**
+     * @param  list<int>  $boundaries
+     * @return array<string, Money>
+     */
+    private function emptyBuckets(string $currency, array $boundaries): array
     {
         $buckets = ['current' => Money::zero($currency)];
         $previous = 0;
 
-        foreach (self::BUCKETS as $boundary) {
+        foreach ($boundaries as $boundary) {
             $buckets[sprintf('%d-%d', $previous + 1, $boundary)] = Money::zero($currency);
             $previous = $boundary;
         }
@@ -649,7 +681,8 @@ final class PayablesAging
         return $buckets;
     }
 
-    private function bucketFor(int $age): string
+    /** @param list<int> $boundaries */
+    private function bucketFor(int $age, array $boundaries): string
     {
         if ($age <= 0) {
             return 'current';
@@ -657,7 +690,7 @@ final class PayablesAging
 
         $previous = 0;
 
-        foreach (self::BUCKETS as $boundary) {
+        foreach ($boundaries as $boundary) {
             if ($age <= $boundary) {
                 return sprintf('%d-%d', $previous + 1, $boundary);
             }

@@ -162,56 +162,119 @@ final class TrialBalance
     }
 
     /**
-     * The lines behind one figure - PF-058's drill-down.
+     * The lines behind one figure - PF-058's drill-down, widened by PF-189.
      *
      * Same bounds as the balance it explains, so the sum of what comes back
      * equals the figure that was clicked. A drill-down that does not add up
      * to its own total is worse than none: it teaches people the report is
      * approximate.
      *
+     * ## Why it takes a SET of accounts
+     *
+     * Because a figure on a statement almost never belongs to one account.
+     * "Trade and other receivables" is every account on that IAS 1 line,
+     * and the operating section of a cash flow statement is a dozen of
+     * them. A drill-down that could only take one code would be called in
+     * a loop by every report that has sections - so the query count would
+     * follow the chart of accounts, invisibly, because the figures would
+     * still be right.
+     *
+     * One code is still accepted and is the same thing with one member, so
+     * PF-058's callers are unchanged.
+     *
+     * ## Why the ids and the two user columns are here and not in a second
+     * query
+     *
+     * PF-189 drills from a figure to its lines, then to the source
+     * document, then to who entered and posted it. Each of those needs the
+     * handle for the next level, and fetching them separately would mean
+     * reading the same entries again - with a second copy of this WHERE
+     * clause deciding which lines are in the figure. Two copies of that
+     * clause is two populations, and the symptom would be a drill-down
+     * whose document list does not match its own line list.
+     *
+     * @param  string|list<string>  $accountCode  one code, or every code on a statement line
      * @return Collection<int, object>
      */
     public function drillDown(
         string $entityId,
-        string $accountCode,
+        string|array $accountCode,
         Carbon $asAt,
         ?Carbon $from = null,
         bool $includeAdjusting = true,
     ): Collection {
-        $bindings = [$entityId, $accountCode, $asAt->toDateString()];
+        $codes = \is_string($accountCode) ? [$accountCode] : array_values($accountCode);
+
+        if ($codes === []) {
+            /*
+             | No accounts means no lines, and it is asked for in earnest.
+             |
+             | A statement line that no account in this chart is classified
+             | under is an ordinary state - most charts leave several of
+             | IAS 1's lines unused - and the figure on the report is zero.
+             | Running the query with an empty IN list would be a syntax
+             | error, and defaulting to "every account" would explain a
+             | zero with the whole ledger.
+             */
+            return collect();
+        }
+
+        $placeholders = implode(',', array_fill(0, \count($codes), '?'));
         $dateBound = 'l.accounting_date <= ?';
+        $dateBindings = [$asAt->toDateString()];
 
         if ($from !== null) {
             $dateBound = 'l.accounting_date BETWEEN ? AND ?';
-            $bindings = [$entityId, $accountCode, $from->toDateString(), $asAt->toDateString()];
+            $dateBindings = [$from->toDateString(), $asAt->toDateString()];
         }
 
+        $bindings = array_merge([$entityId], $codes, $dateBindings);
         $adjustingBound = $includeAdjusting ? '' : ' AND p.is_adjusting = false';
 
         return collect(DB::connection('tenant')->select(<<<SQL
             SELECT
+                l.id AS line_id,
+                e.id AS entry_id,
                 e.number,
+                e.status,
                 e.accounting_date,
+                a.code AS account_code,
+                a.name_ar AS account_name_ar,
+                a.name_en AS account_name_en,
+                j.code AS journal_code,
                 e.narration AS entry_narration,
                 e.posting_rule,
                 e.source_type,
                 e.source_id,
+                -- The two people PF-189's third level names. Who DRAFTED an
+                -- entry and who POSTED it are different facts and are
+                -- sometimes different people, which is the whole point of a
+                -- maker-checker: one column could not express it.
+                e.created_by_user_id,
+                e.posted_by_user_id,
+                e.posted_at,
+                l.party_id,
                 l.functional_amount,
                 l.currency,
                 l.amount,
                 l.narration AS line_narration
             FROM journal_lines l
             JOIN journal_entries e ON e.id = l.journal_entry_id
+            JOIN journals j ON j.id = e.journal_id
             JOIN periods p ON p.id = l.period_id
             JOIN accounts a ON a.id = l.account_id
             WHERE l.entity_id = ?
-              AND a.code = ?
+              AND a.code IN ({$placeholders})
               -- Same set as the balance this explains; a drill-down that
               -- does not add up to its own total teaches people the report
               -- is approximate.
               AND e.status IN ('posted', 'reversed')
               AND {$dateBound}{$adjustingBound}
-            ORDER BY e.accounting_date, e.number
+            -- To the line's own id, so two lines of one entry on one
+            -- account come back in the same order every time. Without it
+            -- the order follows the plan, and a drill-down somebody printed
+            -- yesterday cannot be reproduced today.
+            ORDER BY l.accounting_date, j.code, e.number, l.id
         SQL, $bindings));
     }
 

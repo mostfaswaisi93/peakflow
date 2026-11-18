@@ -75,10 +75,33 @@ final class UnappliedCash
     /**
      * What is unapplied, by age and by payer.
      *
+     * ## Why the direction is a parameter - PF-190
+     *
+     * A receipt nobody has allocated is money we are holding for a
+     * customer; a payment nobody has allocated is money a supplier is
+     * holding for us. They are the same fact from opposite sides, and the
+     * AR and AP ageing reports both have to show one as a negative bucket
+     * rather than netting it into what is owed.
+     *
+     * Written as a second query in the reporting module, the two would
+     * drift on the question that matters - whether a reversed payment
+     * still counts - and the first time they disagreed the two sides of
+     * one report would be using two definitions of unapplied. The default
+     * is `receipt`, so PF-167's own callers are unchanged.
+     *
+     * `balance()` and `reconciles()` stay receipt-only: the
+     * `unapplied_cash` control account carries customer money, and a
+     * payment on account sits against the supplier's own payable.
+     *
+     * @param  'receipt'|'disbursement'  $direction
      * @return array<string, mixed>
      */
-    public function ageing(string $entityId, string $currency, ?string $asOf = null): array
-    {
+    public function ageing(
+        string $entityId,
+        string $currency,
+        ?string $asOf = null,
+        string $direction = 'receipt',
+    ): array {
         $asOf ??= now()->toDateString();
 
         $rows = DB::connection('tenant')->select(<<<'SQL'
@@ -99,11 +122,11 @@ final class UnappliedCash
             LEFT JOIN parties pt ON pt.id = p.party_id
             WHERE p.entity_id = ?
               AND p.currency = ?
-              AND p.direction = 'receipt'
+              AND p.direction = ?
               AND p.reversed_at IS NULL
               AND p.value_date <= ?::date
             ORDER BY p.value_date, p.number
-        SQL, [$asOf, $entityId, $currency, $asOf]);
+        SQL, [$asOf, $entityId, $currency, $direction, $asOf]);
 
         $buckets = [
             '0-30' => Money::zero($currency),
@@ -168,6 +191,10 @@ final class UnappliedCash
 
         return [
             'as_of' => $asOf,
+            // Which side this was read from, so a report that shows it as a
+            // negative bucket can say whether it is customer money we hold
+            // or supplier money they hold.
+            'direction' => $direction,
             'total' => $total,
             'buckets' => $buckets,
             'credit_buckets' => $credits,

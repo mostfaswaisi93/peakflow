@@ -40,7 +40,7 @@ Three rules are structural rather than configurable:
 | `accrued_expenses` | Received, not yet billed | `Purchasing` |
 | `fx_gain_loss` | Realized currency differences | `Settlement` |
 | `fx_revaluation` | Unrealized, reversed each period | `Catalog` |
-| `rounding_difference` | Settlement rounding | `Settlement` |
+| `rounding_difference` | Settlement rounding, and the residual from translating a foreign-currency bill | `Settlement`, `Purchasing` |
 | `bad_debt` | Written off | `Settlement` |
 | `ecl_provision` | IFRS 9 expected credit loss | `Settlement` |
 | `inter_entity` | Due-to / due-from within the tenant | `Ledger` |

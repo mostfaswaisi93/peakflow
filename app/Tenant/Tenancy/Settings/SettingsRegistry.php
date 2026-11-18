@@ -432,6 +432,33 @@ final class SettingsRegistry
                 allowed: ['due_date', 'document_date'],
             ),
 
+            /*
+             | Where the aging buckets divide - PF-190.
+             |
+             | Thirty, sixty and ninety days are the default because the
+             | provision matrix, the Overview tile and the payables report
+             | already divide there, so an entity that has not decided means
+             | the same thing by "61-90" on all of them.
+             |
+             | They are a tenant's decision because the boundaries are a
+             | function of the terms they sell on: a business on fourteen-day
+             | terms puts every balance it has into "1-30" and learns nothing
+             | from the report it is paying for.
+             |
+             | The report states the boundaries it used, which is what keeps
+             | a changed set honest - two reports with the same bucket names
+             | and different boundaries are two different questions, and the
+             | names do not say so.
+             */
+            new SettingDefinition(
+                key: 'aging.buckets',
+                type: 'json',
+                scope: 'entity',
+                default: '[30,60,90]',
+                descriptionAr: 'حدود فئات التقادم بالأيام بعد تاريخ الأساس.',
+                descriptionEn: 'Where the aging buckets divide, in days past the basis date.',
+            ),
+
             new SettingDefinition(
                 key: 'purchasing.accrue_receipts',
                 type: 'bool',
