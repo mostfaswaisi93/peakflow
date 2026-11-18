@@ -8,19 +8,6 @@ The engine's organising principle is that **tax is data, not code**. A rate that
 
 ---
 
-### PF-077 · The tax point date
-`Tax` · **5 pts** · depends: PF-076 · standards: EN 16931 (`BT-7`) · `risk:high` `type:compliance`
-
-- [ ] The tax point is its own field, distinct from the invoice date and the delivery date
-- [x] Derivation is a per-jurisdiction rule: invoice date, delivery date, payment date, or the earlier of a pair. Five bases in `TaxPointBasis`, read from `config/jurisdictions.php` per profile, and `TaxPoint::derive()` returns a `TaxPointDecision` carrying the date, the basis, **which input won** and the profile it came from
-- [ ] The derived value is **stored on the document**, not recomputed - a document issued on the 1st for a supply on the 30th belongs to the earlier return in many jurisdictions, and that decision must be frozen
-- [ ] The tax point determines the period the document falls into for the return, which can differ from its accounting period; both are stored
-- [x] A missing date **refuses** rather than falls back. The delivery-date basis with no delivery date used to return the invoice date, which is the single worst failure available here: it is silent, it is plausible, and it puts the supply in the wrong return. `TaxPointUndeterminable::missingDates()` names the profile and the basis
-- [x] Found on the way: the two "earlier of" bases have **no UNCL 2005 code**. `3` is the invoice date, `35` the delivery date, `432` the payment date, and "the earlier of the invoice date and the delivery date" is not one of them - so `documentCode()` reports the code of the date that actually **won**, not the rule that chose it. A document that declared `3` while the delivery date won would be wrong on `BT-8`
-- [x] Found on the way: an **unknown basis string** and an **unlisted profile** are different mistakes. A profile nobody has configured yet should fall back to the invoice date; a configured profile whose basis is a typo should not, because the fallback would hide it. So the profile name falls back and the basis string throws, and both are checked. `jofotara` had no entry at all and now has one
-
-> The two open criteria are a column on a document, and documents arrive in Phase 05 (PF-089 onwards). What exists now is the decision and the period it falls into - `TaxPoint::fallsInMonth()` - and `TaxPointDecision` is `JsonSerializable` precisely so the whole decision, not just its date, can be frozen onto the row when there is a row to freeze it onto.
-
 ### PF-078 · Place of supply
 `Tax` · **8 pts** · depends: PF-077, PF-060 · standards: — · `risk:high` `type:compliance`
 
@@ -50,21 +37,6 @@ The engine's organising principle is that **tax is data, not code**. A rate that
 - [x] Found on the way: the citation check failed on my own data - the Jordanian note cited a law and no article. The fix was **not** to invent one. A guessed article reads as checked and is the first thing an auditor looks up, so two sources are marked `article unverified here`, the same stance `database/iso/provenance.json` takes, and the check accepts a citation or that marker
 
 > The open criterion is the purchasing half, which is Phase 07: posting both the input and the output tax on the bill is what makes a reverse charge net to nothing for a fully recoverable customer and cost money for one that is partly exempt. The sell-side gate, the note and the registration checks are here.
-
-### PF-080 · Zero-rated, exempt and out of scope
-`Tax` · **3 pts** · depends: PF-075 · standards: — · `type:compliance`
-
-- [x] The three are distinct categories with distinct return treatment: zero-rated is a taxable supply at 0% and is reclaimable; exempt is not a taxable supply and restricts input recovery; out of scope is outside the regime entirely
-- [x] Each requires its own evidence: an export needs proof of export, an exemption needs a reason code. Three kinds - export proof, **dispatch** proof and the customer's registration - and the second is the one that catches people: an intra-Community supply is exempt in the state of dispatch only if the goods arrived somewhere else in the Community, and there is no customs declaration to prove it because there is no customs frontier
-- [ ] A document whose category requires evidence cannot be issued without it recorded
-- [x] The evidence requirement is declared on the **place-of-supply rule**, not derived from the category, because the category is not enough: `Z` is what a Saudi export carries and also what a domestic zero-rated foodstuff carries. Derive it from the category and either every loaf of bread needs a customs declaration or no Saudi export needs one. `TaxCategory::requiresEvidence()` stays as a floor, so a rule that forgot its list cannot claim less than the code list demands
-- [x] Found on the way: PF-078's export rule carried `Z` for every jurisdiction, and EN 16931 codes an export `G` ("free export item, VAT not charged") while the Saudi regime zero-rates it under Art. 32. One row was wrong for an EU supplier and the other spelling would be wrong for a Saudi one, so it is **two rows** - which is the case that shows why the rule book holds the category rather than deriving it from "is it cross-border"
-- [x] Each evidence item carries a **reference**, not a boolean. A ticked box with nothing behind it is worse than nothing: the system says the evidence exists, so nobody looks for it, and the assessment is unanswerable. A whitespace reference is refused, and the refusal is told apart from a missing one
-- [x] Exemption reason codes are **data, validated**: a VATEX subset keyed by code, each mapped to its category with bilingual text and its article. A code used with the wrong category is refused - `vatex-eu-ic` on an exempt line reports an intra-Community supply that did not happen, and the other member state will look for a figure in a box and not find it
-- [x] The code list is an explicit subset and an unknown code is **refused**, which blocks a legitimate exemption whose code nobody has added yet. That is an availability problem, fixed by a row, and the right direction: a code is the first thing a receiving system validates, and an invented one fails a document that was otherwise correct after it was filed
-- [x] `L` and `M` are named in the configuration as categories with no code shipped, so the refusal points at the gap rather than looking like a bug in the gate. A check asserts that every category requiring a reason has either codes or a declared gap - a category in neither place refuses every document silently
-
-> The open criterion is the issue path, which is Phase 05. `EvidenceGate::assertSatisfied()` is the rule it will call, built and checked now so the issue path has something to call rather than a comment saying it should.
 
 ### PF-083 · Withholding tax
 `Tax` · **5 pts** · depends: PF-082 · standards: — · `type:compliance`

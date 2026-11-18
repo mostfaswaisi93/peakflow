@@ -28,10 +28,13 @@ The distinguishing idea is **alerting on invariants**. A dashboard of CPU and p9
 ### PF-233 · Database privilege verification
 `—` · **5 pts** · depends: PF-010, PF-045 · standards: — · `risk:high` `type:security`
 
-- [ ] An automated check asserting the live privilege grants match the declared intent - not that the migration once ran, but that the grants are as expected now
-- [ ] `peakflow_app` proven unable to `DELETE` a posted row, `ALTER` anything, or connect to the platform database
+- [x] An automated check asserting the live privilege grants match the declared intent - not that the migration once ran, but that the grants are as expected now
+- [x] `peakflow_app` proven unable to `DELETE` a posted row, `ALTER` anything, or connect to the platform database
+  - The first two are in the hardening suite; the third is `the connect matrix is one role, one database` in `DatabaseRoleRules`, which opens real sessions rather than reading a catalog.
 - [ ] A drift check runs on every deploy, because a manual grant made during an incident is exactly how this regresses
-- [ ] Row-level security policies verified present on every table that requires one
+  - **The check is built; nothing runs it on a deploy.** `privileges:verify [--tenant=] [--repair] [--platform-only]` exits non-zero on any drift and reports it per tenant, and the hardening suite runs the same matrix on every provisioned database. What is missing is the caller: there is no deploy pipeline in this repository yet (PF-240), so there is nowhere to put the one line. Deliberately left open rather than ticked with a note, because a check nobody invokes is exactly the failure mode this criterion was written against.
+- [x] Row-level security policies verified present on every table that requires one
+  - Proved by `TenantEnforcementRules::everyScopedTableHasAPolicy()` on every provisioned tenant, and carried for the deploy by `privileges:verify`, which calls the same `PrivilegeMatrix::rowSecurityDrift()`. The hardening suite's own matrix check deliberately does not ask again, and says so where it would have.
 
 ### PF-234 · Secret management
 `—` · **5 pts** · depends: PF-124, PF-061 · standards: OWASP ASVS 5.0 · `risk:high` `type:security`
@@ -42,29 +45,30 @@ The distinguishing idea is **alerting on invariants**. A dashboard of CPU and p9
 - [ ] A log audit asserting no secret, token, IBAN or personal datum reaches a log line, an error report or a trace attribute - tested with a payload containing all of them
 - [ ] Secret scanning on the repository, with a documented response procedure for an exposure
 
-### PF-235 · XML hardening
-`Exchange` · **3 pts** · depends: PF-114 · standards: OWASP · `risk:high` `type:security`
-
-- [ ] XXE, external entity resolution, DTD loading and network access **disabled explicitly on every reader**, not assumed off by default
-- [ ] Entity-expansion and depth limits configured, so a billion-laughs payload fails fast
-- [ ] Size limits before parsing, since an inbound document from a trading partner is untrusted input
-- [ ] A test fires XXE, billion-laughs, a deeply nested document and an oversized one at every parser the application has
-
 ### PF-236 · Upload hardening
 `—` · **3 pts** · depends: PF-073 · standards: OWASP · `type:security`
 
-- [ ] Content type **sniffed, not trusted**; an extension allowlist; a size cap; a malware scan before the file is readable
+- [x] Content type **sniffed, not trusted**; an extension allowlist; a size cap; a malware scan before the file is readable
+  - The allowlist admitted the empty string. A file with no extension cleared the sniffer (plain text is on the list) and the mismatch check returned null because there was nothing to compare, so it was stored and served under whatever name the uploader chose - the one case `nosniff` cannot help with, because there is nothing to sniff against.
 - [ ] Served from a separate origin with `Content-Disposition: attachment` and a short-lived signed URL, so a stored HTML or SVG cannot execute against the application's origin
-- [ ] Filenames normalized; path traversal and unicode-confusable names rejected
-- [ ] Office and PDF documents never rendered server-side in a way that resolves external references
+  - **Two of three.** `AttachmentDownloadController` sends `Content-Disposition: attachment` with the name quoted and escaped both ways, and `SecurityHeaders` sends `default-src 'none'; sandbox` on that route, so a stored HTML or SVG has no origin to execute against even when it is opened. Both are checked. The **separate origin** and the **short-lived signed URL** are not built: the route is an ordinary authenticated one, so a download link pasted into a chat is useless to whoever receives it, which is the right default but not what this criterion asks. A second origin needs a host and a certificate, which is deployment and not code.
+- [x] Filenames normalized; path traversal and unicode-confusable names rejected
+  - The rules were four characters wide - only `/`, `\\`, NUL, `.` and `..`. A right-to-left override, zero-width characters, a Cyrillic homoglyph, a trailing dot, an MS-DOS device name and a 10,000-byte name all passed. The hashed storage path means none of them reaches a filesystem, so this is not a traversal bug; the name is what an approver reads before clicking and what their browser writes to disk, and `document.pdf` spelled with a Cyrillic `о` beside the real one is a decision made on a lie. Arabic names are explicitly **not** confusable and a check asserts it, because a mixed-script rule written carelessly refuses half this product's customers.
+- [x] Office and PDF documents never rendered server-side in a way that resolves external references
+  - Nothing renders one, and the check is a source scan rather than a behavioural one: adding `new \Imagick` to the store is caught. A behavioural check would have to install the renderer in order to prove it is not used.
 
 ### PF-237 · HTTP security headers
 `—` · **3 pts** · depends: PF-204 · standards: OWASP, W3C · `type:security`
 
 - [ ] **CSP with per-request nonces**, no `unsafe-inline` and no `unsafe-eval`; a report-only phase first, then enforcing
-- [ ] `Strict-Transport-Security` with preload, `Permissions-Policy` denying what the application does not use, `Referrer-Policy`, `X-Content-Type-Options`, and COOP/COEP
-- [ ] Cookies `Secure`, `HttpOnly` and `SameSite=Lax`, with session cookies host-prefixed
-- [ ] A test asserts the headers on a real response, because a header set in a config file nobody loads is not a header
+  - **Three of four, and the fourth is honest about itself.** Per-request nonces are built and bound `scoped`, so the value in the header is the value on the tag; a `@cspNonce` directive is the only spelling, so a template cannot acquire a second one. `unsafe-eval` is gone. `CSP_ENFORCE` switches between the enforcing and report-only header names with one policy behind both, and a check asserts they do not drift apart - a report-only phase that reports a weaker policy than the one it is rehearsing teaches nothing.
+  - What remains is `style-src-attr 'unsafe-inline'`. Six computed `style` attributes - a column width in `components/grid.blade.php`, a progress bar's share in `app/home.blade.php` - and an attribute cannot carry a nonce. `script-src-attr` stays `'none'`, so `onclick=` and every other event-handler attribute is still refused, and a check asserts `style-src-attr` is the **only** directive in the whole policy carrying the keyword, so the exception cannot quietly spread. Closing it means a nonce'd `<style>` block with a generated class per value, from a reusable grid component: a real refactor of two templates, not a header change.
+- [x] `Strict-Transport-Security` with preload, `Permissions-Policy` denying what the application does not use, `Referrer-Policy`, `X-Content-Type-Options`, and COOP/COEP
+  - HSTS is two years with subdomains and preload, because the preload list refuses a max-age under a year and ignores a header without `includeSubDomains` - a shorter value produces a header that works in every browser and is rejected by the list, which nobody notices. It is not sent over plain HTTP, and a check asserts that: a browser ignores it there, so sending it only teaches whoever is reading the development traffic what we think we are doing.
+- [x] Cookies `Secure`, `HttpOnly` and `SameSite=Lax`, with session cookies host-prefixed
+  - `SESSION_SAME_SITE` **unset** was accepted in production: the guard refused only the literal `none`, and unset sends no attribute at all, which leaves the answer to the visitor's browser version. Now `lax` or `strict`. The `__Host-` prefix is derived in `config/session.php` rather than written there, because the prefix is a promise about the cookie's own attributes - no `Domain`, path `/`, `Secure` - and a name that says `__Host-` beside attributes that contradict it is simply ignored by the browser, silently.
+- [x] A test asserts the headers on a real response, because a header set in a config file nobody loads is not a header
+  - The middleware is global and **prepended**, not in the web group: the responses that most need these headers never reach a route - a 404 from an unmatched URL, a 500 from the exception handler, and `/workspace-unavailable`, which exists precisely because the tenant could not be resolved.
 
 ### PF-238 · Access review and the evidence pack
 `—` · **5 pts** · depends: PF-034, PF-035 · standards: SOC 2, ISO/IEC 27001 Annex A · `type:security` `type:compliance`

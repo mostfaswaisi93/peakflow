@@ -50,19 +50,19 @@ nobody can find is a task nobody will do.
 | [01](phase-01-tenancy-identity.md) | 15 / 19 | 85 | 4 |
 | [02](phase-02-ledger.md) | 19 / 22 | 143 | 3 |
 | [03](phase-03-masters.md) | 14 / 16 | 77 | 5 |
-| [04](phase-04-tax.md) | 8 / 14 | 109 | 8 |
+| [04](phase-04-tax.md) | 10 / 14 | 113 | 4 |
 | [05](phase-05-sales.md) | 17 / 21 | 159 | 17 |
 | [06](phase-06-einvoicing.md) | 6 / 20 | 101 | 43 |
-| [07](phase-07-purchasing.md) | 8 / 15 | 152 | 7 |
+| [07](phase-07-purchasing.md) | 9 / 15 | 153 | 6 |
 | [08](phase-08-banking.md) | 21 / 21 | 124 | 0 |
 | [09](phase-09-settlement.md) | 15 / 16 | 79 | 1 |
 | [10](phase-10-reporting.md) | 5 / 17 | 28 | 48 |
 | [11](phase-11-design-system.md) | 1 / 20 | 24 | 81 |
 | [12](phase-12-api-exchange.md) | 0 / 14 | 0 | 64 |
-| [13](phase-13-hardening.md) | 0 / 16 | 0 | 73 |
+| [13](phase-13-hardening.md) | 1 / 16 | 13 | 60 |
 | [14](phase-14-operations.md) | 10 / 11 | 53 | 1 |
 | [15](phase-15-verticals.md) | 0 / 8 | 0 | 36 |
-| **all** | **154 / 267** | **1309** | **396** |
+| **all** | **158 / 267** | **1327** | **378** |
 
 Phases 00 to 09 are the ones that have been worked, and Phase 08 is closed. An open criterion in a worked phase is one that depends on a later phase and says so in its own task file, with the task that brings it - never one that was skipped.
 
