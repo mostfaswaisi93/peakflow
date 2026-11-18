@@ -284,7 +284,7 @@ final class ChartTemplateRules
     }
 
     /**
-     * Nine incoherent templates, each expected to be refused.
+     * Thirteen incoherent templates, each expected to be refused.
      *
      * @return list<string>
      */
@@ -351,6 +351,41 @@ final class ChartTemplateRules
             },
             'a subtree that changes statement' => function (array $t): array {
                 $t['accounts'][] = $this->account('1.9', '1', 'revenue', true, false);
+
+                return $t;
+            },
+            /*
+             | The three ways a statement classification goes wrong - PF-184.
+             |
+             | Each of them produces a statement that is wrong in a way the
+             | totals do not reveal, which is why they are refused at load
+             | rather than reported by whoever reads the statement.
+             */
+            'a postable account that names no statement line' => function (array $t): array {
+                $row = $this->account('1.1.4', '1.1', 'asset', true, false);
+                unset($row['statement_line']);
+                $t['accounts'][] = $row;
+
+                return $t;
+            },
+            'a statement line that is not an IAS 1 line' => function (array $t): array {
+                $t['accounts'][] = $this->account(
+                    '1.1.5', '1.1', 'asset', true, false, null, 'sundry_bits_and_pieces',
+                );
+
+                return $t;
+            },
+            'an asset presented on a liability line' => function (array $t): array {
+                $t['accounts'][] = $this->account(
+                    '1.1.6', '1.1', 'asset', true, true, null, 'trade_and_other_payables',
+                );
+
+                return $t;
+            },
+            'a group account that claims a statement line' => function (array $t): array {
+                $t['accounts'][] = $this->account(
+                    '1.2', '1', 'asset', false, false, null, 'other_current_assets',
+                );
 
                 return $t;
             },
@@ -874,12 +909,36 @@ final class ChartTemplateRules
         bool $postable,
         bool $monetary,
         ?string $role = null,
+        ?string $statementLine = null,
     ): array {
-        return [
+        $row = [
             'code' => $code, 'parent' => $parent, 'type' => $type,
             'name_ar' => 'حساب '.$code, 'name_en' => 'Account '.$code,
             'postable' => $postable, 'role' => $role, 'monetary' => $monetary,
         ];
+
+        /*
+         | A postable fixture account gets a plausible line for its type.
+         |
+         | The loader refuses a postable account with none - PF-184 - and a
+         | fixture that had to name one per call would make every unrelated
+         | case in this file carry a classification it is not about. The
+         | default is the catch-all line for the type, which is a real line
+         | and never the interesting one, so a case that cares passes its own.
+         */
+        if ($postable) {
+            $row['statement_line'] = $statementLine ?? match ($type) {
+                'asset' => 'other_current_assets',
+                'liability' => 'other_current_liabilities',
+                'equity' => 'retained_earnings',
+                'revenue' => 'other_income',
+                default => 'other_expenses',
+            };
+        } elseif ($statementLine !== null) {
+            $row['statement_line'] = $statementLine;
+        }
+
+        return $row;
     }
 
     /** @param array<string, mixed> $template */

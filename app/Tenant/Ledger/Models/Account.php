@@ -6,6 +6,7 @@ namespace App\Tenant\Ledger\Models;
 
 use App\Support\Database\TenantModel;
 use App\Tenant\Ledger\Enums\AccountType;
+use App\Tenant\Ledger\Enums\StatementLine;
 use App\Tenant\Ledger\Services\AccountTree;
 use App\Tenant\Tenancy\Concerns\BelongsToEntity;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -24,6 +25,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  *
  * @property string $code
  * @property AccountType $type
+ * @property ?StatementLine $statement_line
  * @property string $path
  * @property bool $postable
  */
@@ -42,6 +44,17 @@ final class Account extends TenantModel
 
     protected $casts = [
         'type' => AccountType::class,
+        /*
+         | Nullable, and the null means two different things.
+         |
+         | On a group account it means "structure, not a line", which is
+         | correct and permanent. On a POSTABLE account it means nobody has
+         | classified it, and PF-184 puts those in an explicit
+         | "unclassified" section of the statement rather than dropping
+         | them - a silently dropped account is how a statement stops
+         | balancing. `postable` is what tells the two apart.
+         */
+        'statement_line' => StatementLine::class,
         'depth' => 'integer',
         'postable' => 'boolean',
         'requires_dimension' => 'boolean',

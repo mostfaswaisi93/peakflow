@@ -128,7 +128,17 @@ final class ChartTemplate
                     'path' => $path,
                     'depth' => substr_count($path, '.'),
                     'type' => $account->type->value,
-                    'statement_line' => $account->type->statement(),
+                    /*
+                     | The IAS 1 line the template declares - PF-184.
+                     |
+                     | This used to be `$account->type->statement()`, which
+                     | answers a different question: "balance sheet" or
+                     | "profit and loss", the same for every account of a
+                     | type. It was never a line, so a statement built from
+                     | it would have had two rows, and the column's own
+                     | comment in the migration says what it is for.
+                     */
+                    'statement_line' => $account->statementLine?->value,
                     'postable' => $account->postable,
                     'monetary' => $account->monetary,
                 ]);

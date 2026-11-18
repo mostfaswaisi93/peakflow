@@ -33,6 +33,10 @@
       {
         "version": 9,
         "sha256": "86bdd9f8b4337667753ed5a633aeb2ba43d66c51800e0fec1d472d8e2baae0f6"
+      },
+      {
+        "version": 10,
+        "sha256": "a2a4232d3253acd7b504513911cd3d430c2d34b06800de14b8ec728a2467af11"
       }
     ],
     "jordan": [
@@ -67,6 +71,10 @@
       {
         "version": 9,
         "sha256": "2761c732183baae931eda7adc9f7fcf66c0edcdea47571b3fd5f31ac3e440730"
+      },
+      {
+        "version": 10,
+        "sha256": "831c9e03eaf782afb8878328af7f27fbe82f0ff779c5c8d3f821c83b3d4db4fb"
       }
     ],
     "saudi-arabia": [
@@ -101,6 +109,10 @@
       {
         "version": 9,
         "sha256": "acd5abecbcf307f8cf353b719a9a8278e6c2b48ee151b49673b67f61ca8b3f90"
+      },
+      {
+        "version": 10,
+        "sha256": "914625a5f04f8d4b498faab9e8fcc55c6e04aaf3a3bbe30af2e81c3bf43b7f7f"
       }
     ]
   }

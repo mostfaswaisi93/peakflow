@@ -1,6 +1,6 @@
 {
   "key": "ifrs-generic",
-  "version": 9,
+  "version": 10,
   "name_ar": "دليل حسابات عام وفق المعايير الدولية",
   "name_en": "Generic IFRS chart of accounts",
   "countries": [],
@@ -48,7 +48,8 @@
       "name_en": "Petty cash",
       "postable": true,
       "role": null,
-      "monetary": true
+      "monetary": true,
+      "statement_line": "cash_and_cash_equivalents"
     },
     {
       "code": "1.1.1.2",
@@ -58,7 +59,8 @@
       "name_en": "Bank",
       "postable": true,
       "role": "bank",
-      "monetary": true
+      "monetary": true,
+      "statement_line": "cash_and_cash_equivalents"
     },
     {
       "code": "1.1.1.3",
@@ -68,7 +70,8 @@
       "name_en": "Payments in transit",
       "postable": true,
       "role": "payments_in_transit",
-      "monetary": true
+      "monetary": true,
+      "statement_line": "cash_and_cash_equivalents"
     },
     {
       "code": "1.1.2",
@@ -88,7 +91,8 @@
       "name_en": "Trade receivables",
       "postable": true,
       "role": "accounts_receivable",
-      "monetary": true
+      "monetary": true,
+      "statement_line": "trade_and_other_receivables"
     },
     {
       "code": "1.1.2.2",
@@ -99,6 +103,7 @@
       "postable": true,
       "role": "ecl_provision",
       "monetary": true,
+      "statement_line": "trade_and_other_receivables",
       "note": "Monetary, and a credit balance on an asset. It is the provision against trade receivables (IFRS 9 expected credit losses), not a separate pool of money."
     },
     {
@@ -109,7 +114,8 @@
       "name_en": "Input VAT",
       "postable": true,
       "role": "vat_input",
-      "monetary": true
+      "monetary": true,
+      "statement_line": "current_tax_assets"
     },
     {
       "code": "1.1.4",
@@ -120,6 +126,7 @@
       "postable": true,
       "role": "suspense",
       "monetary": false,
+      "statement_line": "other_current_assets",
       "note": "NOT monetary. Suspense holds items nobody has identified yet, and revaluing an unidentified item asserts a classification that has not been made."
     },
     {
@@ -130,7 +137,8 @@
       "name_en": "Inter-entity",
       "postable": true,
       "role": "inter_entity",
-      "monetary": true
+      "monetary": true,
+      "statement_line": "other_current_assets"
     },
     {
       "code": "1.1.6",
@@ -141,6 +149,7 @@
       "postable": true,
       "role": "withholding_receivable",
       "monetary": true,
+      "statement_line": "current_tax_assets",
       "note": "Withholding deducted by our customers from payments to us - a credit we claim against our own liability, which is an asset until the return that claims it. PF-083 records the certificate; this is where the credit sits."
     },
     {
@@ -152,6 +161,7 @@
       "postable": true,
       "role": "inventory",
       "monetary": false,
+      "statement_line": "inventories",
       "note": "NOT monetary. Suspense holds items nobody has identified yet, and revaluing an unidentified item asserts a classification that has not been made."
     },
     {
@@ -173,6 +183,7 @@
       "postable": true,
       "role": null,
       "monetary": false,
+      "statement_line": "property_plant_and_equipment",
       "note": "NOT monetary under IAS 21: property is carried at its historical rate, unlike the receivable sitting two groups above it. Both are assets, which is why the classification cannot be derived from the type."
     },
     {
@@ -203,7 +214,8 @@
       "name_en": "Trade payables",
       "postable": true,
       "role": "accounts_payable",
-      "monetary": true
+      "monetary": true,
+      "statement_line": "trade_and_other_payables"
     },
     {
       "code": "2.1.2",
@@ -213,7 +225,8 @@
       "name_en": "Output VAT",
       "postable": true,
       "role": "vat_output",
-      "monetary": true
+      "monetary": true,
+      "statement_line": "current_tax_liabilities"
     },
     {
       "code": "2.1.3",
@@ -224,6 +237,7 @@
       "postable": true,
       "role": "deferred_revenue",
       "monetary": false,
+      "statement_line": "other_current_liabilities",
       "note": "NOT monetary. Deferred revenue is settled by delivering goods and services, not by paying money, so restating it at the closing rate puts an exchange difference through profit or loss for an obligation that is not denominated in currency. It is the account most often wrongly marked monetary."
     },
     {
@@ -235,6 +249,7 @@
       "postable": true,
       "role": "withholding_payable",
       "monetary": true,
+      "statement_line": "current_tax_liabilities",
       "note": "Withholding we deducted from payments to suppliers and owe to the authority. The supplier's invoice is settled in full; this is the part that goes to the authority instead of to them."
     },
     {
@@ -246,6 +261,7 @@
       "postable": true,
       "role": "goods_received_not_invoiced",
       "monetary": true,
+      "statement_line": "trade_and_other_payables",
       "note": "PF-132: a liability for things that have arrived and whose bill has not. What makes a period-end cutoff honest, and a balance that does not clear is a receipt nobody was ever billed for."
     },
     {
@@ -257,6 +273,7 @@
       "postable": true,
       "role": "employee_payable",
       "monetary": true,
+      "statement_line": "trade_and_other_payables",
       "note": "PF-143: what the business owes its own people. An employee is not a supplier - the balance is reported differently, it is frequently settled through payroll, and an aging report that mixed the two would show a colleague's taxi fare beside a supplier on thirty-day terms."
     },
     {
@@ -268,6 +285,7 @@
       "postable": true,
       "role": "unapplied_cash",
       "monetary": false,
+      "statement_line": "other_current_liabilities",
       "note": "NOT monetary. Deferred revenue is settled by delivering goods and services, not by paying money, so restating it at the closing rate puts an exchange difference through profit or loss for an obligation that is not denominated in currency. It is the account most often wrongly marked monetary."
     },
     {
@@ -278,7 +296,8 @@
       "name_en": "Social insurance contributions payable",
       "postable": true,
       "role": "social_insurance_payable",
-      "monetary": true
+      "monetary": true,
+      "statement_line": "other_current_liabilities"
     },
     {
       "code": "2.1.9",
@@ -288,7 +307,8 @@
       "name_en": "Payroll tax withheld, payable",
       "postable": true,
       "role": "payroll_tax_payable",
-      "monetary": true
+      "monetary": true,
+      "statement_line": "current_tax_liabilities"
     },
     {
       "code": "3",
@@ -308,7 +328,8 @@
       "name_en": "Share capital",
       "postable": true,
       "role": null,
-      "monetary": false
+      "monetary": false,
+      "statement_line": "issued_capital"
     },
     {
       "code": "3.2",
@@ -318,7 +339,8 @@
       "name_en": "Retained earnings",
       "postable": true,
       "role": "retained_earnings",
-      "monetary": false
+      "monetary": false,
+      "statement_line": "retained_earnings"
     },
     {
       "code": "4",
@@ -338,7 +360,8 @@
       "name_en": "Sales revenue",
       "postable": true,
       "role": null,
-      "monetary": false
+      "monetary": false,
+      "statement_line": "revenue"
     },
     {
       "code": "4.2",
@@ -348,7 +371,8 @@
       "name_en": "Other income",
       "postable": true,
       "role": null,
-      "monetary": false
+      "monetary": false,
+      "statement_line": "other_income"
     },
     {
       "code": "4.3",
@@ -358,7 +382,8 @@
       "name_en": "Bad debt recovered",
       "postable": true,
       "role": "bad_debt_recovery",
-      "monetary": false
+      "monetary": false,
+      "statement_line": "other_income"
     },
     {
       "code": "5",
@@ -378,7 +403,8 @@
       "name_en": "Cost of sales",
       "postable": true,
       "role": "cost_of_sales",
-      "monetary": false
+      "monetary": false,
+      "statement_line": "cost_of_sales"
     },
     {
       "code": "5.2",
@@ -388,7 +414,8 @@
       "name_en": "Administrative expenses",
       "postable": true,
       "role": null,
-      "monetary": false
+      "monetary": false,
+      "statement_line": "administrative_expenses"
     },
     {
       "code": "5.3",
@@ -398,7 +425,8 @@
       "name_en": "Foreign exchange gain or loss",
       "postable": true,
       "role": "fx_gain_loss",
-      "monetary": false
+      "monetary": false,
+      "statement_line": "other_expenses"
     },
     {
       "code": "5.4",
@@ -408,7 +436,8 @@
       "name_en": "FX revaluation",
       "postable": true,
       "role": "fx_revaluation",
-      "monetary": false
+      "monetary": false,
+      "statement_line": "other_expenses"
     },
     {
       "code": "5.5",
@@ -418,7 +447,8 @@
       "name_en": "Rounding difference",
       "postable": true,
       "role": "rounding_difference",
-      "monetary": false
+      "monetary": false,
+      "statement_line": "other_expenses"
     },
     {
       "code": "5.6",
@@ -428,7 +458,8 @@
       "name_en": "Bad debt",
       "postable": true,
       "role": "bad_debt",
-      "monetary": false
+      "monetary": false,
+      "statement_line": "impairment_losses"
     },
     {
       "code": "5.7",
@@ -438,7 +469,8 @@
       "name_en": "Bank charges",
       "postable": true,
       "role": "bank_charges",
-      "monetary": false
+      "monetary": false,
+      "statement_line": "finance_costs"
     },
     {
       "code": "5.8",
@@ -448,7 +480,8 @@
       "name_en": "Expected credit loss charge",
       "postable": true,
       "role": "ecl_charge",
-      "monetary": false
+      "monetary": false,
+      "statement_line": "impairment_losses"
     },
     {
       "code": "5.9",
@@ -458,7 +491,8 @@
       "name_en": "Salaries and wages",
       "postable": true,
       "role": "salary_expense",
-      "monetary": false
+      "monetary": false,
+      "statement_line": "administrative_expenses"
     },
     {
       "code": "5.10",
@@ -468,7 +502,8 @@
       "name_en": "Employer contributions",
       "postable": true,
       "role": "employer_contribution_expense",
-      "monetary": false
+      "monetary": false,
+      "statement_line": "administrative_expenses"
     }
   ],
   "journals": [
