@@ -32,6 +32,7 @@ declare(strict_types=1);
  |   php bin/verify catalog    items, and which price wins
  |   php bin/verify settings   what a tenant may and may not decide
  |   php bin/verify queue      the tenant travels with the job
+ |   php bin/verify grid       the data grid, its keyboard model and the form system
  |   php bin/verify iso        the vendored standards data, and what it is allowed to say
  |   php bin/verify iban       IBANs and domestic bank identifiers, and what they refuse
  |   php bin/verify canonical  canonical JSON and XML, and the hashes that depend on them
@@ -319,6 +320,10 @@ if ($only === 'all' || $only === 'lang') {
     $suites['Localization'] = $suite(static fn (): array => (new Tests\Support\LocalizationRules())->all());
 }
 
+if ($only === 'all' || $only === 'grid') {
+    $suites['The data grid and the form system'] = $suite(static fn (): array => (new Tests\Support\GridRules())->all());
+}
+
 if ($only === 'all' || $only === 'design') {
     $suites['Design tokens'] = $suite(static fn (): array => (new Tests\Support\DesignTokenRules($base))->all());
 }
@@ -368,7 +373,7 @@ if ($only === 'all' || $only === 'examples') {
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | design | shell | reporting | errors | repo | ops | tax | charts | sales | exchange | attachments | archive | inbound | purchasing | banking | settlement | stock | sync | payroll | messaging | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | design | grid | shell | reporting | errors | repo | ops | tax | charts | sales | exchange | attachments | archive | inbound | purchasing | banking | settlement | stock | sync | payroll | messaging | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public\n");
     exit(2);
 }
 

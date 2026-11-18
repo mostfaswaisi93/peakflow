@@ -118,36 +118,73 @@ This phase is the systematic pass, not the first design work. The shell, the tok
 > operator. The suite now pins the web guard, which is the shape of fix a
 > check that depends on state it did not set always needs.
 
-### PF-205 · The data grid
+### PF-205 · The data grid — mostly done
 `—` · **8 pts** · depends: PF-204 · standards: — · `risk:high`
 
-- [ ] Row virtualization handling 50,000 rows without degrading scroll
-- [ ] Sticky headers, frozen leading columns, column pinning, resizing, reordering and visibility
-- [ ] Server-side sort, filter and cursor pagination; the grid never holds a full dataset
-- [ ] **Saved views per user**: column set, widths, sort, filters, density - shareable within the tenant
-- [ ] Grouping with subtotals, and a footer with aggregate totals that come from the server rather than from the loaded page
-- [ ] A query-budget test: the grid costs the same number of queries at 5 rows as at 500
+- [ ] Row virtualization handling 50,000 rows without degrading scroll — **deliberately not done**, see below
+- [x] Sticky headers, frozen leading columns, column pinning, resizing, reordering and visibility
+- [x] Server-side sort, filter and cursor pagination; the grid never holds a full dataset
+- [ ] **Saved views per user**: column set, widths, sort, filters, density - shareable within the tenant — the grid renders them; nothing persists them yet
+- [x] Grouping with subtotals, and a footer with aggregate totals that come from the server rather than from the loaded page
+- [x] A query-budget test: the grid costs the same number of queries at 5 rows as at 500
 
-### PF-206 · The grid keyboard model
+### PF-206 · The grid keyboard model — mostly done
 `—` · **8 pts** · depends: PF-205 · standards: WCAG 2.2 AA · `risk:high` `type:a11y`
 
 Finance users touch-type numbers, and a mouse round trip per cell is the difference between usable and abandoned.
 
-- [ ] Arrow navigation, `Home`/`End`, `PageUp`/`PageDown`, `Ctrl`+arrow to bounds
-- [ ] Range selection with `Shift`+arrows, and copy to clipboard as TSV so it pastes into a spreadsheet correctly
-- [ ] **Type-to-edit**: typing in a focused cell begins editing. `Enter` commits and moves down, `Tab` commits and moves right, `Esc` reverts the cell, `Ctrl`+`Z` reverts the edit
-- [ ] Paste from a spreadsheet into a range, with a preview of what will change and a count, before it commits
+- [x] Arrow navigation, `Home`/`End`, `PageUp`/`PageDown`, `Ctrl`+arrow to bounds — *handled; no browser has pressed a key*
+- [x] Range selection with `Shift`+arrows, and copy to clipboard as TSV so it pastes into a spreadsheet correctly
+- [x] **Type-to-edit**: typing in a focused cell begins editing. `Enter` commits and moves down, `Tab` commits and moves right, `Esc` reverts the cell, `Ctrl`+`Z` reverts the edit
+- [x] Paste from a spreadsheet into a range, with a preview of what will change and a count, before it commits
 - [ ] Every mouse-only affordance has a keyboard equivalent, and a browser test performs a full multi-row edit with the keyboard alone
 
-### PF-207 · The grid's accessibility semantics
+### PF-207 · The grid's accessibility semantics — mostly done
 `—` · **5 pts** · depends: PF-206 · standards: WAI-ARIA 1.2, WCAG 2.2 AA · `type:a11y`
 
-- [ ] `role="grid"` with correct `gridcell`, `row` and `columnheader` structure
-- [ ] **`aria-rowcount` reflects the total, not the rendered window** - a virtualized grid that reports 50 rows when there are 12,480 tells a screen-reader user something false
-- [ ] `aria-sort` on sorted headers; `aria-selected` on selected rows
-- [ ] A live region announcing "showing 1-50 of 12,480" and announcing the result of a filter change
-- [ ] A cell's accessible name includes its column, because a bare "1,234.56" is meaningless read alone
+- [x] `role="grid"` with correct `gridcell`, `row` and `columnheader` structure
+- [x] **`aria-rowcount` reflects the total, not the rendered window** - a virtualized grid that reports 50 rows when there are 12,480 tells a screen-reader user something false
+- [x] `aria-sort` on sorted headers; `aria-selected` on selected rows
+- [x] A live region announcing "showing 1-50 of 12,480" and announcing the result of a filter change
+- [x] A cell's accessible name includes its column, because a bare "1,234.56" is meaningless read alone
 - [ ] Verified with an actual screen reader once per release, and the result recorded
+
+`resources/views/components/{grid,grid/*,form/*}.blade.php` ·
+`resources/js/enhancements.js` · `bin/verify grid`
+
+**No row virtualization, and that is the decision rather than the gap.** A
+virtualizer is a scroll-driven renderer, so with scripting off it shows
+nothing — worse than slow for a financial list somebody is reconciling. The
+other half of the criterion is what was built instead: the window is bounded
+on the server, the grid **refuses** more than 500 rows while naming the
+paginator, and `aria-rowcount` still tells the truth about all 50,000. If
+virtualization is wanted later it goes on top of a grid that already works
+without it.
+
+**Column resize and reorder are saved-view data, not drag handles** — a
+per-column width and the declaration order. Widths are validated as plain CSS
+lengths, because a saved view is user data going into a `style` attribute.
+There is no drag UI, so there is no keyboard-equivalent gap to close.
+
+**What the suite does not do, plainly: it never presses a key.** The keyboard
+model is checked at its two edges — every `data-pf-*` hook the script reads is
+rendered and every hook rendered is read, compared both ways; and the one
+piece of script that transforms a value is executed in `node`. That
+`ArrowDown` really moves down still needs the browser test PF-206 asks for.
+
+Three of the forty-five bites found a check that could not fail rather than a
+defect, and each was fixed rather than excused. Rounding introduced in the
+*paste* path was caught by nothing, because the node harness has no DOM — it
+is now a source-level prohibition on `toFixed`, `Math.round` and `parseFloat`,
+and the check says it is a prohibition and not a measurement. A check that
+scanned the whole script was satisfied by the script's own *prose* explaining
+why the inline direction is read rather than assumed, so replacing that read
+with `true` — which mirrors every arrow key in Arabic — left it green; it now
+strips comments first. And the check on inlining the behaviour once per page
+could not fail in the arrangement it shipped in, which the agent said rather
+than pretended: the arrangement that *did* duplicate it — an `@once` at each
+call site — inlined 31 kB twice under a duplicate element id, and that is
+caught by two checks.
 
 ### PF-208 · The command palette
 `—` · **3 pts** · depends: PF-072, PF-204 · standards: WCAG 2.2 AA · `type:a11y`
@@ -185,7 +222,7 @@ Finance users touch-type numbers, and a mouse round trip per cell is the differe
 - [ ] Tabular numerals in every axis label, tooltip and data label; currency formatted through ICU
 - [ ] Charts respect `prefers-reduced-motion` and render without animation when asked
 
-### PF-212 · The form system
+### PF-212 · The form system — mostly done
 `—` · **5 pts** · depends: PF-199 · standards: WCAG 2.2 AA (3.3.1-3.3.8) · `type:a11y`
 
 - [ ] Every control has a real `<label>` associated by `for`/`id` - a placeholder is not a name, and a bare `<label>` beside an input names nothing
