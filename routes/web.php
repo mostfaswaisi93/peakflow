@@ -18,6 +18,7 @@ use App\Tenant\Purchasing\Http\Controllers\BillDetailController;
 use App\Tenant\Purchasing\Http\Controllers\BillListController;
 use App\Tenant\Reporting\Http\Controllers\FinancialPositionController;
 use App\Tenant\Reporting\Http\Controllers\OverviewController;
+use App\Tenant\Reporting\Http\Controllers\ProfitOrLossController;
 use App\Tenant\Reporting\Http\Controllers\TrialBalanceController;
 use App\Tenant\Sales\Http\Controllers\InvoiceDetailController;
 use App\Tenant\Sales\Http\Controllers\InvoiceListController;
@@ -230,6 +231,8 @@ Route::middleware(['tenant.session', 'auth', 'entity.scope'])->group(static func
         ->middleware('can:account.manage')->name('accounts.index');
     Route::get('/ledger/financial-position', FinancialPositionController::class)
         ->middleware('can:report.view')->name('financial-position.index');
+    Route::get('/ledger/profit-or-loss', ProfitOrLossController::class)
+        ->middleware('can:report.view')->name('profit-or-loss.index');
 
     Route::get('/banking/accounts', BankAccountListController::class)
         ->middleware('can:bank.manage')->name('bank-accounts.index');
