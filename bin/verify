@@ -283,6 +283,10 @@ if ($only === 'all' || $only === 'settlement') {
     $suites['Mandates and collections'] = $suite(static fn (): array => (new Tests\Support\MandateRules())->all());
 }
 
+if ($only === 'all' || $only === 'messaging') {
+    $suites['Messaging and delivery'] = $suite(static fn (): array => (new Tests\Support\MessagingRules())->all());
+}
+
 if ($only === 'all' || $only === 'payroll') {
     $suites['Payroll'] = $suite(static fn (): array => (new Tests\Support\PayrollRules())->all());
 }
@@ -353,7 +357,7 @@ if ($only === 'all' || $only === 'examples') {
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | design | reporting | errors | repo | ops | tax | charts | sales | exchange | attachments | archive | inbound | purchasing | banking | settlement | stock | sync | payroll | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | design | reporting | errors | repo | ops | tax | charts | sales | exchange | attachments | archive | inbound | purchasing | banking | settlement | stock | sync | payroll | messaging | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public\n");
     exit(2);
 }
 

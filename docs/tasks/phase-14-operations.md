@@ -349,11 +349,62 @@ Three defects in the first draft, all found rather than reasoned about:
   simply absent. `WiringRules::everyProviderLoads()` now asserts both
   halves of that.
 
-### PF-257 · Delivery by WhatsApp and the channels a customer actually reads
-`Exchange` · **6 pts** · depends: PF-102, PF-130 · standards: — · `risk:high`
+### PF-257 · Delivery by WhatsApp and the channels a customer actually reads — done
+`Messaging` · **6 pts** · depends: PF-102, PF-130 · standards: — · `risk:high`
 
-- [ ] A document can be delivered by WhatsApp Business, with the template, the language and the variables declared as data - and a template the provider has not approved is **refused before sending**, not after
-- [ ] Delivery, read and failure are recorded per attempt, so "did they get the invoice" has an answer that is not a guess
-- [ ] Inbound replies land somewhere a person sees them, because a channel that only sends is a channel customers learn to ignore
-- [ ] A number is verified before anything is sent to it, and the consent is recorded with its date - sending an invoice to a wrong number is a data breach with a timestamp
-- [ ] The provider is behind an interface, with one implementation and one fake, because a product wired to a single vendor's SDK is a product that cannot change vendor
+- [x] A document can be delivered by WhatsApp Business, with the template, the language and the variables declared as data - and a template the provider has not approved is **refused before sending**, not after
+- [x] Delivery, read and failure are recorded per attempt, so "did they get the invoice" has an answer that is not a guess
+- [x] Inbound replies land somewhere a person sees them, because a channel that only sends is a channel customers learn to ignore
+- [x] A number is verified before anything is sent to it, and the consent is recorded with its date - sending an invoice to a wrong number is a data breach with a timestamp
+- [x] The provider is behind an interface, with one implementation and one fake, because a product wired to a single vendor's SDK is a product that cannot change vendor
+
+`messaging_consents`, `messaging_attempts`, `messaging_inbound` ·
+`App\Tenant\Messaging\Services\{Consents,Deliveries,InboundReplies}` ·
+`App\Exchange\Messaging\Contracts\MessageChannel` + `FakeChannel` ·
+`config/messaging.php` · `bin/verify messaging`
+
+**The fake is the default binding**, not a test double. A deployment
+that has not configured a provider issues invoices and records that they
+were not delivered, rather than failing at the first one — and it is
+what every check runs against, which keeps the checks about this
+product's behaviour instead of a vendor's uptime. It refuses what the
+real one refuses: an unapproved template, an unverified number, a
+placeholder count that does not match. A fake that accepted everything
+would make every check pass while the real path refused.
+
+**Consent and reachability are two facts.** Consent is a decision the
+customer made; reachability is a fact about the number. A customer can
+agree and give a number with a digit missing, and that digit belongs to
+somebody who then receives an invoice with a name and an amount on it.
+Withdrawal is a date and a reason, never a deletion, because "did we
+have consent in March" is asked after a complaint. Numbers normalise to
+E.164 on the way in — one number written three ways is otherwise
+consented once and refused twice — and a number with no country code is
+refused rather than guessed, because guessing is how an invoice reaches
+the same digits somewhere else.
+
+**Accepted, delivered and read are three states that move forward
+only.** A read whose delivery notice has not arrived sets both, because
+providers do not promise an order and refusing it would drop the
+strongest evidence that the customer saw the invoice.
+
+**A failure never touches the document.** An invoice is ISSUED and
+UNDELIVERED, which are two facts; a check compares `status`,
+`document_hash` and `updated_at` across a failed send, because a product
+that marked the document would have a network error changing a
+hash-chained row.
+
+One real design defect the bite sweep exposed: **the attempt number was
+derived by counting the rows already there.** A caller whose request to
+the provider timed out retries, the count now includes the row it wrote,
+the number becomes 2, the reference changes, and the customer receives a
+second copy of one invoice — the exact duplicate the reference exists to
+prevent. A derived number cannot tell a retry from a chase, because they
+are identical from here: one is the same send happening again, the other
+is a person deliberately sending it again. The caller names it now,
+which is PF-255's lesson about a client id restated.
+
+And a check that proved less than it looked like: the fake derives its
+message id from the reference, so two sends return the same id even when
+both went out. The ids matching is not the same as one send, so it counts
+them.

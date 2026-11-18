@@ -97,6 +97,11 @@ deptrac:
         - type: directory
           value: app/Tenant/Payroll/.*
 
+    - name: Messaging
+      collectors:
+        - type: directory
+          value: app/Tenant/Messaging/.*
+
     - name: Reporting
       collectors:
         - type: directory
@@ -201,6 +206,24 @@ deptrac:
       - Purchasing
       - Banking
 
+    # Delivering a document on a channel a customer reads - PF-257.
+    #
+    # Needs Parties for the customer, Exchange for the channel contract,
+    # and the Ledger for nothing at all. A delivery is not a financial
+    # event: an invoice is ISSUED and UNDELIVERED, which are two facts,
+    # and a module that could post would be one network error away from
+    # moving an issued document.
+    #
+    # It also reaches no document module. What was sent is recorded as a
+    # type and an id, so an invoice, a credit note, a statement and a
+    # receipt are all deliverable without Messaging learning what any of
+    # them is - and without a column per document type.
+    Messaging:
+      - Support
+      - Tenancy
+      - Parties
+      - Exchange
+
     # Salaries, through the same controls as every other payable - PF-256.
     #
     # Needs Parties for the employee, Ledger to post, and Purchasing for
@@ -250,6 +273,7 @@ deptrac:
       - Settlement
       - Sync
       - Payroll
+      - Messaging
 
     Exchange:
       - Support
