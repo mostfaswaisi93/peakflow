@@ -110,6 +110,7 @@
             {{-- `wide` is for grids that need the room (the Overview's Bento
                  grid); reading pages keep the narrower measure. --}}
             <main id="content" tabindex="-1" @class(['mx-auto px-6 py-10', ($wide ?? false) ? 'max-w-7xl' : 'max-w-5xl'])>
+                @include('partials.breadcrumbs')
                 @yield('content')
             </main>
         </div>

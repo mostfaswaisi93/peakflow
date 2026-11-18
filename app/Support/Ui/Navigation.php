@@ -65,7 +65,17 @@ final class Navigation
                 'label_en' => 'Sales',
                 'icon' => 'sales',
                 'items' => [
-                    ['label_ar' => 'الفواتير', 'label_en' => 'Invoices', 'route' => null /* invoices.index */, 'permission' => 'invoice.draft'],
+                    /*
+                     | `report.view`, not `invoice.draft`.
+                     |
+                     | The list is a read. Naming the permission that
+                     | DRAFTS an invoice meant an auditor - whose whole
+                     | job is to read this list - was never shown it, and
+                     | nothing anywhere else would have told them the page
+                     | was there. Creating an invoice is a button on the
+                     | page, gated separately.
+                     */
+                    ['label_ar' => 'الفواتير', 'label_en' => 'Invoices', 'route' => 'invoices.index', 'permission' => 'report.view'],
                     ['label_ar' => 'الإشعارات الدائنة', 'label_en' => 'Credit notes', 'route' => null, 'permission' => 'credit_note.issue'],
                     ['label_ar' => 'عروض الأسعار', 'label_en' => 'Quotes', 'route' => null, 'permission' => 'quote.manage'],
                     ['label_ar' => 'كشوف الحساب', 'label_en' => 'Statements', 'route' => null /* statements.index */, 'permission' => 'report.view'],
@@ -76,7 +86,7 @@ final class Navigation
                 'label_en' => 'Purchasing',
                 'icon' => 'purchasing',
                 'items' => [
-                    ['label_ar' => 'فواتير الموردين', 'label_en' => 'Bills', 'route' => null /* bills.index */, 'permission' => 'bill.create'],
+                    ['label_ar' => 'فواتير الموردين', 'label_en' => 'Bills', 'route' => 'bills.index', 'permission' => 'report.view'],
                     ['label_ar' => 'أوامر الشراء', 'label_en' => 'Purchase orders', 'route' => null, 'permission' => 'purchase_order.manage'],
                     ['label_ar' => 'مطالبات المصروفات', 'label_en' => 'Expense claims', 'route' => null, 'permission' => 'expense_claim.submit'],
                 ],
@@ -115,8 +125,8 @@ final class Navigation
                 'label_en' => 'Master data',
                 'icon' => 'masters',
                 'items' => [
-                    ['label_ar' => 'العملاء والموردون', 'label_en' => 'Customers and suppliers', 'route' => null /* parties.index */, 'permission' => 'party.manage'],
-                    ['label_ar' => 'الأصناف', 'label_en' => 'Items', 'route' => null /* items.index */, 'permission' => 'item.manage'],
+                    ['label_ar' => 'العملاء والموردون', 'label_en' => 'Customers and suppliers', 'route' => 'parties.index', 'permission' => 'party.manage'],
+                    ['label_ar' => 'الأصناف', 'label_en' => 'Items', 'route' => 'items.index', 'permission' => 'item.manage'],
                     ['label_ar' => 'قوائم الأسعار', 'label_en' => 'Price lists', 'route' => null, 'permission' => 'price_list.manage'],
                     ['label_ar' => 'الضرائب', 'label_en' => 'Tax', 'route' => null, 'permission' => 'tax.manage'],
                 ],

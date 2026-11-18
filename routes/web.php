@@ -8,7 +8,14 @@ use App\Platform\Http\Controllers\OpsTenantController;
 use App\Tenant\Banking\Http\Controllers\StatementImportController;
 use App\Tenant\Identity\Http\Controllers\EntitySwitchController;
 use App\Tenant\Identity\Http\Controllers\ThemePreferenceController;
+use App\Tenant\Catalog\Http\Controllers\ItemListController;
+use App\Tenant\Parties\Http\Controllers\PartyDetailController;
+use App\Tenant\Parties\Http\Controllers\PartyListController;
+use App\Tenant\Purchasing\Http\Controllers\BillDetailController;
+use App\Tenant\Purchasing\Http\Controllers\BillListController;
 use App\Tenant\Reporting\Http\Controllers\OverviewController;
+use App\Tenant\Sales\Http\Controllers\InvoiceDetailController;
+use App\Tenant\Sales\Http\Controllers\InvoiceListController;
 use App\Http\Controllers\LoginController;
 use App\Http\Controllers\AttachmentDownloadController;
 use App\Http\Controllers\PublicQuoteController;
@@ -173,6 +180,27 @@ Route::middleware(['tenant.session', 'auth'])->group(static function (): void {
 
 Route::middleware(['tenant.session', 'auth', 'entity.scope'])->group(static function (): void {
     Route::get('/overview', OverviewController::class)->name('overview');
+
+    /*
+    | The reading pages - PF-204.
+    |
+    | Every one of them is a GET and writes nothing, which is why none
+    | carries a `can:` middleware: the figures on them are gated inside the
+    | handler, by the same permission the menu uses to decide whether to
+    | offer the page at all. A detail page resolves its document under the
+    | entity scope, so an id from another company is a 404 rather than a
+    | 403 - indistinguishable from one that never existed, so a numbering
+    | series cannot be walked from outside.
+    */
+    Route::get('/sales/invoices', InvoiceListController::class)->name('invoices.index');
+    Route::get('/sales/invoices/{invoice}', InvoiceDetailController::class)->name('invoices.show');
+
+    Route::get('/purchasing/bills', BillListController::class)->name('bills.index');
+    Route::get('/purchasing/bills/{bill}', BillDetailController::class)->name('bills.show');
+
+    Route::get('/masters/parties', PartyListController::class)->name('parties.index');
+    Route::get('/masters/parties/{party}', PartyDetailController::class)->name('parties.show');
+    Route::get('/masters/items', ItemListController::class)->name('items.index');
 
     /*
     | Importing a statement - PF-154.

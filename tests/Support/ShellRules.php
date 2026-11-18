@@ -48,6 +48,20 @@ final class ShellRules
 {
     use Concerns\IssuesInvoices;
 
+    /**
+     * The templates the shell is made of.
+     *
+     * Named here rather than globbed, because the point of a list is that
+     * adding a template to the shell is a decision somebody writes down.
+     */
+    private const SHELL_TEMPLATES = [
+        'resources/views/layouts/app.blade.php',
+        'resources/views/partials/sidebar.blade.php',
+        'resources/views/partials/nav-list.blade.php',
+        'resources/views/partials/period-state.blade.php',
+        'resources/views/partials/breadcrumbs.blade.php',
+    ];
+
     private ?User $user = null;
 
     /** @return array<string, list<string>> */
@@ -69,7 +83,8 @@ final class ShellRules
             return $this->runEachInASavepoint([
                 'the skip link is the first thing in the tab order' => fn (): array => $this->skipLinkIsFirst(),
                 'and main is focusable, so it lands' => fn (): array => $this->mainIsFocusable(),
-                'there is exactly one navigation landmark' => fn (): array => $this->oneLandmark(),
+                'every navigation landmark has its own name' => fn (): array => $this->landmarksAreNamed(),
+                'the breadcrumb trail is derived, not declared' => fn (): array => $this->theTrailIsDerived(),
                 'every route the menu names exists' => fn (): array => $this->everyRouteExists(),
                 'a page that is not built is listed, and is not a link' => fn (): array => $this->unbuiltIsNotALink(),
                 'a user is not offered a page they cannot open' => fn (): array => $this->permissionsFilterTheMenu(),
@@ -78,6 +93,9 @@ final class ShellRules
                 'a detail page keeps its section selected' => fn (): array => $this->detailPagesStaySelected(),
                 'the active company and the period state are on every page' => fn (): array => $this->contextIsAlwaysVisible(),
                 'the shell is written in logical properties only' => fn (): array => $this->noPhysicalDirections(),
+                'every page the menu offers actually renders' => fn (): array => $this->everyPageRenders(),
+                'and opens for exactly the permission it is offered under' => fn (): array => $this->theMenuNeverOffersARefusal(),
+                'and is offered to everybody who can open it' => fn (): array => $this->theMenuHidesNothingReadable(),
             ]);
         } catch (Throwable $e) {
             return ['the application shell could not be checked' => [
@@ -209,24 +227,128 @@ final class ShellRules
     }
 
     /** @return list<string> */
-    private function oneLandmark(): array
+    private function landmarksAreNamed(): array
     {
         $this->signIn(['accountant']);
         $html = $this->render();
 
-        $landmarks = preg_match_all('/<nav\b|role="navigation"/i', $html);
+        /*
+         | Every navigation landmark must be labelled, and labelled
+         | DIFFERENTLY.
+         |
+         | More than one is fine and normal - the menu is one, a
+         | breadcrumb trail is another - and a screen reader lists them
+         | for the user to jump between. What is not fine is two with the
+         | same name, which is what the first version of the shell
+         | produced: the menu renders twice, a column on a wide screen and
+         | a disclosure on a narrow one, and both were given
+         | `<nav aria-label="Main navigation">`. The landmark list then
+         | offers two identical entries and one of them is the copy that
+         | is hidden at the current width, with nothing to say which.
+         |
+         | An unlabelled landmark is the same problem a step earlier: it
+         | reads as "navigation" and so does the next one.
+         */
+        preg_match_all('/<nav\b([^>]*)>/i', $html, $tags);
 
-        if ($landmarks !== 1) {
-            return [sprintf(
-                'the shell rendered %d navigation landmarks. The menu is rendered twice - a column on a '.
-                'wide screen, a disclosure on a narrow one - and only the one actually displayed may '.
-                'carry the landmark, or a screen reader offers two identical entries with no way to tell '.
-                'which is the hidden copy.',
-                $landmarks,
-            )];
+        $labels = [];
+        $problems = [];
+
+        foreach ($tags[1] as $attributes) {
+            if (! preg_match('/aria-label(?:ledby)?="([^"]+)"/', $attributes, $label)) {
+                $problems[] = 'the shell has a <nav> with no accessible name, so it is announced as '.
+                    '"navigation" - and so is the next one';
+
+                continue;
+            }
+
+            $labels[] = $label[1];
         }
 
-        return [];
+        foreach (array_count_values($labels) as $label => $count) {
+            if ($count > 1) {
+                $problems[] = sprintf(
+                    '%d navigation landmarks are named "%s". A screen reader\'s landmark list then offers '.
+                    'identical entries, and one of them is the copy hidden at the current width.',
+                    $count,
+                    $label,
+                );
+            }
+        }
+
+        /*
+         | And the templates are read as well as the output.
+         |
+         | Rendering the layout outside a dispatched request means the
+         | breadcrumb trail has no current route and so renders nothing -
+         | which is correct, and leaves its `<nav>` unexercised. A shell
+         | landmark that only appears on a real page would be the one
+         | nobody notices has lost its name, so the question is asked of
+         | the source too.
+         */
+        foreach (self::SHELL_TEMPLATES as $file) {
+            $source = (string) preg_replace(
+                '/\{\{--.*?--\}\}/su',
+                '',
+                (string) file_get_contents(base_path($file)),
+            );
+
+            if (! preg_match_all('/<nav\b([^>]*)>/i', $source, $found)) {
+                continue;
+            }
+
+            foreach ($found[1] as $attributes) {
+                if (! preg_match('/aria-label(?:ledby)?=/', $attributes)) {
+                    $problems[] = sprintf(
+                        '%s has a <nav> with no accessible name. It is announced as "navigation", and so '.
+                        'is every other one, so the landmark list stops being a way to get anywhere.',
+                        $file,
+                    );
+                }
+            }
+        }
+
+        return $problems;
+    }
+
+    /** @return list<string> */
+    private function theTrailIsDerived(): array
+    {
+        $this->signIn(['accountant']);
+
+        $problems = [];
+
+        /*
+         | The Overview gets no trail.
+         |
+         | A breadcrumb whose whole content is the page you are already on
+         | is furniture. The trail exists to say where a page sits
+         | relative to the top, and on the top there is nothing to say.
+         */
+        $html = $this->render();
+
+        if (str_contains($html, __('مسار التنقل'))) {
+            $problems[] = 'the Overview rendered a breadcrumb trail. A trail whose only crumb is the page '.
+                'you are on is furniture, and it pushes the content down on every load.';
+        }
+
+        /*
+         | A page in no section gets no trail either.
+         |
+         | Derived means derived: if a page is not in the menu the trail
+         | cannot say where it sits, and inventing a parent for it would
+         | be a claim nothing checks. An empty trail is visible and
+         | truthful; a guessed one is neither.
+         */
+        $template = (string) file_get_contents(base_path('resources/views/partials/breadcrumbs.blade.php'));
+
+        if (! str_contains($template, 'Navigation::sections()')) {
+            $problems[] = 'the breadcrumb trail does not read the navigation declaration, so it is a third '.
+                'list of the product\'s shape - and the one nobody notices has drifted, because the page '.
+                'still works and only claims to live somewhere it does not';
+        }
+
+        return $problems;
     }
 
     /** @return list<string> */
@@ -480,14 +602,7 @@ final class ShellRules
     {
         $problems = [];
 
-        $files = [
-            'resources/views/layouts/app.blade.php',
-            'resources/views/partials/sidebar.blade.php',
-            'resources/views/partials/nav-list.blade.php',
-            'resources/views/partials/period-state.blade.php',
-        ];
-
-        foreach ($files as $file) {
+        foreach (self::SHELL_TEMPLATES as $file) {
             $source = (string) file_get_contents(base_path($file));
 
             /*
@@ -515,6 +630,312 @@ final class ShellRules
         }
 
         return $problems;
+    }
+
+    /**
+     * Every page the menu links to, rendered.
+     *
+     * ## Why this is worth more than every other check in this file
+     *
+     * The rest of them are about structure. This one runs the page: the
+     * query against a real PostgreSQL, the money formatting, the Blade
+     * template, and every `route()` call inside it. A page that was written
+     * against a column that does not exist, or that formats a `numeric`
+     * as a float, or that names a route nobody registered, fails here and
+     * nowhere else - and the alternative is finding out from the person
+     * who clicked the menu item.
+     *
+     * ## The controller, not a dispatched request
+     *
+     * The middleware stack resolves a tenant from the host and a session
+     * from a cookie, and reproducing both inside a transaction that gets
+     * rolled back would make this a check about middleware. `bin/verify
+     * wiring` already asserts the stack's order and that every writing
+     * route is authorized. What is unproven is whether the page, given a
+     * request and an entity, produces HTML - so that is what is asked.
+     *
+     * @return list<string>
+     */
+    private function everyPageRenders(): array
+    {
+        $this->signIn(['owner']);
+
+        /*
+         | With documents on the books, not on an empty entity.
+         |
+         | An empty state renders happily while the row loop beside it is
+         | broken - a column that does not exist, a money value handed to
+         | `number_format`, a relation that was never eager-loaded. Two
+         | issued invoices and a bill make every page here take the branch
+         | that actually reads the data.
+         */
+        $this->issue();
+        $this->issue();
+
+        $problems = [];
+        $original = app('request');
+
+        foreach (Navigation::sections() as $section) {
+            foreach ($section['items'] as $item) {
+                if ($item['route'] === null || ! Route::has($item['route'])) {
+                    continue;
+                }
+
+                $route = Route::getRoutes()->getByName($item['route']);
+
+                /*
+                 | Pages that need an id are left to their own suites.
+                 |
+                 | Inventing one here would mean either a 404 (which proves
+                 | nothing about the template) or seeding a document of
+                 | every kind in a check about navigation.
+                 */
+                if ($route === null || $route->parameterNames() !== []) {
+                    continue;
+                }
+
+                try {
+                    $request = \Illuminate\Http\Request::create('/'.ltrim($route->uri(), '/'), 'GET');
+                    app()->instance('request', $request);
+
+                    $rendered = app()->call($route->getController(), ['request' => $request]);
+
+                    $html = $rendered instanceof \Illuminate\Contracts\Support\Renderable
+                        ? $rendered->render()
+                        : (string) $rendered;
+
+                    if (trim($html) === '') {
+                        $problems[] = sprintf('%s rendered nothing at all', $item['route']);
+                    }
+                } catch (Throwable $e) {
+                    $problems[] = sprintf(
+                        '%s (%s) threw %s: %s',
+                        $item['label_en'],
+                        $item['route'],
+                        class_basename($e),
+                        Str::limit(preg_replace('/\s+/', ' ', $e->getMessage()) ?? '', 220),
+                    );
+                } finally {
+                    app()->instance('request', $original);
+                }
+            }
+        }
+
+        return $problems;
+    }
+
+    /**
+     * A page opened by somebody holding only the permission that offered it.
+     *
+     * ## The gap this closes
+     *
+     * `Navigation` decides what to SHOW from a permission, and the page
+     * decides what to ALLOW from its own. Nothing made the two agree, so
+     * they drifted the moment several people wrote pages at once: one
+     * screen authorized the permission its menu entry named, another left
+     * the page open and gated only the figures. Both are defensible; a
+     * menu entry naming a permission the page does not accept is not,
+     * because then the product offers a link that 403s - and the user's
+     * only reading of that is that it is broken.
+     *
+     * So the direction asserted is the one that matters: holding the
+     * permission the menu named is ENOUGH. A page open to more people
+     * than the menu offers it to is fine and sometimes deliberate, since
+     * a direct link is how work gets shared.
+     *
+     * ## Exactly that permission, through a role made for the question
+     *
+     * Not "the accountant can open it" - the accountant holds nineteen
+     * permissions and any one of them could be the one the page is really
+     * reading. A role holding precisely one permission is the only way to
+     * learn which.
+     *
+     * @return list<string>
+     */
+    private function theMenuNeverOffersARefusal(): array
+    {
+        $problems = [];
+        $original = app('request');
+
+        foreach (Navigation::sections() as $section) {
+            foreach ($section['items'] as $item) {
+                if ($item['route'] === null || $item['permission'] === null || ! Route::has($item['route'])) {
+                    continue;
+                }
+
+                $route = Route::getRoutes()->getByName($item['route']);
+
+                if ($route === null || $route->parameterNames() !== []) {
+                    continue;
+                }
+
+                $this->connection->statement('SAVEPOINT shell_one_permission');
+
+                try {
+                    $user = $this->userHoldingOnly($item['permission']);
+                    Auth::guard('web')->setUser($user);
+
+                    $request = \Illuminate\Http\Request::create('/'.ltrim($route->uri(), '/'), 'GET');
+                    app()->instance('request', $request);
+
+                    app()->call($route->getController(), ['request' => $request]);
+                } catch (\Illuminate\Auth\Access\AuthorizationException) {
+                    $problems[] = sprintf(
+                        '"%s" is offered in the menu to anybody holding %s, and the page then refuses '.
+                        'them. The user reads that as a broken product, and the menu is the only place '.
+                        'that said they could.',
+                        $item['label_en'],
+                        $item['permission'],
+                    );
+                } catch (Throwable $e) {
+                    $problems[] = sprintf(
+                        '"%s" threw %s for a user holding only %s: %s',
+                        $item['label_en'],
+                        class_basename($e),
+                        $item['permission'],
+                        Str::limit(preg_replace('/\s+/', ' ', $e->getMessage()) ?? '', 180),
+                    );
+                } finally {
+                    app()->instance('request', $original);
+                    Auth::guard('web')->forgetUser();
+                    $this->connection->statement('ROLLBACK TO SAVEPOINT shell_one_permission');
+                }
+            }
+        }
+
+        return $problems;
+    }
+
+    /**
+     * The other direction: a page a reader can open is a page they are offered.
+     *
+     * ## The bug this names
+     *
+     * The menu offered the invoice list under `invoice.draft` - a WRITE
+     * permission - while the page itself is a read and opens for anybody
+     * with a role. So an auditor, whose whole job is to read the invoice
+     * list, was not shown it. The product had the page, the auditor was
+     * allowed to open it, and nothing anywhere told them it existed:
+     * a feature nobody can find is the same as a feature that was never
+     * built, which is the sentence `Navigation` opens with.
+     *
+     * ## `report.view` as the stand-in for "a reader"
+     *
+     * It is the permission every reading role in the seeded set holds -
+     * auditor, both clerks, accountant, controller - and no write role
+     * holds it on its own. So "can a reader open this page" is asked of
+     * exactly one permission rather than of five roles, and the answer
+     * does not change when a role's list is edited.
+     *
+     * @return list<string>
+     */
+    private function theMenuHidesNothingReadable(): array
+    {
+        $problems = [];
+        $original = app('request');
+
+        foreach (Navigation::sections() as $section) {
+            foreach ($section['items'] as $item) {
+                if ($item['route'] === null || $item['permission'] === null || ! Route::has($item['route'])) {
+                    continue;
+                }
+
+                $route = Route::getRoutes()->getByName($item['route']);
+
+                if ($route === null || $route->parameterNames() !== []) {
+                    continue;
+                }
+
+                $this->connection->statement('SAVEPOINT shell_reader');
+
+                try {
+                    $reader = $this->userHoldingOnly('report.view');
+                    Auth::guard('web')->setUser($reader);
+
+                    $request = \Illuminate\Http\Request::create('/'.ltrim($route->uri(), '/'), 'GET');
+                    app()->instance('request', $request);
+
+                    app()->call($route->getController(), ['request' => $request]);
+
+                    /*
+                     | It opened. So it has to be in their menu.
+                     |
+                     | `Gate::forUser`, not `Gate::allows`, because the
+                     | signed-in user is this probe and the question is
+                     | about them specifically - and a check that asked
+                     | the ambient gate would answer about whoever the
+                     | previous check left behind.
+                     */
+                    if (! \Illuminate\Support\Facades\Gate::forUser($reader)->allows($item['permission'])) {
+                        $problems[] = sprintf(
+                            '"%s" opens for a user holding only report.view, and the menu offers it under '.
+                            '%s, which they do not hold. The page exists, they may read it, and nothing '.
+                            'tells them it is there.',
+                            $item['label_en'],
+                            $item['permission'],
+                        );
+                    }
+                } catch (\Illuminate\Auth\Access\AuthorizationException) {
+                    // The page is not a plain read. Nothing to answer for.
+                } catch (Throwable $e) {
+                    $problems[] = sprintf(
+                        '"%s" threw %s for a reader: %s',
+                        $item['label_en'],
+                        class_basename($e),
+                        Str::limit(preg_replace('/\s+/', ' ', $e->getMessage()) ?? '', 180),
+                    );
+                } finally {
+                    app()->instance('request', $original);
+                    Auth::guard('web')->forgetUser();
+                    $this->connection->statement('ROLLBACK TO SAVEPOINT shell_reader');
+                }
+            }
+        }
+
+        return $problems;
+    }
+
+    /** A signed-out user whose single role grants one permission and nothing else. */
+    private function userHoldingOnly(string $permission): User
+    {
+        $permissionId = $this->connection->table('permissions')->where('key', $permission)->value('id');
+
+        if ($permissionId === null) {
+            throw new \RuntimeException(sprintf(
+                'the menu names the permission "%s", which is not in the catalogue at all',
+                $permission,
+            ));
+        }
+
+        $role = Role::create([
+            'key' => 'shell-probe-'.bin2hex(random_bytes(4)),
+            'name_ar' => 'دور فحص',
+            'name_en' => 'Shell probe role',
+            'system' => false,
+        ]);
+
+        $this->connection->table('role_permissions')->insert([
+            'id' => (string) Str::ulid(),
+            'role_id' => $role->getKey(),
+            'permission_id' => $permissionId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $user = User::create([
+            'name' => 'One Permission',
+            'email' => 'one-permission-'.bin2hex(random_bytes(6)).'@invalid.test',
+            'password' => Str::password(32),
+            'active' => true,
+        ]);
+
+        UserEntityRole::create([
+            'user_id' => $user->getKey(),
+            'entity_id' => $this->entityId,
+            'role_id' => $role->getKey(),
+        ]);
+
+        return $user;
     }
 
     /**
