@@ -5,10 +5,11 @@ declare(strict_types=1);
 namespace App\Support\Hashing;
 
 use App\Support\Hashing\Exceptions\NotCanonicalizable;
+use App\Support\Xml\MalformedXml;
+use App\Support\Xml\SafeXmlReader;
 use DOMDocument;
 use DOMElement;
 use DOMXPath;
-use Throwable;
 
 /**
  * Canonical XML, for the syntaxes that are signed rather than hashed - PF-009.
@@ -168,6 +169,26 @@ final class XmlCanonicalizer
     /**
      * Parse, with every door that leads outside closed.
      *
+     * ## Why this now delegates to SafeXmlReader
+     *
+     * It used to hold its own copy of the hardening: the same nulled external
+     * entity loader, the same absent `LIBXML_NOENT`, the same DOCTYPE refusal.
+     * Two copies of a security property is one copy and one liability, and
+     * which one it was became clear when the DOCTYPE refusal was found to run
+     * AFTER the parse in both files - libxml expands an internal entity while
+     * building the tree, so the check fired on memory already allocated. The
+     * fix belonged in one place.
+     *
+     * {@see \App\Support\Xml\SafeXmlReader} refuses the DOCTYPE on the bytes,
+     * caps the size before parsing and bounds the nesting depth, and this
+     * class gains all three: a signature is verified over a document a
+     * stranger sent, which is the same threat the reader was written for.
+     *
+     * The refusal is translated rather than propagated, because a caller here
+     * is canonicalizing - `NotCanonicalizable` is the exception its callers
+     * catch, and leaking a `MalformedXml` out of `hash()` would be a second
+     * failure type nobody handles.
+     *
      * @throws NotCanonicalizable
      */
     private static function parse(string $xml): DOMDocument
@@ -176,50 +197,22 @@ final class XmlCanonicalizer
             throw NotCanonicalizable::xmlEmpty();
         }
 
-        $document = new DOMDocument();
-        $document->preserveWhiteSpace = true;
-
-        /*
-         | `LIBXML_NOENT` is deliberately NOT passed.
-         |
-         | Its name reads as "no entities" and in libxml it means "substitute
-         | entities" - XML_PARSE_NOENT - so passing it is what turns an entity
-         | declaration into a file read. Measured: with it, a document
-         | declaring file:///etc/passwd canonicalized to the password file.
-         |
-         | LIBXML_DTDLOAD and LIBXML_DTDVALID are likewise absent, so no
-         | external DTD is fetched, and LIBXML_NONET refuses the network even
-         | if something else asked for one.
-         */
-        /*
-         | The return value is not reliably the previous loader.
-         |
-         | PHP 8.4 made `libxml_set_external_entity_loader()` return the
-         | callable it replaced; 8.3 and earlier return `true`. Restoring that
-         | `true` is a TypeError - measured, as a fatal error on the first call
-         | - so what comes back is only restored when it is actually a
-         | callable, and otherwise the loader is reset to libxml's default.
-         */
-        $previousLoader = libxml_set_external_entity_loader(static fn (): null => null);
-        $previousErrors = libxml_use_internal_errors(true);
-
         try {
-            $loaded = $document->loadXML($xml, LIBXML_NONET);
-            $errors = libxml_get_errors();
-        } catch (Throwable $e) {
+            $document = SafeXmlReader::parse($xml);
+        } catch (MalformedXml $e) {
             throw NotCanonicalizable::xmlUnparseable($e->getMessage());
-        } finally {
-            libxml_clear_errors();
-            libxml_use_internal_errors($previousErrors);
-            libxml_set_external_entity_loader(\is_callable($previousLoader) ? $previousLoader : null);
         }
 
-        if ($loaded === false) {
-            throw NotCanonicalizable::xmlUnparseable(
-                $errors === [] ? 'the parser gave no reason' : trim($errors[0]->message),
-            );
-        }
-
+        /*
+         | Kept, and unreachable through SafeXmlReader, on purpose.
+         |
+         | The reader refuses a DOCTYPE twice over, so this branch cannot fire
+         | today. It is the assertion that the delegation above still carries
+         | the property this class depends on: should the reader ever be
+         | rewritten into something that admits one, a signature produced here
+         | would be a signature over `/etc/passwd`, and that must fail loudly
+         | in the canonicalizer's own vocabulary rather than silently succeed.
+         */
         if ($document->doctype !== null) {
             throw NotCanonicalizable::xmlHasDoctype($document->doctype->name);
         }

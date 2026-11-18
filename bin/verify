@@ -33,6 +33,7 @@ declare(strict_types=1);
  |   php bin/verify settings   what a tenant may and may not decide
  |   php bin/verify queue      the tenant travels with the job
  |   php bin/verify grid       the data grid, its keyboard model and the form system
+ |   php bin/verify identity   what a sign-in has to prove before it is a session
  |   php bin/verify iso        the vendored standards data, and what it is allowed to say
  |   php bin/verify iban       IBANs and domestic bank identifiers, and what they refuse
  |   php bin/verify canonical  canonical JSON and XML, and the hashes that depend on them
@@ -42,6 +43,7 @@ declare(strict_types=1);
  |   php bin/verify design     the colour tokens, and the contrast all five themes must keep
  |   php bin/verify reporting  the Overview: what it counts, and what it costs
  |   php bin/verify errors     what a failure looks like from outside
+ |   php bin/verify hardening  what the XML, upload, header and privilege hardening refuses
  |   php bin/verify repo       the commit hook, composer setup, and the laptop setup
  |   php bin/verify ops        the tenant lifecycle on screen, and what it refuses
  |   php bin/verify tax        tax categories, and rates that are effective-dated
@@ -264,6 +266,7 @@ if ($only === 'all' || $only === 'purchasing') {
     $suites['Supplier credits and aging'] = $suite(static fn (): array => (new Tests\Support\SupplierCreditRules())->all());
     $suites['Requisitions'] = $suite(static fn (): array => (new Tests\Support\RequisitionRules())->all());
     $suites['Expense claims'] = $suite(static fn (): array => (new Tests\Support\ExpenseClaimRules())->all());
+    $suites['A bill in a foreign currency'] = $suite(static fn (): array => (new Tests\Support\PurchasingCoverageRules())->all());
 }
 
 if ($only === 'all' || $only === 'banking') {
@@ -316,8 +319,20 @@ if ($only === 'all' || $only === 'errors') {
     $suites['Error responses'] = $suite(static fn (): array => (new Tests\Support\ErrorResponseRules())->all());
 }
 
+if ($only === 'all' || $only === 'hardening') {
+    $suites['Hardening'] = $suite(static fn (): array => (new Tests\Support\HardeningRules())->all());
+}
+
 if ($only === 'all' || $only === 'lang') {
     $suites['Localization'] = $suite(static fn (): array => (new Tests\Support\LocalizationRules())->all());
+}
+
+if ($only === 'all' || $only === 'identity') {
+    $suites['Signing in'] = $suite(static fn (): array => (new Tests\Support\IdentityCoverageRules())->all());
+}
+
+if ($only === 'all' || $only === 'sales-currency') {
+    $suites['A sales document in another currency'] = $suite(static fn (): array => (new Tests\Support\SalesCurrencyRules())->all());
 }
 
 if ($only === 'all' || $only === 'grid') {
@@ -373,7 +388,7 @@ if ($only === 'all' || $only === 'examples') {
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | design | grid | shell | reporting | errors | repo | ops | tax | charts | sales | exchange | attachments | archive | inbound | purchasing | banking | settlement | stock | sync | payroll | messaging | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | design | grid | shell | identity | sales-currency | reporting | errors | hardening | repo | ops | tax | charts | sales | exchange | attachments | archive | inbound | purchasing | banking | settlement | stock | sync | payroll | messaging | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public\n");
     exit(2);
 }
 

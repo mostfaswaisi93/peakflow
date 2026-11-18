@@ -103,10 +103,15 @@ final class ProductionConfiguration
                 'session cookie out of JavaScript. Set SESSION_HTTP_ONLY=true.';
         }
 
-        if ($get('session.same_site') === 'none') {
-            $problems[] = 'SESSION_SAME_SITE is "none", so the session cookie travels on cross-site '.
-                'requests - which is what a cross-site request forgery needs. Use "lax" unless an '.
-                'embedded flow genuinely requires otherwise, and then say which one in writing.';
+        if (! \in_array($get('session.same_site'), ['lax', 'strict'], true)) {
+            $problems[] = sprintf(
+                'SESSION_SAME_SITE is %s. "none" sends the session cookie on cross-site requests, which '.
+                'is what a cross-site request forgery needs; unset sends no attribute at all, which '.
+                'leaves the answer to whichever default the visitor\'s browser version happens to have. '.
+                'Use "lax" unless an embedded flow genuinely requires otherwise, and then say which one '.
+                'in writing.',
+                var_export($get('session.same_site'), true),
+            );
         }
 
         /*

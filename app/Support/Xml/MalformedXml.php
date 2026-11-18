@@ -43,6 +43,51 @@ final class MalformedXml extends \RuntimeException
         return new self(sprintf('The document is not well-formed%s: %s', $where, $reason), $line, $column);
     }
 
+    public static function tooLarge(int $bytes, int $cap): self
+    {
+        return new self(sprintf(
+            'The document is %s bytes and the cap is %s. The size is checked BEFORE the parser sees '.
+            'the bytes, because a parser is where an oversized document costs memory: the DOM libxml '.
+            'builds from a document is several times the size of the document, so a cap applied after '.
+            'parsing is a cap that has already been paid.',
+            number_format($bytes),
+            number_format($cap),
+        ));
+    }
+
+    public static function tooDeep(int $depth, int $limit): self
+    {
+        return new self(sprintf(
+            'The document nests elements %d deep and the limit is %d. No billing document, statement '.
+            'or payment status has a legitimate reason to nest that far, and depth is what every '.
+            'recursive reader downstream pays for - a limit libxml also enforces for itself, at 256, '.
+            'which is too far to be the only one.',
+            $depth,
+            $limit,
+        ));
+    }
+
+    /**
+     * The DOCTYPE refusal that happens BEFORE the parser runs.
+     *
+     * Deliberately a different sentence from {@see hasDoctype()}, which is
+     * the same refusal made after parsing. A check that merely sees "a
+     * DOCTYPE was refused" cannot tell which of the two layers produced it,
+     * and the whole point of the pre-parse layer is that the post-parse one
+     * is too late.
+     */
+    public static function prologDeclaresADoctype(): self
+    {
+        return new self(
+            'The document declares a DOCTYPE before its root element and is refused without being '.
+            'parsed. It is refused HERE, on the bytes, rather than after parsing: libxml expands an '.
+            'internal entity while it builds the tree whether or not LIBXML_NOENT was passed, so a '.
+            'DOCTYPE check that runs on the parsed document has already paid for the expansion it '.
+            'exists to prevent. Measured: a 347-byte document with five levels of nested entities '.
+            'produced a 1,000,000-character text node before any post-parse check could look at it.'
+        );
+    }
+
     public static function hasDoctype(string $name): self
     {
         return new self(sprintf(

@@ -454,6 +454,18 @@ return [
             'en' => 'The produced document does not match the schema of its syntax.',
             'ar' => 'المستند المُنتَج لا يطابق مخطط صيغته.',
         ],
+
+        /*
+         | Reported when the SCHEMA, not the document, asks for something
+         | outside resources/schemas - PF-235. A validator that fetches part
+         | of its schema from a third party has made every invoice depend on
+         | that party being up, and whoever answers for it decides what
+         | counts as valid.
+         */
+        'EN16931-SCHEMA-REFERENCE' => [
+            'en' => 'The schema used to validate this document refers to a file that is not vendored, so validation was refused rather than fetched over the network.',
+            'ar' => 'يشير المخطط المستخدم للتحقق من هذا المستند إلى ملف غير مُضمَّن محليًا، فرُفض التحقق بدلًا من جلبه عبر الشبكة.',
+        ],
         'EN16931-CARDINALITY' => [
             'en' => 'A business term or group appears a number of times EN 16931 does not permit.',
             'ar' => 'ظهر مصطلح أو مجموعة أعمال بعدد مرات لا يسمح به EN 16931.',

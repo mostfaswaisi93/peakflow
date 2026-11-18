@@ -81,12 +81,31 @@ final class AppServiceProvider extends ServiceProvider
          | decision and same reason as the audit trail above.
          */
         $this->app->bind(TranslatesMoney::class, ExchangeRates::class);
+
+        /*
+         | The Content Security Policy, SCOPED - PF-237.
+         |
+         | `scoped` rather than `singleton`, and the difference is the whole
+         | security property. The object holds one per-request nonce so the
+         | value in the header and the value on the `<script>` tag are the
+         | same string; a singleton in a long-lived worker would hold the
+         | same nonce for every response it ever served, and a nonce an
+         | attacker can read off one page and reuse on the next is the same
+         | as having no nonce at all.
+         |
+         | `bind` would be the other mistake: a fresh instance per resolution
+         | means the view and the middleware generate different nonces, the
+         | header blocks the script it was supposed to allow, and the symptom
+         | is the first paint appearing in the wrong theme.
+         */
+        $this->app->scoped(\App\Support\Http\ContentSecurityPolicy::class);
     }
 
     public function boot(): void
     {
         $this->propagateTheCorrelationIdOutbound();
 
+        $this->publishTheCspNonceToBlade();
         $this->enforceModelDiscipline();
         $this->guardAgainstFloatMoney();
         $this->refuseToStartOnUnsafeProductionSettings();
@@ -109,6 +128,26 @@ final class AppServiceProvider extends ServiceProvider
      * impossible, and `.env.example` is deliberately a configuration this
      * guard rejects.
      */
+    /**
+     * `@cspNonce` in a template - PF-237.
+     *
+     * A directive rather than a documented call to `app()`, because the one
+     * thing that must not happen is a template resolving the policy a second
+     * way and getting a second nonce. The directive is the only spelling, so
+     * the inline script that needs one cannot be written with a nonce that
+     * the header does not know about.
+     *
+     * It emits the whole attribute - `nonce="..."` - and not just the value,
+     * so a template cannot produce `nonce=abc` unquoted.
+     */
+    private function publishTheCspNonceToBlade(): void
+    {
+        \Illuminate\Support\Facades\Blade::directive(
+            'cspNonce',
+            static fn (): string => "<?php echo app(\App\Support\Http\ContentSecurityPolicy::class)->nonceAttribute(); ?>",
+        );
+    }
+
     private function refuseToStartOnUnsafeProductionSettings(): void
     {
         if (! $this->app->isProduction()) {

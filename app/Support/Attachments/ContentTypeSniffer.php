@@ -118,9 +118,82 @@ final class ContentTypeSniffer
         );
     }
 
+    /**
+     * Why this name's extension is refused outright, or null.
+     *
+     * ## Two questions, and {@see mismatch()} only answers one
+     *
+     * `mismatch()` asks whether the extension AGREES with the bytes, which
+     * needs a sniffed type and is silent when there is no extension to
+     * disagree. This asks whether the extension is one the product serves at
+     * all, which is a property of the name alone.
+     *
+     * The gap between them was real: a file with NO extension passed both
+     * checks. `isPermitted()` had cleared its bytes - plain text is on the
+     * list - and `mismatch()` returned null because there was nothing to
+     * compare. It was then stored and handed back by the download route under
+     * whatever name the uploader chose, with no extension for the browser to
+     * decide anything from, which is the one case `X-Content-Type-Options:
+     * nosniff` cannot help with: there is nothing to sniff against.
+     *
+     * PF-236 asks for an extension allowlist, and an allowlist that admits
+     * the empty string is not one.
+     */
+    public function extensionRefusal(string $declaredName): ?string
+    {
+        $extension = strtolower(pathinfo($declaredName, \PATHINFO_EXTENSION));
+
+        if ($extension === '') {
+            return sprintf(
+                'The name "%s" has no extension. The extension is what a person reads before opening a '.
+                'file and what their operating system uses to decide what to open it with, and a name '.
+                'without one leaves both to guesswork. Add the extension the file actually is: %s.',
+                $declaredName,
+                implode(', ', self::permittedExtensions()),
+            );
+        }
+
+        if (! \in_array($extension, self::permittedExtensions(), true)) {
+            return sprintf(
+                'The extension ".%s" is not one an accounting document carries. The list is an allowlist '.
+                'rather than a list of the dangerous formats somebody thought of: %s.',
+                $extension,
+                implode(', ', self::permittedExtensions()),
+            );
+        }
+
+        return null;
+    }
+
     /** @return list<string> */
     public static function permittedTypes(): array
     {
         return array_keys(self::PERMITTED);
+    }
+
+    /**
+     * Every extension any permitted type may carry, deduplicated.
+     *
+     * Derived from {@see PERMITTED} rather than written out a second time: a
+     * separate list is one that drifts the first time a type is added, and
+     * the direction it drifts in is "the extension is allowed and the type is
+     * not", which refuses a legitimate file for a reason nobody can read.
+     *
+     * @return list<string>
+     */
+    public static function permittedExtensions(): array
+    {
+        $extensions = [];
+
+        foreach (self::PERMITTED as $allowed) {
+            foreach ($allowed as $extension) {
+                $extensions[$extension] = true;
+            }
+        }
+
+        $list = array_keys($extensions);
+        sort($list);
+
+        return $list;
     }
 }

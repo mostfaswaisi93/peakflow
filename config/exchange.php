@@ -118,18 +118,6 @@ return [
 
     /*
     |---------------------------------------------------------------------------
-    | Inbound XML hardening
-    |---------------------------------------------------------------------------
-    |
-    | A document from a trading partner is UNTRUSTED INPUT. These are disabled
-    | EXPLICITLY on every reader rather than assumed off by default, and a test
-    | fires XXE, billion-laughs, a deeply nested document and an oversized one
-    | at every parser the application has.
-    |
-    */
-
-    /*
-    |---------------------------------------------------------------------------
     | Email intake - PF-140
     |---------------------------------------------------------------------------
     |
@@ -151,12 +139,68 @@ return [
         'mailbox' => env('EXCHANGE_INTAKE_MAILBOX', 'inbox'),
     ],
 
+    /*
+    |---------------------------------------------------------------------------
+    | Inbound XML hardening - PF-114, PF-235
+    |---------------------------------------------------------------------------
+    |
+    | A document from a trading partner is UNTRUSTED INPUT. These are disabled
+    | EXPLICITLY on every reader rather than assumed off by default, and
+    | `bin/verify hardening` fires XXE, billion-laughs, an external DTD, a
+    | deeply nested document and an oversized one at every parser the
+    | application has.
+    |
+    | This block used to sit two keys below the comment that described it,
+    | which read as documentation of the email intake. That is cosmetic. What
+    | was not cosmetic is that `max_entity_expansion`, `max_depth` and
+    | `max_bytes` were read by nothing at all: `SafeXmlReader` consulted no
+    | configuration, so the three limits below were a statement of intent with
+    | no mechanism under it, and a document 250 elements deep was accepted
+    | while this file said 100.
+    |
+    | `allow_*` are not switches either, and deliberately so. There is no code
+    | path that turns an external entity on - the refusal is by construction,
+    | in the reader - and these three exist so that
+    | `ProductionConfiguration::problems()` can refuse a deployment whose
+    | operator believed there was a switch and set it. A reader that honoured
+    | them would be a reader with an XXE mode.
+    |
+    */
+
     'xml' => [
         'allow_external_entities' => false,
         'allow_dtd' => false,
         'allow_network' => false,
+
+        /*
+         | Zero, and it is a consequence rather than a setting.
+         |
+         | A DOCTYPE is refused on the bytes before the parser is handed
+         | them, so no entity can be declared, so none can expand. libxml's
+         | own amplification cap - which let a 347-byte payload reach
+         | 1,000,000 characters before it fired - is a backstop we do not
+         | rely on.
+         */
         'max_entity_expansion' => 0,
+
+        /*
+         | Depth, and it must stay under libxml's own 256.
+         |
+         | libxml refuses deeper than 256 unless LIBXML_PARSEHUGE is passed,
+         | which it never is. A number above 256 here would therefore be a
+         | limit that silently never applies, and `bin/verify hardening`
+         | refuses one.
+         */
         'max_depth' => 100,
+
+        /*
+         | Sixteen megabytes, checked before parsing.
+         |
+         | The DOM libxml builds is several times the size of the bytes it
+         | came from, so a cap applied afterwards is a cap already paid. The
+         | largest legitimate document seen is a CAMT.053 for a busy month at
+         | around four megabytes.
+         */
         'max_bytes' => 16 * 1024 * 1024,
     ],
 

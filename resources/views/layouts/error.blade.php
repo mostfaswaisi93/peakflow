@@ -44,7 +44,10 @@
     {{-- Static files only - no manifest read, no database - so the icon and
          logo survive the failures this page explains. --}}
     @include('partials.brand-meta')
-    <style>
+    {{-- The nonce, because `style-src` is `self` plus a nonce and this page
+         cannot use the compiled stylesheet: the failures it explains include
+         the build manifest being unreadable. --}}
+    <style @cspNonce>
         /*
          | The brand palette as plain hex, because this page cannot rely on the
          | compiled stylesheet. The values are the same roles app.css gives the

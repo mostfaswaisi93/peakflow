@@ -1,7 +1,5 @@
 <?php
 
-use Illuminate\Support\Str;
-
 return [
 
     /*
@@ -127,9 +125,35 @@ return [
     |
     */
 
+    /*
+    | Host-prefixed when the cookie is Secure - PF-237.
+    |
+    | `__Host-` is refused by the browser unless the cookie is Secure, scoped
+    | to `/` and carries no Domain attribute. That last condition is the point:
+    | without it, any sibling host - a status page, a marketing site, a parked
+    | subdomain - can set a cookie of this name scoped to the parent domain,
+    | and the Cookie header the application receives says nothing about which
+    | host set which value. The application cannot tell them apart, which is
+    | session fixation through a host nobody thought was part of the product.
+    |
+    | Derived from `SESSION_SECURE_COOKIE` rather than written out, because a
+    | `__Host-` cookie that is not Secure is silently dropped and the symptom
+    | is a login form that reloads for ever. A development machine serves
+    | plain HTTP and gets the unprefixed name; production, which this
+    | repository refuses to boot without `SESSION_SECURE_COOKIE=true`, gets
+    | the prefix without anybody having to remember it.
+    |
+    | See App\Support\Http\SessionCookieName for both branches and the
+    | reasoning, and `bin/verify hardening` for the proof that a secure
+    | deployment's Set-Cookie actually carries it.
+    */
+
     'cookie' => env(
         'SESSION_COOKIE',
-        Str::slug((string) env('APP_NAME', 'laravel')).'-session'
+        \App\Support\Http\SessionCookieName::for(
+            (bool) env('SESSION_SECURE_COOKIE', false),
+            (string) env('APP_NAME', 'laravel'),
+        ),
     ),
 
     /*

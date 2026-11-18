@@ -10,6 +10,7 @@ use App\Http\Middleware\ResolveTenantFromHeader;
 use App\Http\Middleware\ResolveTenantFromPath;
 use App\Http\Middleware\ResolveTenantFromSession;
 use App\Http\Middleware\AssignCorrelationId;
+use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\SetLocale;
 use App\Support\Http\Problem;
 use App\Support\Http\ProblemType;
@@ -55,6 +56,22 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->prepend(AssignCorrelationId::class);
 
         $middleware->prepend(SetLocale::class);
+
+        /*
+         | The security headers, GLOBAL and prepended - PF-237.
+         |
+         | Global rather than in the web group, because the responses that
+         | most need them never reach a route: a 404 from an unmatched URL, a
+         | 500 from the exception handler, and `/workspace-unavailable`, which
+         | exists precisely because the tenant could not be resolved.
+         |
+         | Prepended, so it is the LAST middleware the response passes on the
+         | way out. A header set earlier in the stack would be set on the
+         | response the next middleware was going to replace, and an error
+         | response built by the exception handler after the stack unwound
+         | would carry none at all.
+         */
+        $middleware->prepend(SecurityHeaders::class);
 
         $middleware->web(append: [
             SetLocale::class,

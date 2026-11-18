@@ -61,6 +61,31 @@ final class OfxParser implements StatementParser
      */
     public function parse(string $content): array
     {
+        /*
+         | The byte guards run on what the BANK SENT, not on the rewrite.
+         |
+         | {@see asXml()} truncates everything before `<OFX>` so that the SGML
+         | tag-closer has only the document body to work on. That happens to
+         | delete a DOCTYPE, which happens to leave the entity references in
+         | the body undefined, which happens to make the document unparseable
+         | - so an entity-expansion payload was refused with "Entity 'e5' not
+         | defined", shown to somebody holding a file their bank gave them.
+         |
+         | Safe by accident is not safe. It rests on a regular expression
+         | written for a different purpose, nothing in this file said so, and
+         | the next improvement to the transform would have removed the
+         | protection with nobody able to tell.
+         |
+         | So the size cap and the DOCTYPE refusal are applied to the content
+         | as received. The refusal is then deliberate and carries the real
+         | reason.
+         */
+        try {
+            \App\Support\Xml\SafeXmlReader::assertTheBytesAreAcceptable($content);
+        } catch (\App\Support\Xml\MalformedXml $e) {
+            throw StatementUnreadable::malformed('ofx', $e->getMessage(), $e->atLine, $e->atColumn);
+        }
+
         $xml = $this->asXml($content);
 
         try {

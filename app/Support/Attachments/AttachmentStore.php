@@ -41,6 +41,16 @@ use Illuminate\Support\Str;
  * from one is a path traversal. The name is kept for the download and the
  * path is `<prefix>/<hash[0..1]>/<hash>`, which also makes the directory
  * fan out instead of holding a million entries.
+ *
+ * ## And the name is still checked, because it is read by a person
+ *
+ * The hashed path means a name cannot reach the filesystem. It does not mean
+ * the name is harmless: it is what an approver reads in the attachment list
+ * before clicking, and what their browser writes to disk. A name carrying a
+ * right-to-left override displays an extension it does not have, and one
+ * carrying a Cyrillic letter sits in the list looking exactly like the
+ * genuine document beside it. {@see UploadFileName} holds those rules and
+ * what each one prevents.
  */
 final class AttachmentStore
 {
@@ -73,6 +83,18 @@ final class AttachmentStore
 
         $this->assertTheNameIsAName($declaredName);
 
+        /*
+         | The NORMALIZED name is what gets stored, from here down.
+         |
+         | Not the declared one. Two names that differ only in how a diacritic
+         | is encoded are the same name to a person and two rows in a list,
+         | and the list is where somebody picks which document to approve.
+         | Normalizing at the point of storage rather than on the way out
+         | means every later reader - the download header, the audit entry,
+         | the duplicate check - sees one form.
+         */
+        $declaredName = UploadFileName::normalize($declaredName);
+
         $bytes = (int) filesize($sourcePath);
         $cap = (int) config('attachments.max_bytes', 25 * 1024 * 1024);
 
@@ -88,6 +110,23 @@ final class AttachmentStore
 
         if (! $this->sniffer->isPermitted($sniffed)) {
             throw AttachmentRefused::typeNotPermitted($sniffed, $declaredType);
+        }
+
+        /*
+         | The extension is checked against the allowlist AND against the
+         | bytes, in that order.
+         |
+         | They answer different questions, and the order puts the more
+         | specific message second: "this extension is not one we accept" is
+         | a complete answer, where "this file is named .pdf and is an HTML
+         | document" is the one worth showing somebody who has been sent
+         | something odd. Reversing them would report the mismatch for a file
+         | whose extension was never going to be accepted either way.
+         */
+        $extensionRefusal = $this->sniffer->extensionRefusal($declaredName);
+
+        if ($extensionRefusal !== null) {
+            throw AttachmentRefused::because($extensionRefusal);
         }
 
         $mismatch = $this->sniffer->mismatch($declaredName, $sniffed);
@@ -468,22 +507,17 @@ final class AttachmentStore
         return Storage::disk($name ?? (string) config('attachments.disk', 'attachments'));
     }
 
-    /** @throws AttachmentRefused */
+    /**
+     * @throws AttachmentRefused
+     *
+     * @see UploadFileName for what each rule prevents
+     */
     private function assertTheNameIsAName(string $declaredName): void
     {
-        $name = trim($declaredName);
+        $refusal = UploadFileName::refusal($declaredName);
 
-        if ($name === '' || $name === '.' || $name === '..') {
-            throw AttachmentRefused::because('The file has no usable name.');
-        }
-
-        if (str_contains($name, '/') || str_contains($name, '\\') || str_contains($name, "\0")) {
-            throw AttachmentRefused::because(sprintf(
-                'The name "%s" contains a path separator. A name is user input, and a path built from '.
-                'user input is a path traversal - which is why the stored path is derived from the '.
-                'content hash and never from the name.',
-                $name,
-            ));
+        if ($refusal !== null) {
+            throw AttachmentRefused::because($refusal);
         }
     }
 }

@@ -189,6 +189,27 @@ final class TenantProvisioner
      * partitioned table does not describe its existing partitions - revoking
      * only the parent would leave every month of the ledger writable.
      *
+     * ## The pattern is `%marker%`, and it used to be `marker%`
+     *
+     * Which anchored the match to the START of the comment, so a table whose
+     * comment opened with a DIFFERENT marker was silently not hardened. One
+     * table in the schema is written that way, and it is the worst possible
+     * one: `journal_entry_fingerprints` is commented `peakflow:tenant-scoped
+     * peakflow:no-delete - SHA-256 of each entry's substance`, so the
+     * application role kept DELETE on the table holding the evidence that an
+     * entry has not been altered.
+     *
+     * Measured on a provisioned tenant: fourteen tables carry
+     * `peakflow:no-delete`, thirteen had DELETE revoked, and the fourteenth -
+     * the fingerprints - did not. Nothing failed, nothing logged, and
+     * `harden()` reported success, because from its point of view the table
+     * was not marked at all.
+     *
+     * The markers are a SET and the order they are written in carries no
+     * meaning. That is exactly why the anchored match was wrong: it gave the
+     * order a meaning no migration author knew about, and the one migration
+     * that happened to write them the other way round lost its protection.
+     *
      * @return list<string>
      */
     private function tablesMarked(\Illuminate\Database\Connection $connection, string $marker): array
@@ -208,7 +229,7 @@ final class TenantProvisioner
             FROM pg_inherits i
             JOIN marked m ON m.oid = i.inhparent
             JOIN pg_class child ON child.oid = i.inhrelid
-        SQL, [$marker.'%']);
+        SQL, ['%'.$marker.'%']);
 
         return array_map(static fn (object $row): string => (string) $row->relname, $rows);
     }
