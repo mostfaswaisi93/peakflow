@@ -133,6 +133,7 @@ final class GeneralLedgerDetail
         ?string $journalCode = null,
         ?array $dimensions = null,
         bool $includeAdjusting = true,
+        ?Carbon $ranAt = null,
     ): array {
         if ($until->lt($from)) {
             throw ReportRefused::because(
@@ -152,6 +153,16 @@ final class GeneralLedgerDetail
             currency: $functionalCurrency,
             includesAdjusting: $includeAdjusting,
             filters: $filters['stated'],
+            /*
+             | The run clock is a PARAMETER here, not a reading of the wall.
+             |
+             | Without this the same report run twice is two different
+             | files - the parameter block prints the clock - and PF-198's
+             | byte-stability guarantee cannot be stated, let alone
+             | checked. A caller who wants a reproducible artefact names
+             | the instant; a caller who wants "now" leaves it out.
+             */
+            runAt: $ranAt,
         );
 
         $openings = $this->openings($entityId, $from, $includeAdjusting, $filters);
@@ -625,6 +636,77 @@ final class GeneralLedgerDetail
             'movement' => (string) Money::zero($currency)->amount,
             'closing' => (string) Money::zero($currency)->amount,
         ];
+    }
+
+    /**
+     * The same register, as a file - PF-197.
+     *
+     * It calls {@see self::activity()} rather than taking its output, which
+     * is the point: an export that accepted an array could be handed
+     * figures from anywhere, and the guarantee this product sells is that a
+     * printed report and the screen it came from answer the same question.
+     * Same method, same filters, same digest printed on both.
+     *
+     * Grouped by account, with each account's heading as a row of its own
+     * rather than a column repeated 4,000 times. A general ledger is read
+     * by a person, down the page, one account at a time.
+     *
+     * @param  array<string, string>|null  $dimensions
+     *
+     * @throws ReportRefused
+     */
+    public function csvActivity(
+        string $entityId,
+        string $functionalCurrency,
+        Carbon $from,
+        Carbon $until,
+        ?string $accountCode = null,
+        ?string $partyId = null,
+        ?string $journalCode = null,
+        ?array $dimensions = null,
+        bool $includeAdjusting = true,
+        string $locale = 'ar',
+        ?Carbon $ranAt = null,
+    ): string {
+        $report = $this->activity(
+            $entityId,
+            $functionalCurrency,
+            $from,
+            $until,
+            $accountCode,
+            $partyId,
+            $journalCode,
+            $dimensions,
+            $includeAdjusting,
+            $ranAt,
+        );
+
+        $name = $locale === 'ar' ? 'name_ar' : 'name_en';
+
+        $groups = array_map(static fn (array $block): array => [
+            /*
+             | The code and the name, and the OPENING balance beside them.
+             |
+             | A general ledger whose account heading carries only the code
+             | forces the reader to the screen for the one figure every
+             | other figure under it is relative to. The running balance in
+             | the first row is meaningless without it.
+             */
+            'heading' => sprintf(
+                '%s - %s (opening %s)',
+                (string) $block['code'],
+                (string) ($block[$name] ?? ''),
+                (string) $block['opening'],
+            ),
+            'rows' => $block['rows'],
+        ], $report['accounts']);
+
+        return app(\App\Tenant\Reporting\Export\ReportExport::class)->csv(
+            parameterLines: $report['parameter_lines'],
+            columns: $report['columns'],
+            groups: $groups,
+            locale: $locale,
+        );
     }
 
     /**

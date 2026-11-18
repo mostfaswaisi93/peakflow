@@ -153,6 +153,8 @@ final class RegisterRules
                 'boundaries that make an impossible bucket are refused' => fn (): array => $this->badBoundariesAreRefused(),
                 'the boundaries reach the payables side' => fn (): array => $this->boundariesReachPayables(),
                 'the default buckets are the ones the Overview tile uses' => fn (): array => $this->theDefaultsMatchTheTile(),
+                'a register exports through the one export path, parameters first' => fn (): array => $this->theRegisterExports(),
+                'and a closed period\'s file does not move when a later one does' => fn (): array => $this->theFileIsByteStable(),
             ]));
         } catch (Throwable $e) {
             return ['the registers could not be checked' => [
@@ -1772,6 +1774,198 @@ final class RegisterRules
     }
 
     /** @return array<string, mixed> */
+    /**
+     * The export is reached from production, and carries its provenance.
+     *
+     * ## Why this check matters more than it looks
+     *
+     * `CsvExport` and `ReportBasis` were both built for PF-197 and PF-198,
+     * both correct, both with a suite of their own - and neither had a
+     * production caller anywhere. The same shape as the three worst defects
+     * found in this repository on 2026-11-18: `TaxPoint::derive()`,
+     * `EvidenceGate` and `factor_asserted_at` were each built, ticked and
+     * never reached, and each stayed invisible for exactly this reason -
+     * the checks called them directly, so the checks passed.
+     *
+     * So this one does not construct the exporter. It asks the REGISTER for
+     * a file, which is what a page would do, and then reads the bytes.
+     *
+     * @return list<string>
+     */
+    private function theRegisterExports(): array
+    {
+        $this->issue();
+
+        $csv = app(JournalRegister::class)->csvForPeriod(
+            $this->entityId,
+            'SAR',
+            Carbon::parse('2026-05-01'),
+            Carbon::parse('2026-05-31'),
+        );
+
+        $problems = [];
+
+        if (! str_starts_with($csv, "\xEF\xBB\xBF")) {
+            $problems[] = 'the register\'s file has no byte-order mark, so Excel on Windows reads every '.
+                'Arabic name in the system code page and the person who exported it reports that the '.
+                'Arabic is broken in this product';
+        }
+
+        $rows = explode("\r\n", ltrim($csv, "\xEF\xBB\xBF"));
+
+        /*
+         | The parameters are ABOVE the figures, and the check reads the
+         | order rather than merely their presence.
+         |
+         | A printed export is detached from the page that made it within
+         | about a day. In a footer the block is still in the bytes and is
+         | below the 4,000th row, which is the same as not being there.
+         */
+        $digest = (string) ($this->register('2026-05-01', '2026-05-31')['parameters']['digest'] ?? '');
+
+        $blockEnds = array_search('', $rows, true);
+
+        if ($blockEnds === false || $blockEnds === 0) {
+            $problems[] = 'the file has no parameter block separated from its header row. Without the '.
+                'blank row a spreadsheet reads the first parameter as the header and every column is '.
+                'named "Report".';
+
+            return $problems;
+        }
+
+        $block = implode("\n", \array_slice($rows, 0, $blockEnds));
+
+        if (! str_contains($block, substr($digest, 0, 16))) {
+            $problems[] = 'the file does not carry the question\'s digest above its figures, so two '.
+                'printouts on a desk cannot be shown to answer the same question';
+        }
+
+        if (! str_contains($block, '2026-05-01') || ! str_contains($block, '2026-05-31')) {
+            $problems[] = 'the file does not state its own window, which is the first thing asked of a '.
+                'sheet somebody found in a file six months later';
+        }
+
+        $header = $rows[$blockEnds + 1] ?? '';
+
+        foreach (['date', 'journal', 'number', 'status'] as $column) {
+            if (! str_contains($header, $column) && ! str_contains($header, 'التاريخ')) {
+                $problems[] = sprintf(
+                    'the header row is %s, which does not come from the register\'s declared columns - '.
+                    'so the file and the screen have two column lists and the first reorder splits them',
+                    $header,
+                );
+
+                break;
+            }
+        }
+
+        return $problems;
+    }
+
+    /**
+     * A closed period's file is the same file, whatever happens later.
+     *
+     * ## The guarantee, and the one part of it that cannot hold
+     *
+     * PF-198 asks for byte-stability proved by running a report twice
+     * across a data change in a LATER period. Everything in the artefact
+     * can honour that except the run clock, which is printed in the
+     * parameter block and is by definition different on the second run.
+     *
+     * The answer is not to drop the clock - "when was this taken" is the
+     * first question asked of a printout. It is to make the clock a
+     * PARAMETER, so a caller who wants a reproducible artefact names the
+     * instant. This check does both halves: with the instant named the two
+     * files are byte-identical, and with it left out the ONLY line that
+     * differs is the run-clock line. The second half is what proves the
+     * first is a real guarantee rather than two identical calls.
+     *
+     * @return list<string>
+     */
+    private function theFileIsByteStable(): array
+    {
+        $this->issue();
+
+        $named = Carbon::parse('2026-06-01T08:00:00+00:00');
+
+        $before = app(GeneralLedgerDetail::class)->csvActivity(
+            entityId: $this->entityId,
+            functionalCurrency: 'SAR',
+            from: Carbon::parse('2026-05-01'),
+            until: Carbon::parse('2026-05-31'),
+            ranAt: $named,
+        );
+
+        /*
+         | A change in a LATER period, posted through the real service.
+         |
+         | A row written straight onto the table would not exercise the
+         | thing under test: the question is whether the report's window
+         | bounds its population, and a posting the ledger accepted is the
+         | only kind that could leak into it.
+         |
+         | June has to be OPENED first. The fixture's calendar opens only
+         | the month it works in, and the rest start `future` - which is
+         | correct and is itself the refusal that caught this check's first
+         | draft: a document cannot be issued into a future period, so the
+         | "later change" silently became no change at all.
+         */
+        $june = app(\App\Tenant\Ledger\Services\FiscalCalendarGenerator::class)
+            ->periodFor($this->entityId, Carbon::parse('2026-06-15'));
+
+        app(\App\Tenant\Ledger\Services\PeriodStateMachine::class)->transition(
+            $june,
+            \App\Tenant\Ledger\Enums\PeriodState::Open,
+            'opened so a later period can change while an earlier one is read',
+        );
+
+        $this->onDate('2026-06-15', fn (): object => $this->issue());
+
+        $after = app(GeneralLedgerDetail::class)->csvActivity(
+            entityId: $this->entityId,
+            functionalCurrency: 'SAR',
+            from: Carbon::parse('2026-05-01'),
+            until: Carbon::parse('2026-05-31'),
+            ranAt: $named,
+        );
+
+        $problems = [];
+
+        if ($before !== $after) {
+            $problems[] = sprintf(
+                'a May register changed after a June posting: %d bytes became %d. Either the window '.
+                'does not bound the population, or something in the file reads the clock - and a '.
+                'report that cannot reproduce itself cannot be used as evidence of anything.',
+                \strlen($before),
+                \strlen($after),
+            );
+        }
+
+        $unnamed = app(GeneralLedgerDetail::class)->csvActivity(
+            entityId: $this->entityId,
+            functionalCurrency: 'SAR',
+            from: Carbon::parse('2026-05-01'),
+            until: Carbon::parse('2026-05-31'),
+        );
+
+        $differing = array_values(array_diff(
+            explode("\r\n", $unnamed),
+            explode("\r\n", $after),
+        ));
+
+        if (\count($differing) !== 1) {
+            $problems[] = sprintf(
+                'leaving the run instant out changed %d lines rather than the one that prints it: %s. '.
+                'The byte-stability guarantee is then about a caller passing the same arguments twice '.
+                'and not about the report.',
+                \count($differing),
+                implode(' | ', \array_slice($differing, 0, 3)),
+            );
+        }
+
+        return $problems;
+    }
+
     private function register(string $from, string $until): array
     {
         return app(JournalRegister::class)->forPeriod(

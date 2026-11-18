@@ -30,10 +30,18 @@ use Illuminate\Support\Carbon;
  * call those two the same question, which is worse than having no digest
  * at all, because somebody would rely on it.
  *
- * So this carries the statement parameters AND the filters and digests
- * both. When PF-198's basis grows a channel for filters, this composes it
- * instead - one definition of "what was this run with", which is the whole
- * point of having one.
+ * It carried the statement parameters AND the filters and digested both,
+ * with a note saying it would compose the basis once the basis grew a
+ * channel for filters. The basis has grown one, so it composes it: there
+ * is now one definition of "what was this run with" and one of how it is
+ * fingerprinted.
+ *
+ * It was worth collapsing quickly rather than leaving the two in place,
+ * because they had already drifted. This class kept the run clock out of
+ * its digest; the basis put the clock IN, defaulted to `now()`, and so
+ * could never match itself across two runs of one question. Two
+ * fingerprints for one report, disagreeing, and nothing to say which was
+ * right.
  *
  * ## The run clock is printed and is NOT in the digest
  *
@@ -110,15 +118,36 @@ final readonly class ReportParameters
      */
     public function digest(): string
     {
-        return hash('sha256', json_encode([
-            'report' => $this->report,
-            'entity' => $this->entityId,
-            'from' => $this->from,
-            'until' => $this->until,
-            'currency' => $this->currency,
-            'adjusting' => $this->includesAdjusting,
-            'filters' => $this->filters,
-        ], JSON_THROW_ON_ERROR));
+        return $this->basis()->digest();
+    }
+
+    /**
+     * The one definition of what this was run with - PF-198.
+     *
+     * Composed rather than duplicated. A register and a statement are
+     * fingerprinted by the same code, so two reports over the same period
+     * can be compared without anybody first having to establish that the
+     * two digests mean the same thing.
+     *
+     * `entityCode` is the entity id here: a register's own block names the
+     * report rather than the company, and the code is a display field that
+     * takes no part in the digest.
+     */
+    public function basis(): \App\Tenant\Reporting\Export\ReportBasis
+    {
+        return new \App\Tenant\Reporting\Export\ReportBasis(
+            report: $this->report,
+            entityId: $this->entityId,
+            entityCode: $this->entityId,
+            from: $this->from,
+            until: $this->until,
+            functionalCurrency: $this->currency,
+            presentationCurrency: null,
+            includesAdjusting: $this->includesAdjusting,
+            asOf: null,
+            ranAt: $this->runAt,
+            filters: array_map(static fn (?string $v): string => (string) $v, $this->filters),
+        );
     }
 
     /** @return array<string, mixed> */

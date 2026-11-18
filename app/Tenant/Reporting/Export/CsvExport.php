@@ -60,10 +60,27 @@ final class CsvExport
     /**
      * @param  list<string>  $headers
      * @param  list<list<string|int|float|null>>  $rows
+     * @param  list<list<string|int|float|null>>  $preamble  rows written ABOVE the header row
      */
-    public function render(array $headers, array $rows): string
+    public function render(array $headers, array $rows, array $preamble = []): string
     {
         $out = self::BOM;
+
+        /*
+         | The preamble goes through the SAME neutralisation as the data.
+         |
+         | It is tempting to treat it as ours and therefore safe, and it is
+         | not: a report's parameter block prints the filter values, and a
+         | filter value is a party name, an account description or a cost
+         | centre somebody typed. A customer called `=cmd|'/c calc'!A1`
+         | reaches the file through "Filtered by party" exactly as readily
+         | as through a data row, and a preamble written by a shortcut path
+         | would be the one cell in the file nobody had thought about.
+         */
+        foreach ($preamble as $row) {
+            $out .= $this->line($row);
+        }
+
         $out .= $this->line($headers);
 
         foreach ($rows as $row) {

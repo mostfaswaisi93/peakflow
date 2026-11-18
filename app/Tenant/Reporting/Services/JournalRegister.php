@@ -72,6 +72,7 @@ final class JournalRegister
         Carbon $until,
         bool $includeAdjusting = true,
         ?string $journalCode = null,
+        ?Carbon $ranAt = null,
     ): array {
         if ($until->lt($from)) {
             throw ReportRefused::because(
@@ -106,8 +107,18 @@ final class JournalRegister
             from: $from,
             until: $until,
             currency: $functionalCurrency,
+        /*
+         | The run clock is a PARAMETER here, not a reading of the wall.
+         |
+         | Without this the same report run twice is two different files -
+         | the parameter block prints the clock - and PF-198's byte-
+         | stability guarantee cannot be stated, let alone checked. A
+         | caller who wants a reproducible artefact names the instant; a
+         | caller who wants "now" leaves it out and gets it.
+         */
             includesAdjusting: $includeAdjusting,
             filters: $stated,
+            runAt: $ranAt,
         );
 
         $adjusting = $includeAdjusting ? '' : ' AND p.is_adjusting = false';
@@ -283,6 +294,50 @@ final class JournalRegister
                 $totalCredits,
             ),
         ];
+    }
+
+    /**
+     * The same register, as a file - PF-197.
+     *
+     * It calls {@see self::forPeriod()} rather than taking its output,
+     * which is the point: an export that accepted an array could be handed
+     * figures from anywhere, and the guarantee this product sells is that a
+     * printed report and the screen it came from answer the same question.
+     * Same method, same parameters, same digest printed on both.
+     *
+     * The declaration is deliberately NOT in the file. It is a paragraph of
+     * prose - "AN ENTRY IN THIS REGISTER DOES NOT BALANCE" and its
+     * explanation - and a paragraph in a spreadsheet cell is a paragraph
+     * nobody reads, in a column somebody then sorts. The severity reaches
+     * the reader on the screen, where it can be a banner; the file carries
+     * the figures and the parameters that produced them.
+     *
+     * @throws ReportRefused
+     */
+    public function csvForPeriod(
+        string $entityId,
+        string $functionalCurrency,
+        Carbon $from,
+        Carbon $until,
+        bool $includeAdjusting = true,
+        string $locale = 'ar',
+        ?Carbon $ranAt = null,
+    ): string {
+        $report = $this->forPeriod(
+            $entityId,
+            $functionalCurrency,
+            $from,
+            $until,
+            $includeAdjusting,
+            ranAt: $ranAt,
+        );
+
+        return app(\App\Tenant\Reporting\Export\ReportExport::class)->csv(
+            parameterLines: $report['parameter_lines'],
+            columns: $report['columns'],
+            rows: $report['entries'],
+            locale: $locale,
+        );
     }
 
     /**

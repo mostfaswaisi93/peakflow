@@ -46,6 +46,10 @@ final class ExportRules
             'the basis prints every parameter that changes a figure' => $this->theBasisIsComplete(),
             'the same question digests the same, in any order' => $this->theDigestIsStable(),
             'and a different question does not' => $this->theDigestSeparatesQuestions(),
+            'the run clock is printed and is not part of the question' => $this->theClockIsNotTheQuestion(),
+            'but an as-of somebody asked for is' => $this->anAskedForAsOfIsTheQuestion(),
+            'and so is a filter, because it changes every figure' => $this->aFilterIsTheQuestion(),
+            'the parameter block is neutralized like any other cell' => $this->thePreambleIsNeutralized(),
         ];
     }
 
@@ -258,6 +262,213 @@ final class ExportRules
         }
 
         return $violations;
+    }
+
+    /**
+     * Two runs of one question, an hour apart, are one question.
+     *
+     * ## The defect
+     *
+     * `ReportBasis::for()` defaulted `asOf` to `Carbon::now()` and put the
+     * result in the digest, so in production two runs of the same report
+     * over a closed period NEVER carried the same digest. Every pair looked
+     * like two different questions, which is the exact opposite of the one
+     * guarantee PF-198 asks for.
+     *
+     * And this suite could not see it, because its own helper passed a
+     * fixed `asOf` - with the comment "so the digest is about the
+     * parameters and not the clock", which was true of the fixture and
+     * false of the product. A check that only ever exercises the path where
+     * the bug cannot appear is a check that cannot fail.
+     *
+     * So this one uses the DEFAULT, and separates the two instants by an
+     * hour rather than a millisecond: a sibling check elsewhere in this
+     * repository could not fail because two calls in the same second shared
+     * a timestamp, and that is the same mistake one layer down.
+     *
+     * @return list<string>
+     */
+    private function theClockIsNotTheQuestion(): array
+    {
+        $morning = $this->basisRunAt('2026-11-18T09:00:00+00:00');
+        $evening = $this->basisRunAt('2026-11-18T18:30:00+00:00');
+
+        $violations = [];
+
+        if ($morning->digest() !== $evening->digest()) {
+            $violations[] = 'the same report run twice, nine hours apart, carries two digests. Nobody '.
+                'can ever compare two runs, so the fingerprint answers no question at all - and it '.
+                'looks like it does, which is why somebody would rely on it.';
+        }
+
+        foreach ([$morning, $evening] as $basis) {
+            if (! str_contains((string) json_encode($basis->lines()), $basis->ranAt)) {
+                $violations[] = 'the run clock is not printed. "When was this taken" is the first thing '.
+                    'asked of a printout found in a file six months later, and keeping it out of the '.
+                    'digest is not a reason to keep it off the page.';
+            }
+        }
+
+        if ($morning->asOf !== null) {
+            $violations[] = 'a basis nobody gave an as-of to has one anyway, so the asked-for instant '.
+                'and the clock are the same field again';
+        }
+
+        return $violations;
+    }
+
+    /**
+     * An as-of IS the question, when somebody asked for one.
+     *
+     * The other half of the distinction, and it has to be checked or the
+     * fix above degenerates into "ignore the as-of entirely" - which would
+     * make a balance sheet as at the 30th and one as at the 31st digest
+     * identically, and those are different reports.
+     *
+     * @return list<string>
+     */
+    private function anAskedForAsOfIsTheQuestion(): array
+    {
+        $thirtieth = ReportBasis::for(
+            entityId: '01ABCDEF',
+            entityCode: 'DEMO',
+            from: Carbon::parse('2026-01-01'),
+            until: Carbon::parse('2026-12-31'),
+            functionalCurrency: 'SAR',
+            asOf: Carbon::parse('2026-11-30T23:59:59+00:00'),
+        );
+
+        $thirtyFirst = ReportBasis::for(
+            entityId: '01ABCDEF',
+            entityCode: 'DEMO',
+            from: Carbon::parse('2026-01-01'),
+            until: Carbon::parse('2026-12-31'),
+            functionalCurrency: 'SAR',
+            asOf: Carbon::parse('2026-12-31T23:59:59+00:00'),
+        );
+
+        if ($thirtieth->digest() === $thirtyFirst->digest()) {
+            return ['a report asked for as at 30 November and one asked for as at 31 December carry '.
+                'the same digest, so the asked-for instant is being discarded along with the clock'];
+        }
+
+        return [];
+    }
+
+    /**
+     * A filter changes every figure, so it changes the question.
+     *
+     * The activity for one cost centre and the activity for the whole
+     * entity are not the same report. A digest that could not express the
+     * filter would call them the same question - worse than no digest,
+     * because somebody would act on the match.
+     *
+     * The order a caller passes them in is NOT part of the question, and
+     * that is checked too: two screens passing the same two filters in
+     * different orders would otherwise produce two digests for one
+     * question, with identical printed blocks and no way to see why.
+     *
+     * @return list<string>
+     */
+    private function aFilterIsTheQuestion(): array
+    {
+        $unfiltered = $this->basisFiltered([]);
+        $riyadh = $this->basisFiltered(['cost centre' => 'Riyadh branch']);
+        $jeddah = $this->basisFiltered(['cost centre' => 'Jeddah branch']);
+
+        $violations = [];
+
+        if ($unfiltered->digest() === $riyadh->digest()) {
+            $violations[] = 'the whole entity and one cost centre carry the same digest, so a filtered '.
+                'report and an unfiltered one claim to be the same question';
+        }
+
+        if ($riyadh->digest() === $jeddah->digest()) {
+            $violations[] = 'two different cost centres carry the same digest, so the filter\'s VALUE '.
+                'is not in the question - only the fact that there was one';
+        }
+
+        $forwards = $this->basisFiltered(['cost centre' => 'Riyadh branch', 'party' => 'Alpha']);
+        $backwards = $this->basisFiltered(['party' => 'Alpha', 'cost centre' => 'Riyadh branch']);
+
+        if ($forwards->digest() !== $backwards->digest()) {
+            $violations[] = 'the same two filters passed in two orders carry two digests. The printed '.
+                'blocks are identical, so whoever compares them has no way to see why they differ.';
+        }
+
+        if (! str_contains((string) json_encode($unfiltered->lines()), 'none')) {
+            $violations[] = 'an unfiltered report does not say so. An unfiltered report and one whose '.
+                'filter block failed to print look identical on paper, and the difference is every '.
+                'figure on it.';
+        }
+
+        return $violations;
+    }
+
+    /**
+     * The parameter block is data too, and it is the forgettable cell.
+     *
+     * It is tempting to treat the preamble as ours and therefore safe, and
+     * it is not: it prints the FILTER VALUES, and a filter value is a party
+     * name or a cost centre somebody typed. A customer called
+     * `=cmd|'/c calc'!A1` reaches the file through "Filtered by party"
+     * exactly as readily as through a data row - and through the one cell
+     * in the file nobody thought about, which is how this class of bug
+     * survives a fix.
+     *
+     * @return list<string>
+     */
+    private function thePreambleIsNeutralized(): array
+    {
+        $rendered = (new CsvExport())->render(
+            ['code'],
+            [['4000']],
+            [['Filtered by party', '=cmd|\'/c calc\'!A1']],
+        );
+
+        $firstRow = explode("\r\n", ltrim($rendered, "\xEF\xBB\xBF"))[0] ?? '';
+
+        // The filter VALUE is the second cell; read it as a spreadsheet does.
+        $cells = str_getcsv($firstRow);
+        $value = $cells[1] ?? '';
+
+        if (! str_starts_with($value, "'")) {
+            return [sprintf(
+                'a filter value in the parameter block renders as %s, which a spreadsheet runs. The '.
+                'data rows are neutralized and the block above them is not, so the fix covers every '.
+                'cell except the one carrying a customer\'s own name.',
+                $value,
+            )];
+        }
+
+        return [];
+    }
+
+    private function basisRunAt(string $ranAt): ReportBasis
+    {
+        return ReportBasis::for(
+            entityId: '01ABCDEF',
+            entityCode: 'DEMO',
+            from: Carbon::parse('2026-01-01'),
+            until: Carbon::parse('2026-03-31'),
+            functionalCurrency: 'SAR',
+            ranAt: Carbon::parse($ranAt),
+        );
+    }
+
+    /** @param array<string, ?string> $filters */
+    private function basisFiltered(array $filters): ReportBasis
+    {
+        return ReportBasis::for(
+            entityId: '01ABCDEF',
+            entityCode: 'DEMO',
+            from: Carbon::parse('2026-01-01'),
+            until: Carbon::parse('2026-03-31'),
+            functionalCurrency: 'SAR',
+            report: 'general_ledger_detail',
+            filters: $filters,
+            ranAt: Carbon::parse('2026-11-18T09:00:00+00:00'),
+        );
     }
 
     private function basis(
