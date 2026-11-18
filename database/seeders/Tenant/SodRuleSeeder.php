@@ -77,6 +77,40 @@ final class SodRuleSeeder extends Seeder
                 'Nobody approves a bill they entered.',
                 true,
             ],
+            /*
+             | Payroll - PF-256. ONE pair, object-scoped.
+             |
+             | The first draft of this task wrote two - one for setting a
+             | salary and one for preparing a run - and both held
+             | `payroll.manage` then `payroll.approve`. Which is the same
+             | rule written twice: the distinction is in what is being
+             | approved, and the duty pair cannot see that. Two copies of
+             | one invariant means one of them can be changed without the
+             | other and nothing will say so.
+             |
+             | The object scope is what covers both cases: a salary
+             | schedule and a payroll run are different objects, so
+             | setting one person's pay does not bar you from approving
+             | somebody else's, and preparing March does not bar you from
+             | approving April.
+             |
+             | Overridable, unlike `prepare_then_release`. A business of
+             | three people has nobody else to approve the payroll, and
+             | refusing the override would leave them unable to pay
+             | anybody - which is how a product gets worked around
+             | entirely. The override is permissioned, time-boxed and
+             | audited, and the two pairs that can never be overridden
+             | stay two.
+             */
+            [
+                'set_then_approve_payroll',
+                'payroll.manage',
+                'payroll.approve',
+                'object',
+                'من يحدد الراتب أو يُعدّ المسيّر لا يعتمده، وإلا منح نفسه زيادة ودفعها.',
+                'Whoever sets a salary or prepares a payroll run does not approve it, or they can give themselves a rise and pay it. Scoped to the object, so one person\'s pay does not bar you from approving somebody else\'s, and preparing March does not bar you from approving April.',
+                true,
+            ],
             [
                 'prepare_then_release',
                 'payment.prepare',

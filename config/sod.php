@@ -178,6 +178,23 @@ return [
         'expense_claim.approve' => ['expense_claim.approved'],
 
         /*
+         | Payroll - PF-256.
+         |
+         | `payroll.manage` covers two acts that are the same duty:
+         | setting somebody's pay and preparing the run that pays it.
+         | Both are recorded, so `set_then_approve_payroll` fires on
+         | either - which is what the single object-scoped pair needs to
+         | be real rather than a declared gap.
+         |
+         | `salary.restated` is in here and `schedule.approved` is not:
+         | the approval IS the other side of the pair, and listing it as
+         | the first duty too would bar the approver from ever approving
+         | anything again.
+         */
+        'payroll.manage' => ['salary.restated', 'run.prepared'],
+        'payroll.approve' => ['schedule.approved', 'run.approved'],
+
+        /*
          | The payment run - PF-174.
          |
          | `prepare_then_release` is one of the two pairs that can never be

@@ -94,6 +94,24 @@ final class RoleSeeder extends Seeder
                 'party.manage', 'item.manage', 'price_list.manage',
                 'tax.manage', 'tax_return.prepare', 'tax_return.file',
                 'report.view', 'report.export', 'settings.manage', 'audit.view',
+
+                /*
+                 | Payroll: the controller sees and approves, and does
+                 | NOT prepare - PF-256.
+                 |
+                 | `payroll.manage` is deliberately absent. The person
+                 | who approves the largest regular outflow in the
+                 | business should not also be the person who sets the
+                 | figures, and a role holding both makes the
+                 | maker-checker on a payroll run a formality that one
+                 | person satisfies.
+                 |
+                 | It is not in `accountant` either, and that is the
+                 | point: payroll is set up by whoever the business
+                 | decides, as an explicit grant, rather than arriving
+                 | with the ledger permissions.
+                 */
+                'payroll.view', 'payroll.approve',
             ]],
 
             'accountant' => ['المحاسب', 'Accountant', [

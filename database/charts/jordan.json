@@ -1,6 +1,6 @@
 {
   "key": "jordan",
-  "version": 8,
+  "version": 9,
   "name_ar": "دليل حسابات للمملكة الأردنية الهاشمية",
   "name_en": "Jordan chart of accounts",
   "countries": [
@@ -279,7 +279,7 @@
       "name_ar": "الضمان الاجتماعي المستحق",
       "name_en": "Social Security Corporation contributions payable",
       "postable": true,
-      "role": null,
+      "role": "social_insurance_payable",
       "monetary": true
     },
     {
@@ -324,6 +324,16 @@
       "role": "unapplied_cash",
       "monetary": false,
       "note": "NOT monetary. Deferred revenue is settled by delivering goods and services, not by paying money, so restating it at the closing rate puts an exchange difference through profit or loss for an obligation that is not denominated in currency. It is the account most often wrongly marked monetary."
+    },
+    {
+      "code": "2.1.13",
+      "parent": "2.1",
+      "type": "liability",
+      "name_ar": "ضريبة رواتب مستحقة الدفع",
+      "name_en": "Payroll tax withheld, payable",
+      "postable": true,
+      "role": "payroll_tax_payable",
+      "monetary": true
     },
     {
       "code": "2.2",
@@ -524,6 +534,26 @@
       "name_en": "Expected credit loss charge",
       "postable": true,
       "role": "ecl_charge",
+      "monetary": false
+    },
+    {
+      "code": "5.11",
+      "parent": "5",
+      "type": "expense",
+      "name_ar": "الرواتب والأجور",
+      "name_en": "Salaries and wages",
+      "postable": true,
+      "role": "salary_expense",
+      "monetary": false
+    },
+    {
+      "code": "5.12",
+      "parent": "5",
+      "type": "expense",
+      "name_ar": "مساهمات صاحب العمل",
+      "name_en": "Employer contributions",
+      "postable": true,
+      "role": "employer_contribution_expense",
       "monetary": false
     }
   ],

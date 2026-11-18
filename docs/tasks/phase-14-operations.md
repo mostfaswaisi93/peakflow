@@ -292,13 +292,62 @@ characters and 44 spaces, so the till could not match our answer to its
 own queue entry, which is the one thing the column exists for. Found by
 a check comparing the log's order against the ids it sent.
 
-### PF-256 · Payroll payments
-`Settlement` · **5 pts** · depends: PF-174, PF-141 · standards: — · `risk:high`
+### PF-256 · Payroll payments — done
+`Payroll` · **5 pts** · depends: PF-174, PF-141 · standards: — · `risk:high`
 
-- [ ] A salary payment is a payable like any other and goes out through the **same payment run**, maker-checker and all - a separate path for payroll is a separate path round the controls
-- [ ] Net pay, deductions and employer contributions post to their own accounts, because a single net figure hides the liability the business still owes
-- [ ] Payroll amounts are visible only to those permitted, enforced at the row rather than hidden on a screen, and a read of them is audited - the same decision bank details already carry
-- [ ] A recurring salary is a schedule, not forty copies, and changing it changes the next payment rather than the history
+- [x] A salary payment is a payable like any other and goes out through the **same payment run**, maker-checker and all - a separate path for payroll is a separate path round the controls
+- [x] Net pay, deductions and employer contributions post to their own accounts, because a single net figure hides the liability the business still owes
+- [x] Payroll amounts are visible only to those permitted, enforced at the row rather than hidden on a screen, and a read of them is audited - the same decision bank details already carry
+- [x] A recurring salary is a schedule, not forty copies, and changing it changes the next payment rather than the history
+
+`salary_schedules`, `salary_components`, `payroll_runs`, `payroll_lines` ·
+`App\Tenant\Payroll\Services\{Payroll,PayrollVisibility}` ·
+`PayrollPostedRule` · four new control roles · `bin/verify payroll`
+
+**There is no payroll payment path.** The run posts the entry and raises
+one approved `bill` per employee for their net; PF-174's payment run
+selects those like any other payable, with maker-checker, beneficiary
+verification and duplicate detection. Nothing in `PaymentRuns` knows
+payroll exists, and a check reads its source and fails if it learns the
+word — a branch in the payment path is where maker-checker stops
+applying to one kind of payment.
+
+**The gross is the cost.** One entry: salaries and employer
+contributions as debits, the net, payroll tax and social insurance as
+credits. Four new roles, because a single "employee costs" figure
+answers no question anybody asks — gross pay scales with headcount, the
+employer's share scales with a rate the business does not set, and each
+tax is held for a different authority on a different schedule. Social
+insurance holds *both* shares, because they are paid in one transfer
+against one reference. Zero legs are omitted rather than posted as
+zero.
+
+**Visibility is a RESTRICTIVE row policy**, not a screen. Without a
+claim the four tables return nothing — not an error, so every report
+that touches the schema still works and the figures' existence is not
+disclosed. The claim needs `payroll.view`, needs a reason, is recorded
+under the `read` category like a bank-detail read, and is
+transaction-local so it cannot leak into the next request on a pooled
+connection.
+
+Three defects in the first draft, all found rather than reasoned about:
+
+- **A policy that could not grant anything.** The migrator bypass was
+  written as a RESTRICTIVE policy scoped to that role, which does
+  nothing: restrictive policies are ANDed, and the one scoped to
+  `public` still applied. An insert as the migrator was refused by it.
+  The bypass is in the function now.
+- **One duty pair written twice.** `set_then_approve_salary` and
+  `prepare_then_approve_payroll` both held `payroll.manage` then
+  `payroll.approve`. The distinction is in what is approved and a duty
+  pair cannot see that; the object scope already covers both.
+- **A provider that did not load, silently.** `bootstrap/providers.php`
+  lists class constants without their namespace. The entry was added and
+  the `use` import was not, so `PayrollServiceProvider::class` resolved
+  to `\PayrollServiceProvider`, Laravel registered nothing and said
+  nothing, and `bin/verify wiring` stayed green. The posting rule was
+  simply absent. `WiringRules::everyProviderLoads()` now asserts both
+  halves of that.
 
 ### PF-257 · Delivery by WhatsApp and the channels a customer actually reads
 `Exchange` · **6 pts** · depends: PF-102, PF-130 · standards: — · `risk:high`

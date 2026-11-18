@@ -103,6 +103,25 @@ final class PermissionSeeder extends Seeder
             ['payment.release', 'settlement', 'إطلاق دفعة سداد', 'Release a payment run', true, true],
             ['writeoff.record', 'settlement', 'إعدام دين', 'Write off a receivable', true, false],
 
+            /*
+             | Payroll - PF-256.
+             |
+             | `payroll.view` is its own permission and not folded into
+             | `report.view`, because a salary is the one number in a
+             | business that everybody wants and almost nobody should
+             | have. It is also not implied by `payroll.manage`:
+             | somebody who runs the payroll has to see the figures, but
+             | the reverse is not true - a payroll clerk who can see
+             | salaries must not be able to change them.
+             |
+             | Both demand a second factor. The run is the largest
+             | regular outflow most businesses have, and the view is the
+             | single most sensitive read in the product.
+             */
+            ['payroll.view', 'payroll', 'الاطلاع على الرواتب', 'See salary figures', true, true],
+            ['payroll.manage', 'payroll', 'إدارة الرواتب', 'Set salaries and prepare payroll runs', true, true],
+            ['payroll.approve', 'payroll', 'اعتماد الرواتب', 'Approve a salary or a payroll run', true, true],
+
             // Banking
             ['bank.manage', 'banking', 'إدارة الحسابات البنكية', 'Manage bank accounts', false, false],
             ['bank.import', 'banking', 'استيراد كشف حساب', 'Import a bank statement', false, false],

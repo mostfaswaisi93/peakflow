@@ -236,22 +236,16 @@ final class Bill extends TenantModel
     /**
      * Normalise a supplier's document number for comparison.
      *
-     * `INV-001`, `inv 001` and `INV001` are the same document from the
-     * supplier's point of view, and a unique constraint on the raw string
-     * catches only the lazy half of the duplicate problem. Letters and
-     * digits, upper-cased: everything a human would call punctuation goes.
-     *
-     * Leading zeros are KEPT. `INV-001` and `INV-1` are frequently different
-     * documents from the same supplier, and collapsing them would refuse a
-     * real invoice - a false refusal is worse than a near-match warning,
-     * because the warning asks a person and the refusal does not.
+     * The rule itself moved to {@see \App\Support\Text\DocumentNumber}
+     * in PF-257, because payroll raises bills too and reaching into this
+     * model from another module is what the architecture rule forbids.
+     * Kept here as a forward: every caller in Purchasing reads naturally
+     * through the model, and two implementations that drifted would
+     * produce one key the two modules disagree about - which the unique
+     * index would then accept as two different documents.
      */
     public static function normaliseDocumentNumber(?string $number): string
     {
-        if ($number === null) {
-            return '';
-        }
-
-        return strtoupper((string) preg_replace('/[^A-Za-z0-9]/', '', $number));
+        return \App\Support\Text\DocumentNumber::comparable($number);
     }
 }

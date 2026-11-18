@@ -97,6 +97,57 @@ enum ControlRole: string
      */
     case EmployeePayable = 'employee_payable';
 
+    /**
+     * Gross pay, as an expense of the period - PF-256.
+     *
+     * Its own account and not "employee costs", because a single figure
+     * for everything to do with people answers no question anybody asks.
+     * Gross pay, the employer's own contributions and a reimbursed
+     * expense claim are three different costs with three different
+     * behaviours: one scales with headcount, one scales with a statutory
+     * rate somebody else sets, and one is a float.
+     *
+     * The gross, not the net. A product that posted the net would show a
+     * salary cost that moves when a tax rate changes, and a liability
+     * for the difference that appears from nowhere.
+     */
+    case SalaryExpense = 'salary_expense';
+
+    /**
+     * What the employer owes on top of the salary - PF-256.
+     *
+     * Separate from {@see SalaryExpense} because it is not pay: the
+     * employee never sees it, it is set by a rate the business does not
+     * choose, and in most frameworks it is disclosed separately.
+     *
+     * Folding it into salaries makes "what does an employee cost us"
+     * right and "what did we pay them" wrong, and the second is the
+     * figure in every conversation with the employee.
+     */
+    case EmployerContributionExpense = 'employer_contribution_expense';
+
+    /**
+     * Tax deducted from pay and not yet handed over - PF-256.
+     *
+     * Not {@see WithholdingPayable}, which is tax withheld from a
+     * SUPPLIER's invoice. Both are money held for an authority and they
+     * are filed on different returns, on different dates, by different
+     * rules - and a single account makes either reconciliation
+     * impossible without knowing which rows belong to which.
+     */
+    case PayrollTaxPayable = 'payroll_tax_payable';
+
+    /**
+     * Social insurance owed to the authority - BOTH shares - PF-256.
+     *
+     * The employee's deduction and the employer's contribution end up in
+     * one place because they are paid in one transfer, on one schedule,
+     * against one reference. Splitting them would produce two balances
+     * that have to be added together to reconcile to the single amount
+     * the authority expects.
+     */
+    case SocialInsurancePayable = 'social_insurance_payable';
+
     case BadDebt = 'bad_debt';
 
     /**
@@ -229,6 +280,14 @@ enum ControlRole: string
              | every case of this enum through every method on it.
              */
             self::GoodsReceivedNotInvoiced, self::EmployeePayable,
+            /*
+             | Payroll's two liabilities - PF-256.
+             |
+             | Money held for somebody else: the employee's tax until it
+             | is filed, and both shares of social insurance until the
+             | transfer goes out.
+             */
+            self::PayrollTaxPayable, self::SocialInsurancePayable,
             self::UnappliedCash => AccountType::Liability,
 
             self::RetainedEarnings => AccountType::Equity,
@@ -239,6 +298,7 @@ enum ControlRole: string
 
             self::FxGainLoss, self::FxRevaluation, self::RoundingDifference,
             self::BadDebt, self::BankCharges, self::EclCharge,
+            self::SalaryExpense, self::EmployerContributionExpense,
             self::CostOfSales => AccountType::Expense,
 
             /*

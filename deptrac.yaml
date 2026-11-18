@@ -92,6 +92,11 @@ deptrac:
         - type: directory
           value: app/Tenant/Sync/.*
 
+    - name: Payroll
+      collectors:
+        - type: directory
+          value: app/Tenant/Payroll/.*
+
     - name: Reporting
       collectors:
         - type: directory
@@ -196,6 +201,25 @@ deptrac:
       - Purchasing
       - Banking
 
+    # Salaries, through the same controls as every other payable - PF-256.
+    #
+    # Needs Parties for the employee, Ledger to post, and Purchasing for
+    # nothing - the bills it raises are written as rows, because a
+    # salary bill has no supplier document, no tax lines and no
+    # three-way match, and reaching for the bill service would mean
+    # teaching it about payroll.
+    #
+    # That is the one deliberate looseness here, and it is recorded
+    # rather than hidden: `Payroll` writes to `bills` directly so that
+    # `PaymentRuns` can select them with no knowledge of payroll at all.
+    # A separate payment path for payroll is a separate path ROUND the
+    # controls, and this is the cheapest way to have no second path.
+    Payroll:
+      - Support
+      - Tenancy
+      - Ledger
+      - Parties
+
     # Writes from a device, applied exactly once - PF-255.
     #
     # Deliberately thin: Support for the audit trail, Tenancy for the
@@ -225,6 +249,7 @@ deptrac:
       - Banking
       - Settlement
       - Sync
+      - Payroll
 
     Exchange:
       - Support

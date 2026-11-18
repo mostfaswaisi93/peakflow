@@ -4,6 +4,7 @@ use App\Providers\AppServiceProvider;
 use App\Providers\BankingServiceProvider;
 use App\Providers\InventoryServiceProvider;
 use App\Providers\LedgerServiceProvider;
+use App\Providers\PayrollServiceProvider;
 use App\Providers\PurchasingServiceProvider;
 use App\Providers\QueueTenancyServiceProvider;
 use App\Providers\SalesServiceProvider;
@@ -22,4 +23,5 @@ return [
     PurchasingServiceProvider::class,
     BankingServiceProvider::class,
     SettlementServiceProvider::class,
+    PayrollServiceProvider::class,
 ];

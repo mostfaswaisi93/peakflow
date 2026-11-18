@@ -51,6 +51,7 @@ final class WiringRules
             'tenant resolvers run before the auth guard' => $this->resolversBeforeAuth(),
             'tenant resolvers run after the session starts' => $this->resolversAfterSession(),
             'the entity scope runs after the auth guard' => $this->entityScopeAfterAuth(),
+            'every provider in the list is actually loaded' => $this->everyProviderLoads(),
             'the tenant connection is a template with no credentials' => $this->tenantConnectionIsTemplate(),
             'the application does not connect as the migrator' => $this->applicationIsNotMigrator(),
             'problem types have unique URIs and sane statuses' => $this->problemTypesAreWellFormed(),
@@ -588,6 +589,88 @@ final class WiringRules
                     'impersonation - which means without it appearing in that customer\'s audit log',
                     (string) $route->getName(),
                     $found,
+                );
+            }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * Every provider `bootstrap/providers.php` names is loaded - PF-256.
+     *
+     * ## Why this exists
+     *
+     * That file lists class constants without their namespace and relies
+     * on the `use` imports at the top. Adding an entry and forgetting
+     * the import resolves `PayrollServiceProvider::class` to
+     * `\PayrollServiceProvider` - a class that does not exist - and
+     * Laravel registers nothing, raises nothing, and boots happily.
+     *
+     * Measured: that is exactly what happened to PF-256's provider. The
+     * posting rule it registers was simply absent, and the first sign of
+     * it was "no posting rule is registered for payroll.run_posted" from
+     * a check several steps later. `bin/verify wiring` was green
+     * throughout.
+     *
+     * The failure is silent, is one missing line away at any time, and
+     * every module in this product registers its posting rules through a
+     * provider - so a provider that does not load is a module that
+     * cannot post.
+     *
+     * @return list<string>
+     */
+    public function everyProviderLoads(): array
+    {
+        /** @var list<mixed> $listed */
+        $listed = (array) require base_path('bootstrap/providers.php');
+        $loaded = array_keys(app()->getLoadedProviders());
+        $names = array_map('strval', $listed);
+        $violations = [];
+
+        foreach ($names as $name) {
+            /*
+             | A name that is not a class at all.
+             |
+             | Which is what a missing `use` produces: the constant
+             | resolves against the global namespace and the string
+             | names nothing.
+             */
+            if (! class_exists($name)) {
+                $violations[] = sprintf(
+                    '"%s" is listed in bootstrap/providers.php and is not a class - a missing `use` '.
+                    'import resolves the constant against the global namespace, and Laravel registers '.
+                    'nothing and says nothing',
+                    $name,
+                );
+
+                continue;
+            }
+
+            if (! \in_array($name, $loaded, true)) {
+                $violations[] = sprintf(
+                    '%s is listed and not loaded, so whatever it registers - posting rules, ledger '.
+                    'checks, bindings - is absent',
+                    $name,
+                );
+            }
+        }
+
+        /*
+         | And every provider in app/Providers is listed.
+         |
+         | The other half of the same failure: a provider written and
+         | never added to the list is a module whose posting rules are
+         | not registered, and nothing about the file looks wrong.
+         */
+        foreach (glob(base_path('app/Providers/*ServiceProvider.php')) ?: [] as $file) {
+            $name = 'App\\Providers\\'.basename($file, '.php');
+
+            if (! \in_array($name, $names, true)) {
+                $violations[] = sprintf(
+                    '%s exists and is not listed in bootstrap/providers.php, so nothing it registers '.
+                    'is in effect',
+                    $name,
                 );
             }
         }
