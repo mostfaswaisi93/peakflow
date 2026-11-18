@@ -58,22 +58,19 @@ final class BankAccountListController
     public function __construct(private readonly BankBalances $balances) {}
 
     /**
-     * @permission bank.manage - the permission that also puts "Bank
-     *     accounts" in the navigation. The three balances say what the
-     *     business can spend and the difference says what is unexplained,
-     *     which is treasury information rather than a landing page.
+     * @permission bank.manage - the three balances say what the business
+     *     can spend and the itemised difference says what nobody has
+     *     explained yet, which is treasury information rather than
+     *     something a landing page shows everybody.
+     *
+     *     It is also the permission `Navigation` hides this item behind,
+     *     and a page open where its own menu entry is hidden is the
+     *     arrangement where the menu looks like the control. The route
+     *     carries it too; this is the half that holds when somebody adds
+     *     a second route to the group and forgets it.
      */
     public function __invoke(Request $request, EntityContext $context): View
     {
-        /*
-         | The same permission that shows the item in the navigation.
-         |
-         | `Navigation` hides "Bank accounts" from anybody without
-         | `bank.manage`, and a page open where its own menu entry is
-         | hidden is the arrangement where the menu looks like the
-         | control. The route carries it too; this is the half that holds
-         | when somebody adds a second route to the group.
-         */
         Gate::authorize('bank.manage');
 
         $accounts = BankAccount::query()

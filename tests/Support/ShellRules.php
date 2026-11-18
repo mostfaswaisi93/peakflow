@@ -115,6 +115,7 @@ final class ShellRules
                 'and is offered to everybody who can open it' => fn (): array => $this->theMenuHidesNothingReadable(),
                 'every page has one top-level heading, from the one component' => fn (): array => $this->oneHeadingPerPage(),
                 'and every detail page renders too' => fn (): array => $this->everyDetailPageRenders(),
+                'the route names the same permission the menu does' => fn (): array => $this->theRouteAgreesWithTheMenu(),
             ]);
         } catch (Throwable $e) {
             return ['the application shell could not be checked' => [
@@ -1144,6 +1145,74 @@ final class ShellRules
                     'from it.',
                     $relative,
                 );
+            }
+        }
+
+        return $problems;
+    }
+
+    /**
+     * The permission, where it is stated three times, says the same thing.
+     *
+     * The menu uses it to decide what to offer, the handler to decide what
+     * to allow, and the route states it so that a route listing shows it.
+     * Three is a decision this codebase makes on purpose - the listing is
+     * what an auditor reads, and the handler is what still holds when
+     * somebody adds a route to the group and forgets the middleware - and
+     * the price of saying a thing three times is that two of them can
+     * drift. The two render checks above cover the menu against the
+     * handler; this one covers the menu against the route.
+     *
+     * @return list<string>
+     */
+    private function theRouteAgreesWithTheMenu(): array
+    {
+        $problems = [];
+
+        foreach (Navigation::sections() as $section) {
+            foreach ($section['items'] as $item) {
+                if ($item['route'] === null || ! Route::has($item['route'])) {
+                    continue;
+                }
+
+                $route = Route::getRoutes()->getByName($item['route']);
+
+                if ($route === null) {
+                    continue;
+                }
+
+                $stated = [];
+
+                foreach ($route->gatherMiddleware() as $middleware) {
+                    if (\is_string($middleware) && str_starts_with($middleware, 'can:')) {
+                        $stated[] = Str::after($middleware, 'can:');
+                    }
+                }
+
+                /*
+                 | A route with no `can:` is not a finding.
+                 |
+                 | The invoice and bill lists are open to anybody with a
+                 | role and gate their figures inside the handler, which
+                 | is a deliberate choice for a reading page an auditor
+                 | should not need a drafting permission to see. What is a
+                 | finding is a route that states a DIFFERENT permission
+                 | from the one the menu offered it under, because then
+                 | the route listing an auditor reads and the menu a user
+                 | reads disagree, and neither says so.
+                 */
+                foreach ($stated as $permission) {
+                    if ($permission !== $item['permission']) {
+                        $problems[] = sprintf(
+                            '"%s" is offered in the menu under %s and its route demands %s. The route '.
+                            'listing and the menu then disagree, and nothing says which is the product\'s '.
+                            'intent.',
+                            $item['label_en'],
+                            $item['permission'] ?? 'no permission',
+                            $permission,
+                        );
+                    }
+                }
             }
         }
 

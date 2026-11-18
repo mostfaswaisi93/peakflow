@@ -189,13 +189,23 @@ Route::middleware(['tenant.session', 'auth', 'entity.scope'])->group(static func
     /*
     | The reading pages - PF-204.
     |
-    | Every one of them is a GET and writes nothing, which is why none
-    | carries a `can:` middleware: the figures on them are gated inside the
-    | handler, by the same permission the menu uses to decide whether to
-    | offer the page at all. A detail page resolves its document under the
-    | entity scope, so an id from another company is a 404 rather than a
-    | 403 - indistinguishable from one that never existed, so a numbering
-    | series cannot be walked from outside.
+    | Every one of them is a GET and writes nothing. The invoice and bill
+    | lists carry no `can:`, deliberately: they are open to anybody with a
+    | role in the entity and gate their FIGURES on `report.view` inside the
+    | handler, because an auditor who may read the list should not have to
+    | hold a permission that drafts documents.
+    |
+    | The rest state their permission twice - here and in the handler. Both,
+    | because this is the half that shows up in a route listing, and the
+    | handler is the half that still holds when somebody adds a second route
+    | to this group and forgets the middleware. The permission is the same
+    | one `Navigation` uses to decide whether to offer the page, and a check
+    | asserts the two agree in both directions.
+    |
+    | A detail page resolves its document under the entity scope, so an id
+    | from another company is a 404 rather than a 403 - indistinguishable
+    | from one that never existed, so a numbering series cannot be walked
+    | from outside.
     */
     Route::get('/sales/invoices', InvoiceListController::class)->name('invoices.index');
     Route::get('/sales/invoices/{invoice}', InvoiceDetailController::class)->name('invoices.show');
@@ -203,16 +213,24 @@ Route::middleware(['tenant.session', 'auth', 'entity.scope'])->group(static func
     Route::get('/purchasing/bills', BillListController::class)->name('bills.index');
     Route::get('/purchasing/bills/{bill}', BillDetailController::class)->name('bills.show');
 
-    Route::get('/masters/parties', PartyListController::class)->name('parties.index');
-    Route::get('/masters/parties/{party}', PartyDetailController::class)->name('parties.show');
-    Route::get('/masters/items', ItemListController::class)->name('items.index');
+    Route::get('/masters/parties', PartyListController::class)
+        ->middleware('can:party.manage')->name('parties.index');
+    Route::get('/masters/parties/{party}', PartyDetailController::class)
+        ->middleware('can:party.manage')->name('parties.show');
+    Route::get('/masters/items', ItemListController::class)
+        ->middleware('can:item.manage')->name('items.index');
 
-    Route::get('/ledger/trial-balance', TrialBalanceController::class)->name('trial-balance.index');
-    Route::get('/ledger/accounts', AccountListController::class)->name('accounts.index');
+    Route::get('/ledger/trial-balance', TrialBalanceController::class)
+        ->middleware('can:report.view')->name('trial-balance.index');
+    Route::get('/ledger/accounts', AccountListController::class)
+        ->middleware('can:account.manage')->name('accounts.index');
 
-    Route::get('/banking/accounts', BankAccountListController::class)->name('bank-accounts.index');
-    Route::get('/settlement/payment-runs', PaymentRunListController::class)->name('payment-runs.index');
-    Route::get('/settlement/statements', StatementController::class)->name('statements.index');
+    Route::get('/banking/accounts', BankAccountListController::class)
+        ->middleware('can:bank.manage')->name('bank-accounts.index');
+    Route::get('/settlement/payment-runs', PaymentRunListController::class)
+        ->middleware('can:payment.prepare')->name('payment-runs.index');
+    Route::get('/settlement/statements', StatementController::class)
+        ->middleware('can:report.view')->name('statements.index');
 
     /*
     | Importing a statement - PF-154.
