@@ -81,110 +81,126 @@
             </p>
         </section>
     @else
-        <div class="mt-8 overflow-x-auto rounded-card border border-outline bg-surface">
-            <table class="w-full text-start text-label">
-                <caption class="sr-only">{{ __('فواتير هذه الشركة، الأحدث أولًا') }}</caption>
-                <thead>
-                    <tr class="border-b border-outline text-on-surface-muted">
-                        <th scope="col" class="px-3 py-2.5 text-start font-medium">{{ __('الرقم') }}</th>
-                        <th scope="col" class="px-3 py-2.5 text-start font-medium">{{ __('العميل') }}</th>
-                        <th scope="col" class="px-3 py-2.5 text-start font-medium">{{ __('تاريخ الإصدار') }}</th>
-                        <th scope="col" class="px-3 py-2.5 text-start font-medium">{{ __('تاريخ الاستحقاق') }}</th>
-                        {{-- `data-figure` aligns a money header with its column in
-                             BOTH directions: digits do not flip, so the column stays
-                             right-aligned in Arabic, and a `text-end` header would
-                             sit on the far side of it in one of the two languages. --}}
-                        <th scope="col" data-figure class="px-3 py-2.5 font-medium">{{ __('الإجمالي') }}</th>
-                        <th scope="col" class="px-3 py-2.5 text-start font-medium">{{ __('الحالة') }}</th>
-                        <th scope="col" data-figure class="px-3 py-2.5 font-medium">{{ __('الرصيد المفتوح') }}</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach ($invoices as $invoice)
-                        @php
-                            $due = $dueDate($invoice->dueDates());
-                            $open = \App\Support\Money\Money::of($invoice->open_balance, $invoice->currency);
-                            $overdue = $invoice->isIssued() && $open->isPositive() && $due !== null && $due < $today;
-                        @endphp
+        @php
+            /*
+             | The column declaration is the ONLY place a column exists.
+             |
+             | The grid numbers every column from this list, hidden ones
+             | included, and every cell inherits its accessible name from
+             | the label here through `headers`. A heading written in the
+             | markup instead would be a second list, and the first column
+             | somebody reordered would leave the cells naming the wrong one.
+             */
+            $columns = [
+                ['key' => 'number', 'label' => __('الرقم'), 'rowheader' => true, 'pinned' => true],
+                ['key' => 'customer', 'label' => __('العميل')],
+                ['key' => 'issued', 'label' => __('تاريخ الإصدار')],
+                ['key' => 'due', 'label' => __('تاريخ الاستحقاق')],
+                ['key' => 'gross', 'label' => __('الإجمالي'), 'figure' => true],
+                ['key' => 'status', 'label' => __('الحالة')],
+                ['key' => 'open', 'label' => __('الرصيد المفتوح'), 'figure' => true],
+            ];
+        @endphp
 
-                        <tr class="border-b border-outline-subtle last:border-0">
-                            {{--
-                                A draft carries a stripe on the leading edge AND the
-                                word. The word is what carries it: a cue that is only
-                                a stripe is a cue that does not survive a photocopy,
-                                a high-contrast theme or a reader who cannot see it.
-                            --}}
-                            <td @class([
-                                'px-3 py-2.5',
-                                'border-s-2 border-draft-stripe' => $invoice->isDraft(),
-                            ])>
-                                <a href="{{ route('invoices.show', $invoice) }}"
-                                   class="figure font-medium text-link underline-offset-2 hover:underline
-                                          focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
-                                    {{ $invoice->number ?? __('مسودة بلا رقم') }}
-                                </a>
-                                <span class="mt-0.5 block text-caption text-on-surface-muted">
-                                    {{ $invoice->document_type->label() }}
-                                </span>
-                            </td>
+        <x-grid name="invoices"
+                class="mt-8"
+                :caption="__('فواتير هذه الشركة، الأحدث أولًا')"
+                :columns="$columns"
+                :paginator="$invoices"
+                :filtered="request()->filled('q')">
+            @foreach ($invoices as $invoice)
+                @php
+                    $due = $dueDate($invoice->dueDates());
+                    $open = \App\Support\Money\Money::of($invoice->open_balance, $invoice->currency);
+                    $overdue = $invoice->isIssued() && $open->isPositive() && $due !== null && $due < $today;
+                @endphp
 
-                            <td class="px-3 py-2.5 text-on-surface">{{ $invoice->customerName() }}</td>
+                <x-grid.row :index="$loop->index" :row-key="$invoice->id">
+                    {{--
+                        A draft carries a stripe on the leading edge AND the
+                        word. The word is what carries it: a cue that is only
+                        a stripe does not survive a photocopy, a high-contrast
+                        theme or a reader who cannot see it.
+                    --}}
+                    <x-grid.cell column="number"
+                                 :class="['border-s-2 border-draft-stripe' => $invoice->isDraft()]">
+                        <a href="{{ route('invoices.show', $invoice) }}"
+                           class="figure font-medium text-link underline-offset-2 hover:underline
+                                  focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
+                            {{ $invoice->number ?? __('مسودة بلا رقم') }}
+                        </a>
+                        <span class="mt-0.5 block text-caption text-on-surface-muted">
+                            {{ $invoice->document_type->label() }}
+                        </span>
+                    </x-grid.cell>
 
-                            <td class="px-3 py-2.5">
-                                <time datetime="{{ $invoice->issue_date?->toDateString() }}" class="figure text-on-surface">
-                                    {{ $invoice->issue_date?->toDateString() }}
-                                </time>
-                            </td>
+                    <x-grid.cell column="customer">{{ $invoice->customerName() }}</x-grid.cell>
 
-                            <td class="px-3 py-2.5">
-                                @if ($due !== null)
-                                    <time datetime="{{ $due }}" class="figure text-on-surface">{{ $due }}</time>
-                                @else
-                                    <span class="text-on-surface-subtle">—</span>
-                                @endif
-                            </td>
+                    <x-grid.cell column="issued" :value="$invoice->issue_date?->toDateString()">
+                        <time datetime="{{ $invoice->issue_date?->toDateString() }}" class="figure">
+                            {{ $invoice->issue_date?->toDateString() }}
+                        </time>
+                    </x-grid.cell>
 
-                            <td class="figure px-3 py-2.5 text-on-surface">
-                                {{ $figure($invoice->gross_amount, $invoice->currency) }}
-                                <span class="text-caption font-normal text-on-surface-muted">{{ $invoice->currency }}</span>
-                            </td>
+                    <x-grid.cell column="due" :value="$due">
+                        @if ($due !== null)
+                            <time datetime="{{ $due }}" class="figure">{{ $due }}</time>
+                        @else
+                            <span class="text-on-surface-subtle">—</span>
+                        @endif
+                    </x-grid.cell>
 
-                            <td class="px-3 py-2.5">
-                                @if ($invoice->isDraft())
-                                    <span class="inline-flex items-center gap-1 rounded-full bg-surface-container-high px-2 py-0.5 text-caption font-medium text-on-surface-muted">
-                                        <span aria-hidden="true">●</span>{{ __('مسودة') }}
-                                    </span>
-                                @elseif ($overdue)
-                                    <span class="inline-flex items-center gap-1 rounded-full bg-warning-subtle px-2 py-0.5 text-caption font-medium text-on-warning-subtle">
-                                        <span aria-hidden="true">!</span>{{ __('متأخرة') }}
-                                    </span>
-                                @else
-                                    <span class="inline-flex items-center gap-1 rounded-full bg-success-subtle px-2 py-0.5 text-caption font-medium text-on-success-subtle">
-                                        <span aria-hidden="true">✓</span>{{ __('مُصدرة') }}
-                                    </span>
-                                @endif
-                            </td>
+                    {{--
+                        `:value` is what the clipboard and the TSV carry, so
+                        it is the plain figure. Copying a formatted one pastes
+                        into a spreadsheet as text, and the column somebody
+                        wanted to total becomes a column of strings.
+                    --}}
+                    <x-grid.cell column="gross" :value="$invoice->gross_amount">
+                        {{ $figure($invoice->gross_amount, $invoice->currency) }}
+                        <span class="text-caption font-normal text-on-surface-muted">{{ $invoice->currency }}</span>
+                    </x-grid.cell>
 
-                            {{--
-                                A draft has no open balance, and the function cannot
-                                say so: it answers "gross, less what has relieved it",
-                                and nothing has relieved a document the customer has
-                                never seen. Printing its gross here would read as an
-                                unpaid debt.
-                            --}}
-                            <td class="figure px-3 py-2.5 font-medium text-on-surface">
-                                @if ($invoice->isDraft())
-                                    <span class="font-normal text-on-surface-subtle">—</span>
-                                @else
-                                    {{ $figure($invoice->open_balance, $invoice->currency) }}
-                                    <span class="text-caption font-normal text-on-surface-muted">{{ $invoice->currency }}</span>
-                                @endif
-                            </td>
-                        </tr>
-                    @endforeach
-                </tbody>
-            </table>
-        </div>
+                    <x-grid.cell column="status">
+                        @if ($invoice->isDraft())
+                            <span class="inline-flex items-center gap-1 rounded-full bg-surface-container-high px-2 py-0.5 text-caption font-medium text-on-surface-muted">
+                                <span aria-hidden="true">●</span>{{ __('مسودة') }}
+                            </span>
+                        @elseif ($overdue)
+                            <span class="inline-flex items-center gap-1 rounded-full bg-warning-subtle px-2 py-0.5 text-caption font-medium text-on-warning-subtle">
+                                <span aria-hidden="true">!</span>{{ __('متأخرة') }}
+                            </span>
+                        @else
+                            <span class="inline-flex items-center gap-1 rounded-full bg-success-subtle px-2 py-0.5 text-caption font-medium text-on-success-subtle">
+                                <span aria-hidden="true">✓</span>{{ __('مُصدرة') }}
+                            </span>
+                        @endif
+                    </x-grid.cell>
+
+                    {{--
+                        A draft has no open balance, and the function cannot
+                        say so: it answers "gross, less what has relieved it",
+                        and nothing has relieved a document the customer has
+                        never seen. Printing its gross would read as an unpaid
+                        debt, so the cell carries no `:value` either - an empty
+                        clipboard cell is honest and a zero is not.
+                    --}}
+                    <x-grid.cell column="open"
+                                 :value="$invoice->isDraft() ? null : $invoice->open_balance">
+                        @if ($invoice->isDraft())
+                            <span class="font-normal text-on-surface-subtle">—</span>
+                        @else
+                            {{ $figure($invoice->open_balance, $invoice->currency) }}
+                            <span class="text-caption font-normal text-on-surface-muted">{{ $invoice->currency }}</span>
+                        @endif
+                    </x-grid.cell>
+                </x-grid.row>
+            @endforeach
+
+            <x-slot:empty>
+                {{ __('أول فاتورة تُنشَأ من المبيعات، أو من عرض سعر قبله العميل، وتظهر هنا بمجرد حفظها كمسودة.') }}
+            </x-slot:empty>
+        </x-grid>
 
         <p class="mt-3 text-caption text-on-surface-muted">
             {{ __('الرصيد المفتوح هو الإجمالي بعد خصم الإشعارات الدائنة والدفعات المخصَّصة وفروق المطابقة والمبالغ المشطوبة.') }}
