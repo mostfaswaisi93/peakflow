@@ -12,6 +12,39 @@ PF-029 through PF-032. Three questions that look like one, and a deliberate omis
 
 The second and third cannot be answered from roles. Both duties are legitimately inside the user's role — that is *why* the controls exist.
 
+## Signing in is two stages, and the second one is what `requires_mfa` means
+
+Fortify is not installed here — the same registry limitation as the WebAuthn library — so the scaffolding it would have supplied is written by hand: `LoginController` plus `SecondFactorChallenge`, on the one `POST /login` route the route table has.
+
+| Stage | What it does | What it does **not** do |
+|-------|--------------|-------------------------|
+| Password | Resolves the workspace, verifies the credential, rotates the session id, opens a challenge for a user who has a confirmed factor | Sign anybody in. There is no authenticated session, and no `factor_asserted_at` |
+| Code | Accepts a TOTP code or a recovery code, signs the user in, writes `factor_asserted_at` | Accept a code that no challenge asked for, or one for an account named by the form |
+
+The password stage establishing **nothing** is the part worth defending. The tempting shortcut is to sign the user in and set a "needs 2FA" flag for the middleware to honour, and that is how a hand-rolled second factor becomes optional: the session is already authenticated, so every path that forgets to consult the flag — a new route, a job acting on the session, a token minted from it — is a path that skipped the factor. Here there is nothing to forget, because there is no session to forget it with.
+
+The challenge expires in five minutes and is bound to the same device fingerprint an established session carries. Without the binding there would be a window in which the binding does not apply; without the expiry, a challenge left open is a password-only sign-in that completes whenever whoever has the password gets round to it.
+
+### What was broken before it existed, and why nobody noticed
+
+`StepUpGuard` refuses a `requires_mfa` permission unless the session carries `factor_asserted_at`. **Nothing in `app/` ever wrote that key.** The only writers were check suites, setting it by hand to reach the code they were testing.
+
+So the factor could be enrolled, confirmed, audited, demanded at the point of granting and refused on removal — and never *used*. Every `requires_mfa` permission was refused for every real user with the message "this session was not established with a second factor", which was true of every session that could exist.
+
+It failed closed, which is why it survived: the symptom is a payment run nobody can release, not one anybody can. It is the same shape as the defect `config/sod.php` records — a control whose own tests supply the state it reads has never run.
+
+`IdentityCoverageRules` is the suite that holds it, and it holds it behaviourally: it drives the controller with a real request, a real session and the real guard, and asks afterwards whether anybody is signed in. Asserting that the flag was set would have passed against a version that signed the user in first.
+
+### The guess budget is spent at the stage that spends it
+
+The account throttle counter is cleared when a **session is established**, not when a password is accepted. Clearing it on a correct password gave anyone holding a phished password five fresh guesses at the six-digit code for every re-submission of that password — an unbounded number of attempts, arranged out of the counter that exists to bound them. The code stage consults the same limit, against the account the challenge names rather than one the form asks for.
+
+### Enrolment still has no entry point
+
+Nothing in `app/` calls `beginTotpEnrolment()`. There is no account screen (PF-204), no console command and no seeder that creates an authenticator, so in a fresh deployment a user cannot acquire the factor this challenge asks for. `mfa:status` reports who lacks one; it cannot give anybody one.
+
+That matters for the order the remaining work lands in, because `RoleGrantService` refuses a role carrying a `requires_mfa` permission to a user with no confirmed factor. It has no callers yet, so the two gaps cancel out today. Wiring role management before enrolment would deadlock: no factor can be enrolled, therefore no money-moving role can be granted.
+
 ## `requires_mfa` and `requires_step_up` are different demands
 
 `requires_mfa` is a property of the **session**: the user must have a confirmed factor and must have used it to establish this session.

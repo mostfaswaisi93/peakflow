@@ -33,7 +33,9 @@
             <x-brand.logo size="full" class="h-10"/>
 
             <h1 class="mt-8 text-headline font-bold text-on-surface">{{ __('تسجيل الدخول') }}</h1>
-            <p class="mt-1 text-label text-on-surface-muted">{{ __('ادخل إلى مساحة عمل شركتك.') }}</p>
+            <p class="mt-1 text-label text-on-surface-muted">
+                {{ ($awaitingFactor ?? false) ? __('يحتاج تأكيدك') : __('ادخل إلى مساحة عمل شركتك.') }}
+            </p>
 
             @if (session('session_ended'))
                 {{-- Why they are back here. Without it, an absolute timeout is
@@ -53,6 +55,43 @@
                 </div>
             @enderror
 
+            @if ($awaitingFactor ?? false)
+                {{--
+                    The second stage - PF-029.
+
+                    The password was accepted and NOTHING is signed in yet, so
+                    this form is the whole of the sign-in that remains. It
+                    carries no email and no password field on purpose: the
+                    challenge in the session already names the account, and a
+                    form that asked again would let whoever has this page
+                    aim an accepted code at a different one.
+
+                    One field for both factor types, because a user whose
+                    phone is in the other room should not have to find a
+                    different form for the printed codes they kept for
+                    exactly this.
+                --}}
+                <form method="POST" action="{{ route('login.store') }}" class="mt-8 space-y-5" novalidate>
+                    @csrf
+
+                    <div>
+                        <label for="code" class="block text-label font-medium text-on-surface">
+                            {{ __('الرمز') }}
+                        </label>
+                        <input id="code" name="code" type="text" required autofocus
+                               autocomplete="one-time-code" inputmode="text" dir="ltr"
+                               @error('email') aria-invalid="true" @enderror
+                               class="mt-1.5 block min-h-11 w-full rounded-field border border-outline-control bg-surface px-3.5 py-2 text-on-surface
+                                      transition-colors duration-(--duration-fast) ease-(--ease-standard)
+                                      focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
+                        <p class="mt-1.5 text-caption text-on-surface-muted">{{ __('إعادة التحقق المعزز') }}</p>
+                    </div>
+
+                    <x-button type="submit" variant="cta" size="lg" class="mt-2 w-full">
+                        {{ __('تسجيل الدخول') }}
+                    </x-button>
+                </form>
+            @else
             <form method="POST" action="{{ route('login.store') }}" class="mt-8 space-y-5" novalidate>
                 @csrf
 
@@ -100,6 +139,7 @@
                     {{ __('تسجيل الدخول') }}
                 </x-button>
             </form>
+            @endif
         </div>
     </div>
 @endsection
