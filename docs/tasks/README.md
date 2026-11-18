@@ -17,7 +17,7 @@
 | [08](phase-08-banking.md) | Bank accounts, statements, reconciliation | 21 | 109 |
 | [09](phase-09-settlement.md) | Payment runs, files, direct debit, in-transit | 16 | 81 |
 | [10](phase-10-reporting.md) | Reporting, close, consolidation | 17 | 87 |
-| [11](phase-11-design-system.md) | Design system, data grid, accessibility, RTL | 20 | 107 |
+| [11](phase-11-design-system.md) | Design system, data grid, accessibility, RTL | 20 | 104 |
 | [12](phase-12-api-exchange.md) | REST API, webhooks, the Exchange plane | 14 | 57 |
 | [13](phase-13-hardening.md) | Security, observability, performance, release | 16 | 77 |
 | [14](phase-14-operations.md) | Stock, serials, returns, sync, payroll | 11 | 58 |
@@ -45,12 +45,12 @@ A criterion is ticked only when something in `bin/verify` fails if the behaviour
 | [08](phase-08-banking.md) | 21 / 21 | 124 | 0 |
 | [09](phase-09-settlement.md) | 15 / 16 | 79 | 1 |
 | [10](phase-10-reporting.md) | 2 / 17 | 9 | 67 |
-| [11](phase-11-design-system.md) | 1 / 20 | 5 | 97 |
+| [11](phase-11-design-system.md) | 1 / 20 | 9 | 95 |
 | [12](phase-12-api-exchange.md) | 0 / 14 | 0 | 64 |
 | [13](phase-13-hardening.md) | 0 / 16 | 0 | 73 |
 | [14](phase-14-operations.md) | 10 / 11 | 53 | 1 |
 | [15](phase-15-verticals.md) | 0 / 8 | 0 | 36 |
-| **all** | **151 / 267** | **1271** | **431** |
+| **all** | **151 / 267** | **1275** | **429** |
 
 Phases 00 to 09 are the ones that have been worked, and Phase 08 is closed. An open criterion in a worked phase is one that depends on a later phase and says so in its own task file, with the task that brings it - never one that was skipped.
 

@@ -51,14 +51,35 @@ This phase is the systematic pass, not the first design work. The shell, the tok
 - [ ] Persisted per user and applied before first paint, so the layout does not reflow on load
 - [ ] Target sizes stay within the 24×24 minimum in every mode, including `dense`, which is the constraint that bounds how dense `dense` can be
 
-### PF-204 · The application shell
+### PF-204 · The application shell — mostly done
 `—` · **5 pts** · depends: PF-203, PF-027 · standards: WCAG 2.2 AA · `type:a11y`
 
-- [ ] Sidebar navigation gated by permission and plan, the entity switcher, global search, notifications, the user menu
-- [ ] **A skip link as the first thing in the tab order**, hidden until focused, because all three shells put navigation ahead of content and reaching it by keyboard otherwise means tabbing past thirty controls on every load
-- [ ] **`<main>` carries `tabindex="-1"`**: a `<main>` is not focusable by default, so without it the browser scrolls to the target but leaves focus where it was, and the next `Tab` returns to the navigation just skipped. A skip link that only moves the viewport is worse than none, because it looks like it worked
-- [ ] The active entity and the current period state are visible on every screen - a user posting into the wrong company or a closed period is what this prevents
-- [ ] Breadcrumbs, a consistent page header with the primary action, and a `<noscript>` path that still renders content
+- [x] Sidebar navigation gated by permission, the entity switcher, the user menu
+- [x] **A skip link as the first thing in the tab order**, hidden until focused, because all three shells put navigation ahead of content and reaching it by keyboard otherwise means tabbing past thirty controls on every load
+- [x] **`<main>` carries `tabindex="-1"`**: a `<main>` is not focusable by default, so without it the browser scrolls to the target but leaves focus where it was, and the next `Tab` returns to the navigation just skipped. A skip link that only moves the viewport is worse than none, because it looks like it worked
+- [x] The active entity and the current period state are visible on every screen - a user posting into the wrong company or a closed period is what this prevents
+- [ ] Breadcrumbs, a consistent page header with the primary action
+- [ ] Global search and notifications
+- [ ] Plan gating in the menu: a page the tenant's plan does not include is listed with its upgrade path, not hidden
+
+> **The navigation is data, not markup** — `App\Support\Ui\Navigation`. A
+> sidebar written as markup is a second list of what exists, and it goes out
+> of date the first time somebody adds a page and forgets it; the symptom is
+> a feature nobody can find, which is the same as a feature that was never
+> built. `bin/verify shell` renders the shell and reads the structure out of
+> the HTML, because every claim above is structural. Items with no route yet
+> are **listed and not linked**, deliberately: a menu showing only what is
+> finished tells a new user nothing about what the product is for.
+>
+> **The `<noscript>` path** is the whole shell, not a fallback for it. The
+> narrow-screen menu is a `<details>` rather than a scripted drawer, and the
+> entity switcher submits a real form, so navigation and company switching
+> both work with scripting off.
+>
+> The one this found: the first version gave the landmark to **both** copies
+> of the menu — the wide-screen column and the narrow-screen disclosure — so
+> a screen reader's landmark list offered two identical "Main navigation"
+> entries with no way to tell which was the copy hidden at that width.
 
 ### PF-205 · The data grid
 `—` · **8 pts** · depends: PF-204 · standards: — · `risk:high`

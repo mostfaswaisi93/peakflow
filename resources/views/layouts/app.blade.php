@@ -44,15 +44,17 @@
 
     <header class="border-b border-outline bg-surface">
         <div @class(['mx-auto flex flex-wrap items-center gap-4 px-6 py-3', ($wide ?? false) ? 'max-w-7xl' : 'max-w-5xl'])>
-            {{-- The small logo: 32 px high is about 172 px wide in English and
-                 122 px in Arabic - both inside the kit's 120-200 px band for
-                 the small artwork. The link is the way home from anywhere. --}}
+            {{-- The small logo: 32 px high is about 172 px wide, inside the
+                 kit's 120-200 px band for the small artwork. One wordmark in
+                 both languages now, so there is one width to check. The link
+                 is the way home from anywhere. --}}
             <a href="{{ route('overview') }}"
                class="-my-1 rounded-lg py-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                 <x-brand.logo size="small" class="h-8"/>
             </a>
 
             @include('partials.entity-switcher')
+            @include('partials.period-state')
 
             <div class="ms-auto flex items-center gap-4">
                 @include('partials.theme-switcher')
@@ -87,11 +89,31 @@
         @endif
     </div>
 
-    {{-- `wide` is for grids that need the room (the Overview's Bento grid);
-         reading pages keep the narrower measure. --}}
-    <main id="content" tabindex="-1" @class(['mx-auto px-6 py-10', ($wide ?? false) ? 'max-w-7xl' : 'max-w-5xl'])>
-        @yield('content')
-    </main>
+    {{--
+        The shell: navigation beside the content, or above it - PF-204.
+
+        `lg:flex` and nothing else. The sidebar partial renders a column
+        that is `hidden` below `lg` and a disclosure that is `lg:hidden`,
+        so the same markup is a row of two on a wide screen and a stack of
+        two on a narrow one, with no second layout to keep in step.
+
+        `min-w-0` on the content column is load-bearing: a flex item
+        defaults to `min-width: auto`, so one wide table pushes the column
+        past the viewport and takes the sidebar off screen with it. The
+        symptom is a page that scrolls sideways and a navigation nobody
+        can reach, which is how it was found.
+    --}}
+    <div class="lg:flex">
+        @include('partials.sidebar')
+
+        <div class="min-w-0 flex-1">
+            {{-- `wide` is for grids that need the room (the Overview's Bento
+                 grid); reading pages keep the narrower measure. --}}
+            <main id="content" tabindex="-1" @class(['mx-auto px-6 py-10', ($wide ?? false) ? 'max-w-7xl' : 'max-w-5xl'])>
+                @yield('content')
+            </main>
+        </div>
+    </div>
 
     {{--
         The active entity, on every PRINTED page.

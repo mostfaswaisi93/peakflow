@@ -323,6 +323,10 @@ if ($only === 'all' || $only === 'design') {
     $suites['Design tokens'] = $suite(static fn (): array => (new Tests\Support\DesignTokenRules($base))->all());
 }
 
+if ($only === 'all' || $only === 'shell') {
+    $suites['The application shell'] = $suite(static fn (): array => (new Tests\Support\ShellRules())->all());
+}
+
 if ($only === 'all' || $only === 'reporting') {
     $suites['The Overview'] = $suite(static fn (): array => (new Tests\Support\OverviewRules())->all());
     $suites['Trial balance report'] = $suite(static fn (): array => (new Tests\Support\TrialBalanceReportRules())->all());
@@ -358,7 +362,7 @@ if ($only === 'all' || $only === 'examples') {
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | design | reporting | errors | repo | ops | tax | charts | sales | exchange | attachments | archive | inbound | purchasing | banking | settlement | stock | sync | payroll | messaging | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | design | shell | reporting | errors | repo | ops | tax | charts | sales | exchange | attachments | archive | inbound | purchasing | banking | settlement | stock | sync | payroll | messaging | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public\n");
     exit(2);
 }
 

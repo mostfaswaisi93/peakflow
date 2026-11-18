@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Route;
 
 /**
- * What the product has, declared once - PF-199.
+ * What the product has, declared once - PF-204.
  *
  * ## Why this is data and not markup
  *
@@ -65,10 +65,10 @@ final class Navigation
                 'label_en' => 'Sales',
                 'icon' => 'sales',
                 'items' => [
-                    ['label_ar' => 'الفواتير', 'label_en' => 'Invoices', 'route' => 'invoices.index', 'permission' => 'invoice.draft'],
+                    ['label_ar' => 'الفواتير', 'label_en' => 'Invoices', 'route' => null /* invoices.index */, 'permission' => 'invoice.draft'],
                     ['label_ar' => 'الإشعارات الدائنة', 'label_en' => 'Credit notes', 'route' => null, 'permission' => 'credit_note.issue'],
                     ['label_ar' => 'عروض الأسعار', 'label_en' => 'Quotes', 'route' => null, 'permission' => 'quote.manage'],
-                    ['label_ar' => 'كشوف الحساب', 'label_en' => 'Statements', 'route' => 'statements.index', 'permission' => 'report.view'],
+                    ['label_ar' => 'كشوف الحساب', 'label_en' => 'Statements', 'route' => null /* statements.index */, 'permission' => 'report.view'],
                 ],
             ],
             [
@@ -76,7 +76,7 @@ final class Navigation
                 'label_en' => 'Purchasing',
                 'icon' => 'purchasing',
                 'items' => [
-                    ['label_ar' => 'فواتير الموردين', 'label_en' => 'Bills', 'route' => 'bills.index', 'permission' => 'bill.create'],
+                    ['label_ar' => 'فواتير الموردين', 'label_en' => 'Bills', 'route' => null /* bills.index */, 'permission' => 'bill.create'],
                     ['label_ar' => 'أوامر الشراء', 'label_en' => 'Purchase orders', 'route' => null, 'permission' => 'purchase_order.manage'],
                     ['label_ar' => 'مطالبات المصروفات', 'label_en' => 'Expense claims', 'route' => null, 'permission' => 'expense_claim.submit'],
                 ],
@@ -86,10 +86,17 @@ final class Navigation
                 'label_en' => 'Banking and settlement',
                 'icon' => 'bank',
                 'items' => [
-                    ['label_ar' => 'الحسابات البنكية', 'label_en' => 'Bank accounts', 'route' => null, 'permission' => 'bank.manage'],
-                    ['label_ar' => 'استيراد كشف', 'label_en' => 'Import a statement', 'route' => 'statement-import.show', 'permission' => 'bank.import'],
+                    /*
+                     | Importing a statement is NOT listed here.
+                     |
+                     | It is reached from a bank account, because a parsed
+                     | statement without an account to attach it to is the
+                     | one import mistake that cannot be undone from the
+                     | screen: the lines land, matched against nothing.
+                     */
+                    ['label_ar' => 'الحسابات البنكية', 'label_en' => 'Bank accounts', 'route' => null /* bank-accounts.index */, 'permission' => 'bank.manage'],
                     ['label_ar' => 'المطابقة البنكية', 'label_en' => 'Reconciliation', 'route' => null, 'permission' => 'bank.reconcile'],
-                    ['label_ar' => 'مسيّرات الدفع', 'label_en' => 'Payment runs', 'route' => 'payment-runs.index', 'permission' => 'payment.prepare'],
+                    ['label_ar' => 'مسيّرات الدفع', 'label_en' => 'Payment runs', 'route' => null /* payment-runs.index */, 'permission' => 'payment.prepare'],
                 ],
             ],
             [
@@ -97,8 +104,8 @@ final class Navigation
                 'label_en' => 'Ledger',
                 'icon' => 'ledger',
                 'items' => [
-                    ['label_ar' => 'ميزان المراجعة', 'label_en' => 'Trial balance', 'route' => 'trial-balance.index', 'permission' => 'report.view'],
-                    ['label_ar' => 'دليل الحسابات', 'label_en' => 'Chart of accounts', 'route' => 'accounts.index', 'permission' => 'account.manage'],
+                    ['label_ar' => 'ميزان المراجعة', 'label_en' => 'Trial balance', 'route' => null /* trial-balance.index */, 'permission' => 'report.view'],
+                    ['label_ar' => 'دليل الحسابات', 'label_en' => 'Chart of accounts', 'route' => null /* accounts.index */, 'permission' => 'account.manage'],
                     ['label_ar' => 'قيود اليومية', 'label_en' => 'Journal entries', 'route' => null, 'permission' => 'journal.draft'],
                     ['label_ar' => 'الفترات', 'label_en' => 'Periods', 'route' => null, 'permission' => 'period.close'],
                 ],
@@ -108,8 +115,8 @@ final class Navigation
                 'label_en' => 'Master data',
                 'icon' => 'masters',
                 'items' => [
-                    ['label_ar' => 'العملاء والموردون', 'label_en' => 'Customers and suppliers', 'route' => 'parties.index', 'permission' => 'party.manage'],
-                    ['label_ar' => 'الأصناف', 'label_en' => 'Items', 'route' => 'items.index', 'permission' => 'item.manage'],
+                    ['label_ar' => 'العملاء والموردون', 'label_en' => 'Customers and suppliers', 'route' => null /* parties.index */, 'permission' => 'party.manage'],
+                    ['label_ar' => 'الأصناف', 'label_en' => 'Items', 'route' => null /* items.index */, 'permission' => 'item.manage'],
                     ['label_ar' => 'قوائم الأسعار', 'label_en' => 'Price lists', 'route' => null, 'permission' => 'price_list.manage'],
                     ['label_ar' => 'الضرائب', 'label_en' => 'Tax', 'route' => null, 'permission' => 'tax.manage'],
                 ],
@@ -163,14 +170,22 @@ final class Navigation
         return $visible;
     }
 
-    /** Whether a route is the one being looked at, or inside it. */
-    public static function isCurrent(?string $name): bool
+    /**
+     * Whether a route is the one being looked at, or inside it.
+     *
+     * `$current` is a parameter rather than only a lookup so that the
+     * prefix rule below can be checked as the arithmetic it is. Reaching
+     * for the router instead would mean a check could only ask the
+     * question from inside a dispatched request, which is exactly the
+     * setup cost that stops a rule like this from being checked at all.
+     */
+    public static function isCurrent(?string $name, ?string $current = null): bool
     {
         if ($name === null) {
             return false;
         }
 
-        $current = Route::currentRouteName();
+        $current ??= Route::currentRouteName();
 
         if ($current === null) {
             return false;
