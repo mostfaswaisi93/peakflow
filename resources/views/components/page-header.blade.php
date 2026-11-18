@@ -1,10 +1,9 @@
 {{--
     <x-page-header> - the top of every page inside the shell.
 
-        title         the page's name. An attribute for plain text
-                      (`:title="__('...')"`), or a slot when the name needs
-                      markup - an invoice number set in the figure face, a
-                      code in an LTR span.
+        title         the page's name. A bound attribute for plain text,
+                      or a slot when the name needs markup - an invoice
+                      number set in the figure face, a code in an LTR span.
         headingClass  extra classes for the <h1> itself, for exactly that
                       case. The base classes are not negotiable; this adds.
         eyebrow       the small line ABOVE the name: a document type, a

@@ -1098,9 +1098,9 @@ final class ArchitectureRules
                 continue;
             }
 
-            $close = strpos($source, '>', $i);
+            $close = self::tagEnd($source, $i);
 
-            if ($close === false) {
+            if ($close === null) {
                 break;
             }
 
@@ -1111,8 +1111,50 @@ final class ArchitectureRules
             $tag = substr($source, $i, $close - $i + 1);
 
             foreach ($visible as $attribute) {
-                if (preg_match('/\b'.preg_quote($attribute, '/').'\s*=\s*"([^"]*)"/', $tag, $m, PREG_OFFSET_CAPTURE) === 1) {
+                /*
+                 | A PLAIN attribute: `title="..."`, where the value is text.
+                 |
+                 | `(?<![:\w.-])` is what keeps this off Blade's bound form.
+                 | `:title="$invoice->number"` is a component prop carrying a
+                 | PHP expression, not a tooltip carrying words, and reading
+                 | its source as text reported ten correct pages as broken.
+                 */
+                if (preg_match(
+                    '/(?<![:\w.\-])'.preg_quote($attribute, '/').'\s*=\s*"([^"]*)"/',
+                    $tag,
+                    $m,
+                    PREG_OFFSET_CAPTURE,
+                ) === 1) {
                     $found[] = [$m[1][0], $i + $m[1][1], $attribute.' attribute'];
+                }
+
+                /*
+                 | The BOUND form: `:title="EXPR"`.
+                 |
+                 | Skipping it would be the easy fix and would open the hole
+                 | this rule exists to close, because `:title="'نص'"` is a
+                 | literal reaching the user by another route. So the
+                 | expression is judged the way a Blade echo is: a quoted
+                 | string with letters in it, and no call to the translator
+                 | anywhere in the expression, is the violation.
+                 */
+                if (preg_match(
+                    '/(?<![\w.\-]):'.preg_quote($attribute, '/').'\s*=\s*"([^"]*)"/',
+                    $tag,
+                    $m,
+                    PREG_OFFSET_CAPTURE,
+                ) !== 1) {
+                    continue;
+                }
+
+                $expression = $m[1][0];
+
+                if (str_contains($expression, '__(') || str_contains($expression, 'trans(')) {
+                    continue;
+                }
+
+                if (preg_match('/([\'"])((?:(?!\1).)*\p{L}{2,}(?:(?!\1).)*)\1/u', $expression, $literal) === 1) {
+                    $found[] = [$literal[2], $i + $m[1][1], ':'.$attribute.' expression'];
                 }
             }
 
@@ -1125,6 +1167,46 @@ final class ArchitectureRules
         }
 
         return $found;
+    }
+
+    /**
+     * Where a tag ends, skipping over quoted attribute values.
+     *
+     * `strpos($source, '>')` was wrong the moment a tag could contain a PHP
+     * expression: `:title="$party->legal_name"` has a `>` inside the quotes,
+     * so the tag was cut in half and the remainder - `legal_name">` - was
+     * reported as untranslated text. The line number was right and the
+     * finding was nonsense, which is the worst kind of false positive,
+     * because the next person deletes the rule rather than the bug.
+     */
+    private static function tagEnd(string $source, int $from): ?int
+    {
+        $length = \strlen($source);
+        $quote = null;
+
+        for ($i = $from; $i < $length; $i++) {
+            $character = $source[$i];
+
+            if ($quote !== null) {
+                if ($character === $quote) {
+                    $quote = null;
+                }
+
+                continue;
+            }
+
+            if ($character === '"' || $character === "'") {
+                $quote = $character;
+
+                continue;
+            }
+
+            if ($character === '>') {
+                return $i;
+            }
+        }
+
+        return null;
     }
 
     /**
