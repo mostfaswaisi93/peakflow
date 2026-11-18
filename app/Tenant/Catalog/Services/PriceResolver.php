@@ -60,6 +60,7 @@ final class PriceResolver
      * @return array{
      *     unit_price: string,
      *     currency: string,
+     *     list_id: string,
      *     list_code: string,
      *     list_name: string,
      *     scope: string,
@@ -98,11 +99,25 @@ final class PriceResolver
          | underlying list does. Resolving it recursively against what is
          | left of the candidate stack is what keeps the two in step.
          */
-        if ($winner->unit_price === null || $winner->discount_percent !== null) {
+        /*
+         | A list of its own price first, then a discount, then a rule.
+         |
+         | In that order deliberately: a derived list may still carry
+         | lines of its own - "retail less fifteen per cent, except
+         | these three at a fixed price" - and the exception has to beat
+         | the rule, or it is not an exception.
+         */
+        if ($winner->unit_price !== null && $winner->discount_percent === null) {
+            return $this->describe($winner, $candidates, (string) $winner->unit_price, null);
+        }
+
+        if ($winner->discount_percent !== null) {
             return $this->applyDiscount($winner, $candidates, $itemId, $currency, $documentDate);
         }
 
-        return $this->describe($winner, $candidates, (string) $winner->unit_price, null);
+        $derived = $this->derive($winner, $itemId, $currency, $documentDate);
+
+        return $this->describe($winner, $candidates, $derived['unit_price'], $derived['note']);
     }
 
     /**
@@ -142,6 +157,7 @@ final class PriceResolver
     ): array {
         $rows = DB::connection('tenant')->select(<<<'SQL'
             SELECT
+                pl.id,
                 pl.code,
                 pl.currency,
                 pl.name_en,
@@ -151,8 +167,13 @@ final class PriceResolver
                 pl.priority,
                 pl.valid_from,
                 pl.valid_to,
-                pll.unit_price,
-                pll.discount_percent,
+                pl.derived_from_id,
+                pl.derivation_kind,
+                pl.derivation_percent,
+                pt.unit_price,
+                pt.discount_percent,
+                pt.effective_from,
+                pt.reason AS price_reason,
                 pll.min_quantity,
                 /*
                  | Specificity as a number, so the ordering is one ORDER BY
@@ -164,19 +185,54 @@ final class PriceResolver
                     WHEN pl.party_group IS NOT NULL THEN 2
                     ELSE 1
                 END AS specificity
-            FROM price_list_lines pll
-            JOIN price_lists pl ON pl.id = pll.price_list_id
-            WHERE pll.item_id = cast(? AS char(26))
-              AND pl.currency = cast(? AS char(3))
+            /*
+             | From LISTS, not from lines - PF-254.
+             |
+             | A derived list prices an item it has no line for, by
+             | re-running its rule against its base. Driving the query
+             | from `price_list_lines` made such a list no candidate at
+             | all, so the derivation could never be reached.
+             */
+            FROM price_lists pl
+            LEFT JOIN price_list_lines pll
+                   ON pll.price_list_id = pl.id
+                  AND pll.item_id = cast(? AS char(26))
+                  AND pll.min_quantity <= cast(? AS numeric(21,8))
+            /*
+             | The price in force ON THE DOCUMENT'S DATE.
+             |
+             | The latest point at or before it. A point dated next month
+             | is a scheduled change and is not this document's price;
+             | the day it arrives it becomes the latest point at or
+             | before the date, and that is the entire mechanism - no
+             | job, nothing to forget on a public holiday.
+             */
+            LEFT JOIN LATERAL (
+                SELECT p.unit_price, p.discount_percent, p.effective_from, p.reason
+                FROM price_points p
+                WHERE p.price_list_line_id = pll.id
+                  AND p.effective_from <= ?
+                ORDER BY p.effective_from DESC
+                LIMIT 1
+            ) pt ON TRUE
+            WHERE pl.currency = cast(? AS char(3))
               AND pl.active
               AND pl.valid_from <= ?
               AND (pl.valid_to IS NULL OR pl.valid_to >= ?)
-              AND pll.min_quantity <= cast(? AS numeric(21,8))
               AND (
                     (pl.party_id IS NULL AND pl.party_group IS NULL)
                  OR pl.party_id = cast(? AS char(26))
                  OR pl.party_group = ?
               )
+              /*
+               | A list qualifies if it has a price for this item on this
+               | date, or if it can compute one.
+               |
+               | A tier whose first point starts next month is neither:
+               | `pt` is null and the list is not derived, so it drops
+               | out rather than resolving to a price of nothing.
+               */
+              AND (pt.effective_from IS NOT NULL OR pl.derived_from_id IS NOT NULL)
             ORDER BY
                 specificity DESC,
                 pl.priority DESC,
@@ -187,15 +243,27 @@ final class PriceResolver
                  | making every quantity break decorative - and the symptom
                  | is a customer invoiced at list price for a container
                  | load, which they notice and we do not.
+                 |
+                 | No NULLS clause, deliberately. A derived list with no
+                 | line for this item produces a row whose `min_quantity`
+                 | is null, and the first draft wrote NULLS LAST here to
+                 | keep it behind the list's explicit tiers. A bite that
+                 | flipped it to NULLS FIRST changed nothing: the LEFT
+                 | JOIN yields the null row only when NO tier of that
+                 | list matches, so the two never appear together and
+                 | there was never anything to order. A clause that reads
+                 | as precedence and cannot provide it is worse than
+                 | none.
                  */
                 pll.min_quantity DESC,
                 pl.valid_from DESC
         SQL, [
             $itemId,
+            $quantity,
+            $documentDate->toDateString(),
             $currency,
             $documentDate->toDateString(),
             $documentDate->toDateString(),
-            $quantity,
             $partyId,
             $partyGroup,
         ]);
@@ -218,9 +286,158 @@ final class PriceResolver
     }
 
     /**
+     * A derived list's price: its base's price for the same date, re-run.
+     *
+     * Re-run and not copied. A wholesale list holding retail-less-fifteen
+     * with the arithmetic already done stops agreeing with retail the
+     * first time retail moves, and nobody notices because both numbers
+     * look deliberate.
+     *
+     * Re-running also makes the derived price correct on dates in the
+     * PAST: the base's point for that date is read and the rule applied,
+     * so a credit note in April against a March invoice derives March's
+     * figure.
+     *
+     * @param  list<string>  $seen  list ids already on this chain
+     * @return array{unit_price: string, note: string}
+     *
+     * @throws NoPriceFound
+     */
+    private function derive(
+        object $list,
+        string $itemId,
+        string $currency,
+        Carbon $documentDate,
+        array $seen = [],
+    ): array {
+        $baseId = (string) $list->derived_from_id;
+
+        /*
+         | A cycle is refused by name.
+         |
+         | The column constraint stops a list deriving from itself; two
+         | lists deriving from each other is still expressible, and
+         | without this the symptom is a stack overflow whose message
+         | names a stack rather than a price list.
+         */
+        if (\in_array($baseId, $seen, true)) {
+            throw NoPriceFound::aDerivationThatLoops((string) $list->code, $itemId);
+        }
+
+        $seen[] = (string) $list->id;
+
+        $base = DB::connection('tenant')->selectOne(<<<'SQL'
+            SELECT pl.id,
+                   pl.code,
+                   pl.derived_from_id,
+                   pl.derivation_kind,
+                   pl.derivation_percent,
+                   pt.unit_price,
+                   pt.effective_from
+            FROM price_lists pl
+            LEFT JOIN price_list_lines pll
+                   ON pll.price_list_id = pl.id
+                  AND pll.item_id = cast(? AS char(26))
+            LEFT JOIN LATERAL (
+                SELECT p.unit_price, p.effective_from
+                FROM price_points p
+                WHERE p.price_list_line_id = pll.id
+                  AND p.effective_from <= ?
+                  AND p.unit_price IS NOT NULL
+                ORDER BY p.effective_from DESC
+                LIMIT 1
+            ) pt ON TRUE
+            WHERE pl.id = cast(? AS char(26))
+              AND pl.currency = cast(? AS char(3))
+            /*
+             | The base's own lowest tier, deliberately.
+             |
+             | A derivation is a rule about a list's PRICE, and a list
+             | whose base has quantity breaks derives from the base
+             | figure rather than from whichever break the order happens
+             | to reach - otherwise the same order produces two
+             | different derived prices depending on how much of it the
+             | customer bought, which nobody can explain.
+             */
+            ORDER BY pll.min_quantity ASC NULLS LAST
+            LIMIT 1
+        SQL, [$itemId, $documentDate->toDateString(), $baseId, $currency]);
+
+        if ($base === null) {
+            throw NoPriceFound::aDerivationWithNoBase(
+                (string) $list->code,
+                $itemId,
+                $currency,
+                $documentDate->toDateString(),
+            );
+        }
+
+        if ($base->unit_price === null) {
+            if ($base->derived_from_id === null) {
+                throw NoPriceFound::aDerivationWithNoBase(
+                    (string) $list->code,
+                    $itemId,
+                    $currency,
+                    $documentDate->toDateString(),
+                );
+            }
+
+            // A chain: "export is wholesale less 5%, wholesale is retail
+            // less 15%". Real, and resolved by recursion so the
+            // derivation records every step.
+            $beneath = $this->derive($base, $itemId, $currency, $documentDate, $seen);
+            $baseAmount = $beneath['unit_price'];
+            $baseNote = $beneath['note'];
+        } else {
+            $baseAmount = (string) $base->unit_price;
+            $baseNote = sprintf('%s at %s', (string) $base->code, $baseAmount);
+        }
+
+        $percent = BigDecimal::of((string) $list->derivation_percent)
+            ->dividedBy('100', 14, RoundingMode::HalfUp);
+
+        /*
+         | Three kinds, because operators use the three words
+         | interchangeably and the arithmetic is not.
+         |
+         | A MARGIN is on the selling price - "we make 35% on it" - so
+         | the base is divided by what is left of it. A MARKUP is on the
+         | cost, so it is multiplied. A DISCOUNT is off the base. A
+         | product that treated a 35% margin as a 35% markup underprices
+         | every line by about a seventh, which is a year of profit
+         | nobody can find.
+         */
+        $derived = match ((string) $list->derivation_kind) {
+            'margin' => BigDecimal::of($baseAmount)
+                ->dividedBy(BigDecimal::one()->minus($percent), Scale::UnitPrice->value, RoundingMode::HalfUp),
+            'markup' => BigDecimal::of($baseAmount)
+                ->multipliedBy(BigDecimal::one()->plus($percent))
+                ->toScale(Scale::UnitPrice->value, RoundingMode::HalfUp),
+            'discount' => BigDecimal::of($baseAmount)
+                ->multipliedBy(BigDecimal::one()->minus($percent))
+                ->toScale(Scale::UnitPrice->value, RoundingMode::HalfUp),
+            default => throw NoPriceFound::anUnknownDerivation(
+                (string) $list->code,
+                (string) $list->derivation_kind,
+            ),
+        };
+
+        return [
+            'unit_price' => (string) $derived,
+            'note' => sprintf(
+                '%s derived as %s %s%% of %s',
+                (string) $list->code,
+                (string) $list->derivation_kind,
+                (string) $list->derivation_percent,
+                $baseNote,
+            ),
+        ];
+    }
+
+    /**
      * @param  list<object>  $remaining
      * @return array{
-     *     unit_price: string, currency: string, list_code: string, list_name: string,
+     *     unit_price: string, currency: string, list_id: string, list_code: string, list_name: string,
      *     scope: string, tier: string, valid_from: string, valid_to: ?string,
      *     derivation: string, beaten: list<string>,
      * }
@@ -279,7 +496,7 @@ final class PriceResolver
     /**
      * @param  list<object>  $beaten
      * @return array{
-     *     unit_price: string, currency: string, list_code: string, list_name: string,
+     *     unit_price: string, currency: string, list_id: string, list_code: string, list_name: string,
      *     scope: string, tier: string, valid_from: string, valid_to: ?string,
      *     derivation: string, beaten: list<string>,
      * }
@@ -304,16 +521,38 @@ final class PriceResolver
         );
 
         if ($baseNote !== null) {
-            $derivation .= sprintf(
-                '; %s%% off %s',
-                rtrim(rtrim((string) $winner->discount_percent, '0'), '.'),
-                $baseNote,
-            );
+            /*
+             | A discount line and a derived LIST read differently.
+             |
+             | A discount line is a percentage off whatever the next
+             | candidate resolved to, and `discount_percent` says how
+             | much. A derived list computed its own figure and the note
+             | already contains the rule, the percentage and the base -
+             | so appending "% off" to it produced "; % off WHOLESALE
+             | derived as discount 15% of RETAIL at 100", with an empty
+             | percentage and the word "off" in front of a sentence that
+             | was not a discount.
+             |
+             | A check asserted the note was in there and passed on
+             | that, which is why the two branches are now separate.
+             */
+            $derivation .= $winner->discount_percent !== null
+                ? sprintf('; %s%% off %s', rtrim(rtrim((string) $winner->discount_percent, '0'), '.'), $baseNote)
+                : '; '.$baseNote;
         }
 
         return [
             'unit_price' => $price,
             'currency' => (string) ($winner->currency ?? ''),
+            /*
+             | The list's id as well as its code - PF-254.
+             |
+             | Because the snapshot on the invoice line is a foreign key:
+             | a code is renameable, and a line that recorded only the
+             | code cannot be traced back to the list a year later if
+             | somebody tidied the codes up.
+             */
+            'list_id' => (string) ($winner->id ?? ''),
             'list_code' => (string) $winner->code,
             'list_name' => (string) $winner->name_en,
             'scope' => $scope,

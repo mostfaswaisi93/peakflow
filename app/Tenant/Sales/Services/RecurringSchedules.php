@@ -159,7 +159,7 @@ final class RecurringSchedules
      *     rule: string,
      *     describes: string,
      *     timezone: string,
-     *     occurrences: list<array{date: string, net: string, tax: string, gross: string, lines: list<array{description: string, quantity: string, unit_price: string, net: string, basis: string, price_from: string|null}>}>,
+     *     occurrences: list<array{date: string, net: string, tax: string, gross: string, lines: list<array{description: string, quantity: string, unit_price: string, net: string, basis: string, price_from: string|null, price_list_id: string|null}>}>,
      *     ends: string,
      * }
      */
@@ -237,6 +237,7 @@ final class RecurringSchedules
                 // dispute.
                 'basis' => (string) $prorated['basis'],
                 'price_from' => $resolved['derivation'],
+                'price_list_id' => $resolved['list_id'],
                 'tax_code_id' => $line->tax_code_id,
                 'tax_category' => (string) $line->tax_category,
                 'tax_rate' => (string) $line->tax_rate,
@@ -389,7 +390,7 @@ final class RecurringSchedules
     /**
      * A line's price, from the template or from the price list.
      *
-     * @return array{unit_price: string, derivation: string|null}
+     * @return array{unit_price: string, derivation: string|null, list_id: string|null}
      */
     private function priceFor(
         RecurringSchedule $schedule,
@@ -400,6 +401,7 @@ final class RecurringSchedules
             return [
                 'unit_price' => (string) $line->unit_price,
                 'derivation' => 'fixed on the schedule',
+                'list_id' => null,
             ];
         }
 
@@ -440,6 +442,7 @@ final class RecurringSchedules
             return [
                 'unit_price' => (string) $resolved['unit_price'],
                 'derivation' => (string) $resolved['derivation'],
+                'list_id' => (string) $resolved['list_id'],
             ];
         } catch (Throwable $e) {
             throw ScheduleRefused::noPriceOnThatDate(

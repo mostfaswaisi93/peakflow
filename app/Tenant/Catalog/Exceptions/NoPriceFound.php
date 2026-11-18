@@ -61,4 +61,59 @@ final class NoPriceFound extends CatalogException
             $date,
         ));
     }
+
+    /**
+     * A list derived from one that has no price for this item - PF-254.
+     *
+     * Refused rather than falling through to the next candidate. A rule
+     * with nothing to apply to is a configuration mistake, and quietly
+     * using the next list down prices the order from a list the
+     * agreement does not mention.
+     */
+    public static function aDerivationWithNoBase(
+        string $listCode,
+        string $itemId,
+        string $currency,
+        string $on,
+    ): self {
+        return new self(sprintf(
+            'Price list %s is computed from another list, and that list has no price in %s for this '.
+            'item on %s. A rule with nothing to apply to cannot produce a figure, and using the next '.
+            'list down would price the order from a list the agreement does not mention. Item: %s.',
+            $listCode,
+            $currency,
+            $on,
+            $itemId,
+        ));
+    }
+
+    /**
+     * Two lists deriving from each other - PF-254.
+     *
+     * The column constraint stops a list deriving from itself. A cycle
+     * of two is still expressible, and without this the symptom is a
+     * stack overflow whose message names a stack rather than a price
+     * list.
+     */
+    public static function aDerivationThatLoops(string $listCode, string $itemId): self
+    {
+        return new self(sprintf(
+            'Price list %s is computed from a list that is computed, directly or through others, from '.
+            '%s. The chain has no bottom, so there is no figure at the end of it. Item: %s.',
+            $listCode,
+            $listCode,
+            $itemId,
+        ));
+    }
+
+    public static function anUnknownDerivation(string $listCode, string $kind): self
+    {
+        return new self(sprintf(
+            'Price list %s says it is computed by a "%s", which is not a rule this release knows. The '.
+            'three it knows are a margin on the selling price, a markup on the cost, and a discount off '.
+            'the base - and they are different arithmetic.',
+            $listCode,
+            $kind,
+        ));
+    }
 }

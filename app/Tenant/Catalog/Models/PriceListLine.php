@@ -6,20 +6,28 @@ namespace App\Tenant\Catalog\Models;
 
 use App\Support\Database\TenantModel;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
- * One tier of one item's price on one list - PF-065.
+ * One tier of one item's price on one list - PF-065, PF-254.
  *
- * ## A price OR a discount, never both
+ * ## This row is an IDENTITY, not a price
  *
- * `unit_price` is an amount; `discount_percent` is a percentage off whatever
- * the next less specific list resolved to. A CHECK enforces exactly one,
- * because both is two answers to one question and whichever the resolver
- * reads first becomes a rule nobody wrote down.
+ * This list, this item, from this quantity. The price itself lives in
+ * `price_points`, one row per change, with the date it takes effect, the
+ * person and the reason - PF-254 moved it there because "what did this
+ * cost in March" is asked by a customer holding an invoice, and a column
+ * that is overwritten cannot answer it.
  *
- * The discount form exists because "10% off list" is a real agreement and
- * cannot be stored as a number - the number changes whenever the underlying
- * list does, and a copy that has to be kept in step will not be.
+ * The old `unit_price` and `discount_percent` columns were dropped rather
+ * than kept as a denormalised current price. Two places holding one truth
+ * is how they come to disagree, and the resolver reading one while
+ * history read the other is the failure that task exists to remove.
+ *
+ * A point is a price OR a discount off whatever the next less specific
+ * list resolved to, never both. The discount form exists because "10% off
+ * list" is a real agreement and cannot be stored as a number - the number
+ * changes whenever the underlying list does.
  *
  * ## `min_quantity` is a floor
  *
@@ -28,21 +36,13 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * quantity break decorative - and the symptom is a customer invoiced at list
  * price for a container load, which they notice and we do not.
  *
- * @property ?string $unit_price
- * @property ?string $discount_percent
  * @property string $min_quantity
  */
 final class PriceListLine extends TenantModel
 {
     protected $table = 'price_list_lines';
 
-    protected $fillable = ['price_list_id', 'item_id', 'min_quantity', 'unit_price', 'discount_percent'];
-
-    /*
-     | No decimal casts. `unit_price` is numeric(21,8) and
-     | `discount_percent` is numeric(21,12); a cast routes either through
-     | PHP's float, which is the one thing the money path forbids.
-     */
+    protected $fillable = ['price_list_id', 'item_id', 'min_quantity'];
 
     /** @return BelongsTo<PriceList, $this> */
     public function list(): BelongsTo
@@ -56,8 +56,9 @@ final class PriceListLine extends TenantModel
         return $this->belongsTo(Item::class);
     }
 
-    public function isDiscount(): bool
+    /** @return HasMany<PricePoint, $this> */
+    public function points(): HasMany
     {
-        return $this->discount_percent !== null;
+        return $this->hasMany(PricePoint::class, 'price_list_line_id')->orderByDesc('effective_from');
     }
 }

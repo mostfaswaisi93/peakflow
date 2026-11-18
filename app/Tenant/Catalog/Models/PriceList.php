@@ -36,6 +36,16 @@ final class PriceList extends TenantModel
     protected $fillable = [
         'code', 'name_ar', 'name_en', 'currency',
         'party_id', 'party_group', 'valid_from', 'valid_to', 'priority', 'active',
+
+        /*
+         | A list computed FROM another, by a rule - PF-254.
+         |
+         | Re-run at resolution rather than copied. A wholesale list
+         | holding retail-less-fifteen with the arithmetic already done
+         | stops agreeing with retail the first time retail moves, and
+         | nobody notices because both numbers look deliberate.
+         */
+        'derived_from_id', 'derivation_kind', 'derivation_percent',
     ];
 
     protected $casts = [

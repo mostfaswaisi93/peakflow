@@ -171,13 +171,67 @@ another as clean, and it is two serious errors. The two orderings
 disagree and the disagreement is the finding: a hundred missing screws
 and one missing laptop are the same money and not the same problem.
 
-### PF-254 · Price history, and the price somebody was quoted
+### PF-254 · Price history, and the price somebody was quoted — done
 `Catalog` · **3 pts** · depends: PF-074 · standards: — · `risk:high`
 
-- [ ] Every price change is kept with its date and the person, because "what did this cost in March" is asked by a customer holding an invoice
-- [ ] A document uses the price **as of its own date**, not today's, and the snapshot is on the line - which the sales side already does for tax and must do for price
-- [ ] A scheduled change takes effect on its date without anybody running anything, and is visible before it does
-- [ ] A price list may be derived from another by a rule (a margin, a discount), and the derivation is re-run rather than copied
+- [x] Every price change is kept with its date and the person, because "what did this cost in March" is asked by a customer holding an invoice
+- [x] A document uses the price **as of its own date**, not today's, and the snapshot is on the line - which the sales side already does for tax and must do for price
+- [x] A scheduled change takes effect on its date without anybody running anything, and is visible before it does
+- [x] A price list may be derived from another by a rule (a margin, a discount), and the derivation is re-run rather than copied
+
+`price_points`, `price_lists.derived_from_*`, `invoice_lines.price_list_id`
+and `price_basis` · `App\Tenant\Catalog\Services\Prices` ·
+`PriceResolver` · `bin/verify catalog`, `bin/verify sales`
+
+**The price moved off `price_list_lines`.** PF-065 gave a *list* a
+validity window, which answers "which list applied in March"; it did not
+answer "what was the price inside that list in March", because changing
+a price meant updating the row. So the tier keeps its identity — this
+list, this item, from this quantity — and the price is a row in
+`price_points` with the date it takes effect, the person and the reason.
+The old columns were **dropped**, not kept as a denormalised current
+price: two places holding one truth is how they come to disagree, and
+the resolver reading one while history read the other is the failure
+this task exists to remove.
+
+**A scheduled change is a row with a future date.** On the day it
+arrives it becomes the latest point at or before the document date and
+the resolver reads it. No job, no flag, nothing to forget on a public
+holiday. `Prices::pending()` lists it today, with the price it replaces
+beside it — "94.50 becomes 150.00 on the first" is a sentence somebody
+acts on.
+
+**Backdating asks for a name and a sentence** rather than being refused.
+Sometimes it is right — a price entered as 1500 that should have been
+15.00, caught before anything was invoiced — and a product that said no
+outright would have the correction made by an `UPDATE` somebody runs
+against the database, which loses the reason and the name with it.
+Catalog cannot check whether anything was invoiced: it may use `Support`
+and `Tenancy` and nothing else, deliberately, because master data has no
+business reading documents. So the guard is the shape of PF-250's
+expired-batch override, and it fires only on a point landing *beneath*
+one already in force — the thing that changes an answer the resolver has
+already given.
+
+**Three derivation rules, stored not inferred.** A margin is on the
+selling price (100 → 125 at 20%), a markup is on the cost (→ 120), a
+discount is off the base (→ 80). Operators use the three words
+interchangeably, and treating a 20% margin as a 20% markup underprices
+every line by 5 — a year of which is profit nobody can find. A derived
+list may still carry lines of its own, and the line beats the rule:
+"retail less fifteen per cent, except these three at a fixed price" is
+real, and forbidding it would send operators to build the exception as a
+second list with a higher priority, which is the same thing spelled so
+nobody can see it is one.
+
+Two defects the bite sweep found in the first draft: the candidate query
+was driven from `price_list_lines`, so a derived list with no line for
+an item was no candidate at all and its rule could never be reached; and
+`describe()` ran a derived list through the discount-line branch,
+producing "; % off CHK-BASE derived as discount 15% of ..." — an empty
+percentage and the word "off" in front of a sentence that was not a
+discount. The check that was supposed to catch the second one passed on
+it, because the note it looked for was in there somewhere.
 
 ### PF-255 · Offline-first sync and devices
 `Platform` · **8 pts** · depends: PF-010, PF-035 · standards: — · `risk:high` `type:security`

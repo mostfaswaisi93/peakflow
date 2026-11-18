@@ -350,6 +350,22 @@ final class RecurringGenerator
                 'place_of_supply_rule' => 'domestic',
                 'service_from' => $line['service_from'] ?? null,
                 'service_until' => $line['service_until'] ?? null,
+
+                /*
+                 | The price's provenance, snapshotted beside the tax's
+                 | - PF-254.
+                 |
+                 | `tax_code_id`, `tax_rate` and `tax_category` are on
+                 | the line rather than looked up when somebody opens
+                 | the document, for the obvious reason. Price was
+                 | computing the same provenance and throwing it away:
+                 | the derivation sentence went into a preview array and
+                 | nothing persisted it, so "why is this 94.50" was
+                 | answerable on screen before the invoice was issued
+                 | and unanswerable afterwards.
+                 */
+                'price_list_id' => $line['price_list_id'] ?? null,
+                'price_basis' => $line['price_from'] ?? null,
             ]);
         }
 

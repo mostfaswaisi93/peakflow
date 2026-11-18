@@ -65,6 +65,7 @@ final class RecurringScheduleRules
                 'the preview shows twelve occurrences with their amounts' => fn (): array => $this->thePreview(),
                 'proration shows its basis on the generated line' => fn (): array => $this->proration(),
                 'a price change on the item reaches the schedule' => fn (): array => $this->priceChanges(),
+                'the price\'s provenance is snapshotted on the line' => fn (): array => $this->priceProvenanceIsOnTheLine(),
                 'generation is idempotent on the occurrence date' => fn (): array => $this->idempotent(),
                 'it runs in the schedule\'s own timezone' => fn (): array => $this->timezones(),
                 'a failed occurrence is retried, then surfaced' => fn (): array => $this->failures(),
@@ -631,6 +632,141 @@ final class RecurringScheduleRules
             ? []
             : ['a paused schedule generated an invoice. A pause is a decision somebody made, and '.
                 'generating anyway undoes it silently'];
+    }
+
+    /**
+     * The price's provenance, on the generated line - PF-254.
+     *
+     * @return list<string>
+     */
+    public function priceProvenanceIsOnTheLine(): array
+    {
+        $violations = [];
+
+        /*
+         | An item with a price list, and a schedule line that resolves
+         | rather than carrying a fixed price.
+         |
+         | The derivation sentence was already being computed and thrown
+         | away: it went into the preview array and nothing persisted
+         | it, so "why is this 94.50" was answerable on screen before
+         | the invoice was issued and unanswerable afterwards - which is
+         | when a customer asks.
+         */
+        $item = \App\Tenant\Catalog\Models\Item::create([
+            'code' => 'REC-PRICED-'.strtoupper(\Illuminate\Support\Str::random(6)),
+            'name_ar' => 'صنف مُسعَّر من قائمة',
+            'name_en' => 'Priced from a list',
+            'type' => 'service',
+            'unit_code' => 'C62',
+            'recognition' => 'immediate',
+            'sellable' => true,
+        ]);
+
+        $list = \App\Tenant\Catalog\Models\PriceList::create([
+            'code' => 'REC-LIST-'.strtoupper(\Illuminate\Support\Str::random(6)),
+            'name_ar' => 'قائمة الفحص',
+            'name_en' => 'Check list',
+            'currency' => 'SAR',
+            'valid_from' => CarbonImmutable::now()->subYear()->toDateString(),
+            'priority' => 0,
+        ]);
+
+        $tier = \App\Tenant\Catalog\Models\PriceListLine::create([
+            'price_list_id' => (string) $list->getKey(),
+            'item_id' => (string) $item->getKey(),
+            'min_quantity' => '0',
+        ]);
+
+        \App\Tenant\Catalog\Models\PricePoint::create([
+            'price_list_line_id' => (string) $tier->getKey(),
+            'unit_price' => '94.50000000',
+            'effective_from' => CarbonImmutable::now()->subYear()->toDateString(),
+            'reason' => 'the price this tier opened at, set up by the check fixture',
+            'changed_by' => str_repeat('0', 26),
+        ]);
+
+        $schedule = $this->schedule();
+        $schedule->lines()->update([
+            'unit_price' => null,
+            'item_id' => (string) $item->getKey(),
+        ]);
+
+        $schedule = app(RecurringSchedules::class)->activate($schedule->refresh());
+        $date = $schedule->upcoming(1)[0];
+
+        $outcome = app(RecurringGenerator::class)->generate($schedule, $date);
+
+        if (($outcome['outcome'] ?? '') !== 'generated') {
+            return ['the invoice was not generated: '.(string) ($outcome['error'] ?? '')];
+        }
+
+        $line = DB::connection('tenant')->table('invoice_lines')
+            ->where('invoice_id', (string) $outcome['invoice'])
+            ->first();
+
+        if ($line === null) {
+            return ['the generated invoice has no lines'];
+        }
+
+        if ((string) ($line->price_list_id ?? '') !== (string) $list->getKey()) {
+            $violations[] = 'the line does not name the price list it resolved against, so a year '.
+                'later the price cannot be traced to a list that has moved three times since';
+        }
+
+        if (! str_contains((string) ($line->price_basis ?? ''), (string) $list->code)) {
+            $violations[] = sprintf(
+                'the line carries no sentence explaining its price (%s) - a list id with no sentence is '.
+                'a foreign key somebody has to go and interpret',
+                (string) ($line->price_basis ?? '-'),
+            );
+        }
+
+        /*
+         | And a list id without a sentence is refused by the column.
+         |
+         | Because the sentence is the part a person reads. "Resolved
+         | from RETAIL at 94.50" is the difference between a question
+         | and a dispute.
+         */
+        try {
+            DB::connection('tenant')->statement('SAVEPOINT pf254');
+            DB::connection('tenant')->table('invoice_lines')
+                ->where('id', (string) $line->id)
+                ->update(['price_basis' => null]);
+            DB::connection('tenant')->statement('ROLLBACK TO SAVEPOINT pf254');
+
+            $violations[] = 'a line can name a price list and explain nothing, which leaves a foreign '.
+                'key where an explanation should be';
+        } catch (Throwable) {
+            DB::connection('tenant')->statement('ROLLBACK TO SAVEPOINT pf254');
+        }
+
+        /*
+         | A fixed price names no list, and says so.
+         |
+         | A contract with a price written into it is a real thing, and
+         | a product that forced a list onto it would invent one.
+         */
+        $fixed = $this->schedule();
+        $fixed = app(RecurringSchedules::class)->activate($fixed);
+        $fixedOutcome = app(RecurringGenerator::class)->generate($fixed, $fixed->upcoming(1)[0]);
+
+        $fixedLine = DB::connection('tenant')->table('invoice_lines')
+            ->where('invoice_id', (string) ($fixedOutcome['invoice'] ?? ''))
+            ->first();
+
+        if (($fixedLine->price_list_id ?? null) !== null) {
+            $violations[] = 'a line whose price is fixed on the contract names a price list anyway, '.
+                'so a fixed price is indistinguishable from a resolved one';
+        }
+
+        if (! str_contains((string) ($fixedLine->price_basis ?? ''), 'fixed on the schedule')) {
+            $violations[] = 'a fixed price does not say it is fixed on the line, so nobody reading the '.
+                'invoice can tell it from one tied to a list';
+        }
+
+        return $violations;
     }
 
     private function schedule(

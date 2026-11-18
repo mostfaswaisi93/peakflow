@@ -43,6 +43,17 @@ final class InvoiceLine extends TenantModel
         'place_of_supply', 'place_of_supply_rule',
         'recognition', 'service_from', 'service_until',
         'dimension_1', 'dimension_2', 'dimension_3', 'dimension_4',
+
+        /*
+         | Where the price came from, snapshotted beside the tax - PF-254.
+         |
+         | The tax treatment is on the line rather than looked up when
+         | somebody opens the document, because lists and codes change
+         | and the invoice does not. Price needed the same: "why is this
+         | 94.50" has to be answerable from the invoice a year later,
+         | from a list that has moved three times since.
+         */
+        'price_list_id', 'price_basis',
     ];
 
     protected $casts = [
