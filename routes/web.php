@@ -8,14 +8,19 @@ use App\Platform\Http\Controllers\OpsTenantController;
 use App\Tenant\Banking\Http\Controllers\StatementImportController;
 use App\Tenant\Identity\Http\Controllers\EntitySwitchController;
 use App\Tenant\Identity\Http\Controllers\ThemePreferenceController;
+use App\Tenant\Banking\Http\Controllers\BankAccountListController;
 use App\Tenant\Catalog\Http\Controllers\ItemListController;
+use App\Tenant\Ledger\Http\Controllers\AccountListController;
 use App\Tenant\Parties\Http\Controllers\PartyDetailController;
 use App\Tenant\Parties\Http\Controllers\PartyListController;
 use App\Tenant\Purchasing\Http\Controllers\BillDetailController;
 use App\Tenant\Purchasing\Http\Controllers\BillListController;
 use App\Tenant\Reporting\Http\Controllers\OverviewController;
+use App\Tenant\Reporting\Http\Controllers\TrialBalanceController;
 use App\Tenant\Sales\Http\Controllers\InvoiceDetailController;
 use App\Tenant\Sales\Http\Controllers\InvoiceListController;
+use App\Tenant\Settlement\Http\Controllers\PaymentRunListController;
+use App\Tenant\Settlement\Http\Controllers\StatementController;
 use App\Http\Controllers\LoginController;
 use App\Http\Controllers\AttachmentDownloadController;
 use App\Http\Controllers\PublicQuoteController;
@@ -201,6 +206,13 @@ Route::middleware(['tenant.session', 'auth', 'entity.scope'])->group(static func
     Route::get('/masters/parties', PartyListController::class)->name('parties.index');
     Route::get('/masters/parties/{party}', PartyDetailController::class)->name('parties.show');
     Route::get('/masters/items', ItemListController::class)->name('items.index');
+
+    Route::get('/ledger/trial-balance', TrialBalanceController::class)->name('trial-balance.index');
+    Route::get('/ledger/accounts', AccountListController::class)->name('accounts.index');
+
+    Route::get('/banking/accounts', BankAccountListController::class)->name('bank-accounts.index');
+    Route::get('/settlement/payment-runs', PaymentRunListController::class)->name('payment-runs.index');
+    Route::get('/settlement/statements', StatementController::class)->name('statements.index');
 
     /*
     | Importing a statement - PF-154.

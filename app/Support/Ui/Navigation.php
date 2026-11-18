@@ -78,7 +78,7 @@ final class Navigation
                     ['label_ar' => 'الفواتير', 'label_en' => 'Invoices', 'route' => 'invoices.index', 'permission' => 'report.view'],
                     ['label_ar' => 'الإشعارات الدائنة', 'label_en' => 'Credit notes', 'route' => null, 'permission' => 'credit_note.issue'],
                     ['label_ar' => 'عروض الأسعار', 'label_en' => 'Quotes', 'route' => null, 'permission' => 'quote.manage'],
-                    ['label_ar' => 'كشوف الحساب', 'label_en' => 'Statements', 'route' => null /* statements.index */, 'permission' => 'report.view'],
+                    ['label_ar' => 'كشوف الحساب', 'label_en' => 'Statements', 'route' => 'statements.index', 'permission' => 'report.view'],
                 ],
             ],
             [
@@ -104,9 +104,9 @@ final class Navigation
                      | one import mistake that cannot be undone from the
                      | screen: the lines land, matched against nothing.
                      */
-                    ['label_ar' => 'الحسابات البنكية', 'label_en' => 'Bank accounts', 'route' => null /* bank-accounts.index */, 'permission' => 'bank.manage'],
+                    ['label_ar' => 'الحسابات البنكية', 'label_en' => 'Bank accounts', 'route' => 'bank-accounts.index', 'permission' => 'bank.manage'],
                     ['label_ar' => 'المطابقة البنكية', 'label_en' => 'Reconciliation', 'route' => null, 'permission' => 'bank.reconcile'],
-                    ['label_ar' => 'مسيّرات الدفع', 'label_en' => 'Payment runs', 'route' => null /* payment-runs.index */, 'permission' => 'payment.prepare'],
+                    ['label_ar' => 'مسيّرات الدفع', 'label_en' => 'Payment runs', 'route' => 'payment-runs.index', 'permission' => 'payment.prepare'],
                 ],
             ],
             [
@@ -114,8 +114,8 @@ final class Navigation
                 'label_en' => 'Ledger',
                 'icon' => 'ledger',
                 'items' => [
-                    ['label_ar' => 'ميزان المراجعة', 'label_en' => 'Trial balance', 'route' => null /* trial-balance.index */, 'permission' => 'report.view'],
-                    ['label_ar' => 'دليل الحسابات', 'label_en' => 'Chart of accounts', 'route' => null /* accounts.index */, 'permission' => 'account.manage'],
+                    ['label_ar' => 'ميزان المراجعة', 'label_en' => 'Trial balance', 'route' => 'trial-balance.index', 'permission' => 'report.view'],
+                    ['label_ar' => 'دليل الحسابات', 'label_en' => 'Chart of accounts', 'route' => 'accounts.index', 'permission' => 'account.manage'],
                     ['label_ar' => 'قيود اليومية', 'label_en' => 'Journal entries', 'route' => null, 'permission' => 'journal.draft'],
                     ['label_ar' => 'الفترات', 'label_en' => 'Periods', 'route' => null, 'permission' => 'period.close'],
                 ],
