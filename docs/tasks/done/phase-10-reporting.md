@@ -174,3 +174,61 @@ auditor asks for.
 > the bound and changing nothing. So the check reads the query. It catches
 > the bound being deleted and would not catch it being wrong, and the
 > behavioural check arrives with the fixture that can open period 13.
+
+### PF-186 · Statement of Cash Flows — done
+`Reporting` · **8 pts** · depends: PF-185 · standards: IAS 7 · `risk:high` `type:compliance`
+
+- [x] **Indirect method** from the movement in balance-sheet accounts, with each adjustment traceable to the accounts that produced it
+- [x] **Direct method** from the cash and bank journals, which is the independent check
+- [x] The two methods must agree, and the report asserts it rather than presenting whichever was asked for
+- [x] Operating, investing and financing classification driven by account configuration
+- [x] Non-cash movements excluded explicitly and listed, because an unexplained difference between the two methods is almost always a non-cash item nobody tagged
+
+`App\Tenant\Reporting\Services\{StatementOfCashFlows,CashMovements}` ·
+`App\Tenant\Ledger\Enums\CashFlowActivity` · `bin/verify reporting`
+
+**Both methods, every time.** IAS 7.18 permits either; this computes both,
+because they are independent — the indirect one starts from profit and works
+through the movement in every balance-sheet account, the direct one reads the
+cash accounts themselves. They share the ledger and no arithmetic. A product
+that presented whichever was asked for would present a wrong figure in
+exactly the case where the other one knew.
+
+And the checks compare each against the **cash accounts**, not only against
+each other: two methods agreeing with one another and not with the bank are
+two wrong answers, and a check comparing only the two would report them as
+right.
+
+**The activity is derived from the statement line, not declared again.** A
+receivable is working capital *because* it is a receivable. A fourth column
+saying so would be a second place for one fact to be wrong, and the two would
+disagree on the first account somebody edited. What that costs is written
+down in the enum: IAS 7.16 classifies by the nature of the transaction and a
+presentation line is a proxy for it, so when a short-term investment sitting
+on "other current assets" arrives, the answer is an override that defaults to
+this — not a different default.
+
+**What the two methods caught in each other.** The first version excluded a
+non-cash movement by looking at each ACCOUNT's own classification. IAS 7.43
+excludes the whole *transaction*: a machine bought on credit moves property
+and payables and no money, and subtracting only the leg whose line is
+"non-cash" leaves the other leg reported as a cash flow that never happened.
+The two methods disagreed by exactly that leg, which is the entire reason the
+product runs both. A non-cash transaction is now one that touches no cash
+account *and* no profit-or-loss account — both conditions, because either
+alone would wrongly exclude an ordinary accrual, which is precisely the
+difference between a profit and the cash it produced.
+
+**A transfer inside cash is not a flow** — IAS 7.7. The direct method
+excludes it rather than netting it, because counting both sides reports an
+inflow and an outflow that never happened.
+
+Three fixtures were wrong before the code was. Manual journals to the bank
+and the receivables control were refused, correctly — a control account's
+balance is the total of a subledger — so the cash now moves through the
+posting rules that move it. The receipt check first asserted only that the
+operating section was positive, and the bite sweep showed a sliver of
+withholding tax kept it positive even with receivables misclassified as
+financing; it now asserts the other two sections are *empty*, which the
+misclassification cannot survive. And that assertion in turn failed on the
+fixture's own opening entry, which credits equity and is a financing flow.

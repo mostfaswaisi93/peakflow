@@ -333,6 +333,7 @@ if ($only === 'all' || $only === 'reporting') {
     $suites['Statement of financial position'] = $suite(static fn (): array => (new Tests\Support\FinancialPositionRules())->all());
     $suites['Statement of profit or loss'] = $suite(static fn (): array => (new Tests\Support\ProfitOrLossRules())->all());
     $suites['Statement of changes in equity'] = $suite(static fn (): array => (new Tests\Support\ChangesInEquityRules())->all());
+    $suites['Statement of cash flows'] = $suite(static fn (): array => (new Tests\Support\CashFlowRules())->all());
 }
 
 if ($only === 'all' || $only === 'config') {

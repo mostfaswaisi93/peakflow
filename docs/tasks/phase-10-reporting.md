@@ -64,15 +64,6 @@ statement with an empty expense side; and a manual entry to a control
 account is refused, because a control account's balance is the total of a
 subledger and a manual posting makes the two disagree.
 
-### PF-186 · Statement of Cash Flows
-`Reporting` · **8 pts** · depends: PF-185 · standards: IAS 7 · `risk:high` `type:compliance`
-
-- [ ] **Indirect method** from the movement in balance-sheet accounts, with each adjustment traceable to the accounts that produced it
-- [ ] **Direct method** from the cash and bank journals, which is the independent check
-- [ ] The two methods must agree, and the report asserts it rather than presenting whichever was asked for
-- [ ] Operating, investing and financing classification driven by account configuration
-- [ ] Non-cash movements excluded explicitly and listed, because an unexplained difference between the two methods is almost always a non-cash item nobody tagged
-
 ### PF-188 · General ledger detail and registers
 `Reporting` · **3 pts** · depends: PF-183 · standards: —
 

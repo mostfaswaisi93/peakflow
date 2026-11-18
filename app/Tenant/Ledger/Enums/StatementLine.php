@@ -261,6 +261,68 @@ enum StatementLine: string
         };
     }
 
+    /**
+     * Which IAS 7 activity this line's movement is a flow of - PF-186.
+     *
+     * Derived from the presentation classification rather than declared
+     * again, because a receivable is working capital BECAUSE it is a
+     * receivable. A second column saying so would be a second place for
+     * one fact to be wrong, and the two would disagree on the first
+     * account somebody edited.
+     *
+     * Profit-and-loss lines have no activity of their own: the indirect
+     * method starts from the result they produce, so classifying them
+     * again would count the same money twice.
+     */
+    public function cashFlowActivity(): CashFlowActivity
+    {
+        return match ($this) {
+            self::CashAndCashEquivalents => CashFlowActivity::Cash,
+
+            /*
+             | Working capital - IAS 7.14.
+             |
+             | The movement in what customers owe, what is owed to
+             | suppliers, what sits in stock and what is owed to the tax
+             | authority is the difference between a profit and the cash
+             | it produced. That difference IS the operating section.
+             */
+            self::TradeAndOtherReceivables,
+            self::Inventories,
+            self::CurrentTaxAssets,
+            self::OtherCurrentAssets,
+            self::TradeAndOtherPayables,
+            self::CurrentTaxLiabilities,
+            self::CurrentProvisions,
+            self::OtherCurrentLiabilities,
+            self::NonCurrentProvisions => CashFlowActivity::Operating,
+
+            self::PropertyPlantAndEquipment,
+            self::IntangibleAssets,
+            self::OtherNonCurrentAssets => CashFlowActivity::Investing,
+
+            self::Borrowings,
+            self::OtherNonCurrentLiabilities,
+            self::IssuedCapital,
+            self::OtherReserves,
+            self::RetainedEarnings => CashFlowActivity::Financing,
+
+            /*
+             | Accumulated OCI never moved cash.
+             |
+             | A translation difference or a revaluation changes equity and
+             | nothing leaves the bank. Classifying it as financing would
+             | report capital the shareholders never put in.
+             */
+            self::ForeignOperationTranslation,
+            self::CashFlowHedgeReserve,
+            self::RevaluationSurplus,
+            self::DefinedBenefitRemeasurement => CashFlowActivity::NonCash,
+
+            default => CashFlowActivity::NonCash,
+        };
+    }
+
     /** The paragraph of IAS 1 that asks for this line. */
     public function reference(): string
     {
