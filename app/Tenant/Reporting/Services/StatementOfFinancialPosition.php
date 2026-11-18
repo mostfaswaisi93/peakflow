@@ -128,7 +128,30 @@ final class StatementOfFinancialPosition
             $lines = [];
 
             foreach (StatementLine::cases() as $line) {
-                if ($line->statement() !== FinancialStatement::FinancialPosition || $line->section() !== $section) {
+                /*
+                 | Accumulated OCI is EQUITY, and belongs here - IAS 1.54(r).
+                 |
+                 | A translation reserve's statement line belongs to the
+                 | statement of profit or loss, because that is where the
+                 | year's movement is presented. The BALANCE is a component
+                 | of equity and sits on this statement, and the first
+                 | version of this loop excluded it on the statement test -
+                 | so a real equity balance was silently dropped, assets
+                 | exceeded liabilities plus equity by exactly the reserve,
+                 | and the unclassified section said nothing because the
+                 | account had a line.
+                 |
+                 | It was found by the statement of changes in equity, whose
+                 | closing column has to equal this section and did not.
+                 */
+                $belongsHere = $line->statement() === FinancialStatement::FinancialPosition
+                    || $line->section() === StatementSection::OtherComprehensiveIncome;
+
+                $presentedIn = $line->section() === StatementSection::OtherComprehensiveIncome
+                    ? StatementSection::Equity
+                    : $line->section();
+
+                if (! $belongsHere || $presentedIn !== $section) {
                     continue;
                 }
 
@@ -155,11 +178,11 @@ final class StatementOfFinancialPosition
                     'label_en' => $line->label('en'),
                     'reference' => $line->reference(),
                     'maturity' => $line->maturity()->value,
-                    'accounts' => $this->presented($accounts, $section, $currency),
-                    'amount' => (string) $this->sum($accounts, $section, $currency)->amount,
+                    'accounts' => $this->presented($accounts, $presentedIn, $currency),
+                    'amount' => (string) $this->sum($accounts, $presentedIn, $currency)->amount,
                     'comparative' => $comparative === null
                         ? null
-                        : (string) $this->sum($comparativeAccounts, $section, $currency)->amount,
+                        : (string) $this->sum($comparativeAccounts, $presentedIn, $currency)->amount,
                 ];
             }
 
@@ -314,7 +337,19 @@ final class StatementOfFinancialPosition
                 ? null
                 : StatementLine::tryFrom((string) $row['statement_line']);
 
-            if ($line === null || $line->statement() !== FinancialStatement::ProfitOrLoss) {
+            /*
+             | OCI is excluded from the unclosed result.
+             |
+             | Its balance is now presented inside equity on this statement,
+             | so carrying it into the result as well would add it twice and
+             | the equation would fail by exactly the reserve - which is the
+             | mirror of the bug that put it here.
+             */
+            $isUnclosedProfit = $line !== null
+                && $line->statement() === FinancialStatement::ProfitOrLoss
+                && $line->section() !== StatementSection::OtherComprehensiveIncome;
+
+            if (! $isUnclosedProfit) {
                 continue;
             }
 
@@ -345,7 +380,12 @@ final class StatementOfFinancialPosition
                 ? null
                 : StatementLine::tryFrom((string) $row['statement_line']);
 
-            if ($line === null || $line->statement() !== FinancialStatement::FinancialPosition) {
+            $onThisStatement = $line !== null && (
+                $line->statement() === FinancialStatement::FinancialPosition
+                || $line->section() === StatementSection::OtherComprehensiveIncome
+            );
+
+            if (! $onThisStatement) {
                 continue;
             }
 

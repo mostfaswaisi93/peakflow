@@ -124,3 +124,53 @@ drop a liability line from the grouping, which is a defect the check does
 see. And the IAS 1 reference check first bit the *cash* line, which an
 entity whose only activity is an issued invoice does not have: the check
 passed and proved nothing until the bite moved to the receivable.
+
+### PF-187 · Statement of Changes in Equity — done
+`Reporting` · **3 pts** · depends: PF-185 · standards: IAS 1 · `type:compliance`
+
+- [x] Opening, movements by type (result for the period, OCI, transactions with owners), closing
+- [x] Reconciles to the balance sheet's equity section, asserted
+- [x] Prior-period adjustments presented per IAS 8 rather than folded into the current year
+
+`App\Tenant\Reporting\Services\{StatementOfChangesInEquity,EquityMovements}` ·
+`bin/verify reporting`
+
+**It is the only statement that has to agree with both of the others.** Its
+closing column must equal the equity section of the statement of financial
+position, and its result row the bottom of the statement of profit or loss.
+An entity whose three statements each look right alone and do not reconcile
+has published three answers, and the reader cannot tell which one the ledger
+holds — so the reconciliation is computed and declared here rather than left
+to whoever reads them side by side.
+
+**The cause of a movement cannot be read off the account.** A credit to
+retained earnings is a profit if the year-end close made it and a
+distribution if a dividend did; IAS 1.106 presents those separately and they
+must never be added together. `journal_entries.posting_rule` is what every
+posting carries and the close is one rule, so that is what the
+classification rests on. The alternative is a box on a dividend form that
+nobody ticks.
+
+**Two defects it found in statements that were already green.**
+
+The statement of financial position was *silently dropping accumulated
+OCI*. A translation reserve's statement line belongs to the profit-or-loss
+statement, because that is where the year's movement is presented — but the
+BALANCE is a component of equity and belongs on the balance sheet. It was
+excluded on the statement test, so a real equity balance vanished, assets
+exceeded liabilities plus equity by exactly the reserve, and the
+unclassified section said nothing because the account *had* a line. Only a
+statement whose closing column has to equal that section could see it.
+
+And the movement query ignored `includeAdjusting` while the balances beside
+it honoured it, so on the view that excludes period 13 the two sides would
+have disagreed by exactly the year-end adjustments — on the first view an
+auditor asks for.
+
+> **One check here is structural and says so.** Reaching the adjusting
+> period needs `period.post_adjusting` with step-up and a written reason,
+> which this suite has no fixture for; a fixture posting to an ordinary
+> period cannot see the flag at all, which the bite sweep proved by removing
+> the bound and changing nothing. So the check reads the query. It catches
+> the bound being deleted and would not catch it being wrong, and the
+> behavioural check arrives with the fixture that can open period 13.

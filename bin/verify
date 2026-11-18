@@ -332,6 +332,7 @@ if ($only === 'all' || $only === 'reporting') {
     $suites['Trial balance report'] = $suite(static fn (): array => (new Tests\Support\TrialBalanceReportRules())->all());
     $suites['Statement of financial position'] = $suite(static fn (): array => (new Tests\Support\FinancialPositionRules())->all());
     $suites['Statement of profit or loss'] = $suite(static fn (): array => (new Tests\Support\ProfitOrLossRules())->all());
+    $suites['Statement of changes in equity'] = $suite(static fn (): array => (new Tests\Support\ChangesInEquityRules())->all());
 }
 
 if ($only === 'all' || $only === 'config') {

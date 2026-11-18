@@ -73,13 +73,6 @@ subledger and a manual posting makes the two disagree.
 - [ ] Operating, investing and financing classification driven by account configuration
 - [ ] Non-cash movements excluded explicitly and listed, because an unexplained difference between the two methods is almost always a non-cash item nobody tagged
 
-### PF-187 · Statement of Changes in Equity
-`Reporting` · **3 pts** · depends: PF-185 · standards: IAS 1 · `type:compliance`
-
-- [ ] Opening, movements by type (result for the period, OCI, distributions, capital transactions), closing
-- [ ] Reconciles to the balance sheet's equity section, asserted
-- [ ] Prior-period adjustments presented per IAS 8 rather than folded into the current year
-
 ### PF-188 · General ledger detail and registers
 `Reporting` · **3 pts** · depends: PF-183 · standards: —
 
