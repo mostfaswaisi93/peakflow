@@ -1,5 +1,6 @@
 <?php
 
+use App\Providers\ApiServiceProvider;
 use App\Providers\AppServiceProvider;
 use App\Providers\BankingServiceProvider;
 use App\Providers\InventoryServiceProvider;
@@ -16,6 +17,7 @@ use App\Providers\TenancyServiceProvider;
 return [
     AppServiceProvider::class,
     TenancyServiceProvider::class,
+    ApiServiceProvider::class,
     QueueTenancyServiceProvider::class,
     LedgerServiceProvider::class,
     TaxServiceProvider::class,

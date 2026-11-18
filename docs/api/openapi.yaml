@@ -1,8 +1,47 @@
 openapi: 3.1.0
 
+# =============================================================================
+#  THE CONTRACT. Written before the route, and reviewed as part of any API
+#  change - PF-217.
+# =============================================================================
+#
+#  An operation appears in this document when its route EXISTS. That is not a
+#  bookkeeping preference: tests/Support/ApiContractRules.php asserts the
+#  agreement in both directions, so an operation here with no route fails the
+#  build, and so does a route with no operation. An API that documented
+#  endpoints returning 404 would be worse than one documenting fewer - a
+#  client writes code against the document.
+#
+#  The resource surface therefore arrives with the tasks that implement it.
+#  Phase 12 brings the plumbing: the contract, authentication and scopes,
+#  problem details, idempotency, pagination, and money and dates on the wire.
+#  Invoices, payments, payment runs, statement import and the reports arrive
+#  with their own tasks, each adding its operations here in the same pull
+#  request.
+#
+# -----------------------------------------------------------------------------
+#  An authoring convention, and the reason for it
+# -----------------------------------------------------------------------------
+#
+#  Inline mappings and sequences in this file are written as JSON - YAML
+#  accepts JSON, so `{"$ref": "#/components/schemas/Money"}` is valid YAML -
+#  and every example is strict JSON.
+#
+#  This project has no YAML library: none could be installed in the
+#  environment it was first assembled in, which is the same reason bin/verify
+#  exists. The contract test therefore reads this document with a parser of
+#  its own, and a parser small enough to be trusted is one that handles block
+#  structure plus JSON. It REFUSES anything else rather than guessing, so the
+#  document cannot drift into syntax the check silently skips - which would be
+#  a check that cannot fail.
+#
+#  The cost is a style a little more explicit than hand-written YAML usually
+#  is. The benefit is that the examples below are the test fixtures, so they
+#  cannot go stale.
+
 info:
   title: PeakFlow API
-  version: 1.0.0-draft
+  version: 1.0.0
   summary: Invoicing, banking and the double-entry ledger underneath them.
   description: |
     The PeakFlow REST API.
@@ -14,23 +53,25 @@ info:
     documents whatever the implementation happens to do, including its
     mistakes.
 
-    Conventions in full: `docs/api/conventions.md`. The points that catch
-    integrators out:
+    Conventions in full: `docs/api/conventions.md`. The problem-type registry:
+    `docs/api/problems.md`. The points that catch integrators out:
 
     - **Money is always an object with a string amount.** Never a bare number.
       A client parsing `1.234` (a Jordanian dinar amount) as a float will
       reformat it to `1.23`.
     - **An accounting date is a date, not a timestamp**, and must never be
-      timezone-shifted — `2026-11-30T21:00:00Z` in Riyadh is December.
+      timezone-shifted - `2026-11-30T21:00:00Z` in Riyadh is December.
     - **`Idempotency-Key` is required on every POST that posts to the ledger**,
       and a request without one is refused.
     - Pagination is cursor-based. The cursor is opaque and signed.
     - Errors are RFC 9457 `application/problem+json`, with document-rule
-      failures addressed by EN 16931 business term rather than by XPath.
+      failures addressed by EN 16931 business term.
+    - **A token scope is a permission key**, spelled identically. There is no
+      second vocabulary for machines.
 
-    This draft defines the shared components and a representative slice of the
-    resource surface. Operations are added with the tasks that implement them,
-    in the same pull request.
+    Every operation can also answer `500` with a problem document; it is
+    described once as the `ServerError` response and referenced from each
+    operation rather than being left implicit.
   contact:
     name: PeakFlow
     url: https://github.com/mostfaswaisi93/peakflow
@@ -51,315 +92,433 @@ security:
   - bearerAuth: []
 
 tags:
+  - name: Contract
+    description: The document itself.
   - name: Ledger
-    description: Accounts, journal entries, periods.
-  - name: Sales
-    description: Invoices, credit notes.
-  - name: Settlement
-    description: Payments, allocations, payment runs.
-  - name: Banking
-    description: Bank accounts, statements, reconciliation.
-  - name: Reporting
-    description: Statements and operational reports.
+    description: Accounts and journal entries.
+  - name: Identity
+    description: The tenant's own API tokens.
 
 paths:
 
-  /journal-entries:
-    post:
-      tags: [Ledger]
-      operationId: createJournalEntry
-      summary: Create a draft journal entry
+  /openapi.yaml:
+    get:
+      tags: ["Contract"]
+      operationId: getOpenApiDocument
+      summary: This document
       description: |
-        Creates a **draft**. A draft has no effect on any balance and may be
-        edited freely. Posting is a separate, irreversible operation.
-      parameters:
-        - $ref: '#/components/parameters/Tenant'
-        - $ref: '#/components/parameters/Entity'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/JournalEntryDraft' }
-      responses:
-        '201':
-          description: Draft created
-          headers:
-            ETag: { $ref: '#/components/headers/ETag' }
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/JournalEntry' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '422': { $ref: '#/components/responses/ValidationFailed' }
+        The contract, served byte for byte from the committed file.
 
-  /journal-entries/{id}/post:
-    post:
-      tags: [Ledger]
-      operationId: postJournalEntry
-      summary: Post a draft journal entry
-      description: |
-        Irreversible. The entry must balance to zero in the entity's functional
-        currency — enforced by a deferred constraint trigger in the database,
-        not only by this endpoint — and its period must accept postings.
+        **Unauthenticated, deliberately.** An integrator reads the contract
+        before they have a token - that is what they are reading it in order to
+        obtain. Requiring one would mean the first question every integration
+        asks is answered by a `401`, and the usual workaround is somebody
+        emailing a copy of the file, which is then the version they build
+        against for two years.
 
-        Requires the `journal.post` permission, which in turn requires an
-        enrolled second factor.
-      parameters:
-        - $ref: '#/components/parameters/Tenant'
-        - $ref: '#/components/parameters/Entity'
-        - $ref: '#/components/parameters/IdempotencyKey'
-        - $ref: '#/components/parameters/ResourceId'
+        It describes shapes and not data: no tenant, no entity, no figure. It
+        is also the only operation here with no `X-Tenant`, for the same
+        reason.
+
+        The `ETag` is a hash of the bytes rather than a modification time, so
+        a client polling for contract changes transfers the document only when
+        it has actually changed - a deploy rewrites every mtime.
+      security: []
       responses:
         '200':
-          description: Posted
+          description: The OpenAPI document
+          headers:
+            ETag: {"$ref": "#/components/headers/ETag"}
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
           content:
-            application/json:
-              schema: { $ref: '#/components/schemas/JournalEntry' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '422': { $ref: '#/components/responses/ValidationFailed' }
-        '423': { $ref: '#/components/responses/PeriodClosed' }
+            application/yaml:
+              schema: {"type": "string"}
+        '500': {"$ref": "#/components/responses/ServerError"}
 
-  /invoices:
+  /accounts:
     get:
-      tags: [Sales]
-      operationId: listInvoices
-      summary: List invoices
+      tags: ["Ledger"]
+      operationId: listAccounts
+      summary: The chart of accounts
+      description: |
+        Cursor-paginated, in code order - which is tree order, because the
+        code is the path. A client that wants the tree reassembles it from
+        `parent_id`, which every row carries.
+
+        Requires `account.manage`, which is the same permission the chart
+        screen requires and for the same reason: the chart names every control
+        account in the entity, which is a map of where money lands.
       parameters:
-        - $ref: '#/components/parameters/Tenant'
-        - $ref: '#/components/parameters/Entity'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
-        - name: filter[status]
-          in: query
-          schema:
-            type: string
-            enum: [draft, issued, sent, partially_paid, paid, overdue, disputed, credited, written_off]
-        - name: filter[party_id]
-          in: query
-          schema: { $ref: '#/components/schemas/Ulid' }
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+        - {"$ref": "#/components/parameters/Cursor"}
+        - {"$ref": "#/components/parameters/Limit"}
+        - {"$ref": "#/components/parameters/PageNumber"}
         - name: sort
           in: query
-          description: Allowlisted. Anything else is a 400 naming what is permitted.
-          schema:
-            type: string
-            enum: [issue_date, -issue_date, due_date, -due_date, number, -number]
+          description: |
+            Allowlisted. Anything else is a `400` naming what is permitted - a
+            field is sortable when it has an index, and sorting by one that
+            has not would ask the database for a full sort of the table.
+          schema: {"type": "string", "enum": ["code", "-code", "created_at", "-created_at"], "default": "code"}
       responses:
         '200':
-          description: A page of invoices
+          description: A page of accounts
           headers:
-            Link: { $ref: '#/components/headers/Link' }
+            Link: {"$ref": "#/components/headers/Link"}
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
           content:
             application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/Page'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items: { $ref: '#/components/schemas/Invoice' }
-        '400': { $ref: '#/components/responses/BadRequest' }
+              schema: {"$ref": "#/components/schemas/AccountPage"}
+              examples:
+                aPage:
+                  summary: The first page of a small chart
+                  value: {"data": [{"resource": "account", "id": "01jd3xq7f8k2m9n4p5r6s7t8v9", "code": "1.1.1.1", "name": {"ar": "النقدية", "en": "Cash on hand"}, "parent_id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "depth": 4, "type": "asset", "currency": null, "postable": true, "blocked": false, "monetary": true}], "meta": {"limit": 25, "has_more": false, "pagination": "cursor"}, "links": {"self": "https://example.peakflow.app/api/v1/accounts"}}
+        '400': {"$ref": "#/components/responses/BadRequest"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '500': {"$ref": "#/components/responses/ServerError"}
 
-    post:
-      tags: [Sales]
-      operationId: createInvoice
-      summary: Create a draft invoice
-      parameters:
-        - $ref: '#/components/parameters/Tenant'
-        - $ref: '#/components/parameters/Entity'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/InvoiceDraft' }
-      responses:
-        '201':
-          description: Draft created
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Invoice' }
-        '422': { $ref: '#/components/responses/ValidationFailed' }
-
-  /invoices/{id}/issue:
-    post:
-      tags: [Sales]
-      operationId: issueInvoice
-      summary: Issue a draft invoice
-      description: |
-        One transaction: validate, freeze totals, apply the posting rule,
-        allocate the gapless number, write the hash-chain link, commit. It
-        either all happens or none of it does. Rendering, delivery and any
-        clearance submission are queued after commit.
-
-        An issued invoice is immutable. Correct it with a credit note.
-      parameters:
-        - $ref: '#/components/parameters/Tenant'
-        - $ref: '#/components/parameters/Entity'
-        - $ref: '#/components/parameters/IdempotencyKey'
-        - $ref: '#/components/parameters/ResourceId'
-      responses:
-        '200':
-          description: Issued
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Invoice' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '422':
-          description: |
-            Business-rule failure. Document-rule errors are addressed by
-            EN 16931 business term.
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/Problem' }
-        '423': { $ref: '#/components/responses/PeriodClosed' }
-
-  /payments:
-    post:
-      tags: [Settlement]
-      operationId: createPayment
-      summary: Record a payment
-      description: |
-        A payment is cash moving. Allocation is a separate resource, because it
-        is a separate event — often days later and by a different person.
-        Unallocated cash is a liability, and that is correct rather than an
-        error state.
-      parameters:
-        - $ref: '#/components/parameters/Tenant'
-        - $ref: '#/components/parameters/Entity'
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/PaymentDraft' }
-      responses:
-        '201':
-          description: Recorded
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Payment' }
-        '422': { $ref: '#/components/responses/ValidationFailed' }
-
-  /payment-runs/{id}/release:
-    post:
-      tags: [Settlement]
-      operationId: releasePaymentRun
-      summary: Release a prepared payment run
-      description: |
-        The highest-consequence operation in the API.
-
-        - The releaser must differ from the preparer, enforced against the
-          audit trail rather than against a role list.
-        - Requires step-up re-authentication at the moment of the act, so a
-          stolen session is not enough.
-        - Any change since preparation invalidates the preparation.
-        - A beneficiary account changed since approval blocks the release until
-          it is re-verified.
-
-        PeakFlow never moves money. This produces an instruction file that a
-        human releases into the bank's own channel.
-      parameters:
-        - $ref: '#/components/parameters/Tenant'
-        - $ref: '#/components/parameters/Entity'
-        - $ref: '#/components/parameters/IdempotencyKey'
-        - $ref: '#/components/parameters/ResourceId'
-        - name: X-Step-Up-Token
-          in: header
-          required: true
-          schema: { type: string }
-      responses:
-        '200':
-          description: Released
-        '403':
-          description: |
-            Forbidden — lacking the permission, failing segregation of duties,
-            or a stale step-up assertion.
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/Problem' }
-        '409': { $ref: '#/components/responses/Conflict' }
-
-  /statements:
-    post:
-      tags: [Banking]
-      operationId: importStatement
-      summary: Import a bank statement
-      description: |
-        The import asserts that its opening balance equals the previous
-        statement's closing balance for the account. A mismatch stops the
-        import and reports the gap rather than importing a hole.
-
-        Imports are idempotent: re-importing an overlapping file is a no-op
-        that reports what it skipped.
-      parameters:
-        - $ref: '#/components/parameters/Tenant'
-        - $ref: '#/components/parameters/Entity'
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              type: object
-              required: [bank_account_id, format, file]
-              properties:
-                bank_account_id: { $ref: '#/components/schemas/Ulid' }
-                format:
-                  type: string
-                  enum: [camt053, camt052, camt054, mt940, mt942, ofx, csv]
-                csv_template_id: { $ref: '#/components/schemas/Ulid' }
-                file:
-                  type: string
-                  format: binary
-      responses:
-        '201':
-          description: Imported
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  statement_id: { $ref: '#/components/schemas/Ulid' }
-                  imported:     { type: integer }
-                  skipped:      { type: integer, description: Already present. }
-                  continuity:   { type: string, enum: [ok, first_statement] }
-        '422':
-          description: |
-            Continuity broken, or the file is not what it claims to be. The
-            problem detail names the expected and actual opening balance.
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/Problem' }
-
-  /reports/trial-balance:
+  /journal-entries:
     get:
-      tags: [Reporting]
-      operationId: getTrialBalance
-      summary: Trial balance
+      tags: ["Ledger"]
+      operationId: listJournalEntries
+      summary: List journal entries
       description: |
-        Reproducible: the same parameters return the same numbers, and the
-        parameters are echoed on the response. Debits must equal credits, and
-        the response says so explicitly.
+        Newest first by accounting date, which is what a client polling for
+        what has changed wants and is also the order the index is in.
+
+        `posted_at` is deliberately not sortable: it is nullable, and a keyset
+        cursor over a nullable column silently loses rows - the row-value
+        comparison evaluates to NULL for them, so the page is short with no
+        indication that anything was left out.
       parameters:
-        - $ref: '#/components/parameters/Tenant'
-        - $ref: '#/components/parameters/Entity'
-        - name: as_of
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+        - {"$ref": "#/components/parameters/Cursor"}
+        - {"$ref": "#/components/parameters/Limit"}
+        - {"$ref": "#/components/parameters/PageNumber"}
+        - name: sort
           in: query
-          required: true
-          schema: { $ref: '#/components/schemas/AccountingDate' }
-        - name: include_adjusting
+          schema: {"type": "string", "enum": ["accounting_date", "-accounting_date", "number", "-number"], "default": "-accounting_date"}
+        - name: filter[status]
           in: query
-          schema: { type: boolean, default: true }
-        - name: currency
-          in: query
-          description: Presentation currency. Defaults to the entity's functional currency.
-          schema: { $ref: '#/components/schemas/CurrencyCode' }
+          schema: {"type": "string", "enum": ["draft", "posted", "reversed"]}
       responses:
         '200':
-          description: The trial balance
+          description: A page of journal entries
+          headers:
+            Link: {"$ref": "#/components/headers/Link"}
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/TrialBalance' }
+              schema: {"$ref": "#/components/schemas/JournalEntryPage"}
+              examples:
+                aPage:
+                  summary: One posted entry
+                  value: {"data": [{"resource": "journal_entry", "id": "01jd3xq7f8k2m9n4p5r6s7t8v9", "number": "GEN-2026/00001", "status": "posted", "accounting_date": "2026-03-10", "period_id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "journal_id": "01jd3xq7f8k2m9n4p5r6s7t8v7", "narration": "Accrued electricity", "posting_rule": "ledger.manual.api", "source": {"type": "api", "reference": null}, "posted_at": "2026-03-10T09:31:22Z", "posted_by_user_id": "01jd3xq7f8k2m9n4p5r6s7t8v6", "currency": "SAR"}], "meta": {"limit": 25, "has_more": false, "pagination": "cursor"}, "links": {"self": "https://example.peakflow.app/api/v1/journal-entries"}}
+        '400': {"$ref": "#/components/responses/BadRequest"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+    post:
+      tags: ["Ledger"]
+      operationId: postJournalEntry
+      summary: Post a journal entry
+      description: |
+        **This posts. There is no draft.**
+
+        The manual entry screen has drafts because a person is interrupted
+        halfway through a forty-line accrual. An integration is not
+        interrupted, and a draft only it can see is a row nothing will ever
+        come back and finish.
+
+        So this is a write that posts to the ledger, which is why
+        `Idempotency-Key` is **required**: a retried POST without one posts the
+        entry twice, and the second one is indistinguishable from a real
+        transaction - same amounts, same date, same party, a different number.
+
+        The entry must balance to zero in the entity's functional currency,
+        which is enforced by a deferred constraint trigger in the database and
+        not only by this endpoint. A **control account is refused**: its
+        balance is the total of a subledger, and a manual entry makes the two
+        disagree with nothing afterwards able to say which is right.
+
+        Requires `journal.post`, which the permission catalogue marks as
+        needing an enrolled second factor on the person whose token this is.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+        - {"$ref": "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"$ref": "#/components/schemas/JournalEntryRequest"}
+            examples:
+              anAccrual:
+                summary: A two-line accrual in the functional currency
+                value: {"accounting_date": "2026-03-10", "narration": "Accrued electricity for March", "lines": [{"account_code": "6.1.5", "amount": "1500.0000", "narration": "March electricity"}, {"account_code": "2.1.9", "amount": "-1500.0000"}]}
+      responses:
+        '201':
+          description: Posted
+          headers:
+            Location: {"$ref": "#/components/headers/Location"}
+            Idempotent-Replay: {"$ref": "#/components/headers/IdempotentReplay"}
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/JournalEntryDetail"}
+              examples:
+                posted:
+                  summary: The entry, with its lines
+                  value: {"resource": "journal_entry", "id": "01jd3xq7f8k2m9n4p5r6s7t8v9", "number": "GEN-2026/00001", "status": "posted", "accounting_date": "2026-03-10", "period_id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "journal_id": "01jd3xq7f8k2m9n4p5r6s7t8v7", "narration": "Accrued electricity for March", "posting_rule": "ledger.manual.api", "source": {"type": "api", "reference": null}, "posted_at": "2026-03-10T09:31:22Z", "posted_by_user_id": "01jd3xq7f8k2m9n4p5r6s7t8v6", "currency": "SAR", "lines": [{"id": "01jd3xq7f8k2m9n4p5r6s7t8va", "account_id": "01jd3xq7f8k2m9n4p5r6s7t8vb", "amount": {"amount": "1500.0000", "currency": "SAR", "presentation_exponent": 2}, "functional_amount": {"amount": "1500.0000", "currency": "SAR", "presentation_exponent": 2}, "fx": null, "party_id": null, "narration": "March electricity"}, {"id": "01jd3xq7f8k2m9n4p5r6s7t8vd", "account_id": "01jd3xq7f8k2m9n4p5r6s7t8ve", "amount": {"amount": "-1500.0000", "currency": "SAR", "presentation_exponent": 2}, "functional_amount": {"amount": "-1500.0000", "currency": "SAR", "presentation_exponent": 2}, "fx": null, "party_id": null, "narration": null}]}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '409': {"$ref": "#/components/responses/Conflict"}
+        '422': {"$ref": "#/components/responses/ValidationFailed"}
+        '423': {"$ref": "#/components/responses/PeriodClosed"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /journal-entries/{id}:
+    get:
+      tags: ["Ledger"]
+      operationId: getJournalEntry
+      summary: One journal entry, with its lines
+      description: |
+        Resolved under the entity scope, so an id belonging to another company
+        in the same tenant is a `404` - indistinguishable from one that never
+        existed, which is what stops a numbering series being walked from
+        outside.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+        - {"$ref": "#/components/parameters/ResourceId"}
+      responses:
+        '200':
+          description: The entry
+          headers:
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/JournalEntryDetail"}
+              examples:
+                withAForeignLine:
+                  summary: An entry carrying a translated line and its rate's provenance
+                  value: {"resource": "journal_entry", "id": "01jd3xq7f8k2m9n4p5r6s7t8v9", "number": "GEN-2026/00002", "status": "posted", "accounting_date": "2026-03-11", "period_id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "journal_id": "01jd3xq7f8k2m9n4p5r6s7t8v7", "narration": "Supplier invoice in euro", "posting_rule": "ledger.manual.api", "source": {"type": "api", "reference": null}, "posted_at": "2026-03-11T11:02:04Z", "posted_by_user_id": "01jd3xq7f8k2m9n4p5r6s7t8v6", "currency": "SAR", "lines": [{"id": "01jd3xq7f8k2m9n4p5r6s7t8vc", "account_id": "01jd3xq7f8k2m9n4p5r6s7t8vb", "amount": {"amount": "1000.0000", "currency": "EUR", "presentation_exponent": 2}, "functional_amount": {"amount": "4012.5000", "currency": "SAR", "presentation_exponent": 2}, "fx": {"rate": "4.012500000000", "rate_set": "market", "as_of": "2026-03-11", "provider": "ecb"}, "party_id": null, "narration": null}, {"id": "01jd3xq7f8k2m9n4p5r6s7t8vf", "account_id": "01jd3xq7f8k2m9n4p5r6s7t8vg", "amount": {"amount": "-4012.5000", "currency": "SAR", "presentation_exponent": 2}, "functional_amount": {"amount": "-4012.5000", "currency": "SAR", "presentation_exponent": 2}, "fx": null, "party_id": null, "narration": "The riyal side, at the booking rate"}]}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '404': {"$ref": "#/components/responses/NotFound"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /api-tokens:
+    get:
+      tags: ["Identity"]
+      operationId: listApiTokens
+      summary: The caller's own API tokens
+      description: |
+        Revoked tokens included, because the question a customer asks is "did
+        we already rotate this", and a list of live tokens cannot answer it -
+        the rotation chain is only legible when both ends are in it.
+
+        `last_used_at` is the field worth having: the question asked about a
+        token found in a configuration file is "is anything still using this",
+        and a name and a creation date cannot answer it.
+
+        The permitted scopes are on the response, because the next thing a
+        client does is issue a token and the set of valid scopes is the
+        permission catalogue - which changes with a deployment. A client that
+        kept its own copy would be keeping a copy that goes stale.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+      responses:
+        '200':
+          description: The tokens
+          headers:
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/ApiTokenPage"}
+              examples:
+                oneLiveOneRotated:
+                  summary: A live token and the one it replaced
+                  value: {"data": [{"resource": "api_token", "id": "01jd3xq7f8k2m9n4p5r6s7t8v9", "name": "Nightly bookkeeping", "plane": "tenant", "scopes": ["report.view"], "entity_ids": ["01jd3xq7f8k2m9n4p5r6s7t8v8"], "created_at": "2026-03-10T09:00:00Z", "last_used_at": "2026-03-11T02:00:11Z", "expires_at": null, "revoked_at": null, "revoked_reason": null, "rotated_to_token_id": null}], "meta": {"available_scopes": ["account.manage", "journal.post", "report.view", "user.manage"], "scopes_requiring_a_person_present": ["payment.release"]}}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+    post:
+      tags: ["Identity"]
+      operationId: issueApiToken
+      summary: Issue a token
+      description: |
+        **Delegation only ever narrows.** A token may issue a token carrying
+        its own scopes or fewer, in its own entities or fewer, and never more.
+        Without that rule this operation would be the escalation: a token
+        issued to read invoices, holding `user.manage` so that it can rotate
+        itself, could otherwise mint one that releases payments - because its
+        OWNER holds that permission.
+
+        A scope must also be a permission its owner holds **in every entity
+        the token names**, checked per entity rather than once: a user who may
+        post in the parent and only read in a subsidiary is the ordinary case,
+        and taking the union would hand the token posting rights in the
+        subsidiary.
+
+        A permission requiring step-up re-authentication can never be a token
+        scope. A step-up assertion proves somebody is at the keyboard now; a
+        token in a configuration file proves the opposite.
+
+        **The plaintext is returned exactly once** and there is no endpoint
+        that returns it again.
+
+        No `Idempotency-Key`: this does not post to the ledger, and a
+        duplicate produces a second token with its own id that the listing
+        shows and a human revokes. Requiring a key on every POST would train
+        clients to generate one per call, which is the same as not having one.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"$ref": "#/components/schemas/ApiTokenRequest"}
+            examples:
+              aReadOnlyToken:
+                summary: A reporting token for one entity
+                value: {"name": "Nightly bookkeeping", "scopes": ["report.view"], "entity_ids": ["01jd3xq7f8k2m9n4p5r6s7t8v8"], "expires_on": "2027-03-10"}
+      responses:
+        '201':
+          description: Issued, with the plaintext - once
+          headers:
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/ApiTokenIssued"}
+              examples:
+                issued:
+                  summary: The token and its one and only plaintext
+                  value: {"resource": "api_token", "id": "01jd3xq7f8k2m9n4p5r6s7t8v9", "name": "Nightly bookkeeping", "plane": "tenant", "scopes": ["report.view"], "entity_ids": ["01jd3xq7f8k2m9n4p5r6s7t8v8"], "created_at": "2026-03-10T09:00:00Z", "last_used_at": null, "expires_at": "2027-03-10T23:59:59Z", "revoked_at": null, "revoked_reason": null, "rotated_to_token_id": null, "token": "01jd3xq7f8k2m9n4p5r6s7t8v9|pfat_rPq4s...", "issued_at": "2026-03-10T09:00:00Z"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '422': {"$ref": "#/components/responses/ValidationFailed"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /api-tokens/{id}/rotate:
+    post:
+      tags: ["Identity"]
+      operationId: rotateApiToken
+      summary: Replace a token with a successor
+      description: |
+        Mints a successor with the same scopes and entities, and revokes this
+        one with the reason given - in one transaction, because the two halves
+        are a single decision. A rotation that minted the successor and failed
+        to revoke the predecessor has doubled the number of live credentials,
+        which is the opposite of what somebody rotating after a leak wanted.
+
+        Rotation is two rows and an arrow, never an update. A token whose hash
+        changed in place leaves no record that the old credential existed, so
+        "which token posted this entry on the 14th" has no answer. A database
+        trigger refuses the alternative.
+
+        This operation is why an integration can rotate without a human: a
+        rotation that needs somebody to open a screen, paste a token into a
+        configuration file and redeploy happens once, during setup, and then
+        never.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+        - {"$ref": "#/components/parameters/ResourceId"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"$ref": "#/components/schemas/TokenReason"}
+            examples:
+              scheduled:
+                summary: A scheduled rotation
+                value: {"reason": "Scheduled quarterly rotation of the bookkeeping credential."}
+      responses:
+        '201':
+          description: The successor, with its plaintext - once
+          headers:
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/ApiTokenIssued"}
+              examples:
+                rotated:
+                  summary: The successor token
+                  value: {"resource": "api_token", "id": "01jd3xq7f8k2m9n4p5r6s7t8vd", "name": "Nightly bookkeeping", "plane": "tenant", "scopes": ["report.view"], "entity_ids": ["01jd3xq7f8k2m9n4p5r6s7t8v8"], "created_at": "2026-06-10T09:00:00Z", "last_used_at": null, "expires_at": null, "revoked_at": null, "revoked_reason": null, "rotated_to_token_id": null, "token": "01jd3xq7f8k2m9n4p5r6s7t8vd|pfat_8wQ2x...", "issued_at": "2026-06-10T09:00:00Z"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '404': {"$ref": "#/components/responses/NotFound"}
+        '409': {"$ref": "#/components/responses/Conflict"}
+        '422': {"$ref": "#/components/responses/ValidationFailed"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /api-tokens/{id}:
+    delete:
+      tags: ["Identity"]
+      operationId: revokeApiToken
+      summary: Revoke a token
+      description: |
+        Revoked, not deleted. "Which token posted this entry" has to stay
+        answerable after the token is gone, and a deleted row answers it with
+        silence - which reads as "no token", which is worse than "we do not
+        know".
+
+        A reason is required, and a database constraint requires it too.
+        "Revoked" with no reason cannot distinguish a routine rotation from a
+        response to a leak, and those are the two cases somebody will later
+        need to tell apart.
+
+        Revocation is final: a trigger refuses an update that clears
+        `revoked_at`, because a token revoked after a leak and then
+        un-revoked is a compromised credential that is live again, with one
+        row saying both things.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+        - {"$ref": "#/components/parameters/ResourceId"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"$ref": "#/components/schemas/TokenReason"}
+            examples:
+              leaked:
+                summary: Revoked after the credential was found in a commit
+                value: {"reason": "Found committed to a public repository; rotating out of band."}
+      responses:
+        '200':
+          description: The revoked token
+          headers:
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/ApiTokenResource"}
+              examples:
+                revoked:
+                  summary: Revoked, with its reason
+                  value: {"resource": "api_token", "id": "01jd3xq7f8k2m9n4p5r6s7t8v9", "name": "Nightly bookkeeping", "plane": "tenant", "scopes": ["report.view"], "entity_ids": ["01jd3xq7f8k2m9n4p5r6s7t8v8"], "created_at": "2026-03-10T09:00:00Z", "last_used_at": "2026-03-11T02:00:11Z", "expires_at": null, "revoked_at": "2026-03-12T08:15:00Z", "revoked_reason": "Found committed to a public repository; rotating out of band.", "rotated_to_token_id": null}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '404': {"$ref": "#/components/responses/NotFound"}
+        '409': {"$ref": "#/components/responses/Conflict"}
+        '422': {"$ref": "#/components/responses/ValidationFailed"}
+        '500': {"$ref": "#/components/responses/ServerError"}
 
 components:
 
@@ -368,9 +527,18 @@ components:
       type: http
       scheme: bearer
       description: |
-        A Sanctum token. Scopes mirror permissions exactly, so there is one
-        authorization model rather than a second, weaker one for machines. A
-        token is scoped to specific entities, not to the whole tenant.
+        A Sanctum bearer token, and nothing else: the cookie fallback is
+        switched off, so a session cookie cannot authenticate an API request.
+        Two holes close with it - CSRF, because a browser attaches cookies to
+        a cross-site POST on its own, and the scope model, because a
+        session-authenticated request carries every ability its user holds.
+
+        **Scopes are permission keys**, spelled identically, so there is one
+        authorization model rather than a second and weaker one for machines.
+        There is no wildcard: `*` names no permission and would widen itself
+        with every deployment that adds one.
+
+        A token is scoped to **specific entities**, never to the tenant.
 
   parameters:
     Tenant:
@@ -378,16 +546,45 @@ components:
       in: header
       required: true
       description: |
-        Resolved before authentication, because the user table lives in the
-        tenant's own database.
-      schema: { $ref: '#/components/schemas/Ulid' }
+        Resolved **before** authentication, because the users table lives in
+        the tenant's own database and a guard that ran first would query
+        whichever connection happened to be configured.
+
+        A missing header is a `400` and not a guess. "They only have one
+        tenant, so use that" is how an integration silently writes into the
+        wrong company after the customer adds a second one.
+      schema: {"$ref": "#/components/schemas/Ulid"}
 
     Entity:
       name: X-Entity
       in: header
       required: true
-      description: The legal entity to act in. The token must hold a role in it.
-      schema: { $ref: '#/components/schemas/Ulid' }
+      description: |
+        The legal entity to act in, and it is **required even when the token
+        names exactly one**. The browser can guess because a person is
+        watching and will notice the wrong company's figures; an integration
+        will not, and the failure is silent and cumulative.
+      schema: {"$ref": "#/components/schemas/Ulid"}
+
+    AcceptLanguage:
+      name: Accept-Language
+      in: header
+      required: false
+      description: |
+        Localizes the human-readable `detail` and `errors[].detail` of a
+        problem document, and nothing else. `type`, `title` and every
+        machine-readable member are never localized - a client switching on
+        `title` would break the first time somebody sent `ar`, and it would
+        break by taking the wrong branch rather than by failing.
+
+        On the API this header **outranks the tenant's default language**,
+        which is the opposite of the application's own ordering. An
+        integration sending it has stated the language of the system - or the
+        person - that will read the failure, per request, in code somebody
+        wrote on purpose.
+
+        The response carries `Content-Language`.
+      schema: {"type": "string", "enum": ["ar", "en"]}
 
     IdempotencyKey:
       name: Idempotency-Key
@@ -395,329 +592,682 @@ components:
       required: true
       description: |
         Required on every POST that posts to the ledger; a request without one
-        is refused. The response is stored and replayed for 24 hours. A replay
-        with a different body is a 409 — that is a client bug, and silently
-        returning the first response would hide it.
-      schema: { type: string, minLength: 16, maxLength: 128 }
+        is refused rather than accepted. Between 16 and 128 characters - a
+        short key is not a unique key, it collides with this same token's next
+        request.
+
+        The response is stored and replayed for 24 hours, keyed on the tenant,
+        the token and the key. A replay with a **different body** is a `409`,
+        because that is a client bug and silently returning the first response
+        would hide it: the second write would never happen, its id would be
+        recorded against the first document, and the discrepancy would surface
+        weeks later as a document nobody can find.
+
+        A request arriving while the first is still running is a `409` with
+        `Retry-After` rather than a second execution. Two requests arriving
+        together are answered by the database: the second blocks on the
+        claim, and when the first commits it replays the first's response.
+
+        A `5xx` is not stored. Replaying one for 24 hours would mean the
+        client could never succeed with that key, and the key is the only
+        thing it is permitted to retry with.
+      schema: {"type": "string", "minLength": 16, "maxLength": 128}
 
     ResourceId:
       name: id
       in: path
       required: true
-      schema: { $ref: '#/components/schemas/Ulid' }
+      schema: {"$ref": "#/components/schemas/Ulid"}
 
     Cursor:
       name: cursor
       in: query
-      description: Opaque and signed, so it cannot be tampered with or hand-constructed.
-      schema: { type: string }
+      required: false
+      description: |
+        Opaque and **signed**, so it cannot be tampered with or
+        hand-constructed, and bound to the listing and sort that produced it -
+        the same string against a different sort would compare an account code
+        to a date. Send back exactly what was received; anything else is a
+        `400`.
+      schema: {"type": "string"}
 
     Limit:
       name: limit
       in: query
-      description: Allowlisted, so a crafted value can never request an unbounded page.
-      schema: { type: integer, enum: [10, 25, 50, 100], default: 25 }
+      required: false
+      description: |
+        An **allowlist**, not a ceiling. A ceiling answers `limit=99999` with a
+        page of 100 and says nothing, which is a silent reinterpretation of
+        what was asked - the client believes it has every row and iterates no
+        further. Anything else is a `400` naming the four sizes that work.
+      schema: {"type": "integer", "enum": [10, 25, 50, 100], "default": 25}
+
+    PageNumber:
+      name: page
+      in: query
+      required: false
+      description: |
+        Offset pagination, available where a UI genuinely needs a page number
+        and **documented as the slower path**. `OFFSET 50000` reads fifty
+        thousand rows in order to discard them, and over a journal that is
+        still being written to the pages also drift: one insert between
+        request five and request six shifts every later row by one, so a
+        client sees one entry twice and never sees another.
+
+        Capped at 200. Sending `page` selects offset mode and ignores
+        `cursor`; the response says which mode answered it.
+      schema: {"type": "integer", "minimum": 1, "maximum": 200}
 
   headers:
     ETag:
-      description: Strong and permanently cacheable on an immutable resource.
-      schema: { type: string }
+      description: A strong validator over the bytes served.
+      schema: {"type": "string"}
     Link:
-      description: RFC 8288 pagination links.
-      schema: { type: string }
+      description: RFC 8288 pagination links - `rel="next"` and `rel="prev"`.
+      schema: {"type": "string"}
+    Location:
+      description: The created resource.
+      schema: {"type": "string"}
+    RetryAfter:
+      description: Seconds to wait. Present on every refusal that asks for one.
+      schema: {"type": "integer"}
+    ContentLanguage:
+      description: The language the human-readable text was written in.
+      schema: {"type": "string"}
+    IdempotentReplay:
+      description: |
+        `true` when this response is the stored answer to an earlier request
+        with the same key, rather than a fresh execution.
+      schema: {"type": "string"}
 
   responses:
     BadRequest:
-      description: Malformed, or a filter or sort field not on the allowlist.
+      description: |
+        Malformed, or a filter, sort field, page size or cursor outside what is
+        permitted. The problem document lists what IS permitted.
       content:
         application/problem+json:
-          schema: { $ref: '#/components/schemas/Problem' }
+          schema: {"$ref": "#/components/schemas/Problem"}
+          examples:
+            sortNotAllowed:
+              summary: A sort field that is not on the allowlist
+              value: {"type": "https://peakflow.app/problems/filter-not-allowed", "title": "That filter or sort field is not permitted", "status": 400, "detail": "\"narration\" is not a sortable field here.", "instance": "/api/v1/accounts?sort=narration", "errors": [{"pointer": "/sort", "code": "not_allowed", "detail": "narration"}], "permitted": ["code", "created_at"]}
+
+    Unauthenticated:
+      description: |
+        No token, an unknown token, an expired or revoked one, or a token from
+        another plane. All four answer the same way: confirming that a token
+        is real and simply not usable here is the one fact worth having.
+      content:
+        application/problem+json:
+          schema: {"$ref": "#/components/schemas/Problem"}
+          examples:
+            noToken:
+              summary: No bearer token
+              value: {"type": "https://peakflow.app/problems/unauthenticated", "title": "Authentication is required", "status": 401, "detail": "Send a bearer token in the Authorization header. The API accepts no other credential.", "instance": "/api/v1/accounts"}
+
     Forbidden:
       description: |
-        Authenticated, but lacking the permission, the entity scope, or failing
-        a segregation-of-duties rule.
+        Authenticated, and not permitted. Three distinct types, because the fix
+        differs: `token-scope-missing` is fixed by issuing a new token,
+        `forbidden` by granting a permission, `entity-not-permitted` by
+        issuing a token for that entity.
       content:
         application/problem+json:
-          schema: { $ref: '#/components/schemas/Problem' }
+          schema: {"$ref": "#/components/schemas/Problem"}
+          examples:
+            scopeMissing:
+              summary: The token was issued without the scope
+              value: {"type": "https://peakflow.app/problems/token-scope-missing", "title": "The token does not carry this scope", "status": 403, "detail": "This route needs the scope journal.post and the token carries report.view.", "instance": "/api/v1/journal-entries", "errors": [{"pointer": "/scopes", "code": "scope_missing", "detail": "journal.post"}]}
+            entityNotPermitted:
+              summary: An entity outside the token's list
+              value: {"type": "https://peakflow.app/problems/entity-not-permitted", "title": "This token may not act in that entity", "status": 403, "detail": "This token may act in 01jd3xq7f8k2m9n4p5r6s7t8v8, and 01jd3xq7f8k2m9n4p5r6s7t8vz is not among them.", "instance": "/api/v1/accounts"}
+
+    NotFound:
+      description: |
+        No such record is visible to this token. A record that exists and is
+        not visible is reported identically to one that does not exist -
+        distinguishing them tells an attacker which ids and which document
+        numbers are real.
+      content:
+        application/problem+json:
+          schema: {"$ref": "#/components/schemas/Problem"}
+          examples:
+            notFound:
+              summary: An id from another entity, or none at all
+              value: {"type": "https://peakflow.app/problems/not-found", "title": "Not found", "status": 404, "detail": "No such record is visible to this token.", "instance": "/api/v1/journal-entries/01jd3xq7f8k2m9n4p5r6s7t8vz"}
+
     Conflict:
-      description: An idempotency conflict, or a transition the state machine does not allow.
+      description: |
+        An idempotency conflict, a request still in flight, or a transition
+        the state machine does not allow.
+      headers:
+        Retry-After: {"$ref": "#/components/headers/RetryAfter"}
       content:
         application/problem+json:
-          schema: { $ref: '#/components/schemas/Problem' }
+          schema: {"$ref": "#/components/schemas/Problem"}
+          examples:
+            keyReused:
+              summary: The same key with a different body
+              value: {"type": "https://peakflow.app/problems/idempotency-key-conflict", "title": "The Idempotency-Key was reused with a different body", "status": 409, "detail": "The key \"7c0f3d1e4b5a6978f0a1b2c3d4e5\" was already used for a different request.", "instance": "/api/v1/journal-entries"}
+            stillRunning:
+              summary: The first request with this key has not committed
+              value: {"type": "https://peakflow.app/problems/idempotency-key-in-flight", "title": "The first request with this Idempotency-Key is still running", "status": 409, "detail": "The first request with key \"7c0f3d1e4b5a6978f0a1b2c3d4e5\" is still running and has not committed.", "instance": "/api/v1/journal-entries", "retry_after": 2}
+
     ValidationFailed:
-      description: Validation or business-rule failure.
+      description: |
+        A field or a business rule. Field errors are addressed by RFC 6901
+        JSON pointer into the request body; document-rule failures are
+        addressed by **EN 16931 business term** rather than by XPath or by an
+        internal field name.
       content:
         application/problem+json:
-          schema: { $ref: '#/components/schemas/Problem' }
+          schema: {"$ref": "#/components/schemas/Problem"}
+          examples:
+            lineProblems:
+              summary: A control account, and an entry that does not balance
+              value: {"type": "https://peakflow.app/problems/validation-failed", "title": "The request could not be validated", "status": 422, "detail": "The entry was not posted: 1 line problem(s), and it is out by 250.0000 SAR.", "instance": "/api/v1/journal-entries", "errors": [{"pointer": "/lines/0/account_code", "code": "account_is_a_control", "detail": "Account 1.1.2.1 is a control account (trade_receivable): its balance is the total of a subledger, and the documents post to it. A manual entry makes the two disagree and nothing afterwards can say which is right."}], "imbalance": {"amount": "250.0000", "currency": "SAR", "presentation_exponent": 2}, "imbalance_side": "credit"}
+            documentRule:
+              summary: A document rule, addressed by business term
+              value: {"type": "https://peakflow.app/problems/document-validation-failed", "title": "The document does not satisfy its business rules", "status": 422, "detail": "The document breaks one or more business rules.", "instance": "/api/v1/invoices/01jd3xq7f8k2m9n4p5r6s7t8v9/issue", "errors": [{"business_term": "BT-110", "code": "BR-CO-14", "detail": "The tax total does not equal the sum of the VAT breakdown."}]}
+
     PeriodClosed:
-      description: The target period is closed or locked.
+      description: |
+        The target period is closed or locked. A closed period has been
+        reported on; posting into it after the fact changes a figure somebody
+        has already acted upon.
       content:
         application/problem+json:
-          schema: { $ref: '#/components/schemas/Problem' }
+          schema: {"$ref": "#/components/schemas/Problem"}
+          examples:
+            closed:
+              summary: The period will not accept the posting
+              value: {"type": "https://peakflow.app/problems/period-not-accepting-postings", "title": "The accounting period does not accept postings", "status": 423, "detail": "The period this date falls in has been closed. A closed period has been reported on.", "instance": "/api/v1/journal-entries"}
+
+    ServerError:
+      description: |
+        The request failed on our side. Nothing was half-saved - an idempotent
+        write rolls back its claim with it, so the same key may be retried -
+        and the correlation id is what joins this response to the log line.
+      content:
+        application/problem+json:
+          schema: {"$ref": "#/components/schemas/Problem"}
+          examples:
+            failed:
+              summary: A server failure
+              value: {"type": "https://peakflow.app/problems/server-error", "title": "Something went wrong", "status": 500, "detail": "The request failed on our side. Nothing was half-saved; quote the correlation id when reporting it.", "instance": "/api/v1/journal-entries"}
 
   schemas:
 
     Ulid:
       type: string
-      pattern: '^[0-9A-HJKMNP-TV-Z]{26}$'
-      examples: ['01JD3XQ7F8K2M9N4P5R6S7T8V9']
+      pattern: '^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$'
+      description: |
+        Crockford base32, 26 characters, sortable by creation time.
+
+        **Either case.** Crockford is case-insensitive as a specification, and
+        this application emits both: a model-generated id is lower case, and
+        one generated directly by the framework helper is upper. An id is
+        therefore OPAQUE - compare it case-insensitively, or better, echo back
+        exactly the bytes you were given. Normalizing the case of an id before
+        sending it back is how a client gets 404s it cannot explain, because
+        the column behind it is `char(26)` and compares as a string.
+      examples: ["01jd3xq7f8k2m9n4p5r6s7t8v9"]
 
     CurrencyCode:
       type: string
       pattern: '^[A-Z]{3}$'
       description: ISO 4217. The minor unit is not always 2.
-      examples: ['SAR', 'JOD', 'JPY']
+      examples: ["SAR", "JOD", "JPY"]
 
     AccountingDate:
       type: string
       format: date
       description: |
-        A date, never a timestamp. An accounting date that can be
-        timezone-shifted is a period-allocation bug.
-      examples: ['2026-11-14']
+        A date, never a timestamp. Midnight on the 30th in UTC is 03:00 on the
+        30th in Riyadh, and midnight on the 1st in Riyadh is 21:00 on the 30th
+        in UTC - so a timestamp for an accounting date is one conversion away
+        from moving an entry into another month, another quarter and another
+        tax return. Nobody finds it, because both dates are plausible.
+      examples: ["2026-11-14"]
+
+    Timestamp:
+      type: string
+      format: date-time
+      description: |
+        A moment: RFC 3339, UTC, with a `Z`. A client that has to know which
+        zone a timestamp is in before it can order two of them has been handed
+        the ordering problem, and the first symptom is a log that appears to
+        go backwards for one hour twice a year.
+      examples: ["2026-11-14T09:31:22Z"]
 
     Money:
       type: object
-      required: [amount, currency]
+      required: ["amount", "currency"]
       additionalProperties: false
       description: |
-        Money is always an object with a string amount. A bare number is never
-        returned — a client parsing it as a float is the bug this prevents.
+        Money is **always** an object with a string amount. A bare number is
+        never returned: `JOD 1.234` as the JSON number `1.234` arrives in
+        JavaScript as the nearest double, which is
+        1.23399999999999998578914528479799628257751464843750, and every client
+        that formats it with two decimals - which is every client, because two
+        is the default everywhere - writes 1.23 on an invoice for a
+        three-decimal currency. The lines then no longer sum to the total, and
+        the difference is a third of a fils per line.
       properties:
         amount:
           type: string
           pattern: '^-?\d{1,17}\.\d{4}$'
-          description: Exact decimal at the storage scale (4 places). Never a JSON number.
-          examples: ['1150.0000', '-42.9629']
-        currency: { $ref: '#/components/schemas/CurrencyCode' }
+          description: |
+            Exact decimal at the storage scale - four places, whatever the
+            currency's own exponent is. Never a JSON number.
+          examples: ["1150.0000", "-42.9629"]
+        currency: {"$ref": "#/components/schemas/CurrencyCode"}
         presentation_exponent:
           type: integer
           minimum: 0
           maximum: 4
-          description: From ISO 4217. The client formats; the server does not pre-format.
+          description: |
+            From ISO 4217. The client formats; the server does not
+            pre-format. A server that sent `"1.23"` for a JOD amount would
+            have made the float mistake one layer earlier and hidden the
+            evidence.
+
+    ProblemError:
+      type: object
+      description: One addressed error inside a problem document.
+      properties:
+        pointer:
+          type: string
+          description: RFC 6901 JSON pointer into the request body, zero-indexed.
+        business_term:
+          type: string
+          pattern: '^BT-\d{1,3}$'
+          description: |
+            EN 16931 business term. Document-rule failures are addressed this
+            way rather than by XPath - users do not read XPath, and neither do
+            integrators.
+        code:
+          type: string
+          description: A validation key, or an EN 16931 rule id such as `BR-CO-14`.
+        detail:
+          type: string
+          description: Localized by `Accept-Language`.
 
     Problem:
       type: object
-      required: [type, title, status]
-      description: RFC 9457 problem details.
+      required: ["type", "title", "status", "detail", "instance"]
+      description: |
+        RFC 9457 problem details, served as `application/problem+json`.
+
+        Every `type` is a URI in the documented registry at
+        `docs/api/problems.md`. An error type is a contract a client switches
+        on, not something invented at the call site - a client that had to
+        parse `detail` to tell a closed period from a missing permission would
+        have no contract at all.
       properties:
-        type:     { type: string, format: uri, description: From a documented registry. }
-        title:    { type: string }
-        status:   { type: integer }
-        detail:   { type: string }
-        instance: { type: string, format: uri-reference }
+        type:
+          type: string
+          format: uri
+          description: From the registry. Never localized.
+        title:
+          type: string
+          description: Short, stable, English. Never localized; never switch on it.
+        status: {"type": "integer"}
+        detail:
+          type: string
+          description: For the person who will read it. Localized by `Accept-Language`.
+        instance: {"type": "string", "format": "uri-reference"}
         errors:
           type: array
-          items:
-            type: object
-            properties:
-              pointer:
-                type: string
-                description: RFC 6901 JSON pointer into the request body.
-              business_term:
-                type: string
-                pattern: '^BT-\d{1,3}$'
-                description: |
-                  EN 16931 business term. Document-rule failures are addressed
-                  this way rather than by XPath — users do not read XPath.
-              code:
-                type: string
-                description: A validation key, or an EN 16931 rule id such as BR-CO-14.
-              detail: { type: string }
+          items: {"$ref": "#/components/schemas/ProblemError"}
+        retry_after:
+          type: integer
+          description: |
+            Also sent as the `Retry-After` header. Both, because they are read
+            by different things: the header by any HTTP client library with no
+            code written, the member by somebody reading a logged response
+            without the headers beside it.
 
-    Page:
+    PageMeta:
       type: object
+      required: ["limit", "has_more", "pagination"]
       properties:
-        meta:
+        limit: {"type": "integer"}
+        has_more: {"type": "boolean"}
+        pagination:
+          type: string
+          enum: ["cursor", "offset"]
+          description: |
+            Which mode answered. A client that asked for `page=3` and silently
+            got a cursor page would page through the wrong thing while
+            everything looked fine.
+        page:
+          type: integer
+          description: Present in offset mode only.
+
+    PageLinks:
+      type: object
+      description: |
+        The same URLs as the `Link` header. Both, for the same reason as
+        `Retry-After`: a generic client follows `rel="next"` with no code
+        written, and somebody reading a logged response has no headers.
+      properties:
+        self: {"type": "string"}
+        next: {"type": "string"}
+        prev: {"type": "string"}
+
+    Account:
+      type: object
+      required: ["resource", "id", "code", "name", "depth", "type", "postable", "blocked", "monetary"]
+      properties:
+        resource: {"type": "string", "const": "account"}
+        id: {"$ref": "#/components/schemas/Ulid"}
+        code:
+          type: string
+          description: |
+            The code IS the position in the tree - the meaning of `1.1.4` is
+            where it sits - so this is also the sort order.
+        name:
+          type: object
+          required: ["ar", "en"]
+          properties:
+            ar: {"type": "string"}
+            en: {"type": "string"}
+        parent_id: {"type": ["string", "null"]}
+        depth: {"type": "integer"}
+        type: {"type": "string", "enum": ["asset", "liability", "equity", "revenue", "expense"]}
+        currency:
+          oneOf: [{"$ref": "#/components/schemas/CurrencyCode"}, {"type": "null"}]
+          description: |
+            A currency-restricted account, where there is one. Null means "any
+            enabled currency", which is a different fact from "the functional
+            currency" - a client that filled the null in would refuse a
+            legitimate EUR line to a general account.
+        postable:
+          type: boolean
+          description: |
+            False for a group heading. A balance on one is explained by none of
+            its children and lost by every drill-down.
+        blocked: {"type": "boolean"}
+        monetary:
+          type: boolean
+          description: Whether it is revalued at a reporting date - IAS 21.
+
+    AccountPage:
+      type: object
+      required: ["data", "meta", "links"]
+      properties:
+        data:
+          type: array
+          items: {"$ref": "#/components/schemas/Account"}
+        meta: {"$ref": "#/components/schemas/PageMeta"}
+        links: {"$ref": "#/components/schemas/PageLinks"}
+
+    FxProvenance:
+      type: object
+      required: ["rate", "as_of"]
+      description: |
+        WHICH rate, not merely what number - PF-069. The value alone cannot
+        answer "was it current", "was it the statutory rate" or "which feed
+        said so", and looking it up again later cannot either: it may have been
+        superseded, and two feeds can send the same figure for different days.
+      properties:
+        rate:
+          type: string
+          description: |
+            An exact decimal string, like every other figure here. Null when
+            nothing was translated, and **never 1** - a rate of 1 asserts that
+            a translation happened and came out even, which is a different
+            claim from no translation at all.
+        rate_set: {"type": ["string", "null"]}
+        as_of: {"$ref": "#/components/schemas/AccountingDate"}
+        provider: {"type": ["string", "null"]}
+
+    JournalEntryLine:
+      type: object
+      required: ["id", "account_id", "amount", "functional_amount"]
+      properties:
+        id: {"$ref": "#/components/schemas/Ulid"}
+        account_id: {"$ref": "#/components/schemas/Ulid"}
+        amount:
+          allOf: [{"$ref": "#/components/schemas/Money"}]
+          description: |
+            What the line is DENOMINATED in. Signed: debits positive, credits
+            negative, which is the only convention under which "the lines sum
+            to zero" is a sentence a client can check for itself.
+        functional_amount:
+          allOf: [{"$ref": "#/components/schemas/Money"}]
+          description: |
+            What the ledger balances on. The same figure as `amount` only when
+            there was no translation - a client given one of them cannot tell
+            which case it is in, and an integration reconciling a euro bank
+            account against a riyal ledger needs both.
+        fx:
+          oneOf: [{"$ref": "#/components/schemas/FxProvenance"}, {"type": "null"}]
+        party_id: {"type": ["string", "null"]}
+        narration: {"type": ["string", "null"]}
+
+    JournalEntry:
+      type: object
+      required: ["resource", "id", "number", "status", "accounting_date", "period_id", "journal_id", "currency"]
+      properties:
+        resource: {"type": "string", "const": "journal_entry"}
+        id: {"$ref": "#/components/schemas/Ulid"}
+        number:
+          type: string
+          description: From the gapless series. A gap is a question an auditor asks that nobody can answer.
+        status: {"type": "string", "enum": ["draft", "posted", "reversed"]}
+        accounting_date: {"$ref": "#/components/schemas/AccountingDate"}
+        period_id: {"$ref": "#/components/schemas/Ulid"}
+        journal_id: {"$ref": "#/components/schemas/Ulid"}
+        narration: {"type": ["string", "null"]}
+        posting_rule:
+          type: ["string", "null"]
+          description: |
+            Which rule produced this, so a balance traces back not only to a
+            document but to the reason it posted the way it did.
+        source:
           type: object
           properties:
-            limit:    { type: integer }
-            has_more: { type: boolean }
-        links:
-          type: object
-          properties:
-            self: { type: string }
-            next: { type: string }
+            type: {"type": ["string", "null"]}
+            reference:
+              type: ["string", "null"]
+              description: |
+                The document or event that caused the posting, where there was
+                one; null for a manual entry.
 
-    JournalEntryDraft:
+                Deliberately **not** the client's `Idempotency-Key`. The
+                column behind it is a ULID, and a key is whatever the client
+                generated, so one would truncate or fail depending on its
+                length. The mapping from a key to the document it produced is
+                the idempotency record, which exists for the 24 hours the
+                guarantee does - after that, the client has the id from the
+                response it was given.
+        posted_at:
+          oneOf: [{"$ref": "#/components/schemas/Timestamp"}, {"type": "null"}]
+        posted_by_user_id: {"type": ["string", "null"]}
+        currency:
+          allOf: [{"$ref": "#/components/schemas/CurrencyCode"}]
+          description: The entity's functional currency, which is what the entry balances in.
+
+    JournalEntryDetail:
+      allOf:
+        - {"$ref": "#/components/schemas/JournalEntry"}
+        - type: object
+          required: ["lines"]
+          properties:
+            lines:
+              type: array
+              minItems: 2
+              items: {"$ref": "#/components/schemas/JournalEntryLine"}
+
+    JournalEntryPage:
       type: object
-      required: [journal_id, accounting_date, lines]
+      required: ["data", "meta", "links"]
       properties:
-        journal_id:      { $ref: '#/components/schemas/Ulid' }
-        accounting_date: { $ref: '#/components/schemas/AccountingDate' }
-        narration:       { type: string, maxLength: 500 }
+        data:
+          type: array
+          items: {"$ref": "#/components/schemas/JournalEntry"}
+        meta: {"$ref": "#/components/schemas/PageMeta"}
+        links: {"$ref": "#/components/schemas/PageLinks"}
+
+    JournalEntryRequest:
+      type: object
+      required: ["accounting_date", "lines"]
+      additionalProperties: false
+      properties:
+        accounting_date: {"$ref": "#/components/schemas/AccountingDate"}
+        narration: {"type": "string", "maxLength": 500}
         lines:
           type: array
           minItems: 2
+          maxItems: 500
           items:
             type: object
-            required: [account_id, amount]
+            required: ["account_code", "amount"]
+            additionalProperties: false
             properties:
-              account_id:
-                allOf: [{ $ref: '#/components/schemas/Ulid' }]
+              account_code:
+                type: string
                 description: |
-                  A control account is refused — only a registered posting rule
-                  may post to one.
+                  The account's code, not its id - a code is what an
+                  integration's own chart mapping is keyed on, and it is
+                  stable across a restore.
               amount:
-                allOf: [{ $ref: '#/components/schemas/Money' }]
+                type: string
+                pattern: '^-?\d{1,17}(\.\d{1,4})?$'
                 description: |
-                  Signed. Debits positive, credits negative. Must not be zero.
-                  The lines must sum to zero in the entity's functional
-                  currency.
-              fx_rate:    { type: string }
-              party_id:   { $ref: '#/components/schemas/Ulid' }
+                  A **string**, and the validator refuses a number. `numeric`
+                  would accept the JSON number 1.234, which PHP has already
+                  turned into a float by the time any rule sees it - so the
+                  precision is gone before validation runs and no later check
+                  can recover it.
+
+                  Signed: debits positive, credits negative. Must not be zero,
+                  and the lines must sum to zero in the functional currency.
+              currency:
+                allOf: [{"$ref": "#/components/schemas/CurrencyCode"}]
+                description: |
+                  Defaults to the functional currency. A foreign line needs a
+                  rate for the date, and one will not be invented.
+              narration: {"type": "string", "maxLength": 500}
               dimensions:
                 type: object
-                additionalProperties: { $ref: '#/components/schemas/Ulid' }
-              narration:  { type: string }
+                additionalProperties: {"$ref": "#/components/schemas/Ulid"}
 
-    JournalEntry:
-      allOf:
-        - $ref: '#/components/schemas/JournalEntryDraft'
-        - type: object
-          properties:
-            id:        { $ref: '#/components/schemas/Ulid' }
-            number:    { type: string }
-            status:    { type: string, enum: [draft, posted, reversed] }
-            period_id: { $ref: '#/components/schemas/Ulid' }
-            posted_by: { $ref: '#/components/schemas/Ulid' }
-            posted_at: { type: string, format: date-time }
-            reversed_by_entry_id: { $ref: '#/components/schemas/Ulid' }
-
-    InvoiceDraft:
+    ApiTokenResource:
       type: object
-      required: [party_id, document_type, currency, issue_date, lines]
+      required: ["resource", "id", "name", "plane", "scopes", "entity_ids"]
       properties:
-        party_id:      { $ref: '#/components/schemas/Ulid' }
-        document_type:
+        resource: {"type": "string", "const": "api_token"}
+        id: {"$ref": "#/components/schemas/Ulid"}
+        name: {"type": "string", "maxLength": 64}
+        plane:
           type: string
-          enum: ['380', '381', '383', '384', '386', '389']
-          description: UNCL 1001.
-        currency:      { $ref: '#/components/schemas/CurrencyCode' }
-        issue_date:    { $ref: '#/components/schemas/AccountingDate' }
-        tax_point_date:
-          allOf: [{ $ref: '#/components/schemas/AccountingDate' }]
+          enum: ["tenant", "platform"]
           description: |
-            EN 16931 BT-7. Derived by the jurisdiction rule when omitted, and
-            frozen on issue. Determines the return period, which can differ
-            from the accounting period.
-        delivery_date: { $ref: '#/components/schemas/AccountingDate' }
-        payment_terms_id: { $ref: '#/components/schemas/Ulid' }
-        buyer_reference:  { type: string, description: 'BT-10. Mandatory under some CIUS.' }
-        lines:
+            Which plane issued it, written on the row. A platform token can
+            never act on a tenant route and the check reads this column, not
+            the model class - "they are in different databases" is true until
+            somebody restores a dump into the wrong one.
+        scopes:
           type: array
           minItems: 1
-          items:
-            type: object
-            required: [description, quantity, unit_price, tax_code_id]
-            properties:
-              item_id:     { $ref: '#/components/schemas/Ulid' }
-              description: { type: string, description: 'BT-153. Frozen, so renaming an item later does not rewrite history.' }
-              quantity:    { type: string, pattern: '^-?\d{1,15}\.\d{6}$' }
-              unit_of_measure: { type: string, description: 'UN/CEFACT Rec 20.' }
-              unit_price:
-                type: string
-                pattern: '^-?\d{1,13}\.\d{8}$'
-                description: Eight decimals, so per-litre and per-kWh pricing needs no scaling factor.
-              tax_code_id: { $ref: '#/components/schemas/Ulid' }
-              dimensions:
-                type: object
-                additionalProperties: { $ref: '#/components/schemas/Ulid' }
-
-    Invoice:
-      allOf:
-        - $ref: '#/components/schemas/InvoiceDraft'
-        - type: object
-          properties:
-            id:     { $ref: '#/components/schemas/Ulid' }
-            number: { type: string, description: 'From the gapless series. Absent while draft.' }
-            status:
-              type: string
-              enum: [draft, issued, sent, partially_paid, paid, overdue, disputed, credited, written_off]
-            net:   { $ref: '#/components/schemas/Money' }
-            tax:   { $ref: '#/components/schemas/Money' }
-            gross: { $ref: '#/components/schemas/Money' }
-            amount_due: { $ref: '#/components/schemas/Money' }
-            tax_breakdown:
-              type: array
-              description: |
-                EN 16931 BG-23. One entry per unique (category, rate) pair. The
-                document tax total equals the sum of these — BR-CO-14.
-              items:
-                type: object
-                properties:
-                  category:       { type: string, enum: [S, Z, E, AE, O, K, G], description: 'UNCL 5305.' }
-                  rate:           { type: string }
-                  taxable_amount: { $ref: '#/components/schemas/Money' }
-                  tax_amount:     { $ref: '#/components/schemas/Money' }
-                  exemption_reason: { type: string, description: 'BT-120. Mandatory for E, Z, AE, K, G.' }
-            canonical_hash: { type: string, description: 'SHA-256 over the canonicalized legally significant fields.' }
-            previous_hash:  { type: string, description: 'The preceding document in the same series.' }
-            chain_index:    { type: integer }
-            transmission:
-              type: object
-              description: |
-                The document is issued; its transmission may be pending. A
-                transport outage is a queue depth, not a failed issue.
-              properties:
-                status:    { type: string, enum: [not_required, pending, sent, cleared, rejected] }
-                profile:   { type: string }
-                reference: { type: string }
-                message:   { type: string, description: "The authority's own message, verbatim." }
-
-    PaymentDraft:
-      type: object
-      required: [direction, bank_account_id, value_date, amount]
-      properties:
-        direction:       { type: string, enum: [receipt, disbursement] }
-        bank_account_id: { $ref: '#/components/schemas/Ulid' }
-        party_id:        { $ref: '#/components/schemas/Ulid' }
-        value_date:      { $ref: '#/components/schemas/AccountingDate' }
-        amount:          { $ref: '#/components/schemas/Money' }
-        method:          { type: string, description: 'UNCL 4461.' }
-        reference:       { type: string }
-
-    Payment:
-      allOf:
-        - $ref: '#/components/schemas/PaymentDraft'
-        - type: object
-          properties:
-            id: { $ref: '#/components/schemas/Ulid' }
-            allocated:   { $ref: '#/components/schemas/Money' }
-            unallocated:
-              allOf: [{ $ref: '#/components/schemas/Money' }]
-              description: |
-                Unallocated cash is a liability, and that is correct rather than
-                an error state.
-
-    TrialBalance:
-      type: object
-      properties:
-        parameters:
-          type: object
-          description: Echoed so the output is self-describing and reproducible.
-          properties:
-            entity_id:         { $ref: '#/components/schemas/Ulid' }
-            as_of:             { $ref: '#/components/schemas/AccountingDate' }
-            include_adjusting: { type: boolean }
-            currency:          { $ref: '#/components/schemas/CurrencyCode' }
-        balances:
+          items: {"type": "string"}
+          description: Permission keys, verbatim. Never `*`.
+        entity_ids:
           type: array
-          items:
-            type: object
-            properties:
-              account_id:   { $ref: '#/components/schemas/Ulid' }
-              account_code: { type: string }
-              account_name: { type: string }
-              debit:        { $ref: '#/components/schemas/Money' }
-              credit:       { $ref: '#/components/schemas/Money' }
-        totals:
-          type: object
+          minItems: 1
+          items: {"$ref": "#/components/schemas/Ulid"}
+        created_at: {"$ref": "#/components/schemas/Timestamp"}
+        last_used_at:
+          oneOf: [{"$ref": "#/components/schemas/Timestamp"}, {"type": "null"}]
+          description: |
+            The field that answers the only question asked about a token found
+            in a configuration file: is anything still using this.
+        expires_at:
+          oneOf: [{"$ref": "#/components/schemas/Timestamp"}, {"type": "null"}]
+        revoked_at:
+          oneOf: [{"$ref": "#/components/schemas/Timestamp"}, {"type": "null"}]
+        revoked_reason: {"type": ["string", "null"]}
+        rotated_to_token_id:
+          type: ["string", "null"]
+          description: The successor, when this row was rotated rather than simply revoked.
+
+    ApiTokenIssued:
+      allOf:
+        - {"$ref": "#/components/schemas/ApiTokenResource"}
+        - type: object
+          required: ["token"]
           properties:
-            debit:  { $ref: '#/components/schemas/Money' }
-            credit: { $ref: '#/components/schemas/Money' }
-            balanced:
-              type: boolean
+            token:
+              type: string
               description: |
-                Asserted, not assumed. A trial balance that does not balance
-                says so prominently rather than printing.
+                The plaintext, returned **once**. There is no endpoint that
+                returns it again: the whole value of storing a hash is that
+                reading the table lets nobody act as anybody.
+            issued_at: {"$ref": "#/components/schemas/Timestamp"}
+
+    ApiTokenPage:
+      type: object
+      required: ["data", "meta"]
+      properties:
+        data:
+          type: array
+          items: {"$ref": "#/components/schemas/ApiTokenResource"}
+        meta:
+          type: object
+          required: ["available_scopes"]
+          properties:
+            available_scopes:
+              type: array
+              items: {"type": "string"}
+              description: |
+                Every permission key, which is every scope. Published here so
+                an integration never keeps its own copy - a copy is what goes
+                stale when a deployment adds a permission.
+            scopes_requiring_a_person_present:
+              type: array
+              items: {"type": "string"}
+              description: |
+                Permissions that can never be token scopes. A step-up
+                assertion proves somebody is at the keyboard now; a token in a
+                configuration file proves the opposite.
+
+    ApiTokenRequest:
+      type: object
+      required: ["name", "scopes", "entity_ids"]
+      additionalProperties: false
+      properties:
+        name: {"type": "string", "maxLength": 64}
+        scopes:
+          type: array
+          minItems: 1
+          items: {"type": "string"}
+        entity_ids:
+          type: array
+          minItems: 1
+          items: {"$ref": "#/components/schemas/Ulid"}
+        expires_on:
+          allOf: [{"$ref": "#/components/schemas/AccountingDate"}]
+          description: |
+            A date, not a timestamp. An expiry a customer asked for as "the end
+            of March" is a day, and accepting a timestamp invites a timezone
+            argument about which hour a credential dies in. It expires at the
+            end of the day named.
+
+    TokenReason:
+      type: object
+      required: ["reason"]
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          minLength: 10
+          maxLength: 200
+          description: |
+            Why. "Revoked" with no reason cannot distinguish a routine rotation
+            from a response to a leak, and those are the two cases somebody
+            will later need to tell apart. A database constraint requires it
+            too.

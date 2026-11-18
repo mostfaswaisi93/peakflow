@@ -33,6 +33,9 @@ final class Problem implements Responsable
     /** @var array<string, mixed> */
     private array $extensions = [];
 
+    /** @var array<string, string> */
+    private array $headers = [];
+
     private function __construct(
         private readonly ProblemType $type,
     ) {}
@@ -42,9 +45,38 @@ final class Problem implements Responsable
         return new self($type);
     }
 
+    /**
+     * A specific sentence, in one language.
+     *
+     * Use it only where the text is already localized - a domain message that
+     * carries both languages, or a validator's own output. A hand-written
+     * English sentence here is the commonest way `detail` stops being
+     * localized, and it fails silently: the response is perfectly readable,
+     * in the wrong language, to the one reader who asked for the other.
+     *
+     * {@see withLocalizedDetail()} is the two-language form, and
+     * {@see ProblemType::detail()} is the registry's own.
+     */
     public function withDetail(string $detail): self
     {
         $this->detail = $detail;
+
+        return $this;
+    }
+
+    /**
+     * The same sentence in both languages, chosen by the request's locale.
+     *
+     * For a call site that knows something the registry cannot - which scope
+     * is missing, which entities a token names - and should still answer in
+     * the language that was asked for. Written as a pair here rather than as
+     * a catalogue key because these sentences describe a condition the code
+     * around them already names, and splitting the two puts half of an error
+     * in a translation file where a reviewer cannot see it.
+     */
+    public function withLocalizedDetail(string $ar, string $en): self
+    {
+        $this->detail = app()->getLocale() === 'ar' ? $ar : $en;
 
         return $this;
     }
@@ -95,6 +127,33 @@ final class Problem implements Responsable
     }
 
     /**
+     * How long to wait, as a HEADER and not only as a body member.
+     *
+     * Both, because they are read by different things. `Retry-After` is what
+     * an HTTP client library, a proxy and a queue runner already understand
+     * with no code written; `retry_after` in the body is what somebody
+     * reading a logged response can see without the headers beside it.
+     *
+     * A problem that carried only the body member would be ignored by every
+     * off-the-shelf retry policy, which is how a 429 or an in-flight 409
+     * turns into a tight loop against the thing that asked for a pause.
+     */
+    public function withRetryAfter(int $seconds): self
+    {
+        $this->headers['Retry-After'] = (string) $seconds;
+
+        return $this->withExtensions(['retry_after' => $seconds]);
+    }
+
+    /** @param array<string, string> $headers */
+    public function withHeaders(array $headers): self
+    {
+        $this->headers = [...$this->headers, ...$headers];
+
+        return $this;
+    }
+
+    /**
      * Laravel's validator output, converted to addressed field errors.
      *
      * @param  array<string, list<string>>  $errors
@@ -122,7 +181,18 @@ final class Problem implements Responsable
                 'type' => $this->type->uri(),
                 'title' => $this->type->title(),
                 'status' => $this->status ?? $this->type->status(),
-                'detail' => $this->detail,
+                /*
+                 | The type's own sentence when the call site had nothing more
+                 | specific, rather than no sentence at all.
+                 |
+                 | A problem document with no `detail` leaves a client with a
+                 | title it must not switch on and a URI it has to go and read
+                 | - so the first thing every integrator does is print the
+                 | title to their user, in English, whatever language that
+                 | user reads. The registry's default is localized, which is
+                 | the whole point of having one.
+                 */
+                'detail' => $this->detail ?? $this->type->detail(),
                 'instance' => $request->getRequestUri(),
             ],
             static fn (mixed $value): bool => $value !== null,
@@ -137,7 +207,7 @@ final class Problem implements Responsable
         return new JsonResponse(
             $body,
             $this->status ?? $this->type->status(),
-            ['Content-Type' => 'application/problem+json'],
+            ['Content-Type' => 'application/problem+json', ...$this->headers],
         );
     }
 }

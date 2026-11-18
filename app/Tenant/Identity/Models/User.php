@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Laravel\Sanctum\HasApiTokens;
 
 /**
  * A user of one tenant - PF-024.
@@ -36,6 +37,22 @@ use Illuminate\Support\Facades\DB;
  */
 final class User extends Authenticatable implements AuthenticatableContract
 {
+    /*
+     | Bearer tokens, from PF-218.
+     |
+     | The trait is what lets the Sanctum guard call `withAccessToken()` on a
+     | user, which is how the request learns WHICH token authenticated it -
+     | and therefore which scopes narrow this user's permissions. Without it
+     | the guard authenticates the user and discards the token, and every
+     | request would carry the user's full permissions whatever the token was
+     | issued for.
+     |
+     | `tokens()` resolves to App\Tenant\Identity\Models\ApiToken, registered
+     | in ApiServiceProvider, so a token row lands in the tenant database with
+     | its plane and its entity list.
+     */
+    use HasApiTokens;
+
     use HasUlids;
     use SoftDeletes;
 

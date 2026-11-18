@@ -14,6 +14,7 @@ use App\Tenant\Identity\Services\SodEngine;
 use App\Tenant\Identity\Services\StepUpGuard;
 use App\Tenant\Tenancy\Services\Settings;
 use App\Support\Limits\Ceilings;
+use App\Tenant\Identity\Models\ApiToken;
 use App\Tenant\Identity\Models\User;
 use App\Tenant\Identity\Services\PermissionCatalogue;
 use App\Tenant\Ledger\Listeners\OpenLedgerForEntity;
@@ -156,6 +157,27 @@ final class TenancyServiceProvider extends ServiceProvider
      * my business, carry on", which is what an ability that is not a
      * permission key gets. A key that IS in the catalogue is answered here,
      * definitively, including a definitive `false`.
+     *
+     * ## A machine's answer is a person's answer, narrowed - PF-218
+     *
+     * This one callback answers for a browser session and for a bearer token,
+     * and that is why token scopes can "mirror permissions exactly": there is
+     * no second model to mirror. A request carrying a token is the user's own
+     * permissions intersected with what that token was issued for.
+     *
+     * It has to be HERE rather than in a middleware of its own. The gate is
+     * asked from everywhere - `can:` on a route, `Gate::authorize()` in a
+     * handler, `Gate::denies()` three layers down inside a service - and a
+     * check that lived on the route would leave every one of those deeper
+     * questions answered by the user's full permissions. A token issued to
+     * read invoices would then reach any service that authorizes internally,
+     * which is the second, weaker model for machines that PF-218 forbids.
+     *
+     * It is also why the narrowing is folded into this callback instead of
+     * being registered as another `Gate::before`: the first callback to
+     * return a non-null answer wins, so a second one would never be reached
+     * for a permission key, and the ordering would depend on which provider
+     * booted first.
      */
     private function resolvePermissionsThroughTheGate(): void
     {
@@ -180,7 +202,29 @@ final class TenancyServiceProvider extends ServiceProvider
                 return false;
             }
 
-            return $user->holds($ability, $entityId);
+            if (! $user->holds($ability, $entityId)) {
+                return false;
+            }
+
+            $token = $user->currentAccessToken();
+
+            if (! $token instanceof ApiToken) {
+                // A browser session, or a console command. There is no token
+                // to narrow by, and treating its absence as a refusal would
+                // lock every screen in the application.
+                return true;
+            }
+
+            /*
+             | The token's scopes AND its entity list, both.
+             |
+             | The entity was already settled by ResolveApiEntity, and it is
+             | asked again here because this callback is also reached from a
+             | queued job and a console command that set the entity
+             | themselves - and a token whose entity list has nothing to do
+             | with the established entity must not authorize anything there.
+             */
+            return $token->can($ability) && $token->mayActIn($entityId);
         });
     }
 }

@@ -24,6 +24,7 @@ declare(strict_types=1);
  |   php bin/verify rollback   provisioning rollback, by injecting a failure at each step (slow)
  |   php bin/verify concurrency  gapless numbering under 20 parallel issuers (slow, writes data)
  |   php bin/verify public     the customer-facing quote link, over real HTTP (writes data)
+ |   php bin/verify api        the REST contract, over real HTTP (writes data, spawns workers)
  |   php bin/verify ledger     what the ledger refuses
  |   php bin/verify parties    the controls around party bank details
  |   php bin/verify currency   what the currency and FX layer refuses
@@ -146,6 +147,16 @@ if ($only === 'public') {
 
 if ($only === 'concurrency') {
     $suites['The gapless proof'] = $suite(static fn (): array => (new Tests\Support\ConcurrencyRules())->all());
+}
+
+/*
+ | Not in `all`, for the same reasons as `public` and `concurrency`: it
+ | drives real HTTP, commits its fixture rather than holding a transaction
+ | open - its workers are separate processes and cannot see one - and it
+ | spawns two of them to prove that one idempotency key produces one entry.
+ */
+if ($only === 'api') {
+    $suites['The API contract'] = $suite(static fn (): array => (new Tests\Support\ApiContractRules())->all());
 }
 
 if ($only === 'rollback') {
@@ -390,7 +401,7 @@ if ($only === 'all' || $only === 'examples') {
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | design | grid | shell | identity | sales-currency | reporting | errors | hardening | repo | ops | tax | charts | sales | exchange | attachments | archive | inbound | purchasing | banking | settlement | stock | sync | payroll | messaging | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | design | grid | shell | identity | sales-currency | reporting | errors | hardening | repo | ops | tax | charts | sales | exchange | attachments | archive | inbound | purchasing | banking | settlement | stock | sync | payroll | messaging | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public | api\n");
     exit(2);
 }
 

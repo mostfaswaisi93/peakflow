@@ -63,6 +63,27 @@ return [
             'driver' => 'session',
             'provider' => 'operators',
         ],
+
+        /*
+         | `sanctum` authenticates a MACHINE acting as a tenant user - PF-218.
+         |
+         | The provider is named rather than left to Sanctum's default of
+         | null. With null, the guard's own `hasValidProvider()` check becomes
+         | a no-op and any tokenable class is accepted - so a token row whose
+         | `tokenable_type` is an `Operator` would authenticate an operator
+         | into a tenant request, where the thing that decides what they may
+         | do (`User::holds()`) does not exist.
+         |
+         | Naming `users` makes the guard refuse it. `EstablishApiActor`
+         | refuses it again, from the plane column, because one of the two
+         | checks reads what the guard loaded and the other reads what was
+         | issued - and a restore into the wrong database gets the first one
+         | right.
+         */
+        'sanctum' => [
+            'driver' => 'sanctum',
+            'provider' => 'users',
+        ],
     ],
 
     /*

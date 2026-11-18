@@ -4,7 +4,11 @@ The API is **spec-first**: [`openapi.yaml`](openapi.yaml) is written before the 
 
 > An API whose documentation is generated from its implementation documents whatever the implementation happens to do, including its mistakes.
 
-Base path: `/api/v1`.
+So **an operation appears in the contract when its route exists**, and the resource surface arrives with the tasks that implement it. An operation documented ahead of its route is worse than one not documented at all: a client writes code against it and gets a 404, which looks like an outage rather than a plan.
+
+Base path: `/api/v1`. The version is in the path and is never negotiated by a header — a version an integrator can see in a log line, in a bug report and in the URL they pasted into a support ticket is worth more than one negotiated invisibly.
+
+Identifiers are ULIDs, and they are **opaque**: this application emits them in both cases (a model-generated id is lower case, one from the framework helper is upper), Crockford base32 is case-insensitive, and the column behind them compares as a string. Echo back exactly the bytes you were given.
 
 ## Identity
 
@@ -15,7 +19,7 @@ Base path: `/api/v1`.
 | `X-Entity` | On entity-scoped resources | The legal entity to act in |
 | `Idempotency-Key` | **On every POST that posts to the ledger** | See below |
 | `If-Match` | On updates to mutable resources | Optimistic concurrency |
-| `Accept-Language` | No | Localizes human-readable error text only |
+| `Accept-Language` | No | Localizes human-readable error text only. On the API it **outranks the tenant's default language**, which is the opposite of the application's ordering: a header an integration sends per request is a statement about that request. The response carries `Content-Language` |
 
 **Token scopes mirror permissions exactly**, so there is one authorization model rather than a second, weaker one for machines. A token is scoped to **specific entities**, not to the tenant.
 
@@ -60,9 +64,25 @@ The amount is at the storage scale (four decimals). `presentation_exponent` come
 }
 ```
 
-Content type `application/problem+json`. Document-rule failures are addressed by **EN 16931 business term**, never by XPath — users do not read XPath, and neither do integrators.
+Content type `application/problem+json`, on **every** failure including a `500` — the one response an integrator most needs to recognise would otherwise be the only one not in the contract.
 
-Every `type` is a URI in a documented registry. An error type is a contract, not something invented at the call site.
+Document-rule failures are addressed by **EN 16931 business term**, never by XPath — users do not read XPath, and neither do integrators. Field errors carry an RFC 6901 pointer into the request body, **zero-indexed**, because a pointer that is off by one highlights the wrong row with complete confidence.
+
+Every `type` is a URI in a documented registry: [`problems.md`](problems.md), which names every type with its status and what to do about it. An error type is a contract, not something invented at the call site.
+
+`detail` is localized and the machine-readable members never are, so:
+
+> **An exception's message is for the log; a problem document's `detail` is for the client.** The message is English, long, and names the reasoning. `detail` comes from the registry — or from a call site that wrote the sentence in both languages — and the specifics a client acts on travel as `errors` and extension members, so nothing has to be parsed out of prose that is Arabic half the time.
+
+A refusal distinguishes **the token** from **the user**, because only one of them is the caller's to fix:
+
+| `type` | Status | The fix |
+|--------|--------|---------|
+| `token-scope-missing` | 403 | Issue a new token carrying the scope. A live token is never widened. |
+| `forbidden` | 403 | Grant the permission. Re-issuing the token cannot help. |
+| `entity-not-permitted` | 403 | Issue a token for that entity, or get a role in it. |
+
+A single "403 Forbidden" for all three is the refusal that generates a support ticket.
 
 | Status | Used for |
 |--------|----------|
@@ -87,8 +107,13 @@ Every `type` is a URI in a documented registry. An error type is a contract, not
 | Replay, identical body | The **stored response**, replayed byte-identically |
 | Replay, **different** body | `409`. That is a client bug, and silently returning the first response hides it |
 | Replay while the first is still in flight | `409` with `Retry-After` |
+| A `5xx` | **Not stored.** A replayed 500 would mean the client could never succeed with that key, and the key is the only thing it may retry with |
 
-Keyed on `(tenant, token, key)`. A test fires the same create twice concurrently and asserts exactly one document and two identical responses.
+A replayed response carries `Idempotent-Replay: true`, so a client can tell whether its retry executed.
+
+Keyed on `(tenant, token, key)` — the tenant is the database, so the unique index is the other two. The **entity** is part of the request fingerprint rather than the key, so the same key sent with a different `X-Entity` is the `409` it should be and not a replay telling a client its document exists in a company where it does not.
+
+Two requests arriving together are answered by the database rather than by us: the claim is inserted inside the same transaction as the work, so the second request blocks on the unique index and replays the first's response once it commits. A test fires the same create twice from two OS processes and asserts exactly one document and two identical responses.
 
 ## Pagination
 
