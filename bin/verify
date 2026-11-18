@@ -330,6 +330,7 @@ if ($only === 'all' || $only === 'shell') {
 if ($only === 'all' || $only === 'reporting') {
     $suites['The Overview'] = $suite(static fn (): array => (new Tests\Support\OverviewRules())->all());
     $suites['Trial balance report'] = $suite(static fn (): array => (new Tests\Support\TrialBalanceReportRules())->all());
+    $suites['Statement of financial position'] = $suite(static fn (): array => (new Tests\Support\FinancialPositionRules())->all());
 }
 
 if ($only === 'all' || $only === 'config') {

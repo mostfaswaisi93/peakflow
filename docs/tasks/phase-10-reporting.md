@@ -8,14 +8,6 @@ The rule this phase is written around: **a report is never a second opinion abou
 
 ---
 
-### PF-184 · Statement of Financial Position
-`Reporting` · **5 pts** · depends: PF-183, PF-037 · standards: IAS 1 · `type:compliance`
-
-- [ ] Built from the chart's IFRS statement classification, so it is a grouping rather than a hand-built report
-- [ ] Current and non-current split, comparative period, and a note-reference column
-- [ ] Assets equal liabilities plus equity, asserted
-- [ ] An account with no classification appears in an explicit "unclassified" section rather than being omitted - a silently dropped account is how a statement stops balancing
-
 ### PF-185 · Statement of Profit or Loss and OCI
 `Reporting` · **5 pts** · depends: PF-184 · standards: IAS 1 · `type:compliance`
 

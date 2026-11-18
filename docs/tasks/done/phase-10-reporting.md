@@ -79,3 +79,48 @@ already ends both its queries in `HAVING sum(...) <> 0` — so it was
 removed; and a check whose fixture had a zero opening could not tell the
 movement column from the closing one, which is why the fixture now
 issues one invoice before the period and one inside it.
+
+### PF-184 · Statement of Financial Position — done
+`Reporting` · **5 pts** · depends: PF-183, PF-037 · standards: IAS 1 · `type:compliance`
+
+- [x] Built from the chart's IFRS statement classification, so it is a grouping rather than a hand-built report
+- [x] Current and non-current split, comparative period, and the IAS 1 paragraph each line comes from
+- [x] Assets equal liabilities plus equity, asserted
+- [x] An account with no classification appears in an explicit "unclassified" section rather than being omitted - a silently dropped account is how a statement stops balancing
+
+`App\Tenant\Reporting\Services\StatementOfFinancialPosition` ·
+`App\Tenant\Ledger\Enums\StatementLine` · `bin/verify reporting`
+
+**Nothing in the statement knows an account code.** Every figure comes from
+the trial balance and every heading from the chart's own `statement_line`,
+so adding an account to a chart changes the statement without anybody
+editing the statement — and the person who added it has no reason to think
+they broke one.
+
+**The equation is not the trial balance's balance check.** The trial balance
+asserts debits equal credits over every account, profit and loss included;
+this statement covers only the accounts classified onto it, so the two
+differ by exactly the result for the period, which has not been closed into
+retained earnings yet. The result is therefore carried in before the
+equation is asserted — without that, a correct statement would report an
+imbalance on every date except the day after a year-end close.
+
+**The presentation sign lives on the section, in one place.** A liability's
+natural balance is a credit, stored negative, and a report that forgot to
+flip it would print equity negative *and still balance*, because both sides
+move together. That is why there is a check on the sign itself and not only
+on the equation.
+
+**An unclassified balance is declared before anything else**, and named as
+the cause: it is the explanation for the difference in almost every case,
+and it is the one a person can act on. Leading with "the ledger may be
+broken" when the answer is "three accounts need a line" sends the reader to
+the wrong place.
+
+Two bites that proved the checks rather than the code. Inflating the emitted
+equity total changed nothing, because the difference is computed from a
+local that the emitted string is derived from — so the bite was rewritten to
+drop a liability line from the grouping, which is a defect the check does
+see. And the IAS 1 reference check first bit the *cash* line, which an
+entity whose only activity is an issued invoice does not have: the check
+passed and proved nothing until the bite moved to the receivable.

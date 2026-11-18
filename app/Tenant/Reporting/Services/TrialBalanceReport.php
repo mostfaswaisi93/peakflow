@@ -139,6 +139,7 @@ final class TrialBalanceReport
                 'name_ar' => (string) ($shape['name_ar'] ?? ''),
                 'name_en' => (string) ($shape['name_en'] ?? ''),
                 'type' => (string) ($shape['type'] ?? ''),
+                'statement_line' => $shape['statement_line'] ?? null,
                 'opening' => (string) $openingBalance->amount,
                 'movement' => (string) $movement->amount,
                 'closing' => (string) $closingBalance->amount,

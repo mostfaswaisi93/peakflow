@@ -43,7 +43,7 @@ final class TrialBalance
      *     includes_adjusting: bool,
      *     basis: array{includes_adjusting: bool, adjusting_entries: int, choice_mattered: bool, as_at: string, from: ?string, currency: string, declaration_ar: string, declaration_en: string},
      *     currency: string,
-     *     rows: Collection<int, array{code: string, name_ar: string, name_en: string, type: string, debit: string, credit: string, balance: string, net_debit: string, net_credit: string}>,
+     *     rows: Collection<int, array{code: string, name_ar: string, name_en: string, type: string, statement_line: ?string, debit: string, credit: string, balance: string, net_debit: string, net_credit: string}>,
      *     total_debit: string,
      *     total_credit: string,
      *     total_net_debit: string,
@@ -115,6 +115,7 @@ final class TrialBalance
                 a.name_ar,
                 a.name_en,
                 a.type,
+                a.statement_line,
                 -- Split for presentation only. The storage is one signed
                 -- column; this is where the sign becomes two columns, and
                 -- nowhere else.
@@ -143,7 +144,7 @@ final class TrialBalance
                */
               AND e.status IN ('posted', 'reversed')
               AND {$dateBound}{$adjustingBound}
-            GROUP BY a.code, a.name_ar, a.name_en, a.type
+            GROUP BY a.code, a.name_ar, a.name_en, a.type, a.statement_line
             HAVING sum(l.functional_amount) <> 0
             ORDER BY a.code
         SQL, $bindings);
@@ -366,6 +367,7 @@ final class TrialBalance
                 a.name_ar,
                 a.name_en,
                 a.type,
+                a.statement_line,
                 coalesce(sum(b.debits), 0)  AS debit,
                 coalesce(sum(b.credits), 0) AS credit,
                 coalesce(sum(b.net), 0)     AS balance
@@ -373,7 +375,7 @@ final class TrialBalance
             JOIN accounts a ON a.id = b.account_id
             WHERE b.entity_id = cast(? AS char(26))
               AND b.period_id IN ({$placeholders})
-            GROUP BY a.code, a.name_ar, a.name_en, a.type
+            GROUP BY a.code, a.name_ar, a.name_en, a.type, a.statement_line
             HAVING sum(b.net) <> 0
             ORDER BY a.code
         SQL, array_merge([$entityId], $periodIds));
@@ -449,6 +451,15 @@ final class TrialBalance
             return [
                 'code' => (string) $row->code,
                 'name_ar' => (string) $row->name_ar,
+                /*
+                 | The IAS 1 line, carried through - PF-184.
+                 |
+                 | Null for an account nobody has classified, and the
+                 | statement puts those in a section of their own rather
+                 | than dropping them: a silently dropped account is how a
+                 | statement stops balancing.
+                 */
+                'statement_line' => $row->statement_line === null ? null : (string) $row->statement_line,
                 'name_en' => (string) $row->name_en,
                 'type' => (string) $row->type,
                 'debit' => (string) $debit->amount,
