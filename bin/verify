@@ -325,6 +325,7 @@ if ($only === 'all' || $only === 'design') {
 
 if ($only === 'all' || $only === 'reporting') {
     $suites['The Overview'] = $suite(static fn (): array => (new Tests\Support\OverviewRules())->all());
+    $suites['Trial balance report'] = $suite(static fn (): array => (new Tests\Support\TrialBalanceReportRules())->all());
 }
 
 if ($only === 'all' || $only === 'config') {

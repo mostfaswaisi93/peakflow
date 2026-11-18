@@ -14,6 +14,7 @@ use App\Tenant\Settlement\Enums\PaymentMethod;
 use App\Tenant\Settlement\Services\Allocations;
 use App\Tenant\Settlement\Services\DuplicatePaymentDetector;
 use App\Tenant\Settlement\Services\PaymentRuns;
+use App\Tenant\Settlement\Services\Statements;
 use App\Tenant\Settlement\Services\Payments;
 use App\Tenant\Settlement\Services\Refunds;
 use App\Tenant\Settlement\Services\ReleaseReview;
@@ -208,6 +209,15 @@ final class SettlementRules
                 'a run with an unaccepted warning cannot be released' => fn (): array => $this->warningsBlockRelease(),
                 'accepting one needs a name and a sentence, once' => fn (): array => $this->acceptanceIsAttributable(),
                 'outside the window, nothing is flagged' => fn (): array => $this->theWindowBounds(),
+
+                // ---- Statements - PF-181 ------------------------------
+                'an open-item statement lists what is not settled' => fn (): array => $this->openItemsList(),
+                'unapplied cash is labelled, never netted silently' => fn (): array => $this->cashIsLabelled(),
+                'a disputed document stays on the statement, labelled' => fn (): array => $this->disputesAreLabelled(),
+                'balance-forward opens, moves and closes, and the column adds up' => fn (): array => $this->balanceForwardAddsUp(),
+                'the statement says whether it reconciles to the control account' => fn (): array => $this->statementsSayIfTheyReconcile(),
+                'and says so when it does NOT' => fn (): array => $this->aBreakIsReported(),
+                'a supplier statement reads the other side' => fn (): array => $this->supplierStatements(),
 
                 'for any sequence, the balance and the control agree' => fn (): array => $this->theProperty(),
             ]));
@@ -6305,7 +6315,692 @@ final class SettlementRules
             )];
     }
 
+    // ---- Statements - PF-181 ----------------------------------------------
+
+    /** @return list<string> */
+    private function openItemsList(): array
+    {
+        $customer = $this->aBilledCustomer();
+        $statements = app(Statements::class);
+
+        $statement = $statements->openItems(
+            entityId: $this->entityId,
+            partyId: (string) $customer->getKey(),
+            currency: 'SAR',
+            asAt: Carbon::parse('2026-06-30'),
+        );
+
+        $failures = [];
+        $documents = array_values(array_filter(
+            $statement['items'],
+            static fn (array $i): bool => $i['kind'] === 'document',
+        ));
+
+        if ($documents === []) {
+            return ['an open-item statement lists nothing for a customer with an unpaid invoice - it '.
+                'is the only form that can be reconciled line by line against their own ledger'];
+        }
+
+        $line = $documents[0];
+
+        foreach (['reference', 'issued_on', 'gross', 'open'] as $field) {
+            if (trim((string) ($line[$field] ?? '')) === '') {
+                $failures[] = sprintf('the line carries no %s', $field);
+            }
+        }
+
+        /*
+         | The OPEN balance, not the gross.
+         |
+         | A statement that listed the gross of a part-paid invoice
+         | would ask the customer for money they have already sent, and
+         | the telephone call that follows is the one this form exists
+         | to prevent.
+         */
+        if (Money::of((string) $line['open'], 'SAR')->amount->compareTo('1150') !== 0) {
+            $failures[] = sprintf(
+                'the line shows %s open on a 1,150 invoice with nothing paid against it',
+                (string) $line['open'],
+            );
+        }
+
+        /*
+         | And a PART-paid invoice shows what is left, not the gross.
+         |
+         | Which is the only way to tell the two apart: on an untouched
+         | invoice they are the same number, so a check that stopped
+         | above would pass on a statement listing the gross. The bite
+         | sweep found exactly that.
+         |
+         | A statement that asked for the gross of a part-paid invoice
+         | asks the customer for money they have already sent, and the
+         | telephone call that follows is the one this form exists to
+         | prevent.
+         */
+        $partPaid = $this->issue();
+        $payment = $this->recordReceipt((string) $customer->getKey(), '400.0000', '2026-05-20');
+
+        app(Allocations::class)->allocate(
+            paymentId: $payment,
+            documentType: 'invoice',
+            documentId: (string) $partPaid->getKey(),
+            amount: Money::of('400.0000', 'SAR'),
+            userId: $this->actorId(),
+            on: Carbon::parse('2026-05-20'),
+        );
+
+        $withPartPaid = $statements->openItems(
+            entityId: $this->entityId,
+            partyId: (string) $customer->getKey(),
+            currency: 'SAR',
+            asAt: Carbon::parse('2026-06-30'),
+        );
+
+        $partLine = null;
+
+        foreach ($withPartPaid['items'] as $candidate) {
+            if (($candidate['reference'] ?? null) === (string) $partPaid->number) {
+                $partLine = $candidate;
+
+                break;
+            }
+        }
+
+        if ($partLine === null) {
+            $failures[] = 'a part-paid invoice fell off the open-item statement entirely';
+        } elseif (Money::of((string) $partLine['open'], 'SAR')->amount->compareTo('750') !== 0) {
+            $failures[] = sprintf(
+                'a 1,150 invoice with 400 paid against it shows %s open - a statement that lists the '.
+                'gross asks the customer for money they have already sent',
+                (string) $partLine['open'],
+            );
+        }
+
+        /*
+         | And a settled invoice is not on it.
+         |
+         | Which is the difference between an open-item statement and a
+         | list of invoices: the customer is looking for what they still
+         | have to pay.
+         */
+        $settled = $this->issue();
+        $this->payInFull($settled, (string) $customer->getKey());
+
+        $after = $statements->openItems(
+            entityId: $this->entityId,
+            partyId: (string) $customer->getKey(),
+            currency: 'SAR',
+            asAt: Carbon::parse('2026-06-30'),
+        );
+
+        $references = array_column(array_filter(
+            $after['items'],
+            static fn (array $i): bool => $i['kind'] === 'document',
+        ), 'reference');
+
+        if (\in_array((string) $settled->number, $references, true)) {
+            $failures[] = 'a fully settled invoice is still on the open-item statement, so the '.
+                'customer is asked for money they have already sent';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function cashIsLabelled(): array
+    {
+        $customer = $this->aBilledCustomer();
+
+        /*
+         | A payment received and applied to nothing.
+         |
+         | Which happens constantly: the customer pays a round figure, or
+         | pays before the invoice is issued, or pays for something
+         | nobody has matched yet.
+         */
+        $this->recordReceipt((string) $customer->getKey(), '400.0000', '2026-05-20');
+
+        $statement = app(Statements::class)->openItems(
+            entityId: $this->entityId,
+            partyId: (string) $customer->getKey(),
+            currency: 'SAR',
+            asAt: Carbon::parse('2026-06-30'),
+        );
+
+        $failures = [];
+        $cash = array_values(array_filter(
+            $statement['items'],
+            static fn (array $i): bool => $i['kind'] === 'unapplied_cash',
+        ));
+
+        if ($cash === []) {
+            return ['400 received and applied to nothing does not appear on the statement at all, so '.
+                'the total is short by it and the customer cannot see why'];
+        }
+
+        /*
+         | Its own line, with its own label, reducing the total.
+         |
+         | Netting it against the oldest invoice is a decision the
+         | system would be making on the customer's behalf, invisibly -
+         | and then they telephone about an invoice they believe they
+         | paid, and nobody can see which payment was used.
+         */
+        if (Money::of((string) $cash[0]['open'], 'SAR')->amount->compareTo('-400') !== 0) {
+            $failures[] = sprintf(
+                'the unapplied cash line reads %s rather than -400',
+                (string) $cash[0]['open'],
+            );
+        }
+
+        if (! str_contains((string) $cash[0]['note'], 'rather than netted')) {
+            $failures[] = 'the line does not say why it is listed separately, so it reads as an error';
+        }
+
+        /*
+         | And the invoice is still shown at its full open balance.
+         |
+         | Which is the half that proves nothing was netted.
+         */
+        $documents = array_values(array_filter(
+            $statement['items'],
+            static fn (array $i): bool => $i['kind'] === 'document',
+        ));
+
+        if (Money::of((string) ($documents[0]['open'] ?? '0'), 'SAR')->amount->compareTo('1150') !== 0) {
+            $failures[] = sprintf(
+                'the invoice shows %s open, so the unapplied payment was quietly netted against it '.
+                'after all',
+                (string) ($documents[0]['open'] ?? '-'),
+            );
+        }
+
+        if (Money::of((string) $statement['total'], 'SAR')->amount->compareTo('750') !== 0) {
+            $failures[] = sprintf(
+                'the statement totals %s rather than 750 - the figure has to be the same whether the '.
+                'cash is netted or labelled, which is the point',
+                (string) $statement['total'],
+            );
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function disputesAreLabelled(): array
+    {
+        $customer = $this->aBilledCustomer();
+        $invoice = DB::connection('tenant')->table('invoices')
+            ->where('party_id', (string) $customer->getKey())
+            ->where('status', 'issued')
+            ->first();
+
+        DB::connection('tenant')->table('document_disputes')->insert([
+            'id' => (string) Str::ulid(),
+            'entity_id' => $this->entityId,
+            'document_type' => 'invoice',
+            'document_id' => (string) $invoice->id,
+            'party_id' => (string) $customer->getKey(),
+            'reason_code' => 'quality',
+            'detail' => 'the customer says two of the licences were never activated',
+            'disputed_amount' => '500.0000',
+            'currency' => 'SAR',
+            'raised_by_user_id' => $this->actorId(),
+            'raised_at' => now(),
+            'status' => 'open',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $statement = app(Statements::class)->openItems(
+            entityId: $this->entityId,
+            partyId: (string) $customer->getKey(),
+            currency: 'SAR',
+            asAt: Carbon::parse('2026-06-30'),
+        );
+
+        $documents = array_values(array_filter(
+            $statement['items'],
+            static fn (array $i): bool => $i['kind'] === 'document',
+        ));
+
+        $failures = [];
+
+        if ($documents === []) {
+            return ['a disputed invoice was removed from the statement, which makes it disagree with '.
+                'the control account and tells the customer we have forgotten their complaint'];
+        }
+
+        if (($documents[0]['disputed'] ?? false) !== true) {
+            $failures[] = 'the disputed invoice is not labelled as one, so the customer reads a demand '.
+                'for money they have already queried - and raises it again, to somebody else';
+        }
+
+        if (! str_contains((string) ($documents[0]['note'] ?? ''), 'never activated')) {
+            $failures[] = 'the statement does not say what the dispute is about, so the person reading '.
+                'it cannot tell whether it is the one they know about';
+        }
+
+        /*
+         | And it still counts toward the total.
+         |
+         | A disputed invoice is still owed until somebody decides
+         | otherwise. Removing it would make the statement disagree with
+         | the control account, which is the one thing this form has to
+         | do.
+         */
+        if (Money::of((string) $statement['total'], 'SAR')->amount->compareTo('1150') !== 0) {
+            $failures[] = sprintf(
+                'the disputed invoice was taken out of the total, which now reads %s - a statement '.
+                'that drops disputes stops reconciling to the control account',
+                (string) $statement['total'],
+            );
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function balanceForwardAddsUp(): array
+    {
+        $customer = $this->aBilledCustomer();
+        $this->recordReceipt((string) $customer->getKey(), '400.0000', '2026-05-25', allocate: true);
+
+        $statement = app(Statements::class)->balanceForward(
+            entityId: $this->entityId,
+            partyId: (string) $customer->getKey(),
+            currency: 'SAR',
+            from: Carbon::parse('2026-05-01'),
+            until: Carbon::parse('2026-05-31'),
+        );
+
+        $failures = [];
+
+        if (($statement['adds_up'] ?? false) !== true) {
+            $failures[] = 'the column does not add up: '.(string) $statement['why'];
+        }
+
+        /*
+         | And the check does the arithmetic ITSELF.
+         |
+         | `adds_up` is the service's own opinion of its own column, so
+         | a product that hard-coded it true would pass the assertion
+         | above - which the bite sweep demonstrated. Adding the
+         | movements here is the only way to know.
+         */
+        $running = Money::of((string) $statement['opening'], 'SAR');
+
+        foreach ($statement['movements'] as $movement) {
+            $running = $running->plus(Money::of((string) $movement['amount'], 'SAR'));
+        }
+
+        if (! $running->equals(Money::of((string) $statement['closing'], 'SAR'))) {
+            $failures[] = sprintf(
+                'opening %s plus the movements comes to %s while the statement closes at %s - the '.
+                'column does not add up, whatever the report says about itself',
+                (string) $statement['opening'],
+                (string) $running->amount,
+                (string) $statement['closing'],
+            );
+        }
+
+        if ($statement['movements'] === []) {
+            $failures[] = 'a month with an invoice and a payment in it shows no movements, so nobody '.
+                'can see how the balance got from one figure to the other';
+        }
+
+        /*
+         | A running balance on every line.
+         |
+         | Which is the whole reason for this form: "how did we get from
+         | last month's figure to this one" is answered by reading down
+         | the column, not by adding the lines up yourself.
+         */
+        foreach ($statement['movements'] as $index => $movement) {
+            if (trim((string) ($movement['running'] ?? '')) === '') {
+                $failures[] = sprintf('movement %d carries no running balance', $index + 1);
+            }
+        }
+
+        $closing = Money::of((string) $statement['closing'], 'SAR');
+
+        if ($closing->amount->compareTo('750') !== 0) {
+            $failures[] = sprintf(
+                'a 1,150 invoice less a 400 payment closes at %s rather than 750',
+                (string) $statement['closing'],
+            );
+        }
+
+        /*
+         | And a reversed period is refused.
+         |
+         | An opening balance later than its closing one makes the
+         | movement between them read as its own negative.
+         */
+        $reversed = $this->refusal(fn () => app(Statements::class)->balanceForward(
+            entityId: $this->entityId,
+            partyId: (string) $customer->getKey(),
+            currency: 'SAR',
+            from: Carbon::parse('2026-05-31'),
+            until: Carbon::parse('2026-05-01'),
+        ));
+
+        if ($reversed === null) {
+            $failures[] = 'a statement period that ends before it starts was accepted';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function statementsSayIfTheyReconcile(): array
+    {
+        $this->aBilledCustomer();
+
+        $reconciliation = app(Statements::class)->reconciliation($this->entityId, 'SAR');
+        $failures = [];
+
+        if (($reconciliation['reconciles'] ?? false) !== true) {
+            $failures[] = 'the open items do not reconcile to the receivables control account in a '.
+                'fixture that has only issued invoices: '.(string) $reconciliation['why'];
+        }
+
+        /*
+         | And it SAYS so, in words, either way.
+         |
+         | A report that printed the figure only when the two agreed
+         | would be silent exactly when it matters.
+         */
+        if (! str_contains((string) $reconciliation['why'], 'reconcile')) {
+            $failures[] = 'the reconciliation does not say whether it reconciles, which is the '.
+                'criterion: "rather than leaving it implied"';
+        }
+
+        foreach (['subsidiary_ledger', 'control_account', 'difference'] as $field) {
+            if (trim((string) ($reconciliation[$field] ?? '')) === '') {
+                $failures[] = sprintf('the reconciliation does not report the %s', $field);
+            }
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function aBreakIsReported(): array
+    {
+        $this->aBilledCustomer();
+
+        /*
+         | A journal line against the receivables control that no
+         | document explains.
+         |
+         | Which is what a break looks like: somebody posted a manual
+         | entry to the control account, or an import went in sideways.
+         | The statement has to say so rather than print a figure that
+         | is quietly wrong.
+         */
+        $control = (string) DB::connection('tenant')->table('account_roles')
+            ->where('entity_id', $this->entityId)
+            ->where('role', 'accounts_receivable')
+            ->value('account_id');
+
+        $entry = DB::connection('tenant')->table('journal_entries')
+            ->where('entity_id', $this->entityId)
+            ->value('id');
+
+        $existing = DB::connection('tenant')->table('journal_lines')
+            ->where('journal_entry_id', (string) $entry)
+            ->first();
+
+        DB::connection('tenant')->table('journal_lines')->insert([
+            'id' => (string) Str::ulid(),
+            'entity_id' => $this->entityId,
+            'journal_entry_id' => (string) $entry,
+            'accounting_date' => (string) $existing->accounting_date,
+            'period_id' => (string) $existing->period_id,
+            'account_id' => $control,
+            'amount' => '250.0000',
+            'currency' => 'SAR',
+            'functional_amount' => '250.0000',
+            'narration' => 'a manual entry nobody matched to a document',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $reconciliation = app(Statements::class)->reconciliation($this->entityId, 'SAR');
+        $failures = [];
+
+        if (($reconciliation['reconciles'] ?? true) !== false) {
+            return ['a 250 entry against the control account that no document explains was not '.
+                'reported as a break - a statement that was right about one customer while the '.
+                'control account disagreed sends somebody looking in the wrong place for a week'];
+        }
+
+        if (Money::of((string) $reconciliation['difference'], 'SAR')->amount->compareTo('-250') !== 0) {
+            $failures[] = sprintf(
+                'the difference reads %s rather than -250',
+                (string) $reconciliation['difference'],
+            );
+        }
+
+        /*
+         | And it says what to look for.
+         |
+         | "Does not reconcile" sends somebody to a spreadsheet. Naming
+         | the two shapes a break takes - a document with no allocation,
+         | an allocation with no document - sends them to the query.
+         */
+        if (! str_contains((string) $reconciliation['why'], 'posted without an allocation')) {
+            $failures[] = 'the break does not say what shape it usually takes: '.(string) $reconciliation['why'];
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function supplierStatements(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $this->anApprovedBill($supplier, '3400.0000', '2026-05-18');
+
+        $statement = app(Statements::class)->openItems(
+            entityId: $this->entityId,
+            partyId: (string) $supplier->getKey(),
+            currency: 'SAR',
+            asAt: Carbon::parse('2026-06-30'),
+            side: 'supplier',
+        );
+
+        $failures = [];
+
+        if ($statement['items'] === []) {
+            $failures[] = 'a supplier statement lists nothing for an approved unpaid bill';
+        } elseif (($statement['items'][0]['label'] ?? '') !== 'Bill') {
+            $failures[] = sprintf(
+                'the supplier statement labels its lines "%s" - the two sides read different documents',
+                (string) ($statement['items'][0]['label'] ?? '-'),
+            );
+        }
+
+        /*
+         | And the payables control is compared the right way round.
+         |
+         | A payables control carries a CREDIT balance, so comparing it
+         | raw against a positive subsidiary ledger would report every
+         | entity as out by TWICE the balance - a break nobody can find,
+         | because there is not one.
+         |
+         | This fixture's bills are approved and not posted, so the
+         | control is zero and the subsidiary ledger is not: what is
+         | asserted is that the difference comes back as the subsidiary
+         | figure itself rather than doubled, which is what a raw
+         | comparison would give once anything IS posted.
+         */
+        /*
+         | A credit against the payables control, so the sign matters.
+         |
+         | With nothing posted the control is zero, and zero negated is
+         | zero - so a check without this passes whether the comparison
+         | is the right way round or not. The bite sweep showed it.
+         */
+        $payables = (string) DB::connection('tenant')->table('account_roles')
+            ->where('entity_id', $this->entityId)
+            ->where('role', 'accounts_payable')
+            ->value('account_id');
+
+        $anyLine = DB::connection('tenant')->table('journal_lines')
+            ->where('entity_id', $this->entityId)
+            ->first();
+
+        DB::connection('tenant')->table('journal_lines')->insert([
+            'id' => (string) Str::ulid(),
+            'entity_id' => $this->entityId,
+            'journal_entry_id' => (string) $anyLine->journal_entry_id,
+            'accounting_date' => (string) $anyLine->accounting_date,
+            'period_id' => (string) $anyLine->period_id,
+            'account_id' => $payables,
+            'amount' => '-3400.0000',
+            'currency' => 'SAR',
+            'functional_amount' => '-3400.0000',
+            'narration' => 'what an approved bill would credit once it posts',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $reconciliation = app(Statements::class)->reconciliation($this->entityId, 'SAR', 'supplier');
+
+        /*
+         | 3,400 of bills against a control holding 3,400 credit.
+         |
+         | Compared the right way round they reconcile. Compared raw,
+         | the difference is 6,800 - twice the balance, which is a break
+         | nobody can find because there is not one.
+         */
+        if (($reconciliation['reconciles'] ?? false) !== true) {
+            $failures[] = sprintf(
+                'a 3,400 payables control against 3,400 of open bills does not reconcile (difference '.
+                '%s) - a credit balance compared raw against a positive subsidiary ledger reports a '.
+                'break of twice the balance, which nobody can find because there is not one',
+                (string) $reconciliation['difference'],
+            );
+        }
+
+        if (Money::of((string) $reconciliation['control_account'], 'SAR')->isNegative()) {
+            $failures[] = sprintf(
+                'the payables control is reported as %s - a credit balance compared raw against a '.
+                'positive subsidiary ledger reports a break of twice the balance, which nobody can '.
+                'find because there is not one',
+                (string) $reconciliation['control_account'],
+            );
+        }
+
+        if (! str_contains((string) $reconciliation['why'], 'accounts payable')) {
+            $failures[] = 'the supplier reconciliation does not name the control account it compared '.
+                'against: '.(string) $reconciliation['why'];
+        }
+
+        /*
+         | And a side that is neither is refused.
+         */
+        if ($this->refusal(fn () => app(Statements::class)->openItems(
+            entityId: $this->entityId,
+            partyId: (string) $supplier->getKey(),
+            currency: 'SAR',
+            asAt: Carbon::parse('2026-06-30'),
+            side: 'everyone',
+        )) === null) {
+            $failures[] = 'a statement was produced for a side that is neither a customer nor a '.
+                'supplier, which reads from different documents against different control accounts';
+        }
+
+        return $failures;
+    }
+
     // ---- Helpers ----------------------------------------------------------
+
+    // ---- Statement fixtures - PF-181 --------------------------------------
+
+    /**
+     * A customer with one issued, unpaid invoice of 1,150.00.
+     *
+     * The shared draft's own figures - 1,000 net and 150 tax - because
+     * a statement check that invented its own amounts would be asserting
+     * arithmetic rather than the statement.
+     */
+    private function aBilledCustomer(): \App\Tenant\Parties\Models\Party
+    {
+        $this->issue();
+
+        \assert($this->party !== null);
+
+        return $this->party;
+    }
+
+    /**
+     * Money received from a party, optionally applied to their invoice.
+     *
+     * Unapplied by default, because that is the case the statement has
+     * to label rather than net.
+     */
+    private function recordReceipt(
+        string $partyId,
+        string $amount,
+        string $on,
+        bool $allocate = false,
+    ): string {
+        $payment = app(Payments::class)->record(
+            entityId: $this->entityId,
+            direction: PaymentDirection::Receipt,
+            method: PaymentMethod::CreditTransfer,
+            amount: Money::of($amount, 'SAR'),
+            valueDate: Carbon::parse($on),
+            userId: $this->actorId(),
+            bankAccountId: (string) $this->bank()->getKey(),
+            partyId: $partyId,
+        );
+
+        if ($allocate) {
+            $invoice = DB::connection('tenant')->table('invoices')
+                ->where('party_id', $partyId)
+                ->where('status', 'issued')
+                ->orderBy('issue_date')
+                ->first();
+
+            /*
+             | Dated in the period the fixture opened, not `now()`.
+             |
+             | `allocate()` defaults its date to today, and today is
+             | outside the only open period - so the fixture's first
+             | draft failed with "period 2026-11 is future", which is
+             | the period machinery working and the fixture not.
+             */
+            app(Allocations::class)->allocate(
+                paymentId: (string) $payment['id'],
+                documentType: 'invoice',
+                documentId: (string) $invoice->id,
+                amount: Money::of($amount, 'SAR'),
+                userId: $this->actorId(),
+                on: Carbon::parse($on),
+            );
+        }
+
+        return (string) $payment['id'];
+    }
+
+    /** Settle a document completely, so it leaves the open-item list. */
+    private function payInFull(object $invoice, string $partyId): void
+    {
+        $payment = $this->recordReceipt($partyId, (string) $invoice->gross_amount, '2026-05-20');
+
+        app(Allocations::class)->allocate(
+            paymentId: $payment,
+            documentType: 'invoice',
+            documentId: (string) $invoice->getKey(),
+            amount: Money::of((string) $invoice->gross_amount, 'SAR'),
+            userId: $this->actorId(),
+            on: Carbon::parse('2026-05-20'),
+        );
+    }
 
     /**
      * A prepared run on a date, from whatever is payable.

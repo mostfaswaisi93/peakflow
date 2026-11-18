@@ -15,7 +15,10 @@
       flow line stays in the mark), `monogram` under 120 px. The caller sets
       the HEIGHT with a class; the width follows the artwork's own ratio, so
       the logo is never stretched.
-    - Arabic interfaces get the Arabic logo (بيك فلو, mark on the right).
+    - One wordmark in every language. The Arabic artwork exists in the kit and
+      is deliberately NOT used: the product is called PeakFlow in both, and a
+      name that changes shape with the interface language is a second brand
+      that has to be kept in step with the first.
     - One image per theme - colour on light, colour on dark, black for high
       contrast light, white for high contrast dark - and app.css shows exactly
       one. Never recoloured, never given a shadow or an effect.
@@ -31,13 +34,24 @@
 ])
 
 @php
-    $arabic = str_starts_with(app()->getLocale(), 'ar');
-
+    /*
+     | The same wordmark in every language.
+     |
+     | The kit ships Arabic artwork and this component used to switch to
+     | it on an Arabic locale. It no longer does: the product is called
+     | PeakFlow in both languages, and a logo that changes with the
+     | interface is a second brand - two sets of files to keep in step,
+     | two things to get wrong in an export, and a customer who sees a
+     | different mark depending on who opened the document.
+     |
+     | Direction still flips, and the type still changes: it is the
+     | MARK that stays put.
+     */
     $base = match ($size) {
         'mark' => 'mark',
         'monogram' => 'monogram',
-        'small' => $arabic ? 'logo-ar' : 'logo-small',
-        default => $arabic ? 'logo-ar' : 'logo',
+        'small' => 'logo-small',
+        default => 'logo',
     };
 
     $variants = $base === 'monogram'

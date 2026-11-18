@@ -144,7 +144,8 @@
 <main>
     {{-- The small logo, light or dark by the system preference this page
          follows; the Arabic artwork for an Arabic page. --}}
-    @php($brandBase = str_starts_with($locale, 'ar') ? 'logo-ar' : 'logo-small')
+    {{-- One wordmark in every language - see <x-brand.logo> for why. --}}
+    @php($brandBase = 'logo-small')
     <picture>
         <source srcset="{{ asset('brand/'.$brandBase.'-color-on-dark.svg') }}" media="(prefers-color-scheme: dark)">
         <img class="brand" src="{{ asset('brand/'.$brandBase.'-color-on-light.svg') }}" alt="{{ __('بيك فلو') }}">

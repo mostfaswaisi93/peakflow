@@ -160,9 +160,22 @@ final class Statements
         $opening = $this->balanceAt($entityId, $partyId, $currency, $from->copy()->subDay(), $side);
         $closing = $this->balanceAt($entityId, $partyId, $currency, $until, $side);
 
+        /*
+         | Ten parameters, not five: each half of the UNION takes its
+         | own.
+         |
+         | PostgreSQL binds positionally across the whole statement, so
+         | a UNION of two five-parameter halves needs the five given
+         | twice. The first draft passed them once and the driver said
+         | so - "bind message supplies 5 parameters, but the prepared
+         | statement requires 10" - which is the clearest error in this
+         | whole task.
+         */
+        $arguments = [$entityId, $partyId, $currency, $from->toDateString(), $until->toDateString()];
+
         $movements = DB::connection('tenant')->select(
             $this->movementsSql($side),
-            [$entityId, $partyId, $currency, $from->toDateString(), $until->toDateString()],
+            array_merge($arguments, $arguments),
         );
 
         $lines = [];
@@ -188,6 +201,20 @@ final class Statements
          | computed independently. When it does not, the statement says
          | so rather than printing a column that does not add up - which
          | is what the customer notices first and trusts least.
+         |
+         | ## It cannot fire today, and that is the point
+         |
+         | `balanceAt()` and `movementsSql()` are two separately written
+         | queries over the same facts, so while they agree this flag is
+         | always true - a bite that hard-coded it changed nothing, which
+         | is how that was established rather than assumed.
+         |
+         | It is kept because the two are SEPARATE: an edit to one that
+         | does not reach the other is exactly the change this catches,
+         | and that edit is a Tuesday away. The check that covers this
+         | today does the addition itself rather than trusting the flag,
+         | so the flag is not the only guard - it is the one that fires
+         | in production, where nobody is running checks.
          */
         $reconciles = $running->equals($closing);
 

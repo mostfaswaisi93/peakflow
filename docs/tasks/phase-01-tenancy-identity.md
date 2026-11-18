@@ -24,6 +24,17 @@ The identity work in this phase is not generic authentication. It is the part of
 - [x] The whole provision is idempotent and transactional at the step level: a failure half way leaves no orphan database and no half-registered tenant
 - [x] A rollback path drops what it created, and is tested by injecting a failure at each step
 - [x] Provisioning runs as `peakflow_migrator`, never as the application role
+- [x] `tenants:discard-abandoned` drops what a provisioning run left behind when it never reached its own rollback
+
+> **The rollback only runs if the process does.** `TenantProvisioner::create()`
+> keeps its undo steps in memory, so a run that is *killed* — the container
+> reclaimed, the operator's tab closed — leaves a registry row in
+> `provisioning`, a live database and a login role whose password died with
+> the process. It happened: one killed run left an orphan that failed nine
+> `bin/verify tenant` checks on every run afterwards, each telling the truth
+> (`harden()` really never got that far). `tenants:discard-abandoned` is the
+> way out, and it refuses any tenant with `provisioned_at` set, because a
+> finished tenant holds a customer's ledger and that is the archive path.
 
 ### PF-020 · Tenant provisioning, link mode
 `Platform` · **3 pts** · depends: PF-019 · standards: —

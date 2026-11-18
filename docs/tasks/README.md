@@ -7,7 +7,7 @@
 | Phase | Theme | Tasks | Points |
 |-------|-------|-------|--------|
 | [00](phase-00-foundations.md) | Foundations, tooling and guardrails | 17 | 60 |
-| [01](phase-01-tenancy-identity.md) | Tenancy, entities, identity, segregation of duties | 19 | 84 |
+| [01](phase-01-tenancy-identity.md) | Tenancy, entities, identity, segregation of duties | 19 | 85 |
 | [02](phase-02-ledger.md) | The general ledger | 22 | 104 |
 | [03](phase-03-masters.md) | Parties, catalog, currencies, FX | 16 | 66 |
 | [04](phase-04-tax.md) | The tax engine | 14 | 71 |
@@ -35,7 +35,7 @@ A criterion is ticked only when something in `bin/verify` fails if the behaviour
 | Phase | Tasks complete | Criteria met | Criteria open |
 |---|---|---|---|
 | [00](phase-00-foundations.md) | 15 / 17 | 175 | 5 |
-| [01](phase-01-tenancy-identity.md) | 15 / 19 | 84 | 4 |
+| [01](phase-01-tenancy-identity.md) | 15 / 19 | 85 | 4 |
 | [02](phase-02-ledger.md) | 19 / 22 | 143 | 3 |
 | [03](phase-03-masters.md) | 14 / 16 | 77 | 5 |
 | [04](phase-04-tax.md) | 8 / 14 | 109 | 8 |
@@ -43,14 +43,14 @@ A criterion is ticked only when something in `bin/verify` fails if the behaviour
 | [06](phase-06-einvoicing.md) | 6 / 20 | 101 | 43 |
 | [07](phase-07-purchasing.md) | 8 / 15 | 152 | 7 |
 | [08](phase-08-banking.md) | 21 / 21 | 124 | 0 |
-| [09](phase-09-settlement.md) | 15 / 16 | 76 | 4 |
-| [10](phase-10-reporting.md) | 0 / 17 | 0 | 76 |
+| [09](phase-09-settlement.md) | 15 / 16 | 79 | 1 |
+| [10](phase-10-reporting.md) | 2 / 17 | 9 | 67 |
 | [11](phase-11-design-system.md) | 1 / 20 | 5 | 97 |
 | [12](phase-12-api-exchange.md) | 0 / 14 | 0 | 64 |
 | [13](phase-13-hardening.md) | 0 / 16 | 0 | 73 |
 | [14](phase-14-operations.md) | 10 / 11 | 53 | 1 |
 | [15](phase-15-verticals.md) | 0 / 8 | 0 | 36 |
-| **all** | **149 / 267** | **1258** | **443** |
+| **all** | **151 / 267** | **1271** | **431** |
 
 Phases 00 to 09 are the ones that have been worked, and Phase 08 is closed. An open criterion in a worked phase is one that depends on a later phase and says so in its own task file, with the task that brings it - never one that was skipped.
 
