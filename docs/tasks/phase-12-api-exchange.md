@@ -8,57 +8,37 @@ The `Exchange` plane gets its own tasks here because a government endpoint being
 
 ---
 
-### PF-217 · The OpenAPI contract
-`—` · **5 pts** · depends: PF-015 · standards: OpenAPI 3.1 · `risk:high`
-
-- [ ] `docs/api/openapi.yaml` authored by hand, versioned, and reviewed as part of any API change
-- [ ] A contract test asserts **both directions**: every operation and schema in the spec exists in the application, and **no undocumented route exists** on the API surface
-- [ ] Every response, including every error shape, is described - an error that is not in the spec is not an error a client can handle
-- [ ] Examples for every operation, used as test fixtures so they cannot go stale
-- [ ] The spec is published to tenants as the integration reference
-
 ### PF-218 · API authentication and scopes
 `—` · **5 pts** · depends: PF-028, PF-021 · standards: OWASP API Top 10 · `type:security`
 
 - [ ] Sanctum bearer tokens; `X-Tenant` and `X-Entity` resolved before authentication
-- [ ] **Token scopes mirror permissions exactly**, so there is one authorization model and not a second, weaker one for machines
-- [ ] A token is scoped to specific entities, not to the tenant, and a request for another entity is refused
-- [ ] Token creation, last-used, rotation and revocation are visible to the tenant and audited
+  - **Half, and the other half cannot be done in that order.** Sanctum bearer tokens are built, and `X-Tenant` is still pinned ahead of the guard - it has to be, because the token lives in the tenant's own database and there is nothing to authenticate against until the connection is pointed.
+  - `X-Entity` is resolved **after**. Which entity a token may act in is read from the token and then re-read from the owner's own grants, and neither is knowable before the guard has run. Resolving it first would mean either trusting the header or consulting a second, weaker source - and the second source is precisely what criterion 2 below forbids. The reasoning is in `ResolveApiEntity`. Left open rather than ticked with an excuse, because the criterion names an ordering and the ordering is different.
+- [x] **Token scopes mirror permissions exactly**, so there is one authorization model and not a second, weaker one for machines
+  - A scope **is** a permission key, and a check refuses any route whose scope is not in the catalogue. A request carrying a token is the user's own permissions intersected with what the token was issued for, and the narrowing is folded into the one `Gate::before` callback rather than put on a route - because the gate is asked from everywhere: `can:` on a route, `Gate::authorize()` in a handler, `Gate::denies()` three layers down inside a service. A check that lived on the route would leave every deeper question answered by the user's full permissions, and a token issued to read invoices would reach any service that authorizes internally. That is the second model for machines this criterion forbids, arrived at by accident.
+  - A missing scope and a missing permission are told apart in the refusal, because "you cannot do this" and "this token cannot do this" send the reader to different places.
+- [x] A token is scoped to specific entities, not to the tenant, and a request for another entity is refused
+  - A live token can never be widened: a database trigger and a CHECK forbidding a wildcard, both bitten. Delegation only narrows - an issuing token's own ceiling applies to what it can issue.
+  - This check was another of the five first-pass misses, and the miss was instructive: the fixture's user held no role in the second entity, so the **grant** check refused the request before the token's entity list was ever consulted. It passed for the wrong reason. The user now holds roles in both, and the two refusals are told apart by the `token_entity_ids` member.
+- [x] Token creation, last-used, rotation and revocation are visible to the tenant and audited
+  - The audit check was a third first-pass miss: it was scoped by `created_at >= now() - 5 minutes`, and this suite deliberately leaves audit records behind, so an earlier run's rows satisfied it. Scoped to each token's own id now - which also meant `EstablishApiActor` had to start recording **which** token it refused, not just that it refused one.
 - [ ] A platform token can never act on a tenant route and vice versa - both guards issue tokens against the same table, so this has its own test
+  - **One direction is proved; the other has nothing to prove it against.** A planted `plane = 'platform'` row in a tenant's own table gets a 401 and an audited refusal, bitten. There is no platform API route yet, so the middleware takes the plane as a parameter and the reverse direction is untested. It stays open until there is one, because a half-tested boundary that reads as tested is how the untested half ships.
 
 ### PF-219 · Problem-details errors
 `—` · **3 pts** · depends: PF-217, PF-117 · standards: RFC 9457
 
-- [ ] `application/problem+json` with `type`, `title`, `status`, `detail`, `instance`
+- [x] `application/problem+json` with `type`, `title`, `status`, `detail`, `instance`
+  - All five on every refusal, bitten by dropping the registry's default `detail`.
+  - Before this, an unhandled exception on an API route answered with Laravel's own JSON - `{"message", "exception", "trace"}` in debug and a bare `{"message": "Server Error"}` in production - so the one response an integrator most needs to recognise was the only one outside the contract. A last-registered `Throwable` renderer closes it, with the class and message as a `debug` member only when `app.debug`: an exception message in this product can carry a bound value or an account number.
 - [ ] A field-addressed `errors` array; document-rule failures addressed by **EN 16931 business term** rather than by XPath or by an internal field name
-- [ ] A registry of problem `type` URIs, each documented, so an error type is a documented contract and not invented at the call site
-- [ ] Messages are localized by `Accept-Language`; the `type` and the machine-readable parts never are
-
-### PF-220 · Idempotency
-`—` · **5 pts** · depends: PF-218 · standards: — · `risk:high`
-
-- [ ] `Idempotency-Key` is **required** on every POST that posts to the ledger, and a request without one is refused rather than accepted
-- [ ] The response is stored and replayed for 24 hours, keyed on `(tenant, token, key)`
-- [ ] A replay with a **different body** is a `409`, because that is a client bug and silently returning the first response hides it
-- [ ] A request still in flight returns `409` with `Retry-After` rather than executing twice
-- [ ] A test fires the same create twice concurrently and asserts exactly one document and two identical responses
-
-### PF-221 · Pagination
-`—` · **3 pts** · depends: PF-217 · standards: RFC 8288
-
-- [ ] **Cursor-based by default**, because offset pagination over a growing journal both drifts and degrades
-- [ ] An opaque, signed cursor that encodes the sort key, so it cannot be tampered with or hand-constructed
-- [ ] `Link` headers per RFC 8288 plus a cursor in the body
-- [ ] Offset pagination available, capped, where a UI genuinely needs a page number, and documented as the slower path
-- [ ] Page size capped by an allowlist, so a crafted value can never request an unbounded page
-
-### PF-222 · Money and dates on the wire
-`—` · **3 pts** · depends: PF-006 · standards: ISO 4217, ISO 8601, RFC 3339 · `risk:high`
-
-- [ ] Money is **always** an object: `{"amount": "1234.5600", "currency": "SAR"}`. A bare number is never returned, because a client parsing it as a float is the bug this prevents
-- [ ] The amount is a string at the amount scale; the currency's presentation exponent is a separate field where the client needs it
-- [ ] An **accounting date is `YYYY-MM-DD` and never a timestamp**; a timestamp is RFC 3339 UTC. Timezone-shifting an accounting date reallocates it to another period
-- [ ] A schema test asserts no response anywhere contains a bare numeric money value
+  - **The field-addressed half is done and bitten** - a line problem carries a JSON pointer, and making the pointer 1-based is caught. The business-term half is a **mechanism with no caller**: `Problem::withBusinessTermError()`, the `ProblemError` schema and a worked example in the contract all exist, and no operation in this slice emits one, because invoice issuing over the API is a later task.
+  - Left open on purpose. A mechanism nothing calls is the exact shape of the three worst defects found in this repository on 2026-11-18 - `TaxPoint::derive()`, `EvidenceGate` and `factor_asserted_at` were each built, ticked and never called, and each was invisible for months because the tests called them directly. Ticking this would put a fourth on the list.
+- [x] A registry of problem `type` URIs, each documented, so an error type is a documented contract and not invented at the call site
+  - Thirty-two types, and `docs/api/problems.md` documents each. Removing a row from that file fails the build, so the registry and its documentation cannot drift.
+- [x] Messages are localized by `Accept-Language`; the `type` and the machine-readable parts never are
+  - Three bites: always answering in English, ignoring `Accept-Language`, and dropping `Content-Language`. `NegotiateApiLanguage` sits in the api group rather than on routes, because it has to apply to the **failures** too - a 401 from the guard and a 400 from the tenant resolver are both rendered before any route middleware runs, and a problem document in the wrong language is what this criterion is about.
+  - It is in the group and not global because the inversion it performs - `Accept-Language` outranking the tenant default - is right for a machine and wrong for a browser.
 
 ### PF-223 · Optimistic concurrency
 `—` · **3 pts** · depends: PF-217 · standards: RFC 9110

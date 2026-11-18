@@ -232,3 +232,23 @@ withholding tax kept it positive even with receivables misclassified as
 financing; it now asserts the other two sections are *empty*, which the
 misclassification cannot survive. And that assertion in turn failed on the
 fixture's own opening entry, which credits equity and is a financing flow.
+
+### PF-190 · AR and AP aging
+`Reporting` · **5 pts** · depends: PF-168, PF-144 · standards: IFRS 9
+
+- [x] Configurable buckets and a configurable basis - due date or document date - **stated on the report**, because the two give different answers and a report that does not say which is unusable
+  - Stated on **both** sides, and boundaries that would make an impossible bucket are refused rather than silently reordered. The boundaries reach the payables side too - a boundary the AP half ignores makes one report with two grids, and the bucket names do not say so.
+  - The defaults are the Overview tile's own, asserted by a check, because the tile, the IFRS 9 provision matrix and this report are read side by side and two of them meaning different things by "61-90" is a difference nobody would think to look for.
+- [x] Instalment terms split across buckets by each due date, not aged from the last one
+  - **The Overview tile and the IFRS 9 provision both do the wrong thing here, and that is not fixed.** `OverviewQuery::receivables()` and `ExpectedCreditLoss::openReceivables()` age from `max(due_dates)`, the **last** instalment, so a customer on 30/60/90 terms reads as entirely current until the ninetieth day - and the ECL matrix then provisions them at the current rate, which understates the provision rather than just mis-colouring a tile. Left alone deliberately: the ECL reverses and reposts a reported provision, so restating it is a decision with an audit trail behind it, not a bug fix. It wants its own task.
+  - Both also hard-code `document_type IN ('380','383','386')`, which omits `326` (partial invoice) and `384` (corrected invoice) - both money a customer owes, so a partial invoice is invisible to the tile and carries no provision at all. This report derives the set from `DocumentType` instead and lets the control-account reconciliation prove it.
+- [x] Credit balances and unapplied cash shown as negative buckets rather than netted away
+  - Netting is what hides a customer who is simultaneously 90 days late on one invoice and sitting on an unallocated receipt: the net reads as a healthy account and the 90-day column reads as empty.
+- [x] DSO and DPO, with the formula stated
+  - Both state their formula, their window and their **currency**, and both refuse an empty window with a sentence rather than returning zero - a DSO of zero reads as "our customers pay immediately", which is the opposite of what an empty window means.
+  - DPO used to sum `bills.net_amount` across every currency a supplier had billed in, divided into a control-account balance that was itself adding currencies, and printed the quotient to one decimal place. That is what makes a ratio dangerous: it looks precise, and nobody reads a number with a decimal point and asks whether its two halves were denominated in the same thing. Fixed in PF-144's own service so there is still one DPO, with the excluded documents counted and reported.
+  - And the receivables side had a counter that could not count: it selected `count(*) FILTER (WHERE currency <> ?)` to report what it left out, with `currency = ?` in the WHERE clause as well, so the rows it would have counted were gone before it ran - and the result was then dropped on the floor, never returned. Two failures in one line, both the same failure as a check that cannot fail, and both surviving for the same reason: it looked like coverage.
+- [x] **Reconciles to the AR and AP control accounts**, and the report declares the reconciliation rather than leaving it to be discovered
+  - Declares it either way - agreement is a statement, not a silence - and shouts when it does not agree, which is bitten by leaving a real difference out of the declaration.
+  - `PayablesAging::controlAccountBalance()` counted **draft** entries, so somebody's unfinished journal became a reconciliation difference and the report then accused the ledger: it offered three causes, none of which was "somebody has a journal open". Naming a culprit that did not do it is worse than a wrong figure, because somebody acts on it. Fixed, with a check that writes a draft straight onto the control account - no service will, which is the point: the row exists in the wild and the report has to ignore it.
+

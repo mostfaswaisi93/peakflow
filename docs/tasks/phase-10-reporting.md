@@ -67,30 +67,37 @@ subledger and a manual posting makes the two disagree.
 ### PF-188 · General ledger detail and registers
 `Reporting` · **3 pts** · depends: PF-183 · standards: —
 
-- [ ] GL detail by account and period with running balances
-- [ ] Account activity for a date range, filterable by dimension, party and journal
-- [ ] Journal register listing every entry in a period, which is what an auditor samples from
+- [x] GL detail by account and period with running balances
+  - Opening, movement and closing are **one arithmetic**, and the opening balance is the trial balance's own figure rather than a second computation. A bite that negated the opening balance left the report internally consistent - opening plus movement still equalled closing - and only the cross-check against the trial balance caught it, which is why that check exists at all.
+  - The running balance moves within an account and never across two: a static carry between accounts is caught by its own check, because it is the mistake a single accumulator makes and the figures it produces are all plausible.
+- [x] Account activity for a date range, filterable by dimension, party and journal
+  - A filter is **stated on the output and applied to the rows**, and both directions are bitten: stated and not applied, and applied and not stated. The second is the one that produces a report somebody reads as covering everything.
+  - A filter naming something that does not exist is **refused**, not silently empty. An unknown party id returns an empty register, which reads as "this customer has no activity" rather than "you asked about nobody".
+- [x] Journal register listing every entry in a period, which is what an auditor samples from
+  - Drafts included, and totalled separately - an auditor sampling a period needs to see the entry somebody has open, and a total that included it would not reconcile to anything.
+  - This check was hollow on its first bite: its fixture entered a **bill**, which posts nothing, so the period held no draft at all and filtering drafts out changed nothing. It now puts a draft journal entry in the window. Worth recording that nothing in the application creates a draft `journal_entries` row - the status is modelled, the API controller filters on it, the register needs it, and it is unreachable through any service.
 - [ ] Each report is exportable and reproducible, and each states its parameters on the output
+  - **Two of three.** Each report states its parameters, and the same question digests the same while a changed filter changes the digest - which is what makes a printed report answerable six months later.
+  - That check was hollow on its first bite too, and the way it was hollow is worth keeping: putting the run clock into the digest did not break it, because two calls a millisecond apart share a timestamp to the second. It now builds two parameter sets six weeks apart and asserts one digest, which is the case the guarantee was written for.
+  - **Exportable is not done, and `CsvExport` is why.** It exists, it is correct, it has a suite of its own - and it has no production caller anywhere. These reports return rows with declared columns that it could consume, and nothing wires them together. That is the same shape as the three worst defects found in this repository on 2026-11-18, so it is left open rather than ticked on the strength of a class that is never reached.
 
 ### PF-189 · Universal drill-down
 `Reporting` · **5 pts** · depends: PF-188 · standards: — · `risk:high` `type:a11y`
 
 The structural promise: if a number cannot be explained, it is a bug.
 
-- [ ] Every figure on every report drills to its journal lines, then to the source document, then to the user who created and posted it
-- [ ] The path is the same mechanism everywhere - one drill-down service, not a per-report implementation
-- [ ] Permissions are respected at every level: a user who cannot see a document sees that a line exists and that they lack access, rather than a blank
+- [x] Every figure on every report drills to its journal lines, then to the source document, then to the user who created and posted it
+  - A figure drills to lines that **come to it**, and the bite is the one a paginated implementation makes: totalling only the first page of lines. The reconciliation says so when they do not agree, and a presentation sign is not reported as a difference - a credit shown positive on a statement is not a discrepancy, and reporting it as one would make the check cry wolf on every equity line.
+- [x] The path is the same mechanism everywhere - one drill-down service, not a per-report implementation
+  - It extends `TrialBalance::drillDown()` rather than sitting beside it, which meant widening that method to take a **set** of account codes - a statement line is a set, not one account. A second query here would have been a second definition of which lines are in a balance, and the two would have disagreed the first time somebody reclassified an account. A check asserts the drill-down and the statement agree on which accounts a line covers.
+- [x] Permissions are respected at every level: a user who cannot see a document sees that a line exists and that they lack access, rather than a blank
+  - Withheld, not blanked, and the distinction is the criterion: a blank reads as "nobody" and a withheld field reads as "not for you". A drill-down with nobody signed in is **refused** rather than treated as unrestricted, and a salary document demands payroll's own permission, which `report.view` is not - a drill-down that itemised a payroll run would publish every salary to anybody who can read a report.
+  - An entry from another entity is refused **identically**, and that check was one of three that were hollow on their first bite: removing the guard made the code dereference a null, something threw, and the check only asked whether something threw. It now asserts the class is `ReportRefused` and that the sentence names what was not found.
 - [ ] Keyboard-operable, with focus management on each level and a breadcrumb back
-- [ ] A test asserts drill-down from a cash-flow line all the way to an invoice line
-
-### PF-190 · AR and AP aging
-`Reporting` · **5 pts** · depends: PF-168, PF-144 · standards: IFRS 9
-
-- [ ] Configurable buckets and a configurable basis - due date or document date - **stated on the report**, because the two give different answers and a report that does not say which is unusable
-- [ ] Instalment terms split across buckets by each due date, not aged from the last one
-- [ ] Credit balances and unapplied cash shown as negative buckets rather than netted away
-- [ ] DSO and DPO, with the formula stated
-- [ ] **Reconciles to the AR and AP control accounts**, and the report declares the reconciliation rather than leaving it to be discovered
+  - **Not done, and not startable yet.** This is the one criterion here about a screen rather than a service, and there is no drill-down screen: the services return the three levels and nothing renders them. The grid's keyboard model (PF-206) is the thing it will be built on. Nothing to tick and nothing worth sketching.
+- [x] A test asserts drill-down from a cash-flow line all the way to an invoice line
+  - End to end, and bitten by stopping the document level at the header - which is the version that looks right in a demo and is useless to the person asking what the figure is made of.
+  - A fourth gap the sweep exposed had **no check at all**: dropping a figure's lower date bound changed nothing, because every check used either a balance figure or a window that contained every posting. A movement is now explained by its period's lines and not by a balance's, with two postings and a window holding one.
 
 ### PF-191 · Bank reconciliation reporting
 `Reporting` · **3 pts** · depends: PF-165 · standards: —
