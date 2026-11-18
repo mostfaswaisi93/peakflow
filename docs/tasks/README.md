@@ -43,14 +43,14 @@ A criterion is ticked only when something in `bin/verify` fails if the behaviour
 | [06](phase-06-einvoicing.md) | 6 / 20 | 101 | 43 |
 | [07](phase-07-purchasing.md) | 8 / 15 | 152 | 7 |
 | [08](phase-08-banking.md) | 21 / 21 | 124 | 0 |
-| [09](phase-09-settlement.md) | 14 / 16 | 72 | 8 |
+| [09](phase-09-settlement.md) | 15 / 16 | 76 | 4 |
 | [10](phase-10-reporting.md) | 0 / 17 | 0 | 76 |
 | [11](phase-11-design-system.md) | 1 / 20 | 5 | 97 |
 | [12](phase-12-api-exchange.md) | 0 / 14 | 0 | 64 |
 | [13](phase-13-hardening.md) | 0 / 16 | 0 | 73 |
 | [14](phase-14-operations.md) | 10 / 11 | 53 | 1 |
 | [15](phase-15-verticals.md) | 0 / 8 | 0 | 36 |
-| **all** | **148 / 267** | **1254** | **447** |
+| **all** | **149 / 267** | **1258** | **443** |
 
 Phases 00 to 09 are the ones that have been worked, and Phase 08 is closed. An open criterion in a worked phase is one that depends on a later phase and says so in its own task file, with the task that brings it - never one that was skipped.
 

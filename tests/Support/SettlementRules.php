@@ -12,6 +12,7 @@ use App\Tenant\Ledger\Models\AccountRole;
 use App\Tenant\Settlement\Enums\PaymentDirection;
 use App\Tenant\Settlement\Enums\PaymentMethod;
 use App\Tenant\Settlement\Services\Allocations;
+use App\Tenant\Settlement\Services\DuplicatePaymentDetector;
 use App\Tenant\Settlement\Services\PaymentRuns;
 use App\Tenant\Settlement\Services\Payments;
 use App\Tenant\Settlement\Services\Refunds;
@@ -22,6 +23,7 @@ use App\Tenant\Settlement\Services\WriteOffs;
 use Brick\Math\BigDecimal;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 /**
  * Payments, unapplied cash and allocations - PF-166, PF-167, PF-168.
@@ -199,6 +201,14 @@ final class SettlementRules
                 'the screen answers before the button is pressed' => fn (): array => $this->theScreenAsksFirst(),
 
                 // ---- The property that matters -------------------------
+                // ---- Duplicate payments - PF-180 -----------------------
+                'a second run paying the same party the same amount is flagged' => fn (): array => $this->duplicatesInTheWindow(),
+                'and so is one in ANOTHER entity of the tenant' => fn (): array => $this->duplicatesAcrossEntities(),
+                'and one that has already gone out' => fn (): array => $this->duplicatesAgainstPayments(),
+                'a run with an unaccepted warning cannot be released' => fn (): array => $this->warningsBlockRelease(),
+                'accepting one needs a name and a sentence, once' => fn (): array => $this->acceptanceIsAttributable(),
+                'outside the window, nothing is flagged' => fn (): array => $this->theWindowBounds(),
+
                 'for any sequence, the balance and the control agree' => fn (): array => $this->theProperty(),
             ]));
         } finally {
@@ -5741,7 +5751,576 @@ final class SettlementRules
         return $failures;
     }
 
+    // ---- Duplicate payments - PF-180 --------------------------------------
+
+    /** @return list<string> */
+    private function duplicatesInTheWindow(): array
+    {
+        $supplier = $this->aPayableSupplier();
+
+        /*
+         | Two bills, two runs, the same amount, four days apart.
+         |
+         | Which is the ordinary duplicate: the same invoice entered
+         | twice, a week apart, by two people who each paid it.
+         */
+        $this->anApprovedBill($supplier, '4200.0000', '2026-05-18');
+        $first = $this->aRunOn('2026-05-18');
+
+        $this->anApprovedBill($supplier, '4200.0000', '2026-05-22');
+        $second = $this->aRunOn('2026-05-22');
+
+        $warnings = app(DuplicatePaymentDetector::class)->unacknowledged($second['id']);
+        $failures = [];
+
+        if ($warnings === []) {
+            return ['two runs paying one supplier 4,200 four days apart raised nothing - the same '.
+                'invoice entered twice is the ordinary duplicate'];
+        }
+
+        $warning = $warnings[0];
+
+        if (($warning['days_apart'] ?? null) !== 4) {
+            $failures[] = sprintf('the warning says %s days apart rather than 4', (string) ($warning['days_apart'] ?? '-'));
+        }
+
+        if (! str_contains((string) $warning['detail'], (string) $first['number'])) {
+            $failures[] = 'the warning does not name the other run, so somebody has to go and find it: '.
+                (string) $warning['detail'];
+        }
+
+        /*
+         | And it says what it might innocently be.
+         |
+         | A warning that only says "duplicate" is one somebody dismisses
+         | without thinking, because most of them are retainers.
+         */
+        if (! str_contains((string) $warning['detail'], 'retainer')) {
+            $failures[] = 'the warning does not say what it might innocently be, so it reads as an '.
+                'accusation and gets dismissed';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function duplicatesAcrossEntities(): array
+    {
+        $supplier = $this->aPayableSupplier();
+
+        $this->anApprovedBill($supplier, '7300.0000', '2026-05-18');
+        $ours = $this->aRunOn('2026-05-18');
+
+        /*
+         | A second entity of the same tenant, paying the same supplier
+         | the same amount.
+         |
+         | THE case this task exists for. A group shares suppliers, the
+         | same invoice reaches two of them, and neither run looks wrong
+         | from inside its own entity - both bank accounts reconcile
+         | perfectly and the supplier says nothing.
+         |
+         | Every other query in this product is scoped to one entity by
+         | row policy. This one cannot be, which is why the scan is a
+         | definer function.
+         */
+        $other = \App\Tenant\Tenancy\Models\Entity::create([
+            'code' => 'DUP'.Str::upper(Str::random(5)),
+            'legal_name' => 'A second company in the same group',
+            'country' => 'SA',
+            'functional_currency' => 'SAR',
+            'active' => true,
+        ]);
+
+        $context = app(\App\Tenant\Tenancy\Services\EntityContext::class);
+        $failures = [];
+
+        /*
+         | Written from the OTHER entity's context, because the row
+         | policy refuses it otherwise.
+         |
+         | Which is the policy doing its job: the fixture's first draft
+         | inserted from this entity and was refused, and that refusal is
+         | the same one that makes the definer function necessary. A
+         | check that worked round it with the owner's credentials would
+         | be standing on a state the system refuses.
+         |
+         | Written directly rather than prepared properly, because
+         | setting a second entity up far enough to prepare a run is a
+         | second fixture for the whole phase - and what is asserted
+         | here is the SCAN.
+         */
+        $theirRun = (string) Str::ulid();
+        $thisEntity = \App\Tenant\Tenancy\Models\Entity::query()->findOrFail($this->entityId);
+
+        /*
+         | In a `finally`, because an exception must not leave the
+         | session pointed at the other entity.
+         |
+         | The first draft switched, inserted and switched back in a
+         | straight line. The insert threw - a column it had not filled -
+         | and every check after it in this suite failed with "that bank
+         | account does not belong to this entity", which says nothing
+         | about what went wrong. A fixture that can leak the entity
+         | context is one whose failures are unreadable.
+         */
+        try {
+            $context->use($other);
+
+            DB::connection('tenant')->table('payment_runs')->insert([
+                'id' => $theirRun,
+                'entity_id' => (string) $other->getKey(),
+                'number' => 'RUN-OTHER-'.Str::upper(Str::random(5)),
+                'bank_account_id' => (string) $this->bank()->getKey(),
+                'currency' => 'SAR',
+                'pay_on' => '2026-05-20',
+                'state' => 'prepared',
+                'criteria' => json_encode(['horizon_days' => 0], JSON_THROW_ON_ERROR),
+                'gross_total' => '7300.0000',
+                'discount_total' => '0.0000',
+                'net_total' => '7300.0000',
+                'prepared_by' => $this->actorId(),
+                'prepared_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            DB::connection('tenant')->table('payment_run_instructions')->insert([
+                'id' => (string) Str::ulid(),
+                'entity_id' => (string) $other->getKey(),
+                'run_id' => $theirRun,
+                'party_id' => (string) $supplier->getKey(),
+                'amount' => '7300.0000',
+                'currency' => 'SAR',
+                'sequence' => 1,
+                'of' => 1,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        } finally {
+            $context->use($thisEntity);
+        }
+
+        /*
+         | And our own entity cannot SEE their run, which is the point.
+         |
+         | If it could, the detector would not need a definer function -
+         | and the row policy would not be doing its job.
+         */
+        $visible = (int) DB::connection('tenant')->table('payment_runs')
+            ->where('id', $theirRun)
+            ->count();
+
+        if ($visible !== 0) {
+            $failures[] = 'another entity\'s payment run is visible from this one, so the row policy '.
+                'is not scoping payment runs at all';
+        }
+
+        app(DuplicatePaymentDetector::class)->examine($ours['id']);
+        $warnings = app(DuplicatePaymentDetector::class)->unacknowledged($ours['id']);
+
+        $crossEntity = array_values(array_filter(
+            $warnings,
+            static fn (array $w): bool => $w['reason'] === 'same_amount_another_entity',
+        ));
+
+        if ($crossEntity === []) {
+            $failures[] = sprintf(
+                'a second entity of the same tenant is paying the same supplier the same amount and '.
+                'nothing was raised as a cross-entity duplicate - which is the one that actually gets '.
+                'paid, because neither run looks wrong from inside its own entity. Raised instead: %s',
+                json_encode(array_column($warnings, 'reason'), JSON_THROW_ON_ERROR) ?: 'nothing',
+            );
+
+            return $failures;
+        }
+
+        if (! str_contains((string) $crossEntity[0]['detail'], (string) $crossEntity[0]['other_reference'])) {
+            $failures[] = 'the cross-entity warning does not name the other run in its sentence, so '.
+                'somebody has to go and find it: '.(string) $crossEntity[0]['detail'];
+        }
+
+        if (($crossEntity[0]['other_entity'] ?? '') !== (string) $other->code) {
+            $failures[] = sprintf(
+                'the warning names %s rather than the entity that is paying - and "somebody else is '.
+                'paying this too" is useless without which',
+                (string) ($crossEntity[0]['other_entity'] ?? '-'),
+            );
+        }
+
+        /*
+         | And the projection is narrow.
+         |
+         | The definer function reads past the row policy, so what it
+         | hands back is the access decision. Anything beyond the entity
+         | code, the reference and the dates would be another entity's
+         | data arriving through a path nobody audits.
+         */
+        $row = DB::connection('tenant')->select(
+            'SELECT * FROM peakflow_similar_payments(?, ?, ?, ?, ?, ?, ?)',
+            [$this->entityId, (string) $supplier->getKey(), '7300.0000', 'SAR', '2026-05-18', 10, null],
+        );
+
+        $columns = $row === [] ? [] : array_keys((array) $row[0]);
+        $permitted = ['source', 'other_entity_code', 'other_reference', 'other_date', 'days_apart'];
+
+        if (array_diff($columns, $permitted) !== []) {
+            $failures[] = sprintf(
+                'the cross-entity scan returns %s - anything beyond %s is another entity\'s data '.
+                'arriving through a path nobody audits',
+                implode(', ', array_diff($columns, $permitted)),
+                implode(', ', $permitted),
+            );
+        }
+
+        unset($context);
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function duplicatesAgainstPayments(): array
+    {
+        $supplier = $this->aPayableSupplier();
+
+        /*
+         | A payment that has already gone out, by hand.
+         |
+         | The half a run-only check misses: the first payment was
+         | recorded a week ago, its run is archived or it was entered
+         | directly, and the second run has nothing to compare against.
+         */
+        DB::connection('tenant')->table('payments')->insert([
+            'id' => (string) Str::ulid(),
+            'entity_id' => $this->entityId,
+            'number' => 'PMT-DUP-'.Str::upper(Str::random(5)),
+            'direction' => 'disbursement',
+            /*
+             | UNCL 4461 code 30: a credit transfer.
+             |
+             | The column holds the standard's code rather than a word,
+             | which is what an e-invoice carries - and the fixture using
+             | "transfer" was refused by a varchar(4), which is the
+             | column telling the truth about its own contents.
+             */
+            'method' => '30',
+            'bank_account_id' => (string) $this->bank()->getKey(),
+            'party_id' => (string) $supplier->getKey(),
+            'amount' => '1900.0000',
+            'currency' => 'SAR',
+            'value_date' => '2026-05-15',
+            'recorded_by' => $this->actorId(),
+            'recorded_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->anApprovedBill($supplier, '1900.0000', '2026-05-18');
+        $run = $this->aRunOn('2026-05-18');
+
+        $warnings = app(DuplicatePaymentDetector::class)->unacknowledged($run['id']);
+
+        $alreadyPaid = array_values(array_filter(
+            $warnings,
+            static fn (array $w): bool => $w['reason'] === 'same_amount_already_paid',
+        ));
+
+        if ($alreadyPaid === []) {
+            return [sprintf(
+                'a payment of the same amount to the same supplier three days earlier raised nothing '.
+                '- a check that only looks at open runs misses the one that was entered by hand. '.
+                'Raised instead: %s',
+                json_encode(array_column($warnings, 'reason'), JSON_THROW_ON_ERROR) ?: 'nothing',
+            )];
+        }
+
+        $failures = str_contains((string) $alreadyPaid[0]['detail'], 'already gone out')
+            ? []
+            : ['the warning does not say that the money has already left: '.(string) $alreadyPaid[0]['detail']];
+
+        /*
+         | And a REVERSED payment is not a duplicate.
+         |
+         | A payment that was recorded and then reversed did not happen:
+         | the money came back. Counting it would warn about every
+         | correction, and a warning that fires on corrections is one
+         | people learn to accept without reading - which is how the
+         | real duplicate goes through.
+         */
+        $reversedSupplier = $this->aPayableSupplier();
+
+        DB::connection('tenant')->table('payments')->insert([
+            'id' => (string) Str::ulid(),
+            'entity_id' => $this->entityId,
+            'number' => 'PMT-REV-'.Str::upper(Str::random(5)),
+            'direction' => 'disbursement',
+            'method' => '30',
+            'bank_account_id' => (string) $this->bank()->getKey(),
+            'party_id' => (string) $reversedSupplier->getKey(),
+            'amount' => '2600.0000',
+            'currency' => 'SAR',
+            'value_date' => '2026-05-15',
+            'recorded_by' => $this->actorId(),
+            'recorded_at' => now(),
+            'reversed_at' => now(),
+            'reversed_by' => $this->secondActorId(),
+            'reversal_reason' => 'the transfer was recalled by the bank the same afternoon',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->anApprovedBill($reversedSupplier, '2600.0000', '2026-05-18');
+        $afterReversal = $this->aRunOn('2026-05-18');
+
+        $raised = app(DuplicatePaymentDetector::class)->unacknowledged($afterReversal['id']);
+
+        if ($raised !== []) {
+            $failures[] = sprintf(
+                'a payment that was reversed still counts as one that went out, so every correction '.
+                'raises a warning - and a warning that fires on corrections is one people accept '.
+                'without reading. Raised: %s',
+                json_encode(array_column($raised, 'reason'), JSON_THROW_ON_ERROR),
+            );
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function warningsBlockRelease(): array
+    {
+        $supplier = $this->aPayableSupplier();
+
+        $this->anApprovedBill($supplier, '5500.0000', '2026-05-18');
+        $this->aRunOn('2026-05-18');
+
+        $this->anApprovedBill($supplier, '5500.0000', '2026-05-20');
+        $second = $this->aRunOn('2026-05-20');
+
+        $failures = [];
+
+        $refusal = $this->refusal(fn () => app(PaymentRuns::class)->release(
+            $second['id'],
+            $this->secondActorId(),
+        ));
+
+        if ($refusal === null) {
+            return ['a run with an unaccepted duplicate warning was released - a warning that did not '.
+                'block would be read after the supplier was paid twice'];
+        }
+
+        /*
+         | And the refusal LISTS what was found.
+         |
+         | "Three warnings" sends somebody to a screen. The sentence that
+         | names the other run, the amount and the days apart is one they
+         | can act on without leaving the error.
+         */
+        if (! str_contains($refusal, 'day(s) apart')) {
+            $failures[] = 'the refusal counts the warnings rather than saying what they are: '.$refusal;
+        }
+
+        /*
+         | And accepting them lets it through.
+         |
+         | Blocked-and-unblockable would be worked around by changing an
+         | amount by a penny, and then nothing is checked at all.
+         */
+        foreach (app(DuplicatePaymentDetector::class)->unacknowledged($second['id']) as $warning) {
+            app(DuplicatePaymentDetector::class)->acknowledge(
+                (string) $warning['id'],
+                'this is the monthly retainer, not the invoice we paid on the 18th',
+                $this->secondActorId(),
+            );
+        }
+
+        if (app(DuplicatePaymentDetector::class)->unacknowledged($second['id']) !== []) {
+            $failures[] = 'accepting every warning left some unaccepted';
+        }
+
+        /*
+         | And re-examining does NOT ask again.
+         |
+         | `release()` looks a second time, because the world moves
+         | between preparing a run and releasing it. An examination that
+         | cleared accepted warnings would ask the same person the same
+         | question twice - which loses the signature they already gave
+         | and trains them to click through.
+         */
+        $accepted = (int) DB::connection('tenant')->table('payment_duplicate_warnings')
+            ->where('run_id', $second['id'])
+            ->whereNotNull('acknowledged_at')
+            ->count();
+
+        app(DuplicatePaymentDetector::class)->examine($second['id']);
+
+        $afterwards = (int) DB::connection('tenant')->table('payment_duplicate_warnings')
+            ->where('run_id', $second['id'])
+            ->whereNotNull('acknowledged_at')
+            ->count();
+
+        if ($afterwards !== $accepted || $accepted === 0) {
+            $failures[] = sprintf(
+                're-examining the run left %d accepted warning(s) of %d - an examination that clears '.
+                'them asks the same person the same question twice, loses the signature they gave and '.
+                'trains them to click through',
+                $afterwards,
+                $accepted,
+            );
+        }
+
+        if (app(DuplicatePaymentDetector::class)->unacknowledged($second['id']) !== []) {
+            $failures[] = 're-examining raised the accepted warnings again as new ones';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function acceptanceIsAttributable(): array
+    {
+        $supplier = $this->aPayableSupplier();
+
+        $this->anApprovedBill($supplier, '3100.0000', '2026-05-18');
+        $this->aRunOn('2026-05-18');
+
+        $this->anApprovedBill($supplier, '3100.0000', '2026-05-19');
+        $second = $this->aRunOn('2026-05-19');
+
+        $warning = app(DuplicatePaymentDetector::class)->unacknowledged($second['id'])[0] ?? null;
+
+        if ($warning === null) {
+            return ['the fixture raised no warning, so this check is not testing what it claims'];
+        }
+
+        $detector = app(DuplicatePaymentDetector::class);
+        $failures = [];
+
+        $thin = $this->refusal(fn () => $detector->acknowledge((string) $warning['id'], 'checked', $this->secondActorId()));
+
+        if ($thin === null) {
+            $failures[] = 'a duplicate warning was accepted with "checked" - it is what an '.
+                'investigation reads six months later when the supplier has been paid twice';
+        } elseif (! str_contains($thin, 'six months later')) {
+            /*
+             | And the sentence is the service's, not the column's.
+             |
+             | The constraint refuses a short acknowledgement too, which
+             | is the control - but "violates check constraint
+             | payment_duplicate_warnings_acknowledgement_is_attributable"
+             | is read by somebody about to release a payment run.
+             */
+            $failures[] = 'a thin acknowledgement is refused by the column rather than explained by '.
+                'the service: '.$thin;
+        }
+
+        $detector->acknowledge(
+            (string) $warning['id'],
+            'this is the monthly retainer, not the invoice we paid on the 18th',
+            $this->secondActorId(),
+        );
+
+        $row = DB::connection('tenant')->table('payment_duplicate_warnings')
+            ->where('id', (string) $warning['id'])
+            ->first();
+
+        if (($row->acknowledged_by ?? null) !== $this->secondActorId()) {
+            $failures[] = 'the acceptance does not name who made it';
+        }
+
+        /*
+         | And it cannot be accepted twice.
+         |
+         | Replacing the name against a payment that may already have
+         | gone out is how an investigation finds the wrong person.
+         */
+        $again = $this->refusal(fn () => $detector->acknowledge(
+            (string) $warning['id'],
+            'on reflection it was a duplicate after all',
+            $this->actorId(),
+        ));
+
+        if ($again === null) {
+            $failures[] = 'a warning was accepted twice, so the name against a payment that already '.
+                'went out can be replaced';
+        } elseif (! str_contains($again, 'may already have gone out')) {
+            $failures[] = 'a second acceptance is refused by the trigger rather than explained by the '.
+                'service: '.$again;
+        }
+
+        $direct = $this->refusal(fn () => DB::connection('tenant')->table('payment_duplicate_warnings')
+            ->where('id', (string) $warning['id'])
+            ->update(['acknowledged_by' => $this->actorId()]));
+
+        if ($direct === null) {
+            $failures[] = 'the database lets an acceptance be rewritten, so the signature against a '.
+                'payment is not evidence of anything';
+        }
+
+        /*
+         | And the acceptance is in the audit trail.
+         */
+        $recorded = DB::connection('tenant')->table('audit_log')
+            ->where('action', 'duplicate_payment.accepted')
+            ->where('subject_id', (string) $warning['id'])
+            ->first();
+
+        if ($recorded === null) {
+            $failures[] = 'accepting a duplicate warning is not in the audit trail, so the only record '.
+                'of who took the risk is a column somebody can repair';
+        }
+
+        return $failures;
+    }
+
+    /** @return list<string> */
+    private function theWindowBounds(): array
+    {
+        $supplier = $this->aPayableSupplier();
+
+        /*
+         | The same amount, well outside the ten-day window.
+         |
+         | A window of sixty days would warn about every monthly
+         | retainer, and a warning that fires every time is a warning
+         | nobody reads. So this has to NOT fire - a check that only
+         | proved detection would pass with a detector that flags
+         | everything.
+         */
+        $this->anApprovedBill($supplier, '8800.0000', '2026-03-01');
+        $this->aRunOn('2026-03-01');
+
+        $this->anApprovedBill($supplier, '8800.0000', '2026-05-18');
+        $later = $this->aRunOn('2026-05-18');
+
+        $warnings = app(DuplicatePaymentDetector::class)->unacknowledged($later['id']);
+
+        return $warnings === []
+            ? []
+            : [sprintf(
+                'two payments 78 days apart raised %d warning(s) against a %d-day window - a detector '.
+                'that flags every monthly retainer is one nobody reads',
+                \count($warnings),
+                (int) config('settlement.duplicate_window_days'),
+            )];
+    }
+
     // ---- Helpers ----------------------------------------------------------
+
+    /**
+     * A prepared run on a date, from whatever is payable.
+     *
+     * @return array<string, mixed>
+     */
+    private function aRunOn(string $payOn): array
+    {
+        return app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse($payOn),
+            userId: $this->actorId(),
+        );
+    }
     /**
      * Sign a user in, or sign out when there was nobody.
      *

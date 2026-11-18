@@ -139,13 +139,62 @@ The single highest-consequence control in the product.
 - [x] **Found while checking this task:** PF-174's freeze on a released run's lines blocked the columns that record what the bank said - so a released instruction could never learn its own outcome and the in-transit position could never close. The trigger now names the columns that define the payment and freezes those, letting the facts *about* it still be recorded: the same distinction `payment_files` already drew between its bytes and its download
 - [x] **And:** the posting is dated on the pay date, which means a run whose pay date falls in a period nobody has opened cannot be released. That refusal is correct rather than inconvenient, and it names the period
 
-### PF-180 · Duplicate payment detection
+### PF-180 · Duplicate payment detection — done
 `Settlement` · **3 pts** · depends: PF-174, PF-139 · standards: — · `risk:high`
 
-- [ ] Before release: same beneficiary, same amount, within a configurable window, across **all** runs and all entities of the tenant
-- [ ] Also checks against already-released and already-reconciled payments, not only against open runs
-- [ ] A warning requires an explicit, recorded acknowledgement naming the person who accepted the risk
-- [ ] A test constructs the exact duplicate scenario across two runs and two entities and asserts detection
+- [x] Before release: same beneficiary, same amount, within a configurable window, across **all** runs and all entities of the tenant
+- [x] Also checks against already-released and already-reconciled payments, not only against open runs
+- [x] A warning requires an explicit, recorded acknowledgement naming the person who accepted the risk
+- [x] A test constructs the exact duplicate scenario across two runs and two entities and asserts detection
+
+`payment_duplicate_warnings`, `peakflow_similar_payments()` ·
+`App\Tenant\Settlement\Services\DuplicatePaymentDetector` ·
+`bin/verify settlement`
+
+**The duplicate that gets paid is in another entity.** A group shares
+suppliers, the same invoice reaches two companies, each pays it, and
+neither run looks wrong from inside its own entity — both bank accounts
+reconcile perfectly and the supplier says nothing. Every other query in
+this product is scoped to one entity by row policy, deliberately; this
+one cannot be.
+
+So the scan is a `SECURITY DEFINER` function, and a narrow one. It
+returns the entity code, the run reference, the date and the days apart
+— nothing else. The alternative, clearing the entity setting in
+application code, hands the caller everything through a path that is one
+refactor from being reused; a function with a fixed projection cannot
+be. A check asserts the projection has not grown.
+
+**A warning blocks the release and is accepted by a person, with a
+sentence.** Not refused outright: businesses really do pay the same
+amount to the same supplier twice in a week — a retainer, two identical
+deliveries — and a product that refused would be worked around by
+changing an amount by a penny, after which nothing is checked at all.
+
+Four defects, all found by the bite sweep rather than reasoned about:
+
+- **The function compared the wrong two columns.** `pr.entity_id <>
+  i.entity_id` compares the found run's entity against the found
+  instruction's, and those agree by construction — so a sister
+  company's run came back labelled as one of our own and the whole
+  cross-entity value was lost. The asking entity is a parameter now.
+- **Re-examining raised accepted warnings again.** `release()` looks a
+  second time, the re-scan found the same pair and inserted a fresh
+  unacknowledged warning beside the accepted one, and the run could
+  never be released — every look added one. Matching is on the finding
+  now, not the row.
+- **The migration file was edited and never applied**, so the function
+  under test was not the one in the file. Found when a payments-branch
+  check failed against a clause that was already correct on disk.
+- **The two-entity fixture leaked the entity context.** It switched,
+  the insert threw on a column it had not filled, and the switch back
+  never ran — so every later check failed with "that bank account does
+  not belong to this entity", which says nothing about what went wrong.
+
+The SQL-level behaviours — draft runs excluded, reversed payments
+excluded, the asking entity compared — are bitten by rewriting the
+stored function and re-applying it, because biting the service file
+cannot reach them.
 
 ### PF-181 · Statements and open items
 `Settlement` · **3 pts** · depends: PF-168 · standards: —

@@ -64,6 +64,7 @@ final class PaymentRuns
         private readonly SodEngine $sod,
         private readonly ReleaseReview $review,
         private readonly RequiresStepUp $stepUp,
+        private readonly DuplicatePaymentDetector $duplicates,
         private readonly \App\Tenant\Ledger\Services\Poster $poster,
     ) {}
 
@@ -318,6 +319,20 @@ final class PaymentRuns
                 entityId: $entityId,
             );
 
+            /*
+             | Duplicates, raised NOW as well as at release - PF-180.
+             |
+             | Somebody has to be able to act on a warning before the
+             | day the money leaves: finding out at release that a
+             | sister company is paying the same invoice means either
+             | releasing late or accepting it under time pressure, and
+             | the second is what happens.
+             |
+             | `release()` looks again, because the world moves in
+             | between - and that look is the one that blocks.
+             */
+            $this->duplicates->examine($runId);
+
             return [
                 'id' => $runId,
                 'number' => $number,
@@ -422,6 +437,29 @@ final class PaymentRuns
                 (string) $run->number,
                 (string) $prepared->created_at,
             ));
+        }
+
+        /*
+         | Duplicates, re-examined NOW - PF-180.
+         |
+         | Not at preparation only. The world moves between preparing a
+         | run and releasing it: another entity prepares its own run,
+         | somebody records a payment by hand, a second copy of the same
+         | invoice is entered. The look that matters is the last one
+         | before the money leaves.
+         |
+         | Warnings somebody already accepted survive the re-examination,
+         | because they signed for those - asking again would lose the
+         | signature and train people to click through.
+         */
+        $this->duplicates->examine($runId);
+        $unacknowledged = $this->duplicates->unacknowledged($runId);
+
+        if ($unacknowledged !== []) {
+            throw PaymentRefused::aRunWithUnacceptedDuplicates(
+                (string) $run->number,
+                array_map(static fn (array $w): string => (string) $w['detail'], $unacknowledged),
+            );
         }
 
         /*

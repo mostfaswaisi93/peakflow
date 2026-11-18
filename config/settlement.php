@@ -228,6 +228,30 @@ return [
 
     /*
     |---------------------------------------------------------------------------
+    | How far apart two payments can be and still look like one
+    |---------------------------------------------------------------------------
+    |
+    | PF-180. Same party, same amount, within this many days - in this entity
+    | or any other of the tenant - raises a warning somebody has to accept.
+    |
+    | Ten days, which is the shape of the failure rather than a guess about
+    | invoice cycles: the duplicate that gets paid is the one where the same
+    | invoice reached two people in the same fortnight. A window of two days
+    | misses the one that arrives on a Friday and is paid the following
+    | Tuesday; a window of sixty warns about every monthly retainer, and a
+    | warning that fires every time is a warning nobody reads.
+    |
+    | It is configurable because the right number depends on how often a
+    | business pays - a weekly run and a daily one are not the same - and
+    | because a business that finds the warnings noisy will otherwise turn the
+    | check off entirely.
+    |
+    */
+
+    'duplicate_window_days' => 10,
+
+    /*
+    |---------------------------------------------------------------------------
     | The default scheme for an account that declares none
     |---------------------------------------------------------------------------
     |
