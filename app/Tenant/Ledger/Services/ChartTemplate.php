@@ -139,6 +139,7 @@ final class ChartTemplate
                      | comment in the migration says what it is for.
                      */
                     'statement_line' => $account->statementLine?->value,
+                    'expense_nature' => $account->expenseNature?->value,
                     'postable' => $account->postable,
                     'monetary' => $account->monetary,
                 ]);

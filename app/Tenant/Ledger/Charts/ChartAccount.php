@@ -7,6 +7,7 @@ namespace App\Tenant\Ledger\Charts;
 use App\Tenant\Ledger\Charts\Exceptions\InvalidChartTemplate;
 use App\Tenant\Ledger\Enums\AccountType;
 use App\Tenant\Ledger\Enums\ControlRole;
+use App\Tenant\Ledger\Enums\ExpenseNature;
 use App\Tenant\Ledger\Enums\StatementLine;
 
 /**
@@ -38,6 +39,7 @@ final readonly class ChartAccount
         public ?ControlRole $role,
         public bool $monetary,
         public ?StatementLine $statementLine,
+        public ?ExpenseNature $expenseNature,
         public ?string $note,
     ) {}
 
@@ -178,6 +180,61 @@ final readonly class ChartAccount
             );
         }
 
+        /*
+         | The nature, required of a postable EXPENSE account - PF-185.
+         |
+         | IAS 1.104 is the reason this is not optional. An entity that
+         | presents its expenses by function must also disclose them by
+         | nature, so a product that carries only the functional
+         | classification cannot produce a compliant set of statements at
+         | all - and the gap would be found at the first audit rather than
+         | here.
+         |
+         | The two axes are independent and neither can be derived from the
+         | other: a production supervisor's salary is `employee_benefits`
+         | by nature and `cost_of_sales` by function, and a bookkeeper's is
+         | the same nature under `administrative_expenses`.
+         */
+        $expenseNature = null;
+
+        if (($row['expense_nature'] ?? null) !== null) {
+            $expenseNature = ExpenseNature::tryFrom((string) $row['expense_nature']);
+
+            if ($expenseNature === null) {
+                throw InvalidChartTemplate::because(
+                    $template,
+                    sprintf(
+                        'account %s claims the expense nature "%s", which is not one of IAS 1.102\'s',
+                        $code,
+                        (string) $row['expense_nature'],
+                    ),
+                );
+            }
+
+            if ($type !== AccountType::Expense) {
+                throw InvalidChartTemplate::because(
+                    $template,
+                    sprintf(
+                        'account %s is of type "%s" and claims an expense nature. IAS 1.102 analyses '.
+                        'EXPENSES; a nature on anything else is a classification nothing reads, and the '.
+                        'next person to add one would reasonably expect it to change something',
+                        $code,
+                        $type->value,
+                    ),
+                );
+            }
+        } elseif ($row['postable'] === true && $type === AccountType::Expense) {
+            throw InvalidChartTemplate::because(
+                $template,
+                sprintf(
+                    'expense account %s names no nature, so the by-nature analysis IAS 1.104 requires '.
+                    'cannot be produced. It cannot be inferred from the function: salaries are employee '.
+                    'benefits whether they sit in cost of sales or in administrative expenses',
+                    $code,
+                ),
+            );
+        }
+
         if ($role !== null && $row['postable'] !== true) {
             throw InvalidChartTemplate::because(
                 $template,
@@ -201,6 +258,7 @@ final readonly class ChartAccount
             role: $role,
             monetary: (bool) $row['monetary'],
             statementLine: $statementLine,
+            expenseNature: $expenseNature,
             note: ($row['note'] ?? null) === null ? null : (string) $row['note'],
         );
     }

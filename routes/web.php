@@ -9,12 +9,14 @@ use App\Tenant\Banking\Http\Controllers\StatementImportController;
 use App\Tenant\Identity\Http\Controllers\EntitySwitchController;
 use App\Tenant\Identity\Http\Controllers\ThemePreferenceController;
 use App\Tenant\Banking\Http\Controllers\BankAccountListController;
+use App\Tenant\Catalog\Http\Controllers\CurrencyListController;
 use App\Tenant\Catalog\Http\Controllers\ItemListController;
 use App\Tenant\Ledger\Http\Controllers\AccountListController;
 use App\Tenant\Parties\Http\Controllers\PartyDetailController;
 use App\Tenant\Parties\Http\Controllers\PartyListController;
 use App\Tenant\Purchasing\Http\Controllers\BillDetailController;
 use App\Tenant\Purchasing\Http\Controllers\BillListController;
+use App\Tenant\Reporting\Http\Controllers\FinancialPositionController;
 use App\Tenant\Reporting\Http\Controllers\OverviewController;
 use App\Tenant\Reporting\Http\Controllers\TrialBalanceController;
 use App\Tenant\Sales\Http\Controllers\InvoiceDetailController;
@@ -219,11 +221,15 @@ Route::middleware(['tenant.session', 'auth', 'entity.scope'])->group(static func
         ->middleware('can:party.manage')->name('parties.show');
     Route::get('/masters/items', ItemListController::class)
         ->middleware('can:item.manage')->name('items.index');
+    Route::get('/masters/currencies', CurrencyListController::class)
+        ->middleware('can:report.view')->name('currencies.index');
 
     Route::get('/ledger/trial-balance', TrialBalanceController::class)
         ->middleware('can:report.view')->name('trial-balance.index');
     Route::get('/ledger/accounts', AccountListController::class)
         ->middleware('can:account.manage')->name('accounts.index');
+    Route::get('/ledger/financial-position', FinancialPositionController::class)
+        ->middleware('can:report.view')->name('financial-position.index');
 
     Route::get('/banking/accounts', BankAccountListController::class)
         ->middleware('can:bank.manage')->name('bank-accounts.index');

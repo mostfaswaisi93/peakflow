@@ -8,13 +8,61 @@ The rule this phase is written around: **a report is never a second opinion abou
 
 ---
 
-### PF-185 · Statement of Profit or Loss and OCI
+### PF-185 · Statement of Profit or Loss and OCI — mostly done
 `Reporting` · **5 pts** · depends: PF-184 · standards: IAS 1 · `type:compliance`
 
-- [ ] By nature and by function, comparative, with OCI presented separately
-- [ ] Translation differences from consolidation land in OCI, not in profit or loss (`PF-194`)
-- [ ] Gross margin, operating result and net result as derived subtotals defined by the classification, not hard-coded
+- [x] By nature and by function, comparative, with OCI presented separately
+- [x] Translation differences land in OCI, not in profit or loss — the reserve account and the presentation exist; consolidation fills it (`PF-194`)
+- [x] Gross margin, operating result and net result as derived subtotals defined by the classification, not hard-coded
 - [ ] Drill-down to account, then to journal line, then to source document
+
+`App\Tenant\Reporting\Services\StatementOfProfitOrLoss` ·
+`App\Tenant\Ledger\Enums\{ExpenseNature,ProfitOrLossBand}` ·
+`bin/verify reporting`
+
+**Two analyses, because IAS 1.104 requires both.** 1.99 lets an entity
+present expenses by nature or by function; 1.104 says one presenting by
+function must *also* disclose them by nature. So this is not a preference: a
+product carrying only `statement_line` cannot produce a compliant set of
+statements, and the gap surfaces at an audit rather than in the code.
+
+Neither axis follows from the other. A production supervisor's salary is
+`employee_benefits` by nature and `cost_of_sales` by function; a
+bookkeeper's is the same nature under `administrative_expenses`. The two
+agree only in their total — which is asserted, because two analyses of one
+set of expenses reaching different totals is the clearest evidence available
+that an account is classified wrong on one axis.
+
+**The subtotals are band boundaries, not formulas.** Writing gross margin as
+`revenue - cost_of_sales` would be a second definition of the statement's
+shape, and the first line added to the wrong side of it produces a subtotal
+that is wrong and a total that is right — the hardest arithmetic error to
+see, because the bottom still agrees with the ledger.
+
+**Every line is presented as its contribution to the result**, income and
+expense alike, so each subtotal is a plain sum. The first version applied
+the section's presentation sign, which is right for the statement of
+financial position — where a liability is shown positive under a heading
+that says "Liabilities" — and wrong here, where everything is added into one
+number.
+
+Three of the eight bites found a hollow check rather than a defect, and all
+three were the fixture's fault. The by-nature total was negated twice and
+the comparison passed, because the fixture's bill equalled its invoice and
+the result was exactly zero — which no sign error changes. The movement
+check issued two invoices and asserted the result moved, which a product
+reading closing *balances* passes just as happily; it now reports on a
+window that opens after the posting, where the movement is nil and the
+balance is not. And the OCI check asserted only the order of the bands,
+which proved nothing until there was an account OCI could reach: the
+translation reserve exists now, and the check posts to it through the real
+import path and asserts the two totals differ by exactly that amount.
+
+Posting it also found two guards working. A bill is entered as a draft and
+reaches the ledger only when posted, so the first fixture produced a
+statement with an empty expense side; and a manual entry to a control
+account is refused, because a control account's balance is the total of a
+subledger and a manual posting makes the two disagree.
 
 ### PF-186 · Statement of Cash Flows
 `Reporting` · **8 pts** · depends: PF-185 · standards: IAS 7 · `risk:high` `type:compliance`

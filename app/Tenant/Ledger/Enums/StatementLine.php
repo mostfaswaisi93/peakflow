@@ -83,12 +83,31 @@ enum StatementLine: string
     case FinanceCosts = 'finance_costs';
     case IncomeTaxExpense = 'income_tax_expense';
 
+    // ---- Other comprehensive income (IAS 1.82A, 1.7) -------------------
+
+    /**
+     * Items that MAY later be reclassified into profit or loss.
+     *
+     * IAS 1.82A splits other comprehensive income by this, and the split
+     * is not presentational: an item in the first group will one day move
+     * into profit and an item in the second never will. Presenting them
+     * together tells the reader that every one of them is still to come.
+     */
+    case ForeignOperationTranslation = 'foreign_operation_translation';
+    case CashFlowHedgeReserve = 'cash_flow_hedge_reserve';
+
+    /** Items that will NEVER be reclassified into profit or loss. */
+    case RevaluationSurplus = 'revaluation_surplus';
+    case DefinedBenefitRemeasurement = 'defined_benefit_remeasurement';
+
     public function statement(): FinancialStatement
     {
         return match ($this->section()) {
             StatementSection::Assets, StatementSection::Liabilities, StatementSection::Equity
                 => FinancialStatement::FinancialPosition,
-            StatementSection::Income, StatementSection::Expenses
+            StatementSection::Income,
+            StatementSection::Expenses,
+            StatementSection::OtherComprehensiveIncome
                 => FinancialStatement::ProfitOrLoss,
         };
     }
@@ -127,6 +146,11 @@ enum StatementLine: string
             self::OtherExpenses,
             self::FinanceCosts,
             self::IncomeTaxExpense => StatementSection::Expenses,
+
+            self::ForeignOperationTranslation,
+            self::CashFlowHedgeReserve,
+            self::RevaluationSurplus,
+            self::DefinedBenefitRemeasurement => StatementSection::OtherComprehensiveIncome,
         };
     }
 
@@ -173,6 +197,67 @@ enum StatementLine: string
             StatementSection::Equity => [AccountType::Equity],
             StatementSection::Income => [AccountType::Revenue],
             StatementSection::Expenses => [AccountType::Expense],
+
+            /*
+             | OCI accumulates in EQUITY - IAS 21.39(c).
+             |
+             | A translation difference is not revenue and is not an
+             | expense; it goes to a separate component of equity and
+             | stays there until the foreign operation is disposed of.
+             | Allowing a revenue account onto an OCI line would put the
+             | difference through profit, which is the single error IAS
+             | 21.39 exists to prevent.
+             */
+            StatementSection::OtherComprehensiveIncome => [AccountType::Equity],
+        };
+    }
+
+    /**
+     * Which band of the statement of profit or loss this line sits in.
+     *
+     * The subtotals are the running totals at the band boundaries, so
+     * adding a line puts it in a band and nothing else changes. A line on
+     * the statement of financial position has no band, and asking for one
+     * is a question about the wrong statement.
+     */
+    public function band(): ?ProfitOrLossBand
+    {
+        return match ($this) {
+            self::Revenue, self::CostOfSales => ProfitOrLossBand::Gross,
+
+            self::OtherIncome,
+            self::DistributionCosts,
+            self::AdministrativeExpenses,
+            self::ImpairmentLosses,
+            self::OtherExpenses => ProfitOrLossBand::Operating,
+
+            self::FinanceCosts => ProfitOrLossBand::Financing,
+
+            self::IncomeTaxExpense => ProfitOrLossBand::Tax,
+
+            self::ForeignOperationTranslation,
+            self::CashFlowHedgeReserve,
+            self::RevaluationSurplus,
+            self::DefinedBenefitRemeasurement => ProfitOrLossBand::OtherComprehensiveIncome,
+
+            default => null,
+        };
+    }
+
+    /**
+     * Whether an OCI item may one day move into profit or loss - IAS 1.82A.
+     *
+     * Null for every line that is not OCI. The split is not presentational:
+     * an item in the first group will one day be recycled and an item in
+     * the second never will, and presenting them together tells the reader
+     * that all of them are still to come.
+     */
+    public function mayBeReclassified(): ?bool
+    {
+        return match ($this) {
+            self::ForeignOperationTranslation, self::CashFlowHedgeReserve => true,
+            self::RevaluationSurplus, self::DefinedBenefitRemeasurement => false,
+            default => null,
         };
     }
 
@@ -207,6 +292,10 @@ enum StatementLine: string
             self::OtherExpenses => 'IAS 1.103',
             self::FinanceCosts => 'IAS 1.82(b)',
             self::IncomeTaxExpense => 'IAS 1.82(d)',
+            self::ForeignOperationTranslation => 'IAS 21.39(c)',
+            self::CashFlowHedgeReserve => 'IFRS 9.6.5.11',
+            self::RevaluationSurplus => 'IAS 16.39',
+            self::DefinedBenefitRemeasurement => 'IAS 19.120(c)',
         };
     }
 
@@ -247,6 +336,10 @@ enum StatementLine: string
             self::OtherExpenses => 'Other expenses',
             self::FinanceCosts => 'Finance costs',
             self::IncomeTaxExpense => 'Income tax expense',
+            self::ForeignOperationTranslation => 'Exchange differences on translating foreign operations',
+            self::CashFlowHedgeReserve => 'Cash flow hedges',
+            self::RevaluationSurplus => 'Revaluation surplus',
+            self::DefinedBenefitRemeasurement => 'Remeasurements of defined benefit plans',
         };
     }
 
@@ -280,6 +373,10 @@ enum StatementLine: string
             self::OtherExpenses => 'مصروفات أخرى',
             self::FinanceCosts => 'تكاليف تمويلية',
             self::IncomeTaxExpense => 'مصروف ضريبة الدخل',
+            self::ForeignOperationTranslation => 'فروق ترجمة العمليات الأجنبية',
+            self::CashFlowHedgeReserve => 'تغطيات التدفق النقدي',
+            self::RevaluationSurplus => 'فائض إعادة التقييم',
+            self::DefinedBenefitRemeasurement => 'إعادة قياس خطط المنافع المحددة',
         };
     }
 }

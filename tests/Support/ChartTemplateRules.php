@@ -284,7 +284,7 @@ final class ChartTemplateRules
     }
 
     /**
-     * Thirteen incoherent templates, each expected to be refused.
+     * Fifteen incoherent templates, each expected to be refused.
      *
      * @return list<string>
      */
@@ -385,6 +385,26 @@ final class ChartTemplateRules
             'a group account that claims a statement line' => function (array $t): array {
                 $t['accounts'][] = $this->account(
                     '1.2', '1', 'asset', false, false, null, 'other_current_assets',
+                );
+
+                return $t;
+            },
+            /*
+             | The two ways a nature goes wrong - PF-185.
+             |
+             | Both produce a by-nature statement that is wrong in a way the
+             | by-function one does not reveal, so both are refused at load.
+             */
+            'an expense account that names no nature' => function (array $t): array {
+                $row = $this->account('5.9', '5', 'expense', true, false);
+                unset($row['expense_nature']);
+                $t['accounts'][] = $row;
+
+                return $t;
+            },
+            'a nature on something that is not an expense' => function (array $t): array {
+                $t['accounts'][] = $this->account(
+                    '1.1.7', '1.1', 'asset', true, false, null, 'inventories', 'employee_benefits',
                 );
 
                 return $t;
@@ -910,6 +930,7 @@ final class ChartTemplateRules
         bool $monetary,
         ?string $role = null,
         ?string $statementLine = null,
+        ?string $expenseNature = null,
     ): array {
         $row = [
             'code' => $code, 'parent' => $parent, 'type' => $type,
@@ -936,6 +957,19 @@ final class ChartTemplateRules
             };
         } elseif ($statementLine !== null) {
             $row['statement_line'] = $statementLine;
+        }
+
+        /*
+         | A postable expense fixture gets a nature, for the same reason.
+         |
+         | The loader refuses one without - IAS 1.104 - and a fixture that
+         | named one per call would make every unrelated case in this file
+         | carry a classification it is not about.
+         */
+        if ($postable && $type === 'expense') {
+            $row['expense_nature'] = $expenseNature ?? 'other_expenses';
+        } elseif ($expenseNature !== null) {
+            $row['expense_nature'] = $expenseNature;
         }
 
         return $row;

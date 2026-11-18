@@ -22,6 +22,16 @@ enum StatementSection: string
 
     case Expenses = 'expenses';
 
+    /**
+     * Presented after profit for the period, and never inside it.
+     *
+     * IAS 1.82A. An item of other comprehensive income folded into profit
+     * overstates the result, and the error never unwinds: the
+     * reclassification that would have corrected it is exactly what did
+     * not happen.
+     */
+    case OtherComprehensiveIncome = 'other_comprehensive_income';
+
     public function label(?string $locale = null): string
     {
         $locale ??= app()->getLocale();
@@ -32,6 +42,9 @@ enum StatementSection: string
             self::Equity => $locale === 'ar' ? 'حقوق الملكية' : 'Equity',
             self::Income => $locale === 'ar' ? 'الإيرادات' : 'Income',
             self::Expenses => $locale === 'ar' ? 'المصروفات' : 'Expenses',
+            self::OtherComprehensiveIncome => $locale === 'ar'
+                ? 'الدخل الشامل الآخر'
+                : 'Other comprehensive income',
         };
     }
 
@@ -49,7 +62,18 @@ enum StatementSection: string
     {
         return match ($this) {
             self::Assets, self::Expenses => 1,
-            self::Liabilities, self::Equity, self::Income => -1,
+
+            /*
+             | OCI is presented at its ledger sign, like income.
+             |
+             | A gain is a credit and is shown positive; a loss is a debit
+             | and is shown in parentheses. Flipping it the other way
+             | would present a translation loss as a gain, and the
+             | statement of changes in equity - which reads the same
+             | figure - would then reconcile to a balance sheet that
+             | disagreed with it.
+             */
+            self::Liabilities, self::Equity, self::Income, self::OtherComprehensiveIncome => -1,
         };
     }
 }

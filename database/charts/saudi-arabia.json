@@ -1,6 +1,6 @@
 {
   "key": "saudi-arabia",
-  "version": 10,
+  "version": 12,
   "name_ar": "دليل حسابات للمملكة العربية السعودية",
   "name_en": "Saudi Arabia chart of accounts",
   "countries": [
@@ -413,6 +413,18 @@
       "statement_line": "retained_earnings"
     },
     {
+      "code": "3.3",
+      "parent": "3",
+      "type": "equity",
+      "name_ar": "احتياطي ترجمة العمليات الأجنبية",
+      "name_en": "Foreign operation translation reserve",
+      "postable": true,
+      "role": null,
+      "monetary": false,
+      "statement_line": "foreign_operation_translation",
+      "note": "IAS 21.39(c). Exchange differences on translating a foreign operation accumulate here and are recycled into profit or loss only on its disposal - which is why they are not revenue, and why an entity that put them through profit overstates every year until it sells."
+    },
+    {
       "code": "4",
       "parent": null,
       "type": "revenue",
@@ -474,7 +486,8 @@
       "postable": true,
       "role": "cost_of_sales",
       "monetary": false,
-      "statement_line": "cost_of_sales"
+      "statement_line": "cost_of_sales",
+      "expense_nature": "raw_materials_and_consumables"
     },
     {
       "code": "5.2",
@@ -485,7 +498,8 @@
       "postable": true,
       "role": null,
       "monetary": false,
-      "statement_line": "administrative_expenses"
+      "statement_line": "administrative_expenses",
+      "expense_nature": "other_expenses"
     },
     {
       "code": "5.3",
@@ -496,7 +510,8 @@
       "postable": true,
       "role": "fx_gain_loss",
       "monetary": false,
-      "statement_line": "other_expenses"
+      "statement_line": "other_expenses",
+      "expense_nature": "other_expenses"
     },
     {
       "code": "5.4",
@@ -507,7 +522,8 @@
       "postable": true,
       "role": "fx_revaluation",
       "monetary": false,
-      "statement_line": "other_expenses"
+      "statement_line": "other_expenses",
+      "expense_nature": "other_expenses"
     },
     {
       "code": "5.5",
@@ -518,7 +534,8 @@
       "postable": true,
       "role": "rounding_difference",
       "monetary": false,
-      "statement_line": "other_expenses"
+      "statement_line": "other_expenses",
+      "expense_nature": "other_expenses"
     },
     {
       "code": "5.6",
@@ -529,7 +546,8 @@
       "postable": true,
       "role": "bad_debt",
       "monetary": false,
-      "statement_line": "impairment_losses"
+      "statement_line": "impairment_losses",
+      "expense_nature": "impairment"
     },
     {
       "code": "5.7",
@@ -540,7 +558,8 @@
       "postable": true,
       "role": null,
       "monetary": false,
-      "statement_line": "income_tax_expense"
+      "statement_line": "income_tax_expense",
+      "expense_nature": "tax_expense"
     },
     {
       "code": "5.8",
@@ -551,7 +570,8 @@
       "postable": true,
       "role": null,
       "monetary": false,
-      "statement_line": "administrative_expenses"
+      "statement_line": "administrative_expenses",
+      "expense_nature": "employee_benefits"
     },
     {
       "code": "5.9",
@@ -562,7 +582,8 @@
       "postable": true,
       "role": "bank_charges",
       "monetary": false,
-      "statement_line": "finance_costs"
+      "statement_line": "finance_costs",
+      "expense_nature": "finance_costs"
     },
     {
       "code": "5.10",
@@ -573,7 +594,8 @@
       "postable": true,
       "role": "ecl_charge",
       "monetary": false,
-      "statement_line": "impairment_losses"
+      "statement_line": "impairment_losses",
+      "expense_nature": "impairment"
     },
     {
       "code": "5.11",
@@ -584,7 +606,8 @@
       "postable": true,
       "role": "salary_expense",
       "monetary": false,
-      "statement_line": "administrative_expenses"
+      "statement_line": "administrative_expenses",
+      "expense_nature": "employee_benefits"
     },
     {
       "code": "5.12",
@@ -595,7 +618,8 @@
       "postable": true,
       "role": "employer_contribution_expense",
       "monetary": false,
-      "statement_line": "administrative_expenses"
+      "statement_line": "administrative_expenses",
+      "expense_nature": "employee_benefits"
     }
   ],
   "journals": [

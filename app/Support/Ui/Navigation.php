@@ -115,6 +115,8 @@ final class Navigation
                 'icon' => 'ledger',
                 'items' => [
                     ['label_ar' => 'ميزان المراجعة', 'label_en' => 'Trial balance', 'route' => 'trial-balance.index', 'permission' => 'report.view'],
+                    ['label_ar' => 'قائمة المركز المالي', 'label_en' => 'Financial position', 'route' => 'financial-position.index', 'permission' => 'report.view'],
+                    ['label_ar' => 'قائمة الأرباح أو الخسائر', 'label_en' => 'Profit or loss', 'route' => null, 'permission' => 'report.view'],
                     ['label_ar' => 'دليل الحسابات', 'label_en' => 'Chart of accounts', 'route' => 'accounts.index', 'permission' => 'account.manage'],
                     ['label_ar' => 'قيود اليومية', 'label_en' => 'Journal entries', 'route' => null, 'permission' => 'journal.draft'],
                     ['label_ar' => 'الفترات', 'label_en' => 'Periods', 'route' => null, 'permission' => 'period.close'],
@@ -127,6 +129,7 @@ final class Navigation
                 'items' => [
                     ['label_ar' => 'العملاء والموردون', 'label_en' => 'Customers and suppliers', 'route' => 'parties.index', 'permission' => 'party.manage'],
                     ['label_ar' => 'الأصناف', 'label_en' => 'Items', 'route' => 'items.index', 'permission' => 'item.manage'],
+                    ['label_ar' => 'العملات', 'label_en' => 'Currencies', 'route' => 'currencies.index', 'permission' => 'report.view'],
                     ['label_ar' => 'قوائم الأسعار', 'label_en' => 'Price lists', 'route' => null, 'permission' => 'price_list.manage'],
                     ['label_ar' => 'الضرائب', 'label_en' => 'Tax', 'route' => null, 'permission' => 'tax.manage'],
                 ],

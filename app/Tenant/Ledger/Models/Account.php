@@ -6,6 +6,7 @@ namespace App\Tenant\Ledger\Models;
 
 use App\Support\Database\TenantModel;
 use App\Tenant\Ledger\Enums\AccountType;
+use App\Tenant\Ledger\Enums\ExpenseNature;
 use App\Tenant\Ledger\Enums\StatementLine;
 use App\Tenant\Ledger\Services\AccountTree;
 use App\Tenant\Tenancy\Concerns\BelongsToEntity;
@@ -26,6 +27,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property string $code
  * @property AccountType $type
  * @property ?StatementLine $statement_line
+ * @property ?ExpenseNature $expense_nature
  * @property string $path
  * @property bool $postable
  */
@@ -38,7 +40,7 @@ final class Account extends TenantModel
 
     protected $fillable = [
         'entity_id', 'code', 'name_ar', 'name_en', 'parent_id', 'path', 'depth',
-        'type', 'statement_line', 'currency',
+        'type', 'statement_line', 'expense_nature', 'currency',
         'postable', 'requires_dimension', 'reconcilable', 'blocked', 'monetary',
     ];
 
@@ -55,6 +57,15 @@ final class Account extends TenantModel
          | balancing. `postable` is what tells the two apart.
          */
         'statement_line' => StatementLine::class,
+        /*
+         | The second analysis - IAS 1.104.
+         |
+         | Independent of `statement_line` and not derivable from it: a
+         | production supervisor's salary is employee benefits by nature
+         | and cost of sales by function, and a bookkeeper's is the same
+         | nature under administrative expenses.
+         */
+        'expense_nature' => ExpenseNature::class,
         'depth' => 'integer',
         'postable' => 'boolean',
         'requires_dimension' => 'boolean',
