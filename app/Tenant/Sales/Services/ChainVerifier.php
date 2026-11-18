@@ -149,6 +149,10 @@ final class ChainVerifier
             'series' => $document->series_key,
             'type' => $document->document_type->value,
             'issue_date' => $document->issue_date->toDateString(),
+
+            // The date the tax point was derived from - PF-077. Frozen with
+            // its output, or the stored basis names a date nobody can read.
+            'delivery_date' => $document->delivery_date?->toDateString(),
             'tax_point' => ($document->tax_point ?? $document->issue_date)->toDateString(),
             'currency' => $document->currency,
 

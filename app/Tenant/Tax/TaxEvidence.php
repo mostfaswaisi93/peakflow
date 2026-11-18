@@ -33,6 +33,37 @@ final readonly class TaxEvidence implements JsonSerializable
         return new self([]);
     }
 
+    /**
+     * The evidence as a document froze it - the mirror of `jsonSerialize()`.
+     *
+     * A blank reference is kept blank rather than dropped, which is the whole
+     * reason this is not a loop of `with()` calls on the caller's side. The
+     * two states have to stay apart: "nothing was recorded" sends somebody to
+     * the customer or the forwarder to get the document, and "something was
+     * recorded with no reference" sends them to whoever ticked the box. A
+     * reconstruction that collapsed the second into the first would send
+     * everybody looking for a document that may well exist.
+     *
+     * @param  array<string, mixed>  $items  kind => {reference, recorded_on}
+     */
+    public static function fromStored(array $items): self
+    {
+        $kept = [];
+
+        foreach ($items as $kind => $item) {
+            if (EvidenceKind::tryFrom((string) $kind) === null || ! \is_array($item)) {
+                continue;
+            }
+
+            $kept[(string) $kind] = [
+                'reference' => trim((string) ($item['reference'] ?? '')),
+                'recorded_on' => (string) ($item['recorded_on'] ?? ''),
+            ];
+        }
+
+        return new self($kept);
+    }
+
     public function with(EvidenceKind $kind, string $reference, ?CarbonInterface $recordedOn = null): self
     {
         $items = $this->items;
@@ -79,6 +110,31 @@ final readonly class TaxEvidence implements JsonSerializable
             $required,
             fn (EvidenceKind $kind): bool => ! $this->has($kind),
         ));
+    }
+
+    /**
+     * Kinds that are on record with nothing behind them.
+     *
+     * `has()` answers false for a blank reference, so a blank one is reported
+     * as missing unless somebody asks this question separately - and it is a
+     * different question with a different answer. This exists so the gate can
+     * ask it before it reports anything as absent.
+     *
+     * @return list<EvidenceKind>
+     */
+    public function recordedWithoutAReference(): array
+    {
+        $blank = [];
+
+        foreach ($this->items as $kind => $item) {
+            $value = EvidenceKind::tryFrom((string) $kind);
+
+            if ($value !== null && trim($item['reference']) === '') {
+                $blank[] = $value;
+            }
+        }
+
+        return $blank;
     }
 
     /** @return list<EvidenceKind> */

@@ -50,7 +50,7 @@ final class Invoice extends TenantModel
 
     protected $fillable = [
         'entity_id', 'number', 'series_key', 'document_type', 'status', 'party_id',
-        'issue_date', 'tax_point', 'return_period_label', 'currency',
+        'issue_date', 'delivery_date', 'tax_point', 'return_period_label', 'currency',
         'fx_rate', 'fx_source', 'fx_rate_date',
         'net_amount', 'tax_amount', 'gross_amount', 'prepaid_amount', 'payable_amount',
         'presentation_exponent', 'supplier_snapshot', 'customer_snapshot',
@@ -62,6 +62,7 @@ final class Invoice extends TenantModel
     protected $casts = [
         'document_type' => DocumentType::class,
         'issue_date' => 'date',
+        'delivery_date' => 'date',
         'tax_point' => 'date',
         'fx_rate_date' => 'date',
         'issued_at' => 'immutable_datetime',

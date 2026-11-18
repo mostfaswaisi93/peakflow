@@ -6,11 +6,13 @@ The engine is built in Phase 04, **before** sales, and that sequencing is the mo
 
 ## Three dates, and they are not the same
 
-| Date | Term | Determines |
-|------|------|------------|
-| Invoice date | `BT-2` | When the document was issued |
-| **Tax point** | `BT-7` | **Which return period the tax falls in** |
-| Delivery date | `BT-72` | When the supply occurred |
+| Date | Term | Column | Determines |
+|------|------|--------|------------|
+| Invoice date | `BT-2` | `invoices.issue_date` | When the document was issued |
+| **Tax point** | `BT-7` | `invoices.tax_point` | **Which return period the tax falls in** |
+| Delivery date | `BT-72` | `invoices.delivery_date` | When the supply occurred |
+
+Three columns, because a document that cannot hold three answers can only repeat one of them — and the one always available is the invoice date, which is why reaching for it is the failure this design is about. The derivation runs once, at issue, before the document is validated against it; the whole decision (the basis, which candidate date won, the profile and the `BT-8` code) is frozen in `tax_decision_snapshot.tax_point`, and the return period it falls in is stored beside it as `invoices.return_period_label`.
 
 Derivation of the tax point is a **per-jurisdiction rule**: the invoice date, the delivery date, the payment date, or the earlier of a pair. The derived value is **stored on the document**, not recomputed — a document issued on the 1st for a supply on the 30th belongs to the earlier return in many jurisdictions, and that decision must be frozen at issue.
 
@@ -271,9 +273,9 @@ Proof of dispatch is a separate kind from proof of export, and the difference is
 
 The list is an explicit **subset**, and a code absent from it is refused rather than passed through. That blocks a legitimate exemption whose code nobody has added — an availability problem fixed by a row, and the right direction, because a code is the first thing a receiving system validates and an invented one fails a document that was otherwise correct, after filing. `L` and `M` are named in the config as categories with no code shipped, so the refusal points at the gap instead of looking like a bug in the gate.
 
-The gate exists before documents do: PF-080's last criterion is that a document cannot be **issued** without its evidence, and that is Phase 05 calling this.
+**The issue path calls the gate.** `Issuer::issue()` runs it against the determination it is about to freeze — not a recomputed one, because what the gate checked and what the document claims have to be the same array. The evidence is recorded in `tax_decision_snapshot.evidence` beside the `evidence_required` the winning rule declared, which puts it inside the canonical bytes: evidence that could be attached after issue is evidence nobody has to hold at issue. A required kind the engine does not implement refuses rather than being skipped, so a typo in a rule's evidence list cannot quietly become a rule with no evidence list.
 
-Checked by `php bin/verify tax`: ten rules in `tests/Support/TaxEvidenceRules.php`.
+Checked by `php bin/verify tax`: ten rules in `tests/Support/TaxEvidenceRules.php`, and the issue path in `tests/Support/TaxCoverageRules.php`.
 
 ## Withholding tax
 

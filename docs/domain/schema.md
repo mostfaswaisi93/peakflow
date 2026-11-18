@@ -100,7 +100,7 @@ The authoritative description of every table. **A schema change updates this fil
 |-------|-------|---------------------|
 | `quotes`, `quote_lines` | Non-binding offers | No legal number, no posting |
 | `sales_orders`, `sales_order_lines` | Commitments | Uninvoiced balance tracked **per line**; over-invoicing refused |
-| `invoices` | Issued documents | `(entity_id, series_id, number)` unique; `document_type` is a UNCL 1001 code; **frozen snapshot** of both parties' legal identity, addresses, registrations, rates, FX rate and terms; `canonical_hash`, `previous_hash`, `chain_index`; immutable once issued |
+| `invoices` | Issued documents | `(entity_id, series_id, number)` unique; `document_type` is a UNCL 1001 code; **three dates, deliberately** — `issue_date` (`BT-2`), `delivery_date` (`BT-72`) and `tax_point` (`BT-7`), the last **derived** by the jurisdiction's basis at issue and frozen with its reasoning in `tax_decision_snapshot.tax_point`, beside the `return_period_label` it falls in; **frozen snapshot** of both parties' legal identity, addresses, registrations, rates, FX rate, terms and the evidence the treatment required; `canonical_hash`, `previous_hash`, `chain_index`; immutable once issued |
 | `invoice_lines` | With the item reference **and** its own description | So renaming an item later does not rewrite history |
 | `invoice_tax_breakdown` | One row per `(category, rate)` | EN 16931 `BG-23`; `BR-CO-14` asserted against the document tax total |
 | `invoice_allowances_charges` | Document and line level | Apportioned across rate groups before tax |

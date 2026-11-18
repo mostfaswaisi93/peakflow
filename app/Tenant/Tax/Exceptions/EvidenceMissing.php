@@ -55,6 +55,18 @@ final class EvidenceMissing extends RuntimeException
         ));
     }
 
+    public static function anEvidenceKindThisEngineDoesNotKnow(string $value): self
+    {
+        return new self(sprintf(
+            'A place-of-supply rule requires evidence of kind "%s", which this engine does not '.
+            'implement. Refused rather than skipped: skipping it turns a typo in a rule\'s evidence '.
+            'list into a rule with no evidence list, and every document issued under it then carries a '.
+            'rate with nothing behind it. The kinds are the cases of EvidenceKind, and adding one is a '.
+            'case plus the paperwork an authority accepts for it.',
+            $value,
+        ));
+    }
+
     public static function noReasonCode(TaxCategory $category): self
     {
         return new self(sprintf(

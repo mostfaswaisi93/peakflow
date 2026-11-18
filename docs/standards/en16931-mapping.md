@@ -19,7 +19,7 @@ The code's side of this agreement is `App\Exchange\Semantics\BusinessTerm` — o
 | `BT-3` | Invoice type code | 1..1 | `invoices.document_type` (UNCL 1001) | ✅ |
 | `BT-5` | Invoice currency code | 1..1 | `invoices.currency` (ISO 4217) | ✅ |
 | `BT-6` | VAT accounting currency | 0..1 | Entity functional currency, when it differs from `BT-5` | ⚠️ |
-| `BT-7` | **Tax point date** | 0..1 | `invoices.tax_point_date`, derived by the jurisdiction rule and **frozen** | ⚠️ |
+| `BT-7` | **Tax point date** | 0..1 | `invoices.tax_point`, derived by the jurisdiction rule at issue and **frozen** with its basis in `tax_decision_snapshot.tax_point` | ⚠️ |
 | `BT-8` | Tax point date code | 0..1 | Mutually exclusive with `BT-7` per `BR-CO-3`; the profile decides which is used | ⚠️ |
 | `BT-9` | Payment due date | 0..1 | `invoice_due_dates`; omitted when `BT-20` is used | ⚠️ |
 | `BT-10` | Buyer reference | 0..1 | `invoices.buyer_reference` — mandatory under some CIUS | ⚠️ |
@@ -85,7 +85,7 @@ The code's side of this agreement is `App\Exchange\Semantics\BusinessTerm` — o
 | `BT-64`–`BT-68` | Tax representative address lines, city, post code, subdivision | 0..1 each | Frozen address | ⚠️ |
 | `BT-69` | Tax representative country code | 1..1 in `BG-12` | `BR-20` | ⚠️ |
 | `BT-70`–`BT-71` | Deliver-to name and location identifier | 0..1 each | Delivery address | ⚠️ |
-| `BT-72` | Actual delivery date | 0..1 | `invoices.delivery_date` — distinct from `BT-2` **and** `BT-7` | ⚠️ |
+| `BT-72` | Actual delivery date | 0..1 | `invoices.delivery_date` — distinct from `BT-2` **and** `BT-7`, and the input a delivery-date basis derives `BT-7` from | ⚠️ |
 | `BT-73`–`BT-74` | Invoicing period start and end | 0..1 each | Service period, which also drives IFRS 15 recognition | ⚠️ |
 | `BT-75`–`BT-79` | Deliver-to address lines, city, post code, subdivision | 0..1 each | Frozen delivery address | ⚠️ |
 | `BT-80` | Deliver-to country code | 1..1 in `BG-15` | `BR-57` — a delivery address without a country is not an address | ⚠️ |

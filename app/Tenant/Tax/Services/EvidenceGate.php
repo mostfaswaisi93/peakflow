@@ -54,26 +54,106 @@ final class EvidenceGate
      */
     public function assertSatisfied(PlaceOfSupplyDecision $decision, TaxEvidence $evidence): void
     {
-        $required = $this->requirementsFor($decision);
+        $this->assertHolds(
+            $this->requirementsFor($decision),
+            $evidence,
+            $decision->rule,
+            $decision->category,
+        );
+    }
+
+    /**
+     * The same gate, for a decision as a document carries it - PF-080.
+     *
+     * The issue path holds the determination as the array it will freeze onto
+     * the row, not as a `PlaceOfSupplyDecision`: it is handed one by whoever
+     * resolved the supply, it freezes exactly that, and a document reprinted
+     * in six years is read back from the same array. Rebuilding the object to
+     * ask this question would mean the gate ran against something other than
+     * what the document says - which is the one thing a frozen determination
+     * exists to prevent.
+     *
+     * `evidence_required` is what the winning rule demands and `evidence` is
+     * what is held, both in the shape `PlaceOfSupplyDecision` and
+     * `TaxEvidence` serialize to.
+     *
+     * A required kind this engine does not know REFUSES rather than being
+     * skipped. The alternative is the worst failure available here: a typo in
+     * a rule's evidence list silently becomes a rule with no evidence list,
+     * and every document under it is issued with nothing behind its rate.
+     *
+     * @param  array<string, mixed>  $decision  the determination as it will be frozen
+     *
+     * @throws EvidenceMissing
+     */
+    public function assertRecordedOn(array $decision): void
+    {
+        $declared = $decision['evidence_required'] ?? [];
+        $required = [];
+
+        foreach (\is_array($declared) ? $declared : [] as $value) {
+            $kind = \is_string($value) ? EvidenceKind::tryFrom($value) : null;
+
+            if ($kind === null) {
+                throw EvidenceMissing::anEvidenceKindThisEngineDoesNotKnow(
+                    \is_string($value) ? $value : get_debug_type($value),
+                );
+            }
+
+            $required[] = $kind;
+        }
+
+        if ($required === []) {
+            return;
+        }
+
+        $recorded = $decision['evidence'] ?? [];
+
+        $this->assertHolds(
+            $required,
+            TaxEvidence::fromStored(\is_array($recorded) ? $recorded : []),
+            (string) ($decision['rule'] ?? 'unnamed'),
+            TaxCategory::tryFrom((string) ($decision['category'] ?? '')) ?? TaxCategory::Standard,
+        );
+    }
+
+    /**
+     * One gate, whichever shape the decision arrived in.
+     *
+     * Shared rather than written twice, because two gates are two chances to
+     * disagree - and the one that disagrees in the lenient direction is the
+     * one that issues the document.
+     *
+     * @param  list<EvidenceKind>  $required
+     *
+     * @throws EvidenceMissing
+     */
+    private function assertHolds(
+        array $required,
+        TaxEvidence $evidence,
+        string $rule,
+        TaxCategory $category,
+    ): void {
+        /*
+         | Blank BEFORE missing, because `has()` cannot tell them apart.
+         |
+         | A reference of whitespace is absent as far as `has()` is
+         | concerned, so asking "what is missing" first reports a ticked box
+         | with nothing behind it as nothing at all. The two send somebody to
+         | different places - the forwarder for the document, or whoever
+         | ticked the box - and a refusal that cannot distinguish them gets
+         | resolved by typing a number in.
+         */
+        foreach ($evidence->recordedWithoutAReference() as $blank) {
+            if (\in_array($blank, $required, true)) {
+                throw EvidenceMissing::withABlankReference($blank);
+            }
+        }
+
         $missing = $evidence->missingFrom($required);
 
         if ($missing !== []) {
-            throw EvidenceMissing::beforeIssuing($decision->rule, $decision->category, $missing);
-        }
-
-        /*
-         | And nothing recorded may be blank.
-         |
-         | `TaxEvidence::has()` already treats a blank reference as absent, so
-         | this cannot fire through that path - it is here for a caller that
-         | built the evidence another way, and because "recorded with no
-         | reference" deserves its own refusal rather than being reported as
-         | missing. The two send somebody to different places.
-         */
-        foreach ($required as $kind) {
-            if ($evidence->referenceFor($kind) === null) {
-                throw EvidenceMissing::withABlankReference($kind);
-            }
+            throw EvidenceMissing::beforeIssuing($rule, $category, $missing);
         }
     }
 

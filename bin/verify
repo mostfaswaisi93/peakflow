@@ -218,6 +218,7 @@ if ($only === 'all' || $only === 'tax') {
     $suites['Return filing'] = $suite(static fn (): array => (new Tests\Support\ReturnFilingRules())->all());
     $suites['Return adjustments'] = $suite(static fn (): array => (new Tests\Support\ReturnAdjustmentRules())->all());
     $suites['Tax reconciliation'] = $suite(static fn (): array => (new Tests\Support\TaxReconciliationRules())->all());
+    $suites['The tax point on a document'] = $suite(static fn (): array => (new Tests\Support\TaxCoverageRules())->all());
 }
 
 if ($only === 'all' || $only === 'sales') {
