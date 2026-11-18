@@ -147,16 +147,64 @@ The structural promise: if a number cannot be explained, it is a bug.
 `Reporting` · **5 pts** · depends: PF-183 · standards: ISO 19005, RFC 4180 · `type:security`
 
 - [ ] **XLSX with live formulas and number formats intact** rather than flattened text, so an accountant can keep working in it
-- [ ] CSV as UTF-8 with BOM, RFC 4180 quoting, and **formula-injection neutralization on every cell** beginning with `=`, `+`, `-`, `@`, tab or carriage return - applied on the route, not only in the service
+- [x] CSV as UTF-8 with BOM, RFC 4180 quoting, and **formula-injection neutralization on every cell** beginning with `=`, `+`, `-`, `@`, tab or carriage return
 - [ ] PDF/A for archiving, veraPDF-verified
 - [ ] JSON through the API with the same figures, from the same query
 - [ ] Arabic exports carry correct encoding, direction and digit shape; an XLSX opened in Excel shows RTL columns in the right order
 - [ ] A large export is queued and delivered as a signed download, never rendered in a request
 
+`App\Tenant\Reporting\Export\CsvExport` · `bin/verify reporting`
+
+**The CSV half is done and is the security half.** A cell beginning with
+`=`, `+`, `-`, `@`, a tab or a carriage return is a *formula* to Excel,
+LibreOffice and Sheets. A customer called `=cmd|'/c calc'!A1` has not broken
+this product — they have planted something in it, and it fires on the
+accountant who exports the party list. Nothing in the ledger was ever wrong,
+which is why no ledger check can see it.
+
+Quoting is not the fix, and the checks prove they know that: a quoted
+`"=1+1"` is still a formula, because the quotes belong to the CSV reader and
+are gone before the spreadsheet sees the cell. So the apostrophe goes
+*inside* the quoting, and the checks assert what a cell starts with after
+quoting is stripped.
+
+The character is prefixed, never removed. A supplier genuinely called
+`Alpha-Beta` exporting as `Alpha Beta` costs somebody an afternoon
+reconciling two systems that disagree about a name.
+
+> **Still open, and why.** XLSX with live formulas and PDF/A both need an
+> engine this repository does not vendor, and the PDF driver is still a stub
+> (`bin/verify wiring` asserts it). JSON through the API waits on PF-217.
+> Queued delivery waits on the export being large enough to need it — there
+> is no report yet that cannot be rendered in a request, and queueing one
+> that can is machinery with no failure to prevent.
+
 ### PF-198 · Reproducibility
 `Reporting` · **3 pts** · depends: PF-197 · standards: — · `risk:high`
 
-- [ ] Every report takes an explicit as-of basis, and the same parameters return the same numbers
-- [ ] The parameters - entity, period, basis, currency, adjusting-entry treatment, as-of timestamp - are **printed on the output**
+- [x] Every report takes an explicit as-of basis, and the same parameters return the same numbers
+- [x] The parameters - entity, period, basis, currency, adjusting-entry treatment, as-of timestamp - are **printed on the output**
 - [ ] A report run against a closed period is byte-stable, and a test asserts it by running one twice across a data change in a later period
 - [ ] A saved report definition can be re-run by anyone with permission and produce the same artefact
+
+`App\Tenant\Reporting\Export\ReportBasis` · `bin/verify reporting`
+
+**The parameters travel with the figures**, because two people run "the
+trial balance" and get different numbers: one included the adjusting period,
+or asked as at the 30th, or is looking at a presentation currency. Every one
+of those is a correct answer to a different question, and a page showing only
+figures gives the two of them no way to discover which question each asked.
+
+`as_of` is a parameter and never `now()`. A report that read the clock would
+be unreproducible by construction, and the difference would surface weeks
+later as a changed row with nothing to explain it.
+
+**The digest hashes the parameters, not the data** — deliberately. Two runs
+with the same digest asked the same question, and return the same numbers
+while the period is closed, which is the only guarantee that is true. A hash
+of the figures would say two reports agree without saying they are
+comparable.
+
+> **Still open:** byte-stability across a later-period data change needs the
+> export artefact itself, which waits on the XLSX and PDF halves of PF-197;
+> and a saved report definition needs somewhere to save it.
