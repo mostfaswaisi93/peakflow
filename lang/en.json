@@ -231,6 +231,7 @@
     "الفرق بين الأصول والالتزامات وحقوق الملكية": "The difference between assets and liabilities plus equity",
     "الفرق صفر: الأصول تساوي الالتزامات وحقوق الملكية": "The difference is zero: assets equal liabilities and equity",
     "الفواتير": "Invoices",
+    "القائمة تُصدر مقارنة لكل بند في هذا التحليل ولا تُصدر مجموعًا لعمود المقارنة فيه، وجمع العمود هنا كان سيصبح تعريفًا ثانيًا للنتيجة. نتيجة فترة المقارنة في التحليل بحسب الوظيفة أعلاه، حيث تُصدرها القائمة.": "The statement reports a comparative for each line of this analysis and no total for that column, and summing it here would be a second definition of the result. The comparative period's result is in the by-function analysis above, where the statement reports it.",
     "القائمة غير مكتملة، وفيها أرصدة بلا تصنيف": "The statement is incomplete, and carries balances with no classification",
     "القائمة متوازنة، وكل حساب مصنَّف": "The statement balances, and every account is classified",
     "القابل للخصم": "Recoverable",
