@@ -90,23 +90,18 @@
         </a>
     </div>
 
-    <div class="mt-3 flex flex-wrap items-end justify-between gap-4">
-        <div>
-            {{-- The figure face is for the NUMBER. A draft's placeholder is a
-                 sentence, and setting Arabic in the figure face would pick the
-                 fallback rather than the UI face it is matched against. --}}
-            <h1 @class([
-                'text-headline font-bold text-on-surface',
-                'figure' => $invoice->number !== null,
-            ])>
-                {{ $invoice->number ?? __('مسودة بلا رقم') }}
-            </h1>
-            <p class="mt-1 text-label text-on-surface-muted">
-                {{ $invoice->document_type->label() }} · {{ $invoice->customerName() }}
-            </p>
-        </div>
+    {{-- The figure face is for the NUMBER. A draft's placeholder is a
+         sentence, and setting Arabic in the figure face would pick the
+         fallback rather than the UI face it is matched against. --}}
+    <x-page-header class="mt-3"
+                   :title="$invoice->number ?? __('مسودة بلا رقم')"
+                   :heading-class="$invoice->number !== null ? 'figure' : null">
+        <x-slot:description>
+            {{ $invoice->document_type->label() }} · {{ $invoice->customerName() }}
+        </x-slot:description>
 
-        <div class="flex items-center gap-2">
+        <x-slot:aside>
+            <div class="flex items-center gap-2">
             @if ($invoice->isDraft())
                 <span class="inline-flex items-center gap-1 rounded-full bg-surface-container-high px-2.5 py-1 text-caption font-medium text-on-surface-muted">
                     <span aria-hidden="true">●</span>{{ __('مسودة') }}
@@ -120,8 +115,9 @@
                     <span aria-hidden="true">✓</span>{{ __('مُصدرة') }}
                 </span>
             @endif
-        </div>
-    </div>
+            </div>
+        </x-slot:aside>
+    </x-page-header>
 
     @if ($invoice->isDraft())
         {{--

@@ -50,21 +50,19 @@
         $no = __('لا');
     @endphp
 
-    <div class="flex flex-wrap items-end justify-between gap-4">
-        <div>
-            <h1 class="text-headline font-bold text-on-surface">{{ __('الأصناف') }}</h1>
-            <p class="mt-1 max-w-2xl text-label text-on-surface-muted">
-                {{ __('الأصناف مشتركة بين شركات المساحة كلها، أما الحسابات التي يُرحَّل إليها الصنف فهي لكل شركة بحسب دليل حساباتها.') }}
-            </p>
-        </div>
-
-        @if ($entity)
-            <p class="inline-flex items-center gap-2 rounded-full border border-outline bg-surface px-3 py-1 text-caption text-on-surface-muted">
-                {{ __('الشركة الحالية') }}
-                <span class="font-semibold text-on-surface">{{ $entity->legal_name }}</span>
-            </p>
-        @endif
-    </div>
+    <x-page-header :title="__('الأصناف')">
+        <x-slot:description>
+            {{ __('الأصناف مشتركة بين شركات المساحة كلها، أما الحسابات التي يُرحَّل إليها الصنف فهي لكل شركة بحسب دليل حساباتها.') }}
+        </x-slot:description>
+        <x-slot:aside>
+            @if ($entity)
+                <p class="inline-flex items-center gap-2 rounded-full border border-outline bg-surface px-3 py-1 text-caption text-on-surface-muted">
+                    {{ __('الشركة الحالية') }}
+                    <span class="font-semibold text-on-surface">{{ $entity->legal_name }}</span>
+                </p>
+            @endif
+        </x-slot:aside>
+    </x-page-header>
 
     <p class="mt-4 max-w-3xl rounded-card border border-outline bg-surface p-4 text-label text-on-surface">
         {{ __('النوع يحدد مكان التوريد، وبه تُحدَّد ضريبة أي دولة تنطبق وبأي نسبة. خطؤه لا يُظهر رسالة خطأ، بل يُنتج إقرارًا في الدولة الخطأ، وتصحيحه إفصاح طوعي.') }}

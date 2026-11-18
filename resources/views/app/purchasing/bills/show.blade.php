@@ -92,16 +92,15 @@
         {{ __('إلى قائمة فواتير الموردين') }}
     </a>
 
-    <div class="mt-4 flex flex-wrap items-start justify-between gap-4">
-        <div>
-            <p class="text-label text-on-surface-muted">{{ $types[(string) $bill->document_type] ?? $bill->document_type }}</p>
-            <h1 dir="ltr" class="figure text-headline font-bold text-on-surface">
-                {{ $bill->supplier_document_number }}
-            </h1>
-            <p class="mt-1 text-body text-on-surface-muted">{{ $bill->supplierName() ?? $unknown }}</p>
-        </div>
+    <x-page-header class="mt-4 items-start" heading-class="figure">
+        <x-slot:eyebrow>{{ $types[(string) $bill->document_type] ?? $bill->document_type }}</x-slot:eyebrow>
 
-        <div class="flex flex-wrap items-center gap-2">
+        <x-slot:title><span dir="ltr">{{ $bill->supplier_document_number }}</span></x-slot:title>
+
+        <x-slot:description>{{ $bill->supplierName() ?? $unknown }}</x-slot:description>
+
+        <x-slot:aside>
+            <div class="flex flex-wrap items-center gap-2">
             <span class="inline-flex items-center rounded-full bg-surface-container-low px-2.5 py-1 text-caption text-on-surface-muted">
                 {{ $statuses[(string) $bill->status] ?? $bill->status }}
             </span>
@@ -126,8 +125,9 @@
                     </span>
                 @endif
             @endunless
-        </div>
-    </div>
+            </div>
+        </x-slot:aside>
+    </x-page-header>
 
     {{--
         The document's identity.

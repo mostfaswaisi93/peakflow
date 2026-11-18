@@ -1,41 +1,62 @@
 {{--
     <x-page-header> - the top of every page inside the shell.
 
-        title        the page's name, already translated
-        description  one sentence, optional
-        actions      the slot for the page's primary action, optional
+        title         the page's name. An attribute for plain text
+                      (`:title="__('...')"`), or a slot when the name needs
+                      markup - an invoice number set in the figure face, a
+                      code in an LTR span.
+        headingClass  extra classes for the <h1> itself, for exactly that
+                      case. The base classes are not negotiable; this adds.
+        eyebrow       the small line ABOVE the name: a document type, a
+                      status. It is not a heading, because the page's name
+                      is the name and an eyebrow in the outline makes the
+                      document type look like the page.
+        description   one or two sentences saying what the page is.
+        aside         what belongs on the end side - the entity's
+                      functional currency, a caption about how the list is
+                      ordered, the page's one primary action.
 
     ## Why a component and not a convention
 
-    A page header built by hand on each screen is twelve headers, and by
-    the fourth they disagree about the heading level, the spacing and where
-    the primary action sits. The heading level is the part that matters
-    beyond taste: a screen reader user navigates by headings, and a page
-    whose title is an <h2> because somebody copied a card is a page with no
-    top level at all.
+    Thirteen screens were written against the same guidance and produced
+    thirteen copies of this block. Most of them agreed, which was luck.
+    The difference nobody would have caught is the heading LEVEL: a
+    screen-reader user navigates by headings, so a page whose title is an
+    `<h2>` because somebody copied a card has no top level at all - and it
+    looks identical.
 
-    ## The action is on the end side, and there is one
+    ## One `<h1>`, and it is the page's name
 
-    The slot takes one button, not a row of them. A header with four
-    equally weighted buttons has no primary action, and the user reads all
-    four every time they arrive. Anything secondary belongs beside the
-    thing it acts on.
+    Not the product's and not the section's: the shell says both already,
+    so a page whose `<h1>` is "PeakFlow" leaves the reader with no heading
+    that tells them where they are.
+
+    ## The aside is not a second heading
+
+    A chip, a caption, or one button. A header with four equally weighted
+    buttons has no primary action and the reader reads all four every time
+    they arrive; anything secondary belongs beside the thing it acts on.
 --}}
 @props([
-    'title',
+    'title' => null,
+    'headingClass' => null,
     'description' => null,
 ])
 
-<header class="mb-6 flex flex-wrap items-start justify-between gap-4">
-    <div class="min-w-0">
-        <h1 class="text-title font-semibold text-on-surface">{{ $title }}</h1>
+<div {{ $attributes->class(['flex flex-wrap items-end justify-between gap-4']) }}>
+    <div>
+        @isset($eyebrow)
+            <p class="text-label text-on-surface-muted">{{ $eyebrow }}</p>
+        @endisset
+
+        <h1 @class(['text-headline font-bold text-on-surface', $headingClass])>{{ $title }}</h1>
 
         @if ($description !== null)
-            <p class="mt-1 max-w-prose text-body text-on-surface-muted">{{ $description }}</p>
+            <p class="mt-1 max-w-2xl text-label text-on-surface-muted">{{ $description }}</p>
         @endif
     </div>
 
-    @isset($actions)
-        <div class="flex shrink-0 items-center gap-2">{{ $actions }}</div>
+    @isset($aside)
+        {{ $aside }}
     @endisset
-</header>
+</div>

@@ -39,21 +39,19 @@
         ];
     @endphp
 
-    <div class="flex flex-wrap items-end justify-between gap-4">
-        <div>
-            <h1 class="text-headline font-bold text-on-surface">{{ __('العملاء والموردون') }}</h1>
-            <p class="mt-1 max-w-2xl text-label text-on-surface-muted">
-                {{ __('هذه القائمة مشتركة بين شركات المساحة كلها. ما يستحق على الطرف وحدّه الائتماني يُحسبان لكل شركة على حدة.') }}
-            </p>
-        </div>
-
-        @if ($entity)
-            <p class="inline-flex items-center gap-2 rounded-full border border-outline bg-surface px-3 py-1 text-caption text-on-surface-muted">
-                {{ __('الشركة الحالية') }}
-                <span class="font-semibold text-on-surface">{{ $entity->legal_name }}</span>
-            </p>
-        @endif
-    </div>
+    <x-page-header :title="__('العملاء والموردون')">
+        <x-slot:description>
+            {{ __('هذه القائمة مشتركة بين شركات المساحة كلها. ما يستحق على الطرف وحدّه الائتماني يُحسبان لكل شركة على حدة.') }}
+        </x-slot:description>
+        <x-slot:aside>
+            @if ($entity)
+                <p class="inline-flex items-center gap-2 rounded-full border border-outline bg-surface px-3 py-1 text-caption text-on-surface-muted">
+                    {{ __('الشركة الحالية') }}
+                    <span class="font-semibold text-on-surface">{{ $entity->legal_name }}</span>
+                </p>
+            @endif
+        </x-slot:aside>
+    </x-page-header>
 
     <form method="GET" class="mt-6 flex flex-wrap items-end gap-3">
         <div class="w-full max-w-sm">

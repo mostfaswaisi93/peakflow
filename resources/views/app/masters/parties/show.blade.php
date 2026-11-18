@@ -55,21 +55,20 @@
         $creditLimit = $creditCurrency === null ? null : $setting?->creditLimit($creditCurrency);
     @endphp
 
-    <div class="flex flex-wrap items-start justify-between gap-4">
-        <div>
-            <h1 class="text-headline font-bold text-on-surface">{{ $party->legal_name }}</h1>
-
-            <p class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-label text-on-surface-muted">
+    <x-page-header class="items-start" :title="$party->legal_name">
+        <x-slot:description>
+            <span class="flex flex-wrap items-center gap-x-3 gap-y-1">
                 @if ($party->code)
                     <span dir="ltr" class="figure">{{ $party->code }}</span>
                 @endif
                 @if ($party->trading_name)
                     <span>{{ $party->trading_name }}</span>
                 @endif
-            </p>
-        </div>
+            </span>
+        </x-slot:description>
 
-        <div class="flex flex-wrap items-center gap-1.5">
+        <x-slot:aside>
+            <div class="flex flex-wrap items-center gap-1.5">
             @foreach ($roles as $role)
                 <span class="inline-flex items-center rounded-full bg-primary-subtle px-2.5 py-0.5 text-caption font-medium text-on-primary-subtle">
                     {{ $role }}
@@ -91,8 +90,9 @@
                     <span aria-hidden="true">!</span>{{ __('غير نشط') }}
                 </span>
             @endif
-        </div>
-    </div>
+            </div>
+        </x-slot:aside>
+    </x-page-header>
 
     @if ($party->isMerged())
         {{--

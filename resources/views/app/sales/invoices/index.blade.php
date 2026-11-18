@@ -47,21 +47,19 @@
         };
     @endphp
 
-    <div class="flex flex-wrap items-end justify-between gap-4">
-        <div>
-            <h1 class="text-headline font-bold text-on-surface">{{ __('الفواتير') }}</h1>
-            <p class="mt-1 text-label text-on-surface-muted">
-                {{ __('أنت تعمل الآن في :entity.', ['entity' => $entity?->legal_name]) }}
-            </p>
-        </div>
-
-        @if ($entity)
-            <p class="inline-flex items-center gap-2 rounded-full border border-outline bg-surface px-3 py-1 text-caption text-on-surface-muted">
-                {{ __('العملة الوظيفية') }}
-                <span class="figure font-semibold text-on-surface">{{ $entity->functional_currency }}</span>
-            </p>
-        @endif
-    </div>
+    <x-page-header :title="__('الفواتير')">
+        <x-slot:description>
+            {{ __('أنت تعمل الآن في :entity.', ['entity' => $entity?->legal_name]) }}
+        </x-slot:description>
+        <x-slot:aside>
+            @if ($entity)
+                <p class="inline-flex items-center gap-2 rounded-full border border-outline bg-surface px-3 py-1 text-caption text-on-surface-muted">
+                    {{ __('العملة الوظيفية') }}
+                    <span class="figure font-semibold text-on-surface">{{ $entity->functional_currency }}</span>
+                </p>
+            @endif
+        </x-slot:aside>
+    </x-page-header>
 
     @if ($invoices === null)
         {{-- Signed in, in an entity, without `report.view`. --}}

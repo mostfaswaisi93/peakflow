@@ -76,20 +76,18 @@
             ->count();
     @endphp
 
-    <div class="flex flex-wrap items-end justify-between gap-4">
-        <div>
-            <h1 class="text-headline font-bold text-on-surface">{{ __('فواتير الموردين') }}</h1>
-            <p class="mt-1 text-label text-on-surface-muted">
-                {{ __('أنت تعمل الآن في :entity.', ['entity' => $entity?->legal_name]) }}
-            </p>
-        </div>
-
-        @if ($bills !== null && $bills->total() > 0)
-            <p class="text-caption text-on-surface-muted">
-                {{ __('الأحدث ترحيلًا أولًا. تاريخ المستند هو تاريخ المورد، والاستحقاق آخر قسط في شروط السداد المثبَّتة.') }}
-            </p>
-        @endif
-    </div>
+    <x-page-header :title="__('فواتير الموردين')">
+        <x-slot:description>
+            {{ __('أنت تعمل الآن في :entity.', ['entity' => $entity?->legal_name]) }}
+        </x-slot:description>
+        <x-slot:aside>
+            @if ($bills !== null && $bills->total() > 0)
+                <p class="text-caption text-on-surface-muted">
+                    {{ __('الأحدث ترحيلًا أولًا. تاريخ المستند هو تاريخ المورد، والاستحقاق آخر قسط في شروط السداد المثبَّتة.') }}
+                </p>
+            @endif
+        </x-slot:aside>
+    </x-page-header>
 
     @if ($bills === null)
         {{-- Signed in, in an entity, without `report.view`. --}}

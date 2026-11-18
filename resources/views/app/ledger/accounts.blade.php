@@ -115,22 +115,20 @@
         ];
     @endphp
 
-    <div class="flex flex-wrap items-end justify-between gap-4">
-        <div>
-            <h1 class="text-headline font-bold text-on-surface">{{ __('دليل الحسابات') }}</h1>
-            <p class="mt-1 max-w-2xl text-label text-on-surface-muted">
-                {{ __('شجرة حسابات هذه الشركة. لكل شركة دليلها الخاص، والحساب التجميعي لا يُرحَّل عليه - يُرحَّل على الحسابات التي تحته.') }}
-            </p>
-        </div>
-
-        @if ($entity)
-            <p class="inline-flex items-center gap-2 rounded-full border border-outline bg-surface px-3 py-1 text-caption text-on-surface-muted">
-                {{ $entity->legal_name }} ·
-                {{ __('العملة الوظيفية') }}
-                <span dir="ltr" class="figure font-semibold text-on-surface">{{ $entity->functional_currency }}</span>
-            </p>
-        @endif
-    </div>
+    <x-page-header :title="__('دليل الحسابات')">
+        <x-slot:description>
+            {{ __('شجرة حسابات هذه الشركة. لكل شركة دليلها الخاص، والحساب التجميعي لا يُرحَّل عليه - يُرحَّل على الحسابات التي تحته.') }}
+        </x-slot:description>
+        <x-slot:aside>
+            @if ($entity)
+                <p class="inline-flex items-center gap-2 rounded-full border border-outline bg-surface px-3 py-1 text-caption text-on-surface-muted">
+                    {{ $entity->legal_name }} ·
+                    {{ __('العملة الوظيفية') }}
+                    <span dir="ltr" class="figure font-semibold text-on-surface">{{ $entity->functional_currency }}</span>
+                </p>
+            @endif
+        </x-slot:aside>
+    </x-page-header>
 
     {{--
         A GET search, so the result is a URL.

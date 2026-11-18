@@ -58,7 +58,8 @@ This phase is the systematic pass, not the first design work. The shell, the tok
 - [x] **A skip link as the first thing in the tab order**, hidden until focused, because all three shells put navigation ahead of content and reaching it by keyboard otherwise means tabbing past thirty controls on every load
 - [x] **`<main>` carries `tabindex="-1"`**: a `<main>` is not focusable by default, so without it the browser scrolls to the target but leaves focus where it was, and the next `Tab` returns to the navigation just skipped. A skip link that only moves the viewport is worse than none, because it looks like it worked
 - [x] The active entity and the current period state are visible on every screen - a user posting into the wrong company or a closed period is what this prevents
-- [ ] Breadcrumbs, a consistent page header with the primary action
+- [x] Breadcrumbs, derived from the navigation declaration rather than written per page
+- [x] A consistent page header, adopted by every screen — `<x-page-header>`, with a check that no page writes its own `<h1>`
 - [ ] Global search and notifications
 - [ ] Plan gating in the menu: a page the tenant's plan does not include is listed with its upgrade path, not hidden
 
@@ -80,6 +81,42 @@ This phase is the systematic pass, not the first design work. The shell, the tok
 > of the menu — the wide-screen column and the narrow-screen disclosure — so
 > a screen reader's landmark list offered two identical "Main navigation"
 > entries with no way to tell which was the copy hidden at that width.
+>
+> **The menu and the pages are made to agree, in both directions.** Holding
+> the permission a menu entry names must be enough to open the page, or the
+> product offers a link that 403s and the user's only reading of that is
+> that it is broken. And a page a reader can open must be in that reader's
+> menu — which is how the second bug here was found: the invoice list was
+> offered under `invoice.draft`, a *write* permission, so an auditor whose
+> whole job is to read it was never shown it. Both directions are checked by
+> building a role that holds exactly one permission and opening the page
+> with it; asking whether "the accountant can open it" would prove nothing,
+> because the accountant holds nineteen and any one of them could be the one
+> the page is really reading.
+>
+> **Every page the menu links to is rendered on every run**, against a real
+> PostgreSQL, with documents on the books rather than on an empty entity. An
+> empty state renders happily while the row loop beside it reads a column
+> that does not exist — and that is the failure the person clicking the menu
+> item finds. The detail pages are rendered too, each paired with a fixture
+> that makes a row it can show; a parameterised page with no pairing fails
+> the build rather than going unrendered, which is the only way a list like
+> that stays true.
+>
+> **The header is a component because thirteen screens written in parallel
+> produced thirteen copies of it.** Most agreed, which was luck. The
+> difference nobody would have caught is the heading *level*: a screen-reader
+> user navigates by headings, so a page whose title is an `<h2>` because
+> somebody copied a card has no top level at all — and it looks identical.
+>
+> One thing this suite taught about itself: it passed alone and failed inside
+> `bin/verify all`. The operator-console and error-response suites run first
+> and dispatch real requests through `auth:ops` and `auth:sanctum`, and
+> Laravel's Authenticate middleware calls `shouldUse()` — so the process's
+> default guard was whichever one ran last, and `Gate` resolves its user from
+> the default guard. Every authorization check here was asking about an
+> operator. The suite now pins the web guard, which is the shape of fix a
+> check that depends on state it did not set always needs.
 
 ### PF-205 · The data grid
 `—` · **8 pts** · depends: PF-204 · standards: — · `risk:high`

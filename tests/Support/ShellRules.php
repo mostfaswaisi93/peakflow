@@ -46,7 +46,7 @@ use Throwable;
  */
 final class ShellRules
 {
-    use Concerns\IssuesInvoices;
+    use Concerns\EntersBills;
 
     /**
      * The templates the shell is made of.
@@ -77,8 +77,25 @@ final class ShellRules
         $this->connection = DB::connection('tenant');
         $this->connection->beginTransaction();
 
+        /*
+         | The web guard, explicitly.
+         |
+         | `bin/verify all` runs the operator console and the error-response
+         | suites before this one, and both dispatch real requests through
+         | `auth:ops` and `auth:sanctum`. Laravel's Authenticate middleware
+         | calls `shouldUse()`, so the process's DEFAULT guard is whatever
+         | the last of those requests used - and `Gate` resolves its user
+         | from the default guard. Every authorization check here then asks
+         | about an operator, who holds no permission in any tenant, and the
+         | whole suite fails on pages that are fine.
+         |
+         | It passed alone and failed in `all`, which is the shape of a
+         | check that depends on state it did not set.
+         */
+        Auth::shouldUse('web');
+
         try {
-            $this->seedTheSellingEntity();
+            $this->seedThePayableSide();
 
             return $this->runEachInASavepoint([
                 'the skip link is the first thing in the tab order' => fn (): array => $this->skipLinkIsFirst(),
@@ -96,6 +113,8 @@ final class ShellRules
                 'every page the menu offers actually renders' => fn (): array => $this->everyPageRenders(),
                 'and opens for exactly the permission it is offered under' => fn (): array => $this->theMenuNeverOffersARefusal(),
                 'and is offered to everybody who can open it' => fn (): array => $this->theMenuHidesNothingReadable(),
+                'every page has one top-level heading, from the one component' => fn (): array => $this->oneHeadingPerPage(),
+                'and every detail page renders too' => fn (): array => $this->everyDetailPageRenders(),
             ]);
         } catch (Throwable $e) {
             return ['the application shell could not be checked' => [
@@ -936,6 +955,199 @@ final class ShellRules
         ]);
 
         return $user;
+    }
+
+    /**
+     * The detail pages, each handed a real document.
+     *
+     * ## Why these are listed by hand
+     *
+     * A detail page needs an id, and an invented one is a 404 - which
+     * renders the "not found" path and proves nothing about the template
+     * that was the point. So each one is paired with the fixture that
+     * makes a row it can show, written down here, and the check below
+     * refuses to let a parameterised page exist without a pairing. A new
+     * detail page with no entry fails the build rather than going
+     * unrendered, which is the only way a list like this stays true.
+     *
+     * @return list<string>
+     */
+    private function everyDetailPageRenders(): array
+    {
+        $this->signIn(['owner']);
+
+        $subjects = [
+            'invoices.show' => fn (): string => (string) $this->issue()->getKey(),
+            'bills.show' => fn (): string => (string) $this->enterBill()->getKey(),
+            'parties.show' => fn (): string => (string) $this->party?->getKey(),
+        ];
+
+        /*
+         | Rendered by a suite of its own, and named here so it is not
+         | merely absent.
+         |
+         | The statement-import screen is the one page in this group whose
+         | whole purpose is a form, and `BankingScreenRules` renders it
+         | with a parsed CSV and asserts the things that make it usable
+         | without a mouse. Opening it here with an empty account would
+         | render the state nobody imports from.
+         */
+        $elsewhere = ['banking.import.create'];
+
+        $problems = [];
+        $original = app('request');
+
+        /*
+         | Every parameterised page in the group is accounted for.
+         |
+         | Checked before anything is rendered, because the failure worth
+         | naming is the page that is NOT in the list: it renders for
+         | nobody on every run, and the person who finds out is the one
+         | who clicked the row.
+         */
+        foreach (Route::getRoutes()->getRoutesByName() as $name => $route) {
+            if (! \is_string($name) || $route->parameterNames() === []) {
+                continue;
+            }
+
+            if (! \in_array('entity.scope', $route->gatherMiddleware(), true)) {
+                continue;
+            }
+
+            if (! \in_array('GET', $route->methods(), true)) {
+                continue;
+            }
+
+            if (! \array_key_exists($name, $subjects) && ! \in_array($name, $elsewhere, true)) {
+                $problems[] = sprintf(
+                    '%s takes a parameter and is not in this check\'s list, so nothing renders it. Pair '.
+                    'it with a fixture that makes a row it can show.',
+                    $name,
+                );
+            }
+        }
+
+        foreach ($subjects as $name => $subject) {
+            if (! Route::has($name)) {
+                $problems[] = sprintf('%s is listed here and is not a route', $name);
+
+                continue;
+            }
+
+            $route = Route::getRoutes()->getByName($name);
+
+            $this->connection->statement('SAVEPOINT shell_detail');
+
+            try {
+                $id = $subject();
+
+                if ($id === '') {
+                    $problems[] = sprintf('no subject could be made for %s', $name);
+
+                    continue;
+                }
+
+                $parameter = $route->parameterNames()[0];
+                $request = \Illuminate\Http\Request::create('/'.ltrim(str_replace(
+                    '{'.$parameter.'}',
+                    $id,
+                    $route->uri(),
+                ), '/'), 'GET');
+
+                app()->instance('request', $request);
+
+                $rendered = app()->call($route->getController(), [
+                    'request' => $request,
+                    $parameter => $id,
+                ]);
+
+                $html = $rendered instanceof \Illuminate\Contracts\Support\Renderable
+                    ? $rendered->render()
+                    : (string) $rendered;
+
+                if (trim($html) === '') {
+                    $problems[] = sprintf('%s rendered nothing at all', $name);
+                }
+            } catch (Throwable $e) {
+                $problems[] = sprintf(
+                    '%s threw %s: %s',
+                    $name,
+                    class_basename($e),
+                    Str::limit(preg_replace('/\s+/', ' ', $e->getMessage()) ?? '', 220),
+                );
+            } finally {
+                app()->instance('request', $original);
+                $this->connection->statement('ROLLBACK TO SAVEPOINT shell_detail');
+            }
+        }
+
+        return $problems;
+    }
+
+    /**
+     * One `<h1>` per page, and it comes from `<x-page-header>`.
+     *
+     * ## Why a check and not only a component
+     *
+     * Nine screens were written in parallel against the same guidance and
+     * produced nine copies of the header block. They happened to agree.
+     * The tenth would not have, and the difference nobody would notice is
+     * the heading LEVEL: a screen-reader user navigates by headings, so a
+     * page whose title is an `<h2>` because somebody copied a card has no
+     * top level at all - and it looks exactly the same.
+     *
+     * Two `<h1>`s is the same problem from the other side. The heading
+     * outline then has two tops, and "jump to the first heading" lands on
+     * whichever the author wrote first.
+     *
+     * @return list<string>
+     */
+    private function oneHeadingPerPage(): array
+    {
+        $problems = [];
+        $pages = glob(base_path('resources/views/app/*/*.blade.php')) ?: [];
+        $pages = array_merge($pages, glob(base_path('resources/views/app/*/*/*.blade.php')) ?: []);
+
+        foreach ($pages as $page) {
+            $source = (string) preg_replace(
+                '/\{\{--.*?--\}\}/su',
+                '',
+                (string) file_get_contents($page),
+            );
+
+            $relative = 'resources/views/app/'.Str::after($page, 'resources/views/app/');
+            $headings = preg_match_all('/<h1\b/i', $source);
+            $component = preg_match_all('/<x-page-header\b/i', $source);
+
+            if ($headings + $component === 0) {
+                $problems[] = sprintf(
+                    '%s has no top-level heading at all, so nothing on it says where the reader is.',
+                    $relative,
+                );
+
+                continue;
+            }
+
+            if ($headings + $component > 1) {
+                $problems[] = sprintf(
+                    '%s has %d top-level headings. The outline then has two tops, and "jump to the first '.
+                    'heading" lands on whichever the author happened to write first.',
+                    $relative,
+                    $headings + $component,
+                );
+            }
+
+            if ($headings > 0) {
+                $problems[] = sprintf(
+                    '%s writes its own <h1> instead of using <x-page-header>. That is how the heading '.
+                    'level drifts: the copy looks right and is an <h2> on the next page somebody writes '.
+                    'from it.',
+                    $relative,
+                );
+            }
+        }
+
+        return $problems;
     }
 
     /**

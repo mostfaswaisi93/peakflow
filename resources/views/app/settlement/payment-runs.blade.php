@@ -91,18 +91,21 @@
         ];
     @endphp
 
-    <div class="flex flex-wrap items-end justify-between gap-4">
-        <div>
-            <h1 class="text-headline font-bold text-on-surface">{{ __('مسيّرات الدفع') }}</h1>
-            <p class="mt-1 text-label text-on-surface-muted">
-                {{ __('أنت تعمل الآن في :entity.', ['entity' => $entity?->legal_name]) }}
+    {{-- The name goes in the title SLOT, not the title attribute: the
+         template-text rule reads tags with a plain parser, so it cannot
+         see through an attribute value and refuses the whole thing as a
+         name nobody translated. In the slot it is an ordinary echo. --}}
+    <x-page-header>
+        <x-slot:title>{{ __('مسيّرات الدفع') }}</x-slot:title>
+        <x-slot:description>
+            {{ __('أنت تعمل الآن في :entity.', ['entity' => $entity?->legal_name]) }}
+        </x-slot:description>
+        <x-slot:aside>
+            <p class="max-w-md text-caption text-on-surface-muted">
+                {{ __('هذه الصفحة تقرأ ولا ترسل. الإرسال يحتاج شخصًا غير من حضّر، وفحص تعارض المهام، وعاملًا ثانيًا جديدًا لهذه المسيّرة، وإثباتًا أن شيئًا لم يتغيّر بعد التحضير - وزرٌّ في قائمة لا يحمل شيئًا من ذلك.') }}
             </p>
-        </div>
-
-        <p class="max-w-md text-caption text-on-surface-muted">
-            {{ __('هذه الصفحة تقرأ ولا ترسل. الإرسال يحتاج شخصًا غير من حضّر، وفحص تعارض المهام، وعاملًا ثانيًا جديدًا لهذه المسيّرة، وإثباتًا أن شيئًا لم يتغيّر بعد التحضير - وزرٌّ في قائمة لا يحمل شيئًا من ذلك.') }}
-        </p>
-    </div>
+        </x-slot:aside>
+    </x-page-header>
 
     {{-- The filter is a GET form: it reads, and the URL it produces is one
          somebody can keep. --}}

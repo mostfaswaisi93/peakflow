@@ -61,18 +61,21 @@
         ];
     @endphp
 
-    <div class="flex flex-wrap items-end justify-between gap-4">
-        <div>
-            <h1 class="text-headline font-bold text-on-surface">{{ __('الحسابات البنكية') }}</h1>
-            <p class="mt-1 text-label text-on-surface-muted">
-                {{ __('أنت تعمل الآن في :entity.', ['entity' => $entity?->legal_name]) }}
+    {{-- The name goes in the title SLOT, not the title attribute: the
+         template-text rule reads tags with a plain parser, so it cannot
+         see through an attribute value and refuses the whole thing as a
+         name nobody translated. In the slot it is an ordinary echo. --}}
+    <x-page-header>
+        <x-slot:title>{{ __('الحسابات البنكية') }}</x-slot:title>
+        <x-slot:description>
+            {{ __('أنت تعمل الآن في :entity.', ['entity' => $entity?->legal_name]) }}
+        </x-slot:description>
+        <x-slot:aside>
+            <p class="max-w-md text-caption text-on-surface-muted">
+                {{ __('ثلاثة أرصدة لكل حساب، ولا واحد منها اسمه «الرصيد». الدفتري والكشف والمتاح أرقام مختلفة، وصفحة تعرض واحدًا منها باسم «الرصيد» هي الطريقة التي يُعتمد بها دفع من مال مرتبط أصلًا.') }}
             </p>
-        </div>
-
-        <p class="max-w-md text-caption text-on-surface-muted">
-            {{ __('ثلاثة أرصدة لكل حساب، ولا واحد منها اسمه «الرصيد». الدفتري والكشف والمتاح أرقام مختلفة، وصفحة تعرض واحدًا منها باسم «الرصيد» هي الطريقة التي يُعتمد بها دفع من مال مرتبط أصلًا.') }}
-        </p>
-    </div>
+        </x-slot:aside>
+    </x-page-header>
 
     @if ($accounts === [])
         <div class="mt-8 rounded-card border border-outline bg-surface p-6 text-label text-on-surface-muted">

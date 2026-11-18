@@ -66,14 +66,16 @@
         ];
     @endphp
 
-    <div class="flex flex-wrap items-end justify-between gap-4">
-        <div>
-            <h1 class="text-headline font-bold text-on-surface">{{ __('كشوف الحساب') }}</h1>
-            <p class="mt-1 text-label text-on-surface-muted">
-                {{ __('أنت تعمل الآن في :entity.', ['entity' => $entity?->legal_name]) }}
-            </p>
-        </div>
-    </div>
+    {{-- The name goes in the title SLOT, not the title attribute: the
+         template-text rule reads tags with a plain parser, so it cannot
+         see through an attribute value and refuses the whole thing as a
+         name nobody translated. In the slot it is an ordinary echo. --}}
+    <x-page-header>
+        <x-slot:title>{{ __('كشوف الحساب') }}</x-slot:title>
+        <x-slot:description>
+            {{ __('أنت تعمل الآن في :entity.', ['entity' => $entity?->legal_name]) }}
+        </x-slot:description>
+    </x-page-header>
 
     @if ($party === null)
         {{-- The picker. Not an error: arriving with no party is how anybody

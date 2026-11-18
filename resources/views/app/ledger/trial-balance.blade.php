@@ -70,22 +70,20 @@
         ];
     @endphp
 
-    <div class="flex flex-wrap items-end justify-between gap-4">
-        <div>
-            <h1 class="text-headline font-bold text-on-surface">{{ __('ميزان المراجعة') }}</h1>
-            <p class="mt-1 max-w-2xl text-label text-on-surface-muted">
-                {{ __('الأرصدة الافتتاحية وحركة الفترة والأرصدة الختامية، لكل حساب تحرّك. الحساب الذي يفتح ويُقفل على صفر ليس في القائمة.') }}
-            </p>
-        </div>
-
-        @if ($entity)
-            <p class="inline-flex items-center gap-2 rounded-full border border-outline bg-surface px-3 py-1 text-caption text-on-surface-muted">
-                {{ $entity->legal_name }} ·
-                {{ __('العملة الوظيفية') }}
-                <span dir="ltr" class="figure font-semibold text-on-surface">{{ $entity->functional_currency }}</span>
-            </p>
-        @endif
-    </div>
+    <x-page-header :title="__('ميزان المراجعة')">
+        <x-slot:description>
+            {{ __('الأرصدة الافتتاحية وحركة الفترة والأرصدة الختامية، لكل حساب تحرّك. الحساب الذي يفتح ويُقفل على صفر ليس في القائمة.') }}
+        </x-slot:description>
+        <x-slot:aside>
+            @if ($entity)
+                <p class="inline-flex items-center gap-2 rounded-full border border-outline bg-surface px-3 py-1 text-caption text-on-surface-muted">
+                    {{ $entity->legal_name }} ·
+                    {{ __('العملة الوظيفية') }}
+                    <span dir="ltr" class="figure font-semibold text-on-surface">{{ $entity->functional_currency }}</span>
+                </p>
+            @endif
+        </x-slot:aside>
+    </x-page-header>
 
     @if ($entity === null)
         <div class="mt-8 rounded-card border border-outline bg-surface p-6 text-label text-on-surface-muted">
