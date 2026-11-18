@@ -8,6 +8,8 @@ use App\Platform\Models\Operator;
 use App\Platform\Models\Tenant;
 use App\Platform\Services\TenantConnectionResolver;
 use App\Platform\Services\TenantProvisioner;
+use App\Tenant\Catalog\Models\FxRate;
+use App\Tenant\Catalog\Services\CurrencyPolicy;
 use App\Tenant\Identity\Models\Role;
 use App\Tenant\Identity\Models\User;
 use App\Tenant\Identity\Models\UserEntityRole;
@@ -58,6 +60,17 @@ final class DevelopmentSeeder extends Seeder
      * uses the same one and nobody has to ask.
      */
     public const PASSWORD = 'peakflow';
+
+    /**
+     * Where the demo entity is, and what it keeps its books in.
+     *
+     * Named constants because `repoint()` compares against them: a literal
+     * in two places is a seeder that moves the entity on every run, or on
+     * none.
+     */
+    public const COUNTRY = 'PS';
+
+    public const CURRENCY = 'ILS';
 
     public const OPERATOR_EMAIL = 'ops@peakflow.test';
 
@@ -127,9 +140,9 @@ final class DevelopmentSeeder extends Seeder
                 'code' => 'DEMO',
                 'legal_name' => 'Demo Trading Co',
                 'trading_name' => 'Demo',
-                'country' => 'SA',
-                'functional_currency' => 'SAR',
-                'presentation_currency' => 'SAR',
+                'country' => self::COUNTRY,
+                'functional_currency' => self::CURRENCY,
+                'presentation_currency' => self::CURRENCY,
                 'jurisdiction_profiles' => ['generic'],
                 'active' => true,
             ]);
@@ -151,6 +164,11 @@ final class DevelopmentSeeder extends Seeder
                 static fn (): array => app(ChartTemplate::class)->apply((string) $entity->id, 'ifrs-generic'),
             );
         }
+
+        app(EntityContext::class)->during($entity, function () use ($entity): void {
+            $this->repoint($entity);
+            $this->currencies($entity->refresh());
+        });
 
         $user = User::query()->where('email', self::USER_EMAIL)->first();
 
@@ -187,6 +205,132 @@ final class DevelopmentSeeder extends Seeder
 
         if ($user->last_entity_id === null) {
             $user->forceFill(['last_entity_id' => $entity->id])->save();
+        }
+    }
+
+    /**
+     * Move an existing demo entity onto the seeder's current currency.
+     *
+     * ## Why this is attempted rather than assumed
+     *
+     * The demo entity is created once and then re-seeded for months. A
+     * developer who pulls a change to the seeded currency and sees the old
+     * one has no way to tell whether the change arrived - so the seeder
+     * tries, and says what happened.
+     *
+     * ## And why it is allowed to fail
+     *
+     * `entities_functional_currency_immutable` refuses the change once the
+     * entity has posted entries, and that refusal is correct: under IAS 21
+     * changing an entity's functional currency is a re-presentation of its
+     * whole history, not an edit to a settings row. Every posted amount was
+     * measured in the old one, and switching the label would silently
+     * reinterpret all of them.
+     *
+     * So a demo with data on it keeps its currency, and the message says the
+     * way out is a fresh workspace rather than a smaller edit - because
+     * there is no smaller edit that is honest.
+     */
+    private function repoint(Entity $entity): void
+    {
+        $wanted = self::CURRENCY;
+
+        if ((string) $entity->functional_currency === $wanted) {
+            return;
+        }
+
+        $was = (string) $entity->functional_currency;
+
+        try {
+            $entity->forceFill([
+                'country' => self::COUNTRY,
+                'functional_currency' => $wanted,
+                'presentation_currency' => $wanted,
+            ])->save();
+
+            $this->command?->line(sprintf(
+                '  <fg=green>Moved</> the demo entity from %s to %s.',
+                $was,
+                $wanted,
+            ));
+        } catch (Throwable) {
+            $this->command?->newLine();
+            $this->command?->warn(sprintf(
+                '  The demo entity still keeps its books in %s, not %s.',
+                $was,
+                $wanted,
+            ));
+            $this->command?->line(
+                '  It has posted entries, and every one of them was measured in '.$was.'. Under IAS 21 '.
+                'changing that is a re-presentation of the entity\'s history, not an edit, so the '.
+                'database refuses it.',
+            );
+            $this->command?->line(
+                '  For a demo in '.$wanted.', drop the workspace and seed again: '.
+                '<options=bold>php artisan tenants:discard-abandoned</> will not do it, because the '.
+                'workspace is not abandoned - remove it from the operator console first.',
+            );
+            $this->command?->newLine();
+        }
+    }
+
+    /**
+     * The currencies the demo actually trades in, and a rate for each.
+     *
+     * ## Why three and not one
+     *
+     * An entity with only its functional currency enabled exercises none of
+     * the FX layer: no rate is ever looked up, no translation difference is
+     * ever posted, and the first time anybody sees that code run is on a
+     * customer's books. The demo trades in the three currencies that are
+     * actually used where it is: the shekel it keeps its books in, and the
+     * dinar and the dollar that invoices arrive in.
+     *
+     * ## The rates are indicative and say so
+     *
+     * A seeded rate is not a market rate and must never be mistaken for one,
+     * so the provider is named `seed` rather than left to look like a feed.
+     * `RateFetcher` overwrites them from a real provider on its first run,
+     * and a report that translated a figure at one of these carries the
+     * provider on its face - which is how the reader can tell.
+     */
+    private function currencies(Entity $entity): void
+    {
+        $policy = app(CurrencyPolicy::class);
+        $functional = (string) $entity->functional_currency;
+
+        foreach ([$functional, 'JOD', 'USD'] as $code) {
+            $policy->enable($entity, $code);
+        }
+
+        /*
+         | Written in the direction the ledger asks for them.
+         |
+         | A rate is FROM the document's currency TO the functional one,
+         | because that is the question a posting asks: what is this invoice
+         | worth in the books. Storing the other direction and inverting on
+         | read is how a consolidation acquires a persistent one-cent
+         | difference that grows with every account.
+         */
+        $rates = [
+            'JOD' => '5.1500',
+            'USD' => '3.6500',
+        ];
+
+        foreach ($rates as $from => $rate) {
+            if ($from === $functional) {
+                continue;
+            }
+
+            FxRate::query()->updateOrCreate(
+                [
+                    'rate_set' => 'market',
+                    'from_currency' => $from,
+                    'to_currency' => $functional,
+                    'as_of_date' => today()->toDateString(),
+                ],
+                ['rate' => $rate, 'provider' => 'seed'],
+            );
         }
     }
 

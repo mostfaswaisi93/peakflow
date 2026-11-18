@@ -39,7 +39,12 @@
             exactly when they are working through a list that is longer
             than the viewport.
         --}}
-        <div class="sticky top-4 max-h-[calc(100dvh-5rem)] overflow-y-auto">
+        {{--
+            `overscroll-contain` so reaching the end of the menu does not
+            start scrolling the page behind it - the gesture that loses a
+            user their place in a long list without ever looking like it did.
+        --}}
+        <div class="scrollbar-on-sidebar sticky top-4 max-h-[calc(100dvh-5rem)] overflow-y-auto overscroll-contain pe-1">
             @include('partials.nav-list', ['sections' => $sections])
         </div>
     </nav>

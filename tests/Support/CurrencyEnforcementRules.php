@@ -152,6 +152,7 @@ final class CurrencyEnforcementRules
                 'direction is stored, never inferred' => fn (): array => $this->directionIsNeverInferred(),
                 'a currency the entity has not enabled is refused' => fn (): array => $this->unenabledCurrenciesAreRefused(),
                 'the functional currency is always present and enabled' => fn (): array => $this->functionalCurrencyIsMirrored(),
+                'and follows the entity when it legally moves' => fn (): array => $this->theMirrorFollowsAChange(),
                 'a stored rate is superseded, never edited' => fn (): array => $this->ratesAreImmutable(),
                 'the lookup is effective-dated and never reaches forward' => fn (): array => $this->lookupIsEffectiveDated(),
                 'a rate on a line says WHICH rate, not just what number' => fn (): array => $this->rateProvenanceIsRequired(),
@@ -446,6 +447,79 @@ final class CurrencyEnforcementRules
                 'enabled list is a dropdown filter rather than a rule';
         } elseif (! str_contains($refusal, 'does not transact in JPY')) {
             $violations[] = 'a line in an unenabled currency was refused for the wrong reason: '.$refusal;
+        }
+
+        return $violations;
+    }
+
+    /**
+     * The mirror follows a change, not only a creation - PF-087.
+     *
+     * ## The hole this closes
+     *
+     * Two correct guards with no path between them. The immutability
+     * trigger PERMITS the change while the entity has no posted entries,
+     * because before anything is measured there is nothing to re-present.
+     * The unique index permits exactly one functional currency. But the
+     * mirror fired `AFTER INSERT` only, so the old `entity_currencies` row
+     * kept the flag and the entity was left disagreeing with itself - and
+     * every later attempt to record the real currency was refused by an
+     * index protecting an invariant the change had not broken.
+     *
+     * It was found by moving the development workspace from the riyal to
+     * the shekel, which is the first time anything in this repository had
+     * tried. A check that only ever created an entity could not have seen
+     * it, which is why this one changes one.
+     *
+     * ## The old currency stays ENABLED
+     *
+     * Demoted, not switched off. An entity that kept its books in riyals
+     * still has riyal documents and still receives riyal payments; the
+     * history is not wrong, it was measured correctly at the time.
+     * Disabling it to tidy a flag would stop new documents in a currency
+     * the business still trades in.
+     *
+     * @return list<string>
+     */
+    public function theMirrorFollowsAChange(): array
+    {
+        $violations = [];
+
+        $this->connection->statement('SAVEPOINT currency_moves');
+
+        try {
+            $this->connection->table('entities')
+                ->where('id', $this->entityId)
+                ->update(['functional_currency' => 'JOD', 'presentation_currency' => 'JOD']);
+
+            $rows = $this->connection->table('entity_currencies')
+                ->where('entity_id', $this->entityId)
+                ->whereIn('currency', ['SAR', 'JOD'])
+                ->pluck('is_functional', 'currency');
+
+            if (($rows['JOD'] ?? null) !== true) {
+                $violations[] = 'an entity with no postings moved its functional currency to JOD and the '.
+                    'JOD row was not marked functional. The entity now disagrees with itself, and every '.
+                    'later attempt to record the real currency is refused by the unique index.';
+            }
+
+            if (($rows['SAR'] ?? null) === true) {
+                $violations[] = 'the old functional currency kept its flag after the entity moved, so the '.
+                    'entity has two - which the unique index exists to make impossible.';
+            }
+
+            $stillEnabled = $this->connection->table('entity_currencies')
+                ->where('entity_id', $this->entityId)
+                ->where('currency', 'SAR')
+                ->value('enabled');
+
+            if ($stillEnabled !== true) {
+                $violations[] = 'the old functional currency was switched off rather than demoted. The '.
+                    'business still has documents and payments in it, and disabling it to tidy a flag '.
+                    'stops new ones.';
+            }
+        } finally {
+            $this->connection->statement('ROLLBACK TO SAVEPOINT currency_moves');
         }
 
         return $violations;

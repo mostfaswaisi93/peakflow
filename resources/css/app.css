@@ -1093,6 +1093,96 @@
     .skip-link:focus {
         inset-inline-start: 0;
     }
+
+    /* ----------------------------------------------------------------------
+     *  SCROLLBARS - PF-203.
+     *
+     *  The browser's default bar is drawn by the operating system in its own
+     *  grey, which is the one element on the page that ignores the theme the
+     *  user chose. On the navy sidebar it reads as a seam: a light grey
+     *  channel down the edge of a dark panel, and the shell has TWO of them
+     *  side by side at the sidebar's inner edge.
+     *
+     *  Thin, with a transparent track, so the bar is the thumb and nothing
+     *  else. The thumb is the outline colour mixed toward transparent rather
+     *  than a lighter token, because a scrollbar is furniture: it has to be
+     *  findable and must never compete with a figure for attention.
+     *
+     *  Both syntaxes, deliberately. `scrollbar-width`/`scrollbar-color` is
+     *  the standard and is what Firefox reads; `::-webkit-scrollbar` is what
+     *  Chrome and Safari read, and in those a `::-webkit-scrollbar` rule
+     *  turns OFF the overlay behaviour, so the width below is reserved
+     *  space rather than an overlay.
+     * ------------------------------------------------------------------- */
+    /*
+     * `scrollbar-gutter: stable` on the two elements that scroll.
+     *
+     * Without it the bar appears when the content grows past the viewport
+     * and every centred thing on the page shifts sideways by its width.
+     * It is the jump that happens when a filter returns one row fewer, and
+     * it reads as the layout being unstable rather than as a scrollbar
+     * arriving.
+     */
+    html,
+    .scrollbar-on-sidebar {
+        scrollbar-gutter: stable;
+    }
+
+    * {
+        scrollbar-width: thin;
+        scrollbar-color: color-mix(in oklab, var(--color-outline-strong) 70%, transparent) transparent;
+    }
+
+    ::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
+    }
+
+    ::-webkit-scrollbar-track {
+        background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+        background: color-mix(in oklab, var(--color-outline-strong) 70%, transparent);
+        border-radius: 999px;
+        /* The border is what makes a 10px track hold a 6px thumb: a
+           transparent border painted over the element's own background,
+           which is the only way to inset a webkit thumb. */
+        border: 2px solid transparent;
+        background-clip: padding-box;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+        background: color-mix(in oklab, var(--color-outline-strong) 85%, transparent);
+        background-clip: padding-box;
+    }
+
+    /* The corner where two bars meet, which otherwise stays OS grey. */
+    ::-webkit-scrollbar-corner {
+        background: transparent;
+    }
+
+    /*
+     * On the sidebar the thumb is drawn in the sidebar's own on-colour.
+     *
+     * `--color-outline-strong` is tuned against the page surface and
+     * disappears against navy. The sidebar is dark in EVERY theme, including
+     * the two light ones, so this cannot be left to the theme.
+     */
+    .scrollbar-on-sidebar {
+        scrollbar-color: color-mix(in oklab, var(--color-on-sidebar-muted) 70%, transparent) transparent;
+    }
+
+    .scrollbar-on-sidebar::-webkit-scrollbar-thumb {
+        background: color-mix(in oklab, var(--color-on-sidebar-muted) 70%, transparent);
+        background-clip: padding-box;
+    }
+
+    .scrollbar-on-sidebar::-webkit-scrollbar-thumb:hover {
+        background: color-mix(in oklab, var(--color-on-sidebar-muted) 85%, transparent);
+        background-clip: padding-box;
+    }
+
 }
 
 /* ===========================================================================
@@ -1296,6 +1386,24 @@ select:not([multiple]):not([size]) {
         appearance: auto;
         background-image: none;
         padding-inline-end: 0.5rem;
+    }
+
+    /*
+     * The scrollbars go back to the user's own palette.
+     *
+     * A thumb painted in a mixed colour here is a thumb the user's
+     * high-contrast scheme did not choose, which is the whole thing this
+     * mode exists to prevent. `ButtonBorder` is the system colour for
+     * exactly this kind of furniture.
+     */
+    * {
+        scrollbar-color: auto;
+    }
+
+    ::-webkit-scrollbar-thumb,
+    .scrollbar-on-sidebar::-webkit-scrollbar-thumb {
+        forced-color-adjust: none;
+        background: ButtonBorder;
     }
 }
 
