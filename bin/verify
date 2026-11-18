@@ -335,6 +335,7 @@ if ($only === 'all' || $only === 'reporting') {
     $suites['Statement of changes in equity'] = $suite(static fn (): array => (new Tests\Support\ChangesInEquityRules())->all());
     $suites['Statement of cash flows'] = $suite(static fn (): array => (new Tests\Support\CashFlowRules())->all());
     $suites['Export and reproducibility'] = $suite(static fn (): array => (new Tests\Support\ExportRules())->all());
+    $suites['The period close checklist'] = $suite(static fn (): array => (new Tests\Support\CloseChecklistRules())->all());
 }
 
 if ($only === 'all' || $only === 'config') {

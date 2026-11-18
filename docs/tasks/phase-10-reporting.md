@@ -137,11 +137,52 @@ The structural promise: if a number cannot be explained, it is a bug.
 ### PF-196 · The period close checklist
 `Reporting` · **5 pts** · depends: PF-195, PF-050, PF-088 · standards: IAS 10 · `risk:high`
 
-- [ ] `periods:close` runs every blocking check and reports all of them at once rather than failing on the first
-- [ ] Blocking items: unposted documents in the period, unreconciled bank accounts, non-zero suspense, non-zero unexplained tax difference, aged in-transit items, failed recurring occurrences, unresolved three-way-match exceptions, inter-entity residuals, read-model drift
+- [x] Every blocking check runs and reports all of them at once rather than failing on the first
+- [ ] Blocking items — **done**: unposted documents, unreconciled bank accounts, non-zero suspense, unexplained tax difference, read-model drift. **Open**: aged in-transit items, failed recurring occurrences, three-way-match exceptions, inter-entity residuals
 - [ ] Each item links directly to the screen that resolves it
 - [ ] A controller may override a named item with a reason; the override is audited and appears on the compliance report
 - [ ] The checklist state is retained per period, so "what did we accept at the time" is answerable
+
+`App\Support\Closing\ClosingChecks` ·
+`App\Tenant\Ledger\Closing\{ReadModelDriftCheck,UnpostedEntriesCheck}` ·
+`bin/verify reporting`
+
+**Every reason at once, and a check that throws is itself a reason.** A
+close failing on the first problem is found three times by the same person
+on the same afternoon. And a period whose checks nobody could *compute*
+must not close: the alternative is a close that succeeded because something
+was broken.
+
+**Two ledger blockers added, and neither can be signed off.** Unexplained
+money in suspense is a fact about the world that a close cannot always
+resolve — a bank will not say who sent a transfer — so that one has an
+escape. A drifted balance and an unfinished draft are facts about *this
+system*, each with a one-command fix, and there is no circumstance in which
+closing over them is the better of two options.
+
+A draft invoice has **no journal entry at all** until it is issued, so the
+first version of the unposted check — which read `journal_entries` alone —
+could not see the thing most likely to be left unfinished. The criterion
+says "unposted documents" and means it: invoices, bills and journal
+entries.
+
+Three of the seven checks were wrong before the code was. One asserted a
+*soft* close was refused and reported the product as broken; the state
+machine consults the registry on the way to `Closed` only, and the comment
+says why. One drifted a balance on an entity that had never posted, so
+`account_balances` had no row to drift. And one asked about April with a
+draft dated mid-May, where `<` and `<=` give the same answer — so the bite
+sweep changed the period bound and nothing failed. It now drafts on the
+first day of the *next* period, which is the only date that tells the two
+apart.
+
+> **Still open, and why.** The remaining blocking items need services that
+> are themselves unfinished — inter-entity residuals wait on PF-195. The
+> link-to-screen criterion changes `ClosingCheck::reasonsToRefuse` from
+> returning sentences to returning structures, which ripples through three
+> modules that implement it; worth doing, not worth doing half. The
+> override and the retained state need a table, and the honest place for it
+> is beside that interface change.
 
 ### PF-197 · Export
 `Reporting` · **5 pts** · depends: PF-183 · standards: ISO 19005, RFC 4180 · `type:security`

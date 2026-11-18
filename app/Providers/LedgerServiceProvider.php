@@ -102,5 +102,25 @@ final class LedgerServiceProvider extends ServiceProvider
          | queued.
          */
         Event::listen(RevaluationRun::class, CheckBalancesAfterARevaluation::class);
+
+        /*
+         | Two things that must stop a period closing - PF-196.
+         |
+         | They are the ledger's OWN blockers, which is why they register
+         | here rather than being consulted directly: the registry is what
+         | keeps the ledger from learning what a tax return or a bank
+         | reconciliation is, and the ledger putting its own checks in
+         | through the same door is what stops that door becoming a
+         | special case.
+         |
+         | Neither can be signed off, unlike suspense. Unexplained money in
+         | suspense is a fact about the world the close cannot always
+         | resolve; a drifted balance and an unfinished draft are facts
+         | about this system, each with a one-command fix.
+         */
+        $closing = $this->app->make(\App\Support\Closing\ClosingChecks::class);
+
+        $closing->register($this->app->make(\App\Tenant\Ledger\Closing\ReadModelDriftCheck::class));
+        $closing->register(new \App\Tenant\Ledger\Closing\UnpostedEntriesCheck());
     }
 }
