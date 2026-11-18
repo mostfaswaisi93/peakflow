@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace App\Tenant\Sales\Posting\Rules;
 
 use App\Support\Money\Money;
+use App\Support\Money\Rate;
+use App\Support\Money\RoundingPolicy;
+use App\Support\Money\Scale;
 use App\Tenant\Ledger\Enums\ControlRole;
 use App\Tenant\Ledger\Posting\PostingContext;
 use App\Tenant\Ledger\Posting\PostingLine;
@@ -76,9 +79,58 @@ final class InvoiceIssuedRule implements PostingRule
      */
     public function lines(array $event, PostingContext $context): array
     {
-        $currency = $context->functionalCurrency;
+        $functional = $context->functionalCurrency;
         $party = (string) $event['party_id'];
         $narration = $event['narration'] ?? null;
+
+        /*
+         | The DOCUMENT's currency, not the entity's - PF-082.
+         |
+         | This read `$context->functionalCurrency` and applied it to the
+         | document's own figures, so a 1,000 EUR invoice credited 1,000
+         | riyals to revenue and debited 1,150 to the receivable. The entry
+         | BALANCED, because every line was wrong by the same factor - which
+         | is what made it invisible to the trial balance, to `ledger:verify`
+         | and to the `journal_lines` trigger that refuses a foreign line
+         | with no rate, since every line claimed to be functional and gave
+         | it nothing to object to.
+         |
+         | Absent means the document is in the functional currency: an event
+         | built before this field existed could only have been.
+         */
+        $currency = (string) ($event['currency'] ?? $functional);
+        $rate = $event['rate'] ?? null;
+        $policy = RoundingPolicy::halfUp(Scale::Amount);
+
+        if ($currency !== $functional && ! $rate instanceof Rate) {
+            throw IssueRefused::because(sprintf(
+                'This document is in %s and the books are kept in %s, and it carries no rate. It '.
+                'cannot be posted at its face value: that would put %s of the entity\'s own currency '.
+                'into the ledger and balance, so nothing afterwards could tell it was wrong.',
+                $currency,
+                $functional,
+                $currency,
+            ));
+        }
+
+        /*
+         | And a rate on a document already in the functional currency is
+         | refused rather than ignored.
+         |
+         | It asserts a translation that did not happen, and `journal_lines`
+         | refuses that on every line; catching it here names the document
+         | rather than a line id.
+         */
+        if ($currency === $functional && $rate instanceof Rate) {
+            throw IssueRefused::because(sprintf(
+                'This document is in %s, which is the currency the books are kept in, and it carries '.
+                'a rate of %s. A rate asserts that a translation happened and came out even, which is '.
+                'a different claim from no translation at all - and afterwards the two cannot be told '.
+                'apart.',
+                $currency,
+                (string) $rate->value,
+            ));
+        }
 
         $gross = Money::of((string) $event['gross'], $currency);
 
@@ -87,7 +139,16 @@ final class InvoiceIssuedRule implements PostingRule
         }
 
         $lines = [
-            PostingLine::toRole(ControlRole::AccountsReceivable, $gross, $party, $narration),
+            $rate instanceof Rate
+                ? PostingLine::translatedToRole(
+                    role: ControlRole::AccountsReceivable,
+                    original: $gross,
+                    rate: $rate,
+                    policy: $policy,
+                    partyId: $party,
+                    narration: $narration,
+                )
+                : PostingLine::toRole(ControlRole::AccountsReceivable, $gross, $party, $narration),
         ];
 
         foreach ($event['revenue'] as $revenue) {
@@ -101,9 +162,20 @@ final class InvoiceIssuedRule implements PostingRule
              | impossible.
              */
             if (($revenue['deferred'] ?? false) === true) {
-                $lines[] = PostingLine::toRole(
+                $deferred = Money::of((string) $revenue['amount'], $currency)->negated();
+
+                $lines[] = $rate instanceof Rate
+                    ? PostingLine::translatedToRole(
+                        role: ControlRole::DeferredRevenue,
+                        original: $deferred,
+                        rate: $rate,
+                        policy: $policy,
+                        partyId: $party,
+                        narration: $narration,
+                    )
+                    : PostingLine::toRole(
                     ControlRole::DeferredRevenue,
-                    Money::of((string) $revenue['amount'], $currency)->negated(),
+                    $deferred,
                     $party,
                     $narration,
                     $revenue['tax_code_id'] ?? null,
@@ -119,15 +191,29 @@ final class InvoiceIssuedRule implements PostingRule
                 throw IssueRefused::aLineWithNoRevenueAccount();
             }
 
-            $lines[] = PostingLine::toAccount(
-                accountId: $account,
-                amount: Money::of((string) $revenue['amount'], $currency)->negated(),
-                partyId: $party,
-                narration: $narration,
-                taxCodeId: $revenue['tax_code_id'] ?? null,
-                dimensions: $revenue['dimensions'] ?? [],
-                taxPoint: $revenue['tax_point'] ?? null,
-            );
+            $net = Money::of((string) $revenue['amount'], $currency)->negated();
+
+            $lines[] = $rate instanceof Rate
+                ? PostingLine::translated(
+                    accountId: $account,
+                    original: $net,
+                    rate: $rate,
+                    policy: $policy,
+                    partyId: $party,
+                    narration: $narration,
+                    taxCodeId: $revenue['tax_code_id'] ?? null,
+                    dimensions: $revenue['dimensions'] ?? [],
+                    taxPoint: $revenue['tax_point'] ?? null,
+                )
+                : PostingLine::toAccount(
+                    accountId: $account,
+                    amount: $net,
+                    partyId: $party,
+                    narration: $narration,
+                    taxCodeId: $revenue['tax_code_id'] ?? null,
+                    dimensions: $revenue['dimensions'] ?? [],
+                    taxPoint: $revenue['tax_point'] ?? null,
+                );
         }
 
         foreach ($event['tax'] as $tax) {
@@ -142,15 +228,27 @@ final class InvoiceIssuedRule implements PostingRule
                 continue;
             }
 
-            $lines[] = PostingLine::toRoleIn(
-                ControlRole::VatOutput,
-                (string) $tax['jurisdiction'],
-                $amount->negated(),
-                $party,
-                $narration,
-                $tax['tax_code_id'] ?? null,
-                $tax['tax_point'] ?? null,
-            );
+            $lines[] = $rate instanceof Rate
+                ? PostingLine::translatedToRoleIn(
+                    role: ControlRole::VatOutput,
+                    jurisdiction: (string) $tax['jurisdiction'],
+                    original: $amount->negated(),
+                    rate: $rate,
+                    policy: $policy,
+                    partyId: $party,
+                    narration: $narration,
+                    taxCodeId: $tax['tax_code_id'] ?? null,
+                    taxPoint: $tax['tax_point'] ?? null,
+                )
+                : PostingLine::toRoleIn(
+                    ControlRole::VatOutput,
+                    (string) $tax['jurisdiction'],
+                    $amount->negated(),
+                    $party,
+                    $narration,
+                    $tax['tax_code_id'] ?? null,
+                    $tax['tax_point'] ?? null,
+                );
         }
 
         return $lines;

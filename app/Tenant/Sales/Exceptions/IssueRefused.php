@@ -16,6 +16,21 @@ use RuntimeException;
  */
 final class IssueRefused extends RuntimeException
 {
+    /**
+     * A refusal whose sentence is written where the decision is made.
+     *
+     * The named constructors below are for refusals that happen in more
+     * than one place and must read identically in all of them. This one is
+     * for a refusal the posting rule is the only thing that can detect -
+     * a document whose currency and rate contradict each other - where
+     * moving the sentence here would separate it from the condition it
+     * describes and the next person would change one without the other.
+     */
+    public static function because(string $sentence): self
+    {
+        return new self($sentence);
+    }
+
     /** @param  list<string>  $findings */
     public static function theDraftIsNotValid(array $findings): self
     {

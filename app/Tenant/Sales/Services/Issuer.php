@@ -8,6 +8,8 @@ use App\Support\Audit\AuditTrail;
 use App\Support\Authorization\SegregatesDuties;
 use App\Support\Hashing\Canonicalizer;
 use App\Support\Money\Money;
+use App\Support\Money\Rate;
+use App\Tenant\Catalog\Services\ExchangeRates;
 use App\Tenant\Ledger\Models\JournalEntry;
 use App\Tenant\Ledger\Services\NumberAllocator;
 use App\Tenant\Ledger\Services\Poster;
@@ -17,6 +19,11 @@ use App\Tenant\Sales\InvoiceFinding;
 use App\Tenant\Sales\Models\Invoice;
 use App\Tenant\Sales\Models\InvoiceLine;
 use App\Tenant\Sales\Posting\Rules\FinalInvoiceIssuedRule;
+use App\Tenant\Tax\Exceptions\TaxPointUndeterminable;
+use App\Tenant\Tax\Services\EvidenceGate;
+use App\Tenant\Tax\Services\ReturnPeriods;
+use App\Tenant\Tax\Services\TaxPoint;
+use App\Tenant\Tax\TaxPointDecision;
 use App\Tenant\Tenancy\Models\Entity;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -28,6 +35,7 @@ use Illuminate\Support\Facades\DB;
  *
  * In this order, and the order is the design:
  *
+ *   0. derive the tax point     - once, before anything validates against it
  *   1. validate                 - refuse while nothing has been consumed
  *   2. freeze the snapshots     - the parties, the terms, the tax decision
  *   3. post to the ledger       - synchronously, inside the transaction
@@ -75,6 +83,9 @@ final class Issuer
         private readonly AuditTrail $audit,
         private readonly SegregatesDuties $duties,
         private readonly RevenueRecognition $recognition,
+        private readonly TaxPoint $taxPoint,
+        private readonly ReturnPeriods $returnPeriods,
+        private readonly EvidenceGate $evidence,
     ) {}
 
     /**
@@ -114,14 +125,6 @@ final class Issuer
             $draft->refresh();
 
             /*
-             | 1. Validate, while nothing has been consumed.
-             |
-             | Inside the transaction rather than before it, because the
-             | period could close and a registration could lapse between a
-             | check and a write - and the check that passed is the one
-             | somebody would quote afterwards.
-             */
-            /*
              | 0. Whose duty this is - PF-033.
              |
              | Before validation, because being refused for a reason about
@@ -144,6 +147,46 @@ final class Issuer
                 subjectLabel: $draft->document_type->label('en'),
             );
 
+            /*
+             | 0a. The tax point, derived by the jurisdiction's rule - PF-077.
+             |
+             | This used to be `$draft->tax_point ?? $draft->issue_date`,
+             | taken later in the transaction, which is the one fallback
+             | PF-077 exists to forbid. It is silent, it is always available,
+             | and it is plausible: a delivery-date regime would have filed a
+             | supply made on the 30th in the month the paperwork was raised,
+             | and nothing on the document would have said which date decided.
+             |
+             | Derived ONCE, because re-deriving later reads a jurisdiction
+             | profile that may have changed - which would move a document
+             | between returns, retrospectively, after one of them was filed.
+             |
+             | Before validation, and written to the draft, because the
+             | validator checks the tax point against two things that matter:
+             | the return period it falls in (PF-085 refuses one that has
+             | been filed) and the customer's registration as it stood on
+             | that date. Derive afterwards and those checks pass on the date
+             | somebody typed while the document is frozen with another one -
+             | a refusal that reports it was satisfied.
+             |
+             | A refusal of its own rather than a finding, because it is the
+             | input to those checks: there is no return period to check for
+             | a date that could not be derived. The message is shaped like
+             | the validator's so it reads the same way to a caller.
+             */
+            $taxPointDecision = $this->deriveTheTaxPoint($draft);
+            $taxPoint = Carbon::parse($taxPointDecision->date->toDateString());
+
+            $this->freezeTheTaxPoint($draft, $taxPoint);
+
+            /*
+             | 1. Validate, while nothing has been consumed.
+             |
+             | Inside the transaction rather than before it, because the
+             | period could close and a registration could lapse between a
+             | check and a write - and the check that passed is the one
+             | somebody would quote afterwards.
+             */
             $findings = $this->validator->blocking($this->validator->validate($draft, $entity));
 
             if ($findings !== []) {
@@ -153,8 +196,49 @@ final class Issuer
                 ));
             }
 
+            /*
+             | 1a. The evidence the treatment needs, on record - PF-080.
+             |
+             | A zero rate, an exemption and an out-of-scope supply all show
+             | nothing in the tax column, and each one has to be defensible
+             | years later: an export rate claimed on the strength of a
+             | foreign billing address, with nothing showing the goods ever
+             | moved, is the most commonly assessed error there is.
+             |
+             | The gate has existed since PF-080 and had no caller, which
+             | made it a comment. Called here because this is the moment the
+             | document stops being editable: before, somebody can hold it
+             | for a day while the customs declaration is found; after, the
+             | customer holds a copy and a return may already include it.
+             |
+             | Against the decision being FROZEN, not a recomputed one. What
+             | the gate checked and what the document claims have to be the
+             | same array, or the refusal was about a different document.
+             */
+            $this->evidence->assertRecordedOn($taxDecision);
+
             $jurisdiction = (string) ($taxDecision['country'] ?? $entity->country);
-            $taxPoint = $draft->tax_point ?? $draft->issue_date;
+
+            /*
+             | And the return period that date falls into - PF-077, PF-085.
+             |
+             | A different calendar from the accounting period: this document
+             | posts into the period its issue date falls in and is REPORTED
+             | in the period its tax point falls in, and a monthly return on
+             | a quarterly-closing entity makes the two differ as a matter of
+             | course. Both are stored, and neither is derived from the other.
+             |
+             | Null when no period covers the date, which happens for a
+             | jurisdiction nobody has generated periods for. Visibly unknown
+             | rather than quietly attributed to the wrong return; the
+             | validator has already refused the case that matters, which is
+             | a tax point in a period somebody has FILED.
+             */
+            $returnPeriod = $this->returnPeriods->forTaxPoint(
+                (string) $entity->getKey(),
+                $jurisdiction,
+                $taxPointDecision->date,
+            );
 
             // 2. Freeze.
             $snapshot = [
@@ -164,7 +248,21 @@ final class Issuer
                     $jurisdiction,
                     $taxPoint,
                 ),
-                'tax_decision_snapshot' => $taxDecision,
+
+                /*
+                 | The place-of-supply decision the caller resolved, plus the
+                 | tax point decision this transaction derived.
+                 |
+                 | The whole decision and not just its date: the basis, which
+                 | candidate date won and the profile it came from. An
+                 | accountant disagreeing with a tax point never asks what
+                 | date was chosen - they ask why, and a bare date makes them
+                 | reconstruct the rule from the other dates on the document.
+                 | They will reconstruct it differently.
+                 */
+                'tax_decision_snapshot' => array_merge($taxDecision, [
+                    'tax_point' => $taxPointDecision->jsonSerialize(),
+                ]),
                 'terms_snapshot' => $terms === null
                     ? $draft->terms_snapshot
                     : $this->snapshots->terms($terms, $entity, $draft->issue_date, $draft->gross()),
@@ -194,6 +292,7 @@ final class Issuer
                 'status' => 'issued',
                 'number' => $number,
                 'tax_point' => $taxPoint->toDateString(),
+                'return_period_label' => $returnPeriod?->label,
                 'issued_at' => now(),
                 'issued_by' => $userId,
                 'canonical' => $chain['canonical'],
@@ -230,6 +329,82 @@ final class Issuer
 
             return $draft->refresh();
         });
+    }
+
+    /**
+     * The tax point this document's jurisdiction rule produces - PF-077.
+     *
+     * Two of the three dates go in and the profile decides which comes out:
+     * the issue date (`BT-2`) and the delivery date (`BT-72`).
+     *
+     * ## No payment date, and that is why a payment basis refuses here
+     *
+     * The sell side does not know when money arrived - a receipt is
+     * `Settlement`'s, and `Settlement` depends on `Sales` rather than the
+     * other way round, which is the dependency that keeps one answer to
+     * "what was this document settled by". Passing anything else in its
+     * place would be the guess PF-077 is about: the prepayment invoice's own
+     * date is the nearest plausible value and is not the date money arrived.
+     *
+     * So a profile configured for a payment basis refuses every document
+     * until the date reaches the document. That is loud, it names the date it
+     * wanted, and it is what PF-099's `PrepaymentTaxPoint` already decides
+     * separately for the one case where the sell side does know - money taken
+     * before performance.
+     *
+     * A basis whose input is missing REFUSES, through `TaxPoint`. Translated
+     * to `IssueRefused` here because this is the issuing boundary and because
+     * the message is actionable: it names the date the document needs rather
+     * than the rule that wanted it.
+     *
+     * @throws IssueRefused
+     */
+    private function deriveTheTaxPoint(Invoice $draft): TaxPointDecision
+    {
+        $profile = (string) ($draft->profile ?? config('jurisdictions.default', 'generic'));
+
+        try {
+            return $this->taxPoint->derive(
+                profile: $profile,
+                invoiceDate: $draft->issue_date,
+                deliveryDate: $draft->delivery_date,
+            );
+        } catch (TaxPointUndeterminable $e) {
+            throw IssueRefused::theDraftIsNotValid(['tax_point: '.$e->getMessage()]);
+        }
+    }
+
+    /**
+     * Put the derived date on the header and on every line that carries a code.
+     *
+     * Only those lines. `journal_lines` pairs a tax point with a tax code by
+     * a CHECK - that pairing is what makes a return complete by construction
+     * - so a line with no code must keep a null tax point or its journal line
+     * cannot be written at all.
+     *
+     * ## One date, on both legs
+     *
+     * The posting takes the tax leg's tax point from the header and each
+     * revenue leg's from its line. Leave the two to disagree and one
+     * document's taxable base lands in one return period while its tax lands
+     * in another: a box carrying tax with no base in the first period, and a
+     * base with no tax in the second. Both figures are individually
+     * plausible and the return is wrong in two places.
+     *
+     * The header is set in memory and persisted by the single update at the
+     * end of the transaction; the lines are written now, because the
+     * validator and the posting both re-read them from the database rather
+     * than from this model. A refusal after this point rolls the whole
+     * transaction back, lines included.
+     */
+    private function freezeTheTaxPoint(Invoice $draft, Carbon $taxPoint): void
+    {
+        $draft->tax_point = $taxPoint;
+
+        InvoiceLine::query()
+            ->where('invoice_id', (string) $draft->getKey())
+            ->whereNotNull('tax_code_id')
+            ->update(['tax_point' => $taxPoint->toDateString()]);
     }
 
     /**
@@ -403,6 +578,20 @@ final class Issuer
             'series' => $draft->series_key,
             'type' => $draft->document_type->value,
             'issue_date' => $draft->issue_date->toDateString(),
+
+            /*
+             | The date the tax point was DERIVED FROM, not only the tax
+             | point - PF-077.
+             |
+             | A derivation whose output is frozen and whose input is not is
+             | half frozen: the stored basis would say "the delivery date
+             | won" and nothing in the bytes would say what that date was,
+             | so a re-check six years later could not re-run the rule. The
+             | row is immutable by trigger, which stops the application
+             | editing it; the bytes are what catch a write that went round
+             | the application.
+             */
+            'delivery_date' => $draft->delivery_date?->toDateString(),
             'tax_point' => ($draft->tax_point ?? $draft->issue_date)->toDateString(),
             'currency' => $draft->currency,
 
@@ -451,6 +640,48 @@ final class Issuer
             'previous' => $previous?->canonical_hash ?? $genesis,
             'index' => ($previous?->chain_index ?? 0) + 1,
         ];
+    }
+
+    /**
+     * The rate the document was invoiced at, rebuilt from the document.
+     *
+     * ## Why it is read and not fetched again
+     *
+     * The rate on the paper the customer holds is the rate the books must
+     * use. A second lookup at posting time could return a different one -
+     * the feed updates, the document was issued yesterday - and then the
+     * ledger and the invoice disagree about what the sale was worth, with
+     * nothing on either to say which is right.
+     *
+     * `InvoiceValidator` already refuses a foreign document with no frozen
+     * rate, so by the time a draft reaches here the three columns are
+     * filled. Null here therefore means one thing only: the document is in
+     * the currency the books are kept in, and there is no translation.
+     */
+    private function rateToPostAt(Invoice $draft, Entity $entity): ?Rate
+    {
+        $functional = (string) $entity->functional_currency;
+        $currency = (string) $draft->currency;
+
+        if ($currency === $functional || $draft->fx_rate === null) {
+            return null;
+        }
+
+        return new Rate(
+            from: $currency,
+            to: $functional,
+            value: (string) $draft->fx_rate,
+            /*
+             | The rate's OWN date, not the document's.
+             |
+             | A rate is effective-dated, so Friday's is a legitimate answer
+             | for a Saturday invoice. Recording the question rather than
+             | the answer points an auditor at a row that does not exist.
+             */
+            date: ($draft->fx_rate_date ?? $draft->issue_date)->toDateTimeImmutable(),
+            provider: (string) ($draft->fx_source ?? ExchangeRates::PROVIDER_MANUAL),
+            rateSet: Rate::SET_MARKET,
+        );
     }
 
     private function post(Invoice $draft, Entity $entity, string $userId): JournalEntry
@@ -543,6 +774,25 @@ final class Issuer
             'invoice_id' => (string) $draft->getKey(),
             'party_id' => (string) $draft->party_id,
             'gross' => $draft->gross_amount,
+            /*
+             | The document's currency and its frozen rate - PF-082.
+             |
+             | Without these the rule labelled the DOCUMENT's figures with
+             | the ENTITY's currency, so a 1,000 EUR invoice credited 1,000
+             | riyals to revenue. The entry balanced, because every line was
+             | wrong by the same factor - which is what made it invisible to
+             | the trial balance, to `ledger:verify` and to the database
+             | trigger that refuses a foreign line with no rate, since every
+             | line claimed to be functional and had nothing to object to.
+             |
+             | The validator already refuses a foreign document with no
+             | frozen rate, so by the time anything reaches here the rate is
+             | on the document. It is read rather than re-fetched: the rate
+             | the customer was invoiced at is the rate the books must use,
+             | and a second lookup could disagree with the paper.
+             */
+            'currency' => (string) $draft->currency,
+            'rate' => $this->rateToPostAt($draft, $entity),
             'narration' => sprintf('%s %s', $draft->document_type->label('en'), $draft->series_key),
             'revenue' => $revenue,
             'tax' => $tax,
