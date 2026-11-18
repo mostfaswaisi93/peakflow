@@ -99,14 +99,35 @@ final class RepositoryRules
          */
         $progress = mb_substr($contents, (int) mb_strpos($contents, '## Progress'));
 
+        /*
+         | Both halves of every phase - PF-021.
+         |
+         | A finished task lives in `docs/tasks/done/`, so that a phase file
+         | shows what is LEFT. The totals must not move when a task crosses
+         | that line: the work was done either way, and a table that quietly
+         | dropped 151 finished tasks the day they were filed would be the
+         | most misleading thing in the repository.
+         |
+         | So the counts are summed over the pair, and the pairing is
+         | asserted below - a phase with a `done` file and no phase file, or
+         | the same task in both, is a split that went wrong.
+         */
         $files = glob($this->base().'/docs/tasks/phase-*.md') ?: [];
         sort($files);
 
         $totals = ['complete' => 0, 'tasks' => 0, 'met' => 0, 'open' => 0];
 
         foreach ($files as $file) {
-            $phase = $this->phaseFileCounts((string) file_get_contents($file));
             $name = basename($file);
+            $finished = $this->base().'/docs/tasks/done/'.$name;
+
+            $source = (string) file_get_contents($file);
+
+            if (is_file($finished)) {
+                $source .= "\n".(string) file_get_contents($finished);
+            }
+
+            $phase = $this->phaseFileCounts($source);
             $number = substr($name, 6, 2);
 
             $totals['complete'] += $phase['complete'];
@@ -143,6 +164,104 @@ final class RepositoryRules
     /**
      * @return array{tasks: int, complete: int, met: int, open: int}
      */
+    /**
+     * A task is open or it is finished, and it is written down once.
+     *
+     * ## Why this exists
+     *
+     * The phase files hold what is LEFT and `docs/tasks/done/` holds what is
+     * not, which is only useful while the two agree. Two failures are
+     * possible and both are quiet: a task copied rather than moved is
+     * counted twice by the progress table, and a task that got lost between
+     * them disappears from the backlog with nothing to say it was dropped.
+     *
+     * The second is the one worth the check. A task nobody can find is a
+     * task nobody will do, and "it was in the file last month" is not
+     * something anybody notices.
+     *
+     * ## Finished means finished
+     *
+     * A block filed under `done/` with an open criterion in it is a task
+     * somebody called finished and did not finish - so that is a failure
+     * too, named for what it is rather than silently re-counted.
+     *
+     * @return list<string>
+     */
+    public function noTaskIsFiledTwice(): array
+    {
+        $violations = [];
+        $seen = [];
+
+        foreach (glob($this->base().'/docs/tasks/phase-*.md') ?: [] as $file) {
+            $name = basename($file);
+
+            foreach ([$file => 'open', $this->base().'/docs/tasks/done/'.$name => 'finished'] as $path => $where) {
+                if (! is_file($path)) {
+                    continue;
+                }
+
+                $source = (string) file_get_contents($path);
+
+                if (preg_match_all('/^### (PF-\d+)/m', $source, $matches) === 0) {
+                    continue;
+                }
+
+                foreach ($matches[1] as $id) {
+                    if (isset($seen[$id])) {
+                        $violations[] = sprintf(
+                            '%s is filed as %s and also as %s. The progress table counts it twice, and '.
+                            'one of the two copies is the one nobody will update.',
+                            $id,
+                            $seen[$id],
+                            $where,
+                        );
+
+                        continue;
+                    }
+
+                    $seen[$id] = $where.' in '.$name;
+                }
+            }
+        }
+
+        /*
+         | And the backlog is the list of what exists.
+         |
+         | A task in the flat view and in neither phase file has been lost
+         | between the two, which is the failure nobody notices: it is not
+         | in the open file, so nobody is going to do it, and it is not in
+         | the finished one, so nobody can see it was dropped.
+         */
+        $backlog = $this->base().'/docs/tasks/backlog.md';
+
+        if (is_file($backlog)) {
+            preg_match_all('/`(PF-\d+)`/', (string) file_get_contents($backlog), $listed);
+
+            foreach (array_unique($listed[1]) as $id) {
+                if (! isset($seen[$id])) {
+                    $violations[] = sprintf(
+                        '%s is in the backlog and in no phase file, open or finished. It is not on '.
+                        'anybody\'s list and nothing says it was dropped.',
+                        $id,
+                    );
+                }
+            }
+        }
+
+        foreach (glob($this->base().'/docs/tasks/done/phase-*.md') ?: [] as $file) {
+            $source = (string) file_get_contents($file);
+
+            if (str_contains($source, '- [ ]')) {
+                $violations[] = sprintf(
+                    'docs/tasks/done/%s holds an open criterion, so something filed as finished is not.',
+                    basename($file),
+                );
+            }
+        }
+
+        return $violations;
+    }
+
     private function phaseFileCounts(string $source): array
     {
         $met = preg_match_all('/^- \[x\]/m', $source);
@@ -184,6 +303,7 @@ final class RepositoryRules
                 'nothing is fetched from a third party at runtime' => $this->nothingIsFetchedAtRuntime(),
                 'static analysis has no baseline, and the rule is written down' => $this->staticAnalysisHasNoBaseline(),
                 'the backlog progress table agrees with the phase files' => $this->theProgressTableIsHonest(),
+                'every task is in exactly one of the two files' => $this->noTaskIsFiledTwice(),
             ];
         } finally {
             foreach (glob($this->temporary.'/*') ?: [] as $file) {

@@ -234,16 +234,7 @@ Designed states for every screen, not left to the framework.
 - [ ] Icons that imply direction are mirrored; icons that do not (a clock, a checkmark) are not
 - [ ] Visual regression runs every screen in LTR and RTL, in light and dark, at all three densities
 
-### PF-217 · The theme switcher, and the flash it must not have
-`—` · **3 pts** · depends: PF-199 · standards: WCAG 2.2 AA · —
-
-- [x] A person chooses among the five themes, and the choice is **persisted before the first paint** - a switcher that applies after hydration shows the wrong theme for a frame, and on a dark-theme user that frame is a white flash in a dark room
-- [x] The preference follows the account rather than the browser, because somebody who set dark on their laptop did not ask to be blinded by their phone
-- [x] `prefers-color-scheme` is the default for an account that has not chosen, and choosing overrides it - a product that ignores the system setting and one that refuses to let you leave it are both wrong
-- [x] `prefers-contrast` and `prefers-reduced-transparency` select the high-contrast themes, since the people those settings exist for should not have to find a menu
-- [x] **Found while building it:** Tailwind v4 defaults `dark:` to the media query, so a class-based toggle leaves every `dark:` utility compiling, landing in the HTML and doing nothing. `@custom-variant dark` is load-bearing and says so in the stylesheet
-
-### PF-218 · The tenant's own brand colour
+### PF-267 · The tenant's own brand colour
 `—` · **5 pts** · depends: PF-199, PF-200 · standards: WCAG 2.2 AA · `risk:high`
 
 - [ ] A tenant may set one brand colour, and the product **derives a ramp from it** rather than painting it on buttons - Material You's useful idea: one input, a generated set of roles

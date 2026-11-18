@@ -32,6 +32,18 @@ Counted from the checkboxes in the phase files. `php bin/verify repo` asserts th
 
 A criterion is ticked only when something in `bin/verify` fails if the behaviour is removed.
 
+**A phase file holds what is left.** A task with no open criterion moves to
+[`done/`](done/), under the same file name. They are kept rather than deleted:
+the notes under each task are the record of *why* the thing was built the way
+it was, and that is the part somebody needs when they come to change it.
+
+The table counts both halves, so the numbers do not move when a task crosses
+that line — the work was done either way, and a table that quietly dropped a
+finished task the day it was filed would be the most misleading thing in the
+repository. `bin/verify repo` also asserts that no task is in both files and
+that nothing in the flat backlog has fallen out of either, because a task
+nobody can find is a task nobody will do.
+
 | Phase | Tasks complete | Criteria met | Criteria open |
 |---|---|---|---|
 | [00](phase-00-foundations.md) | 15 / 17 | 175 | 5 |
