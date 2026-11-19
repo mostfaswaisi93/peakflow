@@ -77,6 +77,8 @@ final class ReconciliationRules
                 'undoing keeps the document exactly as it was' => fn (): array => $this->undoKeepsIt(),
                 'undoing twice is refused' => fn (): array => $this->undoTwice(),
                 'an undone statement can be reconciled again' => fn (): array => $this->reconcileAgainAfterUndo(),
+                'and the new one points back at what it replaced' => fn (): array => $this->theReplacementPointsBack(),
+                'a restated statement leaves one standing reconciliation, not two' => fn (): array => $this->aRestatementLeavesOneStanding(),
 
                 // ---- Corrections become suggestions --------------------
                 'a correction is stored as a suggestion, not applied' => fn (): array => $this->correctionIsASuggestion(),
@@ -379,6 +381,205 @@ final class ReconciliationRules
         return $refusal !== null
             ? []
             : ['a document that is no longer standing was withdrawn again, which records a second withdrawal of nothing'];
+    }
+
+    /**
+     * The new reconciliation points back at the one it replaced - PF-247.
+     *
+     * `undo()` returns this sentence to whoever withdrew the document:
+     * "the statement can be reconciled again and the new one will point back
+     * at this." The migration says the column "points forward to the
+     * reconciliation that replaced this one". The class docblock says the
+     * same thing a third time.
+     *
+     * Measured: `reconciliations.superseded_by_id` was written by nothing
+     * and read by nothing. Three comments describing a chain that did not
+     * exist, one of them shown to a user as a promise.
+     *
+     * @return list<string>
+     */
+    private function theReplacementPointsBack(): array
+    {
+        $statement = $this->aReconcilableStatement();
+        $service = app(Reconciliations::class);
+
+        $first = $service->reconcile($statement, $this->actorId());
+
+        $service->undo((string) $first['id'], $this->actorId(), 'withdrawn to prove the chain is written');
+
+        $linkBefore = DB::connection('tenant')->table('reconciliations')
+            ->where('id', (string) $first['id'])->value('superseded_by_id');
+
+        if ($linkBefore !== null) {
+            return ['the withdrawn reconciliation already points at something before anything '.
+                'replaced it, so the link says nothing about what replaced what'];
+        }
+
+        $second = $service->reconcile($statement, $this->actorId());
+
+        $linkAfter = DB::connection('tenant')->table('reconciliations')
+            ->where('id', (string) $first['id'])->value('superseded_by_id');
+
+        $problems = [];
+
+        if ((string) $linkAfter !== (string) $second['id']) {
+            $problems[] = sprintf(
+                'the withdrawn reconciliation points at %s and the one that replaced it is %s. '.
+                'undo() tells the person "the new one will point back at this", and the chain it '.
+                'promises is the one an auditor reads to ask what was there before',
+                $linkAfter === null ? '(nothing)' : (string) $linkAfter,
+                (string) $second['id'],
+            );
+        }
+
+        $document = $service->statementFor((string) $first['id']);
+
+        if (($document['superseded_by'] ?? null) === null) {
+            $problems[] = 'the withdrawn document does not say what replaced it. A document that '.
+                'says it was withdrawn and not what stands in its place leaves the reader guessing '.
+                'by date through a list of reconciliations for the same account';
+        }
+
+        return $problems;
+    }
+
+    /**
+     * A restatement leaves ONE standing reconciliation, not two - PF-247.
+     *
+     * ## The door the refusal did not cover
+     *
+     * `reconcile()` refuses a statement that is already reconciled, because
+     * two documents for one statement leave "nothing saying which the period
+     * close should look at". `reconciliations_one_live_per_statement`
+     * enforces the same thing in the database.
+     *
+     * Both are keyed on the STATEMENT. When a bank reissues one,
+     * `StatementImport::supersede()` marks the old row superseded and the new
+     * one is imported - and the old statement's reconciliation is untouched,
+     * so `undone_at` is still null and it is still standing. The new
+     * statement is a different row, so neither the refusal nor the index
+     * sees anything.
+     *
+     * The result is exactly the condition the refusal exists to prevent, one
+     * door along: two standing reconciliations for one account and one
+     * period, both listed as standing by `BankReconciliationReport`.
+     *
+     * ## Driven by linking the statements, not by importing a second file
+     *
+     * What is under test is the reconciliation chain, not the import. A
+     * fixture that produced a real restatement would have to make a second
+     * file's lines reconcile too, and a check that elaborate reports on the
+     * importer when it breaks.
+     *
+     * @return list<string>
+     */
+    private function aRestatementLeavesOneStanding(): array
+    {
+        $original = $this->aReconcilableStatement();
+        $service = app(Reconciliations::class);
+
+        $first = $service->reconcile($original, $this->actorId());
+
+        /*
+         | The old statement is marked superseded BEFORE the new one is
+         | written, which is the order the triggers require.
+         |
+         | `peakflow_bank_statements_are_continuous()` picks the previous
+         | statement with `status <> 'superseded'`, so a restatement inserted
+         | while the original still counts is refused for opening where the
+         | original opened rather than where it closed. The forward pointer
+         | is set afterwards, because the id it points at does not exist yet
+         | - which is the same order `StatementImport` uses.
+         */
+        $original->forceFill([
+            'status' => 'superseded',
+            'superseded_at' => now(),
+            'superseded_by_user' => $this->actorId(),
+            'supersession_reason' => 'the bank reissued this period',
+        ])->save();
+
+        /*
+         | The restatement: the same account and the same period, which is
+         | what makes the two documents rival each other.
+         */
+        $restated = $original->replicate();
+        $restated->forceFill([
+            'id' => (string) Str::ulid(),
+
+            /*
+             | A new sequence, number and hash, which is what the importer
+             | gives a restatement: `StatementImport` takes
+             | `max(sequence) + 1` for the account, and the content hash is
+             | of the file - a reissued file is a different file.
+             |
+             | Reusing the original's values would fail on the account's
+             | unique index, and a fixture that only passed because it broke
+             | the shape of a real restatement would be testing something
+             | that cannot happen.
+             */
+            'sequence' => (int) $original->sequence + 1,
+            'statement_number' => (string) $original->statement_number.'-R',
+            'content_hash' => hash('sha256', 'restatement-probe-'.Str::random(12)),
+
+            'status' => 'imported',
+            'superseded_by_id' => null,
+            'superseded_at' => null,
+            'superseded_by_user' => null,
+            'supersession_reason' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ])->save();
+
+        $original->forceFill(['superseded_by_id' => (string) $restated->getKey()])->save();
+
+        $standingBefore = DB::connection('tenant')->table('reconciliations')
+            ->where('bank_account_id', (string) $this->bank()->getKey())
+            ->whereNull('undone_at')
+            ->count();
+
+        if ($standingBefore < 1) {
+            return ['the first reconciliation is not standing, so this check has nothing to be '.
+                'about - it is whether a SECOND one joins it'];
+        }
+
+        $second = $service->reconcile($restated, $this->actorId());
+
+        $problems = [];
+
+        $old = DB::connection('tenant')->table('reconciliations')
+            ->where('id', (string) $first['id'])->first();
+
+        if ($old === null) {
+            return ['the earlier reconciliation is gone. It is evidence somebody authorised, and '.
+                'a restatement withdraws it rather than deleting it'];
+        }
+
+        if ($old->undone_at === null) {
+            $problems[] = 'after the statement it reconciled was restated and the restatement was '.
+                'reconciled, the earlier reconciliation is STILL STANDING. Two documents now stand '.
+                'for one account and one period, which is word for word the condition reconcile() '.
+                'refuses when it is the same statement twice';
+        }
+
+        if ((string) $old->superseded_by_id !== (string) $second['id']) {
+            $problems[] = sprintf(
+                'the withdrawn reconciliation points at %s rather than at the one that replaced it. '.
+                'In this case the replacement is against a DIFFERENT statement, so the dates do not '.
+                'line up and the link is the only way to find it',
+                $old->superseded_by_id === null ? '(nothing)' : (string) $old->superseded_by_id,
+            );
+        }
+
+        if ($old->undone_reason === null || ! str_contains((string) $old->undone_reason, 'superseded')) {
+            $problems[] = sprintf(
+                'the withdrawal does not say a restatement caused it: "%s". "It was reconciled and '.
+                'then it was not - what changed" is the question, and the answer here is a fact the '.
+                'system already held',
+                $old->undone_reason === null ? '(nothing)' : (string) $old->undone_reason,
+            );
+        }
+
+        return $problems;
     }
 
     /** @return list<string> */

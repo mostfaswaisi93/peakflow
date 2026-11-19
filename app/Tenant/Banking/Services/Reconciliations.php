@@ -43,6 +43,27 @@ use Illuminate\Support\Str;
  * what changed" is the question, and a table that overwrites cannot
  * answer it. The new reconciliation points back at what it superseded.
  *
+ * That last sentence was written when the table was created and nothing
+ * kept it - `superseded_by_id` was written by nothing and read by nothing
+ * until PF-247, while this comment, the migration and the sentence `undo()`
+ * returns to the user all described the chain as though it existed.
+ *
+ * ## A restatement withdraws the reconciliation it invalidates
+ *
+ * `reconcile()` refuses a statement that already carries a standing
+ * reconciliation, and `reconciliations_one_live_per_statement` says the
+ * same in the database. Both are keyed on the STATEMENT, so when a bank
+ * reissues one neither sees anything: the old statement's reconciliation is
+ * still standing and the new statement is a different row. Two documents
+ * then stand for one account and one period - the exact condition the
+ * refusal exists to prevent, arriving through the next door along.
+ *
+ * So reconciling a statement withdraws any standing reconciliation of the
+ * statements it replaces, with a reason naming the restatement, and points
+ * each of them at the new document. Withdrawn rather than refused because
+ * the reason is not a judgement somebody brings: it is a fact the system
+ * already holds.
+ *
  * ## A correction is a suggestion, never a lesson learned silently
  *
  * When somebody rejects what the engine proposed and matches something
@@ -161,6 +182,8 @@ final class Reconciliations
                 'updated_at' => now(),
             ]);
 
+            $replaced = $this->linkWhatThisReplaces($statement, $id, $userId);
+
             $this->audit->record(
                 category: 'banking',
                 action: 'reconciliation.authorised',
@@ -177,6 +200,7 @@ final class Reconciliations
                     'statement_balance' => (string) $balances['statement'],
                     'matched_lines' => $counts['matched'],
                     'unexplained_lines' => $counts['unexplained'],
+                    'replaces' => $replaced,
                 ],
                 reason: 'the ledger and the statement agree once the reconciling items are applied',
                 entityId: (string) $account->entity_id,
@@ -196,6 +220,140 @@ final class Reconciliations
                 ),
             ];
         });
+    }
+
+    /**
+     * Point every reconciliation this one replaces at it - PF-247.
+     *
+     * ## The column three comments described and nothing wrote
+     *
+     * `reconciliations.superseded_by_id` existed from the table's first
+     * migration, which says it "points forward to the reconciliation that
+     * replaced this one, so the chain reads in the direction somebody asks
+     * it in". The class docblock said "the new reconciliation points back at
+     * what it superseded". `undo()` returns a sentence to the user promising
+     * "the statement can be reconciled again and the new one will point back
+     * at this."
+     *
+     * Measured: the column was written by nothing and read by nothing.
+     *
+     * ## Two ways one reconciliation replaces another
+     *
+     * The first is the one `undo()` promises: the same statement is
+     * withdrawn and reconciled again.
+     *
+     * The second is the one that was actually broken. A bank reissues a
+     * statement, `StatementImport::supersede()` marks the old row
+     * `superseded`, and the new one is imported and reconciled. The old
+     * statement's reconciliation is untouched - `undone_at` is still null,
+     * so it is still STANDING - and `reconciliations_one_live_per_statement`
+     * does not catch it, because the two are live against two different
+     * statement rows.
+     *
+     * The result is two standing reconciliations for one account and one
+     * period, with nothing saying which the period close should look at.
+     * That is word for word the condition `reconcile()` refuses when it is
+     * the same statement twice; a restatement produced it through the next
+     * door along, and `BankReconciliationReport` listed both as standing.
+     *
+     * ## Withdrawn here rather than refused
+     *
+     * The alternative was to refuse until somebody undid the old one by
+     * hand, which is what the same-statement case does. It is the wrong
+     * answer here: the reason is not a judgement the person brings, it is a
+     * fact the system already holds - the bank replaced the statement, and
+     * `supersession_reason` on the statement row says why. Asking somebody
+     * to retype it would produce a worse record than copying it.
+     *
+     * The withdrawal is attributed to whoever is reconciling, because they
+     * are the one doing it, and the audit entry names the statement that
+     * replaced the old one.
+     *
+     * ## Walked back, because a restatement can itself be restated
+     *
+     * old → mid → new, where `mid` was never reconciled, leaves `old`'s
+     * reconciliation standing and one hop further away than a single lookup
+     * would find. The walk is bounded: a cycle in that chain is impossible
+     * through `supersede()` - it refuses a statement superseding itself -
+     * but a bound costs nothing and an unbounded loop over data is not
+     * something to leave in a service.
+     *
+     * @return list<string> the ids that now point at this one
+     */
+    private function linkWhatThisReplaces(BankStatement $statement, string $newId, string $userId): array
+    {
+        $statementIds = [(string) $statement->getKey()];
+        $frontier = [(string) $statement->getKey()];
+
+        for ($hop = 0; $hop < 20 && $frontier !== []; $hop++) {
+            $frontier = DB::connection('tenant')->table('bank_statements')
+                ->whereIn('superseded_by_id', $frontier)
+                ->pluck('id')
+                ->map(static fn ($id): string => (string) $id)
+                ->all();
+
+            $statementIds = [...$statementIds, ...$frontier];
+        }
+
+        $predecessors = DB::connection('tenant')->table('reconciliations')
+            ->whereIn('bank_statement_id', $statementIds)
+            ->where('id', '!=', $newId)
+            ->whereNull('superseded_by_id')
+            ->orderBy('authorised_at')
+            ->get();
+
+        $linked = [];
+
+        foreach ($predecessors as $row) {
+            $update = ['superseded_by_id' => $newId, 'updated_at' => now()];
+
+            if ($row->undone_at === null) {
+                /*
+                 | Still standing, so it is withdrawn as part of this.
+                 |
+                 | Reached only through the restatement branch: the same
+                 | statement cannot have a live reconciliation here, because
+                 | `reconcile()` refused before any of this ran.
+                 |
+                 | The reason names the statement that replaced the one this
+                 | document reconciled, which is the fact somebody needs when
+                 | they come back to ask why a standing reconciliation stopped
+                 | standing.
+                 */
+                $update['undone_at'] = now();
+                $update['undone_by'] = $userId;
+                $update['undone_reason'] = sprintf(
+                    'The statement this reconciled was superseded by %s, which has now been '.
+                    'reconciled in its place. Withdrawn so that one document stands for this '.
+                    'account and period.',
+                    $statement->label(),
+                );
+
+                $this->audit->record(
+                    category: 'banking',
+                    action: 'reconciliation.superseded',
+                    subjectType: 'bank_statement',
+                    subjectId: (string) $row->bank_statement_id,
+                    subjectLabel: sprintf('%s to %s', (string) $row->period_from, (string) $row->period_to),
+                    before: [
+                        'ledger_balance' => (string) $row->ledger_balance,
+                        'statement_balance' => (string) $row->statement_balance,
+                        'authorised_by' => (string) $row->authorised_by,
+                    ],
+                    after: ['superseded_by' => $newId],
+                    reason: 'the statement it reconciled was replaced by a restatement, which is now reconciled',
+                    entityId: (string) $row->entity_id,
+                );
+            }
+
+            DB::connection('tenant')->table('reconciliations')
+                ->where('id', (string) $row->id)
+                ->update($update);
+
+            $linked[] = (string) $row->id;
+        }
+
+        return $linked;
     }
 
     /**
@@ -307,6 +465,21 @@ final class Reconciliations
             'authorised_by' => (string) $row->authorised_by,
             'authorised_at' => (string) $row->authorised_at,
             'undone_at' => $row->undone_at === null ? null : (string) $row->undone_at,
+
+            /*
+             | What replaced this, and why it was withdrawn - PF-247.
+             |
+             | Both, because they answer different halves of the same
+             | question. `undone_reason` says what happened; `superseded_by`
+             | says where to go next. A document that says it was withdrawn
+             | and does not say what stands in its place leaves the reader
+             | looking through a list of reconciliations for the same account
+             | and guessing by date - which is exactly what they do when the
+             | restatement is the reason, because then the replacement is
+             | against a DIFFERENT statement and the dates do not line up.
+             */
+            'undone_reason' => $row->undone_reason === null ? null : (string) $row->undone_reason,
+            'superseded_by' => $row->superseded_by_id === null ? null : (string) $row->superseded_by_id,
             'why' => sprintf(
                 'The bank says %s. Take away %s not yet presented, add %s not yet settled, take '.
                 'away %s the bank has that we have not recorded and %s of opening balance not yet '.
