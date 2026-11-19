@@ -30,6 +30,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Symfony\Component\HttpKernel\Exception\TooManyRequestsHttpException;
@@ -283,6 +284,27 @@ return Application::configure(basePath: dirname(__DIR__))
         | it was in - the operator console and the application have different
         | ones, and sending an operator to the tenant login is a dead end.
         */
+
+        /*
+        |----------------------------------------------------------------------
+        | And the report says enough to act on - PF-234
+        |----------------------------------------------------------------------
+        |
+        | The default report is the message plus `['exception' => $e]`.
+        | `exception` is not on the context allowlist - correctly, because a
+        | serialised Throwable carries its trace's ARGUMENTS, where an IBAN, a
+        | password and a statement's bindings live - so the whole thing was
+        | dropped and a production 500 was logged as one scrubbed sentence
+        | with no class, no file, no line and no frames.
+        |
+        | Safe and unusable. An error report nobody can act on is the reason
+        | somebody turns the allowlist off, so the shape goes in under names
+        | the allowlist knows, rebuilt from class/type/function/file/line with
+        | the arguments left out.
+        */
+        $exceptions->report(static function (Throwable $e): void {
+            Log::error($e->getMessage(), \App\Support\Telemetry\ExceptionShape::of($e));
+        });
 
         $exceptions->shouldRenderJsonWhen(
             static fn (Request $request): bool => $request->is('api/*') || $request->expectsJson(),

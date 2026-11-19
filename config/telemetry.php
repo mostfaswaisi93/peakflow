@@ -125,6 +125,28 @@ return [
         'exception_class',
 
         /*
+         | What an error report needs to be acted on - PF-234.
+         |
+         | `exception` is deliberately NOT here: Laravel's handler puts the
+         | whole Throwable under that key and a serialised Throwable carries
+         | its trace's ARGUMENTS, which is where an IBAN, a password and a
+         | statement's bindings live.
+         |
+         | These four are names of code - a class, a file, a line, and
+         | frames rebuilt from class/type/function/file/line with the
+         | arguments left out. A password has never been one of those.
+         |
+         | Without them a production 500 was logged as one scrubbed sentence
+         | with nothing else at all, which is safe and unusable - and an
+         | error report nobody can act on is the reason somebody turns the
+         | allowlist off.
+         */
+        'exception_file',
+        'exception_line',
+        'exception_frames',
+        'exception_previous_class',
+
+        /*
          | The fields the invariant alerts actually use - PF-014, PF-053.
          |
          | Added because the allowlist was declared before anything logged

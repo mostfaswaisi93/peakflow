@@ -7,6 +7,7 @@ namespace Tests\Support;
 use App\Support\Telemetry\AllowlistProcessor;
 use App\Support\Telemetry\CorrelationId;
 use App\Support\Telemetry\LogContext;
+use App\Support\Telemetry\ExceptionShape;
 use App\Support\Telemetry\SecretShapes;
 use Monolog\Formatter\JsonFormatter;
 use Monolog\Handler\TestHandler;
@@ -40,6 +41,7 @@ final class LoggingRules
         return [
             'every configured channel has the allowlist processor attached' => $this->tapsAreApplied(),
             'a payload of secrets produces a line containing none of them' => $this->secretsDoNotSurvive(),
+            'an error report carries the diagnosis and none of the payload' => $this->theErrorReportIsSafeAndUseful(),
             'the allowlist keeps the diagnostics it is supposed to' => $this->diagnosticsSurvive(),
             'tenant, entity and correlation are on every line' => $this->ambientIdsArePresent(),
             'a value shape with a check digit is scrubbed under any field name' => $this->shapesAreScrubbed(),
@@ -122,6 +124,177 @@ final class LoggingRules
 
         return $violations;
     }
+
+    /**
+     * The error report says enough to act on, and leaks none of it - PF-234.
+     *
+     * ## Both halves, because either alone is satisfied by nothing
+     *
+     * A report that carried no context at all would pass a check asking only
+     * "does the IBAN survive". That was the state: Laravel reports an
+     * exception as its message plus `['exception' => $e]`, `exception` is not
+     * on the allowlist, and the whole thing was dropped - so a production 500
+     * was one scrubbed sentence with no class, no file, no line and no
+     * frames.
+     *
+     * Safe, and unusable. An error report nobody can act on is the reason
+     * somebody turns the allowlist off, so this asserts the diagnosis
+     * survives as well as that the secrets do not.
+     *
+     * ## Driven with the payload the criterion names
+     *
+     * An IBAN, a card number, a token, a password, an email and an API key,
+     * in the message AND as an ARGUMENT to the frame that threw - because
+     * arguments are the half that `getTraceAsString()` renders and
+     * `getTrace()` carries in full.
+     *
+     * The chained exception matters too: a `QueryException` under a domain
+     * refusal puts the failing statement and its bindings in its message,
+     * and the bindings are the amounts and the account numbers. Only its
+     * class is kept.
+     *
+     * @return list<string>
+     */
+    public function theErrorReportIsSafeAndUseful(): array
+    {
+        $iban = 'SA0380000000608010167519';
+        $card = '4111111111111111';
+
+        $secrets = [
+            'the IBAN' => $iban,
+            'the card number' => $card,
+            'the token' => 'tok_live_51H8xQ2eZvKYlo2C',
+            'the password' => 'correct-horse-battery-staple',
+            'the email' => 'someone@example.test',
+            'the API key' => 'sk-abcdef0123456789',
+        ];
+
+        /*
+         | Thrown from a frame whose ARGUMENTS are the secrets.
+         |
+         | A closure called with them, so `getTrace()` carries them under
+         | `args` exactly as a real call would. An exception built inline
+         | would have an empty argument list and prove nothing about the
+         | half of the trace that leaks.
+         */
+        $thrower = static function (string $iban, string $card, string $password) : void {
+            throw new \RuntimeException(
+                sprintf('could not pay %s from card %s', $iban, $card),
+                0,
+                new \LogicException('insert into payments values (:iban) with bindings '.$iban),
+            );
+        };
+
+        try {
+            $thrower($iban, $card, 'correct-horse-battery-staple');
+
+            return ['the probe did not throw, so nothing was reported'];
+        } catch (\Throwable $e) {
+            $bytes = $this->through($e->getMessage(), ExceptionShape::of($e));
+        }
+
+        if ($bytes === null) {
+            return ['nothing was written through the handler, so nothing was checked'];
+        }
+
+        $violations = [];
+
+        foreach ($secrets as $what => $secret) {
+            /*
+             | A PREFIX, not the whole value.
+             |
+             | Twelve characters, because a truncated secret is still one.
+             |
+             | Measured while writing this: PHP's `zend.exception_ignore_args`
+             | defaults to ON, so `getTrace()` carries no arguments and
+             | `getTraceAsString()` elides a long value as `'...'`. Under that
+             | default a trace leaks nothing and a value check proves nothing.
+             |
+             | With the ini OFF - a common development and incident-debugging
+             | choice, because it is what makes a trace show what was passed -
+             | `getTrace()[n]['args']` carries the IBAN in full. The prefix is
+             | what catches a partial leak either way, and the structural
+             | assertion below is what holds whatever the ini says.
+             */
+            $prefix = mb_substr($secret, 0, 12);
+
+            if (str_contains($bytes, $prefix)) {
+                $violations[] = sprintf(
+                    '%s survives into the error report, in whole or truncated. A trace\'s arguments '.
+                    'are where a secret lives, and a report built from getTraceAsString() renders '.
+                    'them cut to fifteen characters - which makes an IBAN unreadable rather than '.
+                    'absent, and it is still an IBAN',
+                    $what,
+                );
+            }
+        }
+
+        /*
+         | And the diagnosis is there.
+         |
+         | Without this the check passes against a reporter that logs
+         | nothing at all - which is exactly the state it was written for.
+         */
+        foreach ([
+            'the class' => 'RuntimeException',
+            'the chained cause' => 'LogicException',
+            'the file' => 'exception_file',
+            'the line' => 'exception_line',
+            'the frames' => 'exception_frames',
+        ] as $what => $needle) {
+            if (! str_contains($bytes, $needle)) {
+                $violations[] = sprintf(
+                    'the error report does not carry %s. An error report nobody can act on is not a '.
+                    'smaller problem than one that leaks - it is the reason somebody turns the '.
+                    'allowlist off',
+                    $what,
+                );
+            }
+        }
+
+        /*
+         | Structural, and therefore ini-independent.
+         |
+         | Every frame is a STRING built from five names. A shape that
+         | passed `getTrace()` through would carry arrays, and with
+         | `zend.exception_ignore_args=0` those arrays carry `args` - the
+         | arguments in full. Asserting the type is what holds on a machine
+         | configured the other way, where the value check above would find
+         | nothing to object to.
+         */
+        foreach (ExceptionShape::of($e)['exception_frames'] as $frame) {
+            if (! is_string($frame)) {
+                $violations[] = sprintf(
+                    'a frame is a %s rather than a string, so the trace is being passed through '.
+                    'rather than rebuilt - and with zend.exception_ignore_args off, a passed-through '.
+                    'frame carries the call\'s arguments in full',
+                    get_debug_type($frame),
+                );
+
+                break;
+            }
+        }
+
+        if (str_contains(json_encode(ExceptionShape::of($e)) ?: '', '"args"')) {
+            $violations[] = 'the shape carries an "args" key, which is where a trace keeps the '.
+                'values a call was made with';
+        }
+
+        /*
+         | The frames name code and not a filesystem.
+         |
+         | An absolute path tells a reader of the log where the deployment
+         | lives and which user it runs as, and makes two environments'
+         | reports of one fault look different.
+         */
+        if (str_contains($bytes, base_path().'/')) {
+            $violations[] = 'the report carries an absolute path, which says where the deployment '.
+                'lives and makes the same fault look different in two environments';
+        }
+
+        return $violations;
+    }
+
 
     /**
      * A real payload through a real handler, and the bytes read back.
