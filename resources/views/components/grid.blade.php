@@ -29,6 +29,16 @@
         totals      footer aggregates, keyed by column key, ALREADY
                     formatted. They come from the server.
         totalsLabel the row header for that footer row.
+        error       a sentence to show INSTEAD of rows, when the rows could
+                    not be read. Not the same as `empty`: "no invoices match
+                    this filter" says the data is fine and your question
+                    returned nothing, "we could not read the invoices" says
+                    you do not know what the data is, and a person shown the
+                    first when the second is true concludes a supplier has
+                    no bills.
+        loading     show the grid's skeleton instead of rows. Where this may
+                    be used is decided by docs/design/wait-budget.md, not by
+                    whoever is writing the page.
         action      where an edited grid submits. Required if any column is
                     editable, because an editable grid with nowhere to
                     submit loses every number typed into it in silence.
@@ -109,6 +119,8 @@
     'total' => null,
     'totals' => [],
     'totalsLabel' => null,
+    'error' => null,
+    'loading' => false,
     'action' => null,
     'method' => 'POST',
     'submit' => null,
@@ -243,7 +255,7 @@
         ));
     }
 
-    if ($rendered === 0 && ! isset($empty)) {
+    if ($rendered === 0 && ! isset($empty) && $error === null && ! $loading) {
         $refuse(
             'rendered no rows and was given no `empty` slot. "No results" on a page somebody opened for '.
             'the first time reads as a product that is not working; the page has to say what produces the '.
@@ -288,6 +300,26 @@
 
     $sortStates = ['asc' => 'ascending', 'desc' => 'descending'];
     $totalsLabel ??= __('الإجمالي');
+
+    /*
+     | The skeleton's columns are THIS grid's columns.
+     |
+     | A placeholder with six equal bars over a table with a name column
+     | and five figures is a placeholder for a different table. Where a
+     | column declares a width it is used; where it does not, a figure
+     | column gets a narrow share and a text column a wide one, which is
+     | the shape every table here has.
+     */
+    $skeletonWidths = array_map(
+        static function (array $column): string {
+            if (($column['width'] ?? null) !== null) {
+                return (string) $column['width'];
+            }
+
+            return ($column['figure'] ?? false) === true ? '12%' : '22%';
+        },
+        $visible,
+    );
 @endphp
 
 {{-- The keyboard model. The partial dedupes itself, so a page with four
@@ -568,7 +600,52 @@
             </thead>
 
             <tbody class="grid-rows divide-y divide-outline-subtle bg-surface">
-                @if ($rendered === 0)
+                @if ($error !== null)
+                    {{--
+                        An error is NOT an empty state, and the two being one
+                        row of markup is how they become one in a reader's
+                        mind. "No invoices match this filter" and "we could
+                        not read the invoices" are opposite facts: the first
+                        says the data is fine and your question returned
+                        nothing, the second says you do not know what the
+                        data is. A person who is shown the first when the
+                        second is true concludes a supplier has no bills.
+
+                        `role="alert"` rather than a live region, because
+                        this arrives with the page rather than during it, and
+                        an alert is announced on arrival.
+                    --}}
+                    <tr role="row" aria-rowindex="2">
+                        <td role="gridcell" colspan="{{ count($visible) }}" class="p-0">
+                            {{-- No icon: the kit has none for this, and a
+                                 glyph invented here would be the one place
+                                 in the product with its own. The colour pair
+                                 is declared and measured, and the words are
+                                 what carry it - WCAG 1.4.1. --}}
+                            <p role="alert"
+                               class="bg-danger-subtle px-(--row-padding-inline) py-8 text-start text-on-danger-subtle">
+                                {{ $error }}
+                            </p>
+                        </td>
+                    </tr>
+                @elseif ($loading)
+                    {{--
+                        The grid's own loading state, so a page does not
+                        write one. The skeleton takes this grid's columns,
+                        so the shape that appears is the shape that arrives.
+
+                        `docs/design/wait-budget.md` is what decides where
+                        this may be used, and today the answer is nowhere -
+                        every screen is under the threshold. It is here so
+                        that the first screen that crosses it has one rather
+                        than inventing one.
+                    --}}
+                    <tr role="row" aria-rowindex="2">
+                        <td role="gridcell" colspan="{{ count($visible) }}" class="p-0">
+                            <x-skeleton of="table" :rows="5" :cols="$skeletonWidths" />
+                        </td>
+                    </tr>
+                @elseif ($rendered === 0)
                     <tr role="row" aria-rowindex="2">
                         <td role="gridcell" colspan="{{ count($visible) }}"
                             class="px-(--row-padding-inline) py-8 text-center text-on-surface-muted">

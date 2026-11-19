@@ -93,6 +93,7 @@ final class GridRules
             'the no-script path is real: only the named controls need script' => fn (): array => $this->theNoScriptPathIsReal(),
             'the behaviour is inlined once a page, however many grids' => fn (): array => $this->behaviourIsInlinedOnce(),
             'the grid refuses what it cannot render honestly' => fn (): array => $this->theGridRefuses(),
+            'empty, loading and error are three states and the grid owns all three' => fn (): array => $this->theThreeStates(),
             'a conditional class reaches the element it was written on' => fn (): array => $this->conditionalClassesSurvive(),
             'every control has a real label, named by for and id' => fn (): array => $this->everyControlHasALabel(),
             'two copies of a field do not share an id' => fn (): array => $this->idsAreDerivedFromTheInstance(),
@@ -2000,6 +2001,99 @@ final class GridRules
     /**
      * @param  array<string, mixed>  $data
      */
+    /**
+     * Empty, loading and error are different facts - PF-278.
+     *
+     * ## Why the pair that matters is empty against error
+     *
+     * "No invoices match this filter" says the data is fine and your
+     * question returned nothing. "We could not read the invoices" says you
+     * do not know what the data is. They are opposite facts, and a person
+     * shown the first when the second is true concludes a supplier has no
+     * bills - then does not pay them.
+     *
+     * So this asserts the grid renders them differently and announces the
+     * error, rather than that each exists. Two states that both print a
+     * sentence in the middle of an empty table are one state wearing two
+     * names.
+     *
+     * ## And that the grid owns them
+     *
+     * A page writing its own error block is a page that will write a
+     * different one, and the difference will be in whether it is announced.
+     *
+     * @return list<string>
+     */
+    private function theThreeStates(): array
+    {
+        $columns = [
+            ['key' => 'number', 'label' => 'A'],
+            ['key' => 'gross', 'label' => 'B', 'figure' => true],
+        ];
+
+        $render = fn (string $attributes): string => $this->render(
+            '<x-grid name="s" caption="C" :columns="$columns" '.$attributes.
+            '><x-slot:empty>NOTHING-MATCHED</x-slot:empty></x-grid>',
+            ['columns' => $columns],
+        );
+
+        $violations = [];
+
+        $empty = $render('');
+        $error = $render(':error="\'COULD-NOT-READ\'"');
+        $loading = $render(':loading="true"');
+
+        if (! str_contains($empty, 'NOTHING-MATCHED')) {
+            $violations[] = 'a grid with no rows did not render its empty slot';
+        }
+
+        if (! str_contains($error, 'COULD-NOT-READ')) {
+            $violations[] = 'a grid given an error did not render it';
+        }
+
+        /*
+         | The error must not ALSO be the empty state.
+         |
+         | This is the whole check: a grid that falls through to "no results"
+         | after printing the error has told the person both, and the one
+         | they act on is the one that sounds like an answer.
+         */
+        if (str_contains($error, 'NOTHING-MATCHED')) {
+            $violations[] = 'a grid given an error also rendered its empty state, so the page says both '.
+                '"we could not read this" and "there is nothing here". The second sounds like an answer '.
+                'and is the one somebody acts on';
+        }
+
+        if (! str_contains($error, 'role="alert"')) {
+            $violations[] = 'the error is not announced. It arrives with the page, so a screen reader '.
+                'that is not told reads a table with no rows and no reason';
+        }
+
+        if (! str_contains($loading, 'pf-skeleton')) {
+            $violations[] = 'a loading grid does not render the skeleton, so a page that needs one has '.
+                'to write its own - and the one it writes will be a grey box rather than this table';
+        }
+
+        if (str_contains($loading, 'NOTHING-MATCHED')) {
+            $violations[] = 'a loading grid also rendered its empty state, so a table that is still '.
+                'arriving says there is nothing in it';
+        }
+
+        /*
+         | The skeleton's columns are the grid's columns.
+         |
+         | `of="table"` with this grid's widths, not the component's
+         | defaults: a placeholder with six equal bars over a two-column
+         | table is a placeholder for a different table.
+         */
+        if (substr_count($loading, 'pf-skeleton__cell') < 2) {
+            $violations[] = 'the loading skeleton does not carry this grid\'s columns, so the shape that '.
+                'appears is not the shape that arrives';
+        }
+
+        return $violations;
+    }
+
     private function render(string $template, array $data = []): string
     {
         return Blade::render($template, $data);

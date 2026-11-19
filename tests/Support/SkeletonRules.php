@@ -102,14 +102,32 @@ final class SkeletonRules
         foreach ($this->templates() as $file) {
             $source = (string) file_get_contents($file);
 
-            if (! preg_match('/<x-skeleton\b/', $source)) {
+            /*
+             | Two ways a screen asks for one, and both are watched.
+             |
+             | `<x-skeleton>` is the direct way. `:loading` on a grid is the
+             | other: the grid owns a loading state so that a page does not
+             | write its own, which means a page can reach a skeleton
+             | without ever naming one. Watching only the first would leave
+             | the wait budget with a back door that is also the ergonomic
+             | way in - the one somebody would find first.
+             */
+            if (! preg_match('/<x-skeleton\b/', $source) && ! preg_match('/:loading=(?![\'"]false)/', $source)) {
                 continue;
             }
 
             $relative = substr($file, \strlen($this->base) + 1);
 
-            // A component defining itself is not a screen using it.
-            if (str_contains($relative, 'components/skeleton.blade.php')) {
+            /*
+             | A component OFFERS the state; a screen decides to be in it.
+             |
+             | `components/grid.blade.php` renders a skeleton when it is
+             | told to, and `components/skeleton.blade.php` is the thing
+             | itself. Neither is a screen and neither has a wait to
+             | measure - what is measured is the page that passes
+             | `:loading`, and that page is caught by the clause above.
+             */
+            if (str_starts_with($relative, 'resources/views/components/')) {
                 continue;
             }
 
@@ -118,9 +136,9 @@ final class SkeletonRules
 
             if ($screen === null) {
                 $problems[] = sprintf(
-                    '%s uses <x-skeleton> and no screen in the wait budget maps to it. "Only where the '.
-                    'wait is long enough to matter" needs the wait to have been measured, and this one '.
-                    'has not been',
+                    '%s asks for a skeleton - directly or through a grid\'s `:loading` - and no screen in '.
+                    'the wait budget maps to it. "Only where the wait is long enough to matter" needs the '.
+                    'wait to have been measured, and this one has not been',
                     $relative,
                 );
 
@@ -129,7 +147,7 @@ final class SkeletonRules
 
             if ($measured[$screen] <= self::THRESHOLD_MS) {
                 $problems[] = sprintf(
-                    '%s uses <x-skeleton> and %s is measured at %dms, under the %dms threshold. A '.
+                    '%s asks for a skeleton and %s is measured at %dms, under the %dms threshold. A '.
                     'placeholder shown for that long is a flicker: the eye registers that something '.
                     'changed and has no time to read what, so the page arrives feeling less settled '.
                     'than if nothing had been drawn',
