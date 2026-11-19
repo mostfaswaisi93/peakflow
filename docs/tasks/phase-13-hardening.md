@@ -150,7 +150,10 @@ The unusual part, and the part that cannot be retrofitted.
 ### PF-246 · Zero-downtime migration and rollback
 `—` · **5 pts** · depends: PF-023, PF-245 · standards: — · `risk:high`
 
-- [ ] A written playbook: expand-contract in separate releases, no non-nullable column without a default, no blocking lock on a partitioned table, backfills batched and resumable
+- [x] A written playbook: expand-contract in separate releases, no non-nullable column without a default, no blocking lock on a partitioned table, backfills batched and resumable
+  - `docs/operations/migrations.md`. It exists because the inspector can only say **no**: it cannot say what to do instead at the moment somebody is deciding, which is a week earlier and in a design conversation.
+  - The hazard names are read out of `MigrationSafetyInspector::HAZARDS` by a check rather than typed into it, so adding a hazard without writing its section fails. A document that drifted from the code it describes is worse than none - somebody reads it, writes the migration it blesses, and finds out at the pre-flight, having designed around a rule that does not exist or missed one that does.
+  - It also carries the parts the inspector has no opinion about: why a rename is a deploy-coordination problem rather than a schema change, why a backfill belongs outside the migration (one that backfills holds its transaction for the length of it, and a deploy waiting on that is a deploy that times out halfway), and why `down()` in two of this product's migrations deliberately does **less** than `up()` did.
 - [x] Every migration declares whether it is safe to run while serving traffic; the pre-flight check from `PF-023` enforces the declaration
   - The pre-flight was built and the DECLARATION was not. Measured: **64 of 137 migrations carried no marker at all**, and nothing said so, because an inspector only flags the hazards it knows - a migration it does not flag is *unexamined*, not safe, and from outside the two look the same.
   - All 137 now declare, with three markers and a reason on each: `@online-safe`, `@online-unsafe` and the existing `@unsafe-migration-reviewed`. A bare marker fails the check, because a marker with nothing after it says the same as none except that it silences the question.

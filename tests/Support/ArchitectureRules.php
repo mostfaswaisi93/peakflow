@@ -46,6 +46,7 @@ final class ArchitectureRules
             'financial tables carry entity_id' => $this->financialTablesCarryEntityId(),
             'no migration is unsafe to run against live traffic' => $this->migrationsAreSafeToRunLive(),
             'and every migration says whether it is' => $this->everyMigrationDeclaresItsSafety(),
+            'and the playbook names every hazard the inspector knows' => $this->everyHazardIsInThePlaybook(),
             'the built assets are not stale' => $this->builtAssetsAreNotStale(),
             'translation catalogs agree' => $this->translationCatalogsAgree(),
             'strict types everywhere' => $this->strictTypesDeclared(),
@@ -1264,6 +1265,77 @@ final class ArchitectureRules
             $this->relative($newest),
             $newestAt - $builtAt,
         )];
+    }
+
+    /**
+     * The playbook names every hazard the inspector knows.
+     *
+     * `docs/operations/migrations.md` exists because the inspector can only
+     * say no. It cannot say what to do instead at the moment somebody is
+     * deciding, which is a week earlier and in a design conversation.
+     *
+     * A document that drifted from the code it describes is worse than none:
+     * somebody reads it, writes the migration it blesses, and finds out at
+     * the pre-flight - having designed around a rule that no longer exists,
+     * or missed one that does.
+     *
+     * So the hazard names are read out of the inspector rather than typed
+     * here. Adding a hazard without writing its section fails this.
+     *
+     * @return list<string>
+     */
+    public function everyHazardIsInThePlaybook(): array
+    {
+        $path = $this->basePath.'/docs/operations/migrations.md';
+
+        if (! is_file($path)) {
+            return ['docs/operations/migrations.md does not exist. Every rule the inspector enforces '.
+                'is a rule somebody has to know BEFORE they write the migration, and a refusal at the '.
+                'pre-flight is the latest possible moment to learn it'];
+        }
+
+        $playbook = (string) file_get_contents($path);
+        $reflection = new \ReflectionClass(MigrationSafetyInspector::class);
+
+        /** @var array<string, array<string, string>> $hazards */
+        $hazards = $reflection->getConstant('HAZARDS');
+
+        $names = array_keys($hazards);
+
+        /*
+         | The one hazard that is not in that constant.
+         |
+         | `CHECK constraint without NOT VALID` is detected procedurally -
+         | the clauses arrive comma-separated inside one ALTER TABLE, so a
+         | pattern asking whether NOT VALID appears before the semicolon is
+         | satisfied by a sibling that has one. It is named here so the
+         | playbook is still held to it.
+         */
+        $names[] = 'CHECK constraint without NOT VALID';
+
+        $problems = [];
+
+        foreach ($names as $name) {
+            if (! str_contains($playbook, '### '.$name)) {
+                $problems[] = sprintf(
+                    'the inspector refuses "%s" and the playbook has no section for it. Somebody '.
+                    'reads the playbook, writes the migration it blesses, and finds out at the '.
+                    'pre-flight - which is the latest possible moment',
+                    $name,
+                );
+            }
+        }
+
+        foreach (['@online-safe', '@online-unsafe', '@unsafe-migration-reviewed'] as $marker) {
+            if (! str_contains($playbook, $marker)) {
+                $problems[] = sprintf(
+                    'the playbook does not mention `%s`, which every migration has to carry one of',
+                    $marker,
+                );
+            }
+        }
+
+        return $problems;
     }
 
     /**
