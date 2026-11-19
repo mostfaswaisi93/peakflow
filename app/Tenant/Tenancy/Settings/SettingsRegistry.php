@@ -459,6 +459,43 @@ final class SettingsRegistry
                 descriptionEn: 'Where the aging buckets divide, in days past the basis date.',
             ),
 
+            /*
+             | When a budget variance is worth somebody's attention - PF-193.
+             |
+             | A variance report with every line highlighted is a report
+             | nobody reads, and a threshold is the only thing that turns
+             | four hundred rows into the six that matter. Five per cent
+             | by default because that is what a monthly review tends to
+             | work to, and it is a tenant's decision because it is a
+             | function of how tightly they budget: a business that
+             | budgets to the riyal wants one per cent, and one that
+             | budgets to the nearest thousand learns nothing from it.
+             |
+             | Risk-bearing, and the ceiling is the reason why. A
+             | threshold of fifty per cent makes every report clean and
+             | makes a department spending half again as much as it was
+             | allowed invisible - the same shape as a generous write-off
+             | tolerance, where each individual case looks like
+             | housekeeping.
+             |
+             | The report states the threshold it used, which is what
+             | keeps a changed one honest: two reports with the same
+             | highlighted lines and different thresholds are two
+             | different questions, and the highlighting does not say so.
+             */
+            new SettingDefinition(
+                key: 'budget.materiality_percent',
+                type: 'decimal',
+                scope: 'entity',
+                default: '5.00',
+                descriptionAr: 'نسبة الانحراف التي يُبرزها تقرير الموازنة مقارنةً بالمبلغ المعتمد.',
+                descriptionEn: 'The variance, as a percentage of the budgeted amount, at which the report highlights a line.',
+                ceilingKey: 'ceiling.budget_materiality_percent',
+                ceilingDirection: 'at_most',
+                min: '0',
+                max: '100',
+            ),
+
             new SettingDefinition(
                 key: 'purchasing.accrue_receipts',
                 type: 'bool',

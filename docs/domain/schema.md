@@ -171,10 +171,18 @@ The authoritative description of every table. **A schema change updates this fil
 
 ### Reporting
 
+The budget tables are listed here because a budget is a reporting subject,
+and they are **written from `Ledger`** (`App\Tenant\Ledger\Services\Budgets`):
+`Reporting` performs no writes, and a budget is keyed by account, period and
+dimension exactly as `journal_lines` is - anywhere else it would need a
+translation of those three, and the first one to drift would make a variance
+report compare a cost centre against another cost centre's budget.
+
 | Table | Holds | Notable constraints |
 |-------|-------|---------------------|
 | `report_definitions` | Saved parameters | Re-runnable by anyone with permission, producing the same artefact |
-| `budgets`, `budget_lines` | By account and dimension, versioned | One locked approved version |
+| `budget_versions` | A budget somebody approved, per fiscal year | `status` ∈ draft, approved, superseded; **partial unique index** gives one approved version per `(entity_id, fiscal_year_id)`; `CHECK` that an approved version carries `approved_by`, `approved_at` and `locked_at` together; `CHECK (approved_by <> created_by)`; a superseded version names its successor and `Budgets::approve()` writes it |
+| `budget_lines` | One amount per version, period, account and dimension set | Keyed on the journal's own eight `dimension_n` columns at the entity's own axis numbers, so a budget and the lines that spend against it are comparable; unique on `(version, period, account, coalesce(dimension_1..8, ''))` because PostgreSQL counts two NULLs as distinct; **trigger refuses INSERT, UPDATE and DELETE once the version is locked**; zero is a budget and no row is not |
 | `consolidation_runs` | Group statements | Records the rates used and the elimination proof |
 | *read models* | `account_balances`, aging, open-item | **Derived, never authoritative**; `Reporting` performs no writes to domain tables, enforced by an architecture test |
 

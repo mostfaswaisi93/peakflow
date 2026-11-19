@@ -118,7 +118,7 @@ final class GeneralLedgerDetail
     /**
      * Everything that happened in a window, by account, under filters.
      *
-     * @param  array<string, string>|null  $dimensions  axis key => dimension value code
+     * @param  array<string, ?string>|null  $dimensions  axis key => dimension value code, or null for the lines carrying no value on that axis
      * @return array<string, mixed>
      *
      * @throws ReportRefused
@@ -212,13 +212,13 @@ final class GeneralLedgerDetail
      * page needs "cost centre: Riyadh branch". Resolving them in two places
      * is how a report comes to state a filter it did not apply.
      *
-     * @param  array<string, string>|null  $dimensions
+     * @param  array<string, ?string>|null  $dimensions
      * @return array{
      *     stated: array<string, string>,
      *     account: ?string,
      *     party: ?string,
      *     journal: ?string,
-     *     dimensions: array<string, string>,
+     *     dimensions: array<string, ?string>,
      * }
      *
      * @throws ReportRefused
@@ -288,6 +288,57 @@ final class GeneralLedgerDetail
         }
 
         foreach ($dimensions ?? [] as $axisKey => $valueCode) {
+            /*
+             | A null value code asks for the lines with NO value on that
+             | axis - widened for PF-193.
+             |
+             | "The activity with no cost centre on it" is the question
+             | that finds unclassified spending, and it is the one filter
+             | that cannot be expressed as a value: there is no code for
+             | absence. PF-193's profit or loss by dimension combination
+             | needs it for its own reason - a line posted without a cost
+             | centre is money that was spent, and a pivot that could not
+             | ask for it would be plausible and short by exactly the
+             | spending nobody classified.
+             |
+             | Widened here rather than answered with a second query in
+             | the budget report, because this method IS the definition of
+             | what moved under a filter, and the version that read null
+             | as "no filter at all" was the bug: the unclassified column
+             | came back holding every line, and the pivot added to twice
+             | the result.
+             */
+            if ($valueCode === null) {
+                $axisRow = DB::connection('tenant')->table('dimension_axes')
+                    ->where('entity_id', $entityId)
+                    ->where('key', $axisKey)
+                    ->first(['axis', 'name_en']);
+
+                if ($axisRow === null) {
+                    throw ReportRefused::because(sprintf(
+                        'This entity has no "%s" axis, so there are no lines that do or do not carry '.
+                        'a value on it. An empty register would read as a period in which nothing '.
+                        'was posted unclassified.',
+                        $axisKey,
+                    ));
+                }
+
+                $axisNumber = (int) $axisRow->axis;
+
+                if ($axisNumber < 1 || $axisNumber > 8) {
+                    throw ReportRefused::because(sprintf(
+                        'The "%s" axis is recorded at position %d, and a journal line carries eight.',
+                        $axisKey,
+                        $axisNumber,
+                    ));
+                }
+
+                $resolved['dimensions']['dimension_'.$axisNumber] = null;
+                $stated['dimension:'.$axisKey] = 'no value on this axis';
+
+                continue;
+            }
+
             $row = DB::connection('tenant')->selectOne(<<<'SQL'
                 SELECT x.axis, x.name_en AS axis_name, v.id, v.code, v.name_en
                 FROM dimension_axes x
@@ -349,7 +400,7 @@ final class GeneralLedgerDetail
      * populations, and the symptom would be an opening balance that does
      * not belong to the rows under it.
      *
-     * @param  array{account: ?string, party: ?string, journal: ?string, dimensions: array<string, string>, stated: array<string, string>}  $filters
+     * @param  array{account: ?string, party: ?string, journal: ?string, dimensions: array<string, ?string>, stated: array<string, string>}  $filters
      * @return array{0: string, 1: array<string, string>}
      */
     private function where(array $filters, bool $includeAdjusting): array
@@ -375,6 +426,21 @@ final class GeneralLedgerDetail
         foreach ($filters['dimensions'] as $column => $valueId) {
             // The column name comes from the axis position, which is an
             // integer this class bounded to 1-8; the value is bound.
+            if ($valueId === null) {
+                /*
+                 | `IS NULL`, and not `= NULL`.
+                 |
+                 | An equality against NULL is never true in SQL, so the
+                 | obvious spelling produces an empty register that reads
+                 | as "nothing was posted without a cost centre" - which
+                 | is the answer somebody acts on, and the opposite of
+                 | what an unclassified population usually holds.
+                 */
+                $clauses[] = sprintf('l.%s IS NULL', $column);
+
+                continue;
+            }
+
             $clauses[] = sprintf('l.%s = cast(:%s AS char(26))', $column, $column);
             $bindings[$column] = $valueId;
         }
@@ -394,7 +460,7 @@ final class GeneralLedgerDetail
     /**
      * The balance each account carried into the window, under the filters.
      *
-     * @param  array{account: ?string, party: ?string, journal: ?string, dimensions: array<string, string>, stated: array<string, string>}  $filters
+     * @param  array{account: ?string, party: ?string, journal: ?string, dimensions: array<string, ?string>, stated: array<string, string>}  $filters
      * @return array<string, object>
      */
     private function openings(
@@ -440,7 +506,7 @@ final class GeneralLedgerDetail
     /**
      * The lines in the window, grouped by account, in a fixed order.
      *
-     * @param  array{account: ?string, party: ?string, journal: ?string, dimensions: array<string, string>, stated: array<string, string>}  $filters
+     * @param  array{account: ?string, party: ?string, journal: ?string, dimensions: array<string, ?string>, stated: array<string, string>}  $filters
      * @return array<string, list<object>>
      */
     private function rows(
@@ -651,7 +717,7 @@ final class GeneralLedgerDetail
      * rather than a column repeated 4,000 times. A general ledger is read
      * by a person, down the page, one account at a time.
      *
-     * @param  array<string, string>|null  $dimensions
+     * @param  array<string, ?string>|null  $dimensions
      *
      * @throws ReportRefused
      */

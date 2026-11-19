@@ -331,6 +331,20 @@ final class PurchaseOrders
      * committed to and not yet spent" is answered by a buyer looking at
      * which lines are still open and not by a single total.
      *
+     * ## Each row now names the account and the dimensions it will hit
+     *
+     * Added for PF-193, which shows commitments against a budget: a
+     * committed budget is not an available one, and a department that has
+     * spent 80% and committed the other 30% is over before it knows it.
+     * Showing that needs the commitment keyed the way the budget is keyed
+     * - by account and dimension - and the line already carries both,
+     * since they are what the bill will post to.
+     *
+     * Added here rather than re-queried in the report, because which
+     * orders are open and what is still committed on each line is this
+     * service's answer and there must be one of it. The budget report
+     * groups these rows; it does not decide which lines are in them.
+     *
      * @return array<string, mixed>
      */
     public function commitment(string $entityId, ?string $partyId = null): array
@@ -341,6 +355,18 @@ final class PurchaseOrders
             ->when($partyId !== null, static fn ($q) => $q->where('party_id', $partyId))
             ->with('lines')
             ->get();
+
+        /*
+         | The account CODE beside the id, resolved once.
+         |
+         | A budget is keyed by account code and an order line holds the
+         | id, so one of the two has to be translated - and doing it per
+         | line would be a query per row on the one report a buyer runs
+         | over every open order.
+         */
+        $codes = DB::connection('tenant')->table('accounts')
+            ->where('entity_id', $entityId)
+            ->pluck('code', 'id');
 
         $byCurrency = [];
         $rows = [];
@@ -368,6 +394,28 @@ final class PurchaseOrders
                     'order_id' => (string) $order->getKey(),
                     'line_no' => (int) $line->line_no,
                     'description' => (string) $line->description,
+                    'expense_account_id' => $line->expense_account_id === null
+                        ? null
+                        : (string) $line->expense_account_id,
+                    'account_code' => $line->expense_account_id === null
+                        ? null
+                        : (string) ($codes[(string) $line->expense_account_id] ?? ''),
+                    /*
+                     | Four, because an order line carries four.
+                     |
+                     | `purchase_order_lines` has `dimension_1` to
+                     | `dimension_4` and `journal_lines` has eight, so a
+                     | commitment can only ever be analysed on the first
+                     | four axes. Reporting four and stopping is honest;
+                     | padding the other four with nulls would read as a
+                     | commitment deliberately left unclassified.
+                     */
+                    'dimensions' => [
+                        1 => $line->dimension_1 === null ? null : (string) $line->dimension_1,
+                        2 => $line->dimension_2 === null ? null : (string) $line->dimension_2,
+                        3 => $line->dimension_3 === null ? null : (string) $line->dimension_3,
+                        4 => $line->dimension_4 === null ? null : (string) $line->dimension_4,
+                    ],
                     'currency' => $currency,
                     'ordered' => (string) $line->quantity_ordered,
                     'received' => (string) $line->quantity_received,

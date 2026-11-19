@@ -217,6 +217,23 @@ final class BankBalances
         ];
     }
 
+    /**
+     * The statement the reconciliation measures against - exposed for PF-191.
+     *
+     * The same private lookup `statement()` and `unrecordedBankItems()`
+     * use, and the whole of its definition is the three things it
+     * excludes: a superseded statement, one whose period runs past the
+     * date asked about, and an intraday report. A report that needed "the
+     * last statement the bank closed" and wrote its own query would get
+     * the intraday one - the model's own `lastStatement()` returns it -
+     * and would then draw the drift line in the wrong place every
+     * afternoon a CAMT.052 arrived.
+     */
+    public function baseline(BankAccount $account, ?Carbon $asOf = null): ?BankStatement
+    {
+        return $this->lastStatement($account, $asOf, bookedOnly: true);
+    }
+
     /** The newest statement that stands, optionally only a booked one. */
     private function lastStatement(
         BankAccount $account,

@@ -171,10 +171,30 @@ final class TransitClearing
     /**
      * In-transit items older than the tolerance.
      *
+     * ## Two parameters added for PF-191, and why they are here
+     *
+     * **`$asOf`** replaces `current_date`. A report that read the clock
+     * would be unreproducible by construction - PF-198 says `as_of` is a
+     * parameter and never `now()` - and the in-transit position as at a
+     * past month-end is exactly what a reconciliation report is asked
+     * for. Defaulting to null keeps every existing caller on today.
+     *
+     * **`$days` may be null**, meaning every open in-transit item rather
+     * than only the aged ones. An aging report's first bucket is
+     * "current": an instruction released this morning is not five days of
+     * anything, and a report that could not see it would show a position
+     * whose newest items were missing. A second query here for "all of
+     * them" would have been a second definition of what is in transit -
+     * released, not cleared, not refused - and the two would have drifted
+     * the first time a status was added.
+     *
+     * @param  ?int  $days  age floor in days, exclusive; null for every open item
      * @return list<array<string, mixed>>
      */
-    public function aged(string $entityId, int $days = 5): array
+    public function aged(string $entityId, ?int $days = 5, ?Carbon $asOf = null): array
     {
+        $on = ($asOf ?? Carbon::now())->toDateString();
+
         $rows = DB::connection('tenant')->select(<<<'SQL'
             SELECT i.id,
                    i.amount::text AS amount,
@@ -184,7 +204,7 @@ final class TransitClearing
                    r.released_at,
                    coalesce(p.legal_name, 'a beneficiary') AS party_name,
                    i.bank_status,
-                   (current_date - r.pay_on) AS age_in_days,
+                   (cast(? AS date) - r.pay_on) AS age_in_days,
                    EXISTS (
                        SELECT 1 FROM payment_files f
                        WHERE f.run_id = r.id AND f.downloaded_at IS NOT NULL
@@ -196,9 +216,18 @@ final class TransitClearing
               AND r.state = 'released'
               AND i.cleared_on IS NULL
               AND coalesce(i.bank_status, '') <> 'RJCT'
-              AND (current_date - r.pay_on) > ?
+              /*
+               | The floor, and with null it is -1 rather than 0.
+               |
+               | `age > -1` is `age >= 0`, which is every instruction
+               | payable on or before the date asked about and none that
+               | is payable after it - so a null floor needs no second
+               | clause bounding `pay_on`, and a second clause here would
+               | be one that can never exclude a row.
+               */
+              AND (cast(? AS date) - r.pay_on) > cast(? AS integer)
             ORDER BY r.pay_on
-        SQL, [$entityId, $days]);
+        SQL, [$on, $entityId, $on, $days ?? -1]);
 
         return array_map(static fn (object $row): array => [
             'instruction_id' => (string) $row->id,

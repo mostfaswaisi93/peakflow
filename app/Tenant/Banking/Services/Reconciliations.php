@@ -277,6 +277,26 @@ final class Reconciliations
 
         return [
             'id' => (string) $row->id,
+            /*
+             | WHICH account, in WHICH entity, against WHICH statement -
+             | added for PF-191.
+             |
+             | The table carries all three and this document carried none
+             | of them, so the figures could be re-performed and the thing
+             | they were about could not: an auditor holding this array had
+             | to go back to the table to learn which bank account it
+             | reconciled. The migration's own comment says the period is
+             | denormalised here precisely so the document "reads without a
+             | join"; these three are the rest of that sentence.
+             |
+             | Added rather than re-derived in the report, because a report
+             | that looked the row up itself would be a second answer to
+             | "what is this document about" - and the first thing to drift
+             | would be which statement it names.
+             */
+            'entity_id' => (string) $row->entity_id,
+            'bank_account_id' => (string) $row->bank_account_id,
+            'bank_statement_id' => (string) $row->bank_statement_id,
             'period' => ['from' => (string) $row->period_from, 'to' => (string) $row->period_to],
             'currency' => $currency,
             'statement_balance' => $statement,

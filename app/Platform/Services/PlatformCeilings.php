@@ -56,6 +56,16 @@ final class PlatformCeilings implements Ceilings
         'ceiling.auto_match_tolerance' => '25.00',
 
         /*
+         | The furthest a budget variance threshold may go - PF-193.
+         |
+         | Ten per cent, because past that the threshold stops filtering
+         | noise and starts hiding the thing the report exists to show: a
+         | department at 140% of its budget does not appear on a report
+         | set to highlight at 50%, and the page looks clean.
+         */
+        'ceiling.budget_materiality_percent' => '10.00',
+
+        /*
          | The reconciliation difference tolerances - PF-164.
          |
          | Six, not one, because they absorb different things and a single
