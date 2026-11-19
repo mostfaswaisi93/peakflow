@@ -1187,16 +1187,61 @@ final class LedgerEnforcementRules
             return ['could not write a posted entry to test immutability: '.$written];
         }
 
+        /*
+         | Both tables, and the LINES are the half that was missing.
+         |
+         | `refuse_posted_mutation()` is attached to `journal_lines` as well
+         | as to `journal_entries`, and this check only ever tried the
+         | header - so the branch that looks the parent entry up by
+         | `OLD.journal_entry_id` was never exercised. Editing one line of a
+         | posted entry is also the more realistic tamper: it moves a figure
+         | and leaves the entry's own row untouched.
+         */
+        $line = $this->connection->table('journal_lines')
+            ->where('journal_entry_id', $entryId)
+            ->first();
+
+        if ($line === null) {
+            return ['the posted entry has no lines, so the journal_lines half of the trigger cannot '.
+                'be exercised and this check covers only the header'];
+        }
+
+        /*
+         | WHICH layer answers is part of the assertion.
+         |
+         | There are two, and they are not interchangeable. DELETE is
+         | revoked for the application role, so the privilege refuses before
+         | any trigger runs and the message is `42501 permission denied` -
+         | opaque, and the right trade: granting DELETE so the trigger could
+         | produce a nicer sentence would swap a guarantee for a message.
+         | UPDATE is permitted at the privilege level and refused by the
+         | trigger, which is the layer that can explain itself.
+         |
+         | Asserting per operation is what makes this check able to fail in
+         | the interesting direction. "Something threw" is satisfied by a
+         | privilege that was revoked by accident, by a trigger raising the
+         | wrong error, and by a typo in the SQL - all of which leave the row
+         | safe and the guard untested.
+         */
         foreach ([
-            'UPDATE' => fn () => $this->connection->statement(
+            'UPDATE an entry' => ['trigger', fn () => $this->connection->statement(
                 "UPDATE journal_entries SET narration = 'tampered' WHERE id = ?",
                 [$entryId],
-            ),
-            'DELETE' => fn () => $this->connection->statement(
+            )],
+            'DELETE an entry' => ['privilege', fn () => $this->connection->statement(
                 'DELETE FROM journal_entries WHERE id = ?',
                 [$entryId],
-            ),
-        ] as $operation => $attempt) {
+            )],
+            'UPDATE a line' => ['trigger', fn () => $this->connection->statement(
+                'UPDATE journal_lines SET functional_amount = functional_amount + 1 '.
+                'WHERE id = ? AND accounting_date = ?',
+                [(string) $line->id, (string) $line->accounting_date],
+            )],
+            'DELETE a line' => ['privilege', fn () => $this->connection->statement(
+                'DELETE FROM journal_lines WHERE id = ? AND accounting_date = ?',
+                [(string) $line->id, (string) $line->accounting_date],
+            )],
+        ] as $operation => [$layer, $attempt]) {
             $savepoint = 'immutable_'.bin2hex(random_bytes(4));
             $this->connection->statement('SAVEPOINT '.$savepoint);
 
@@ -1204,12 +1249,62 @@ final class LedgerEnforcementRules
                 $attempt();
 
                 $violations[] = sprintf(
-                    'a posted entry was %sd by raw SQL; a correction must be a reversal, or the trial balance '.
-                    'stops reconciling to the statements printed from it',
-                    strtolower($operation),
+                    'a posted entry survived "%s" by raw SQL; a correction must be a reversal, or the '.
+                    'trial balance stops reconciling to the statements printed from it',
+                    $operation,
                 );
-            } catch (Throwable) {
-                // Refused, by the trigger or by the privilege. Both are right.
+            } catch (Throwable $e) {
+                /*
+                 | And the refusal has to SAY SO.
+                 |
+                 | This used to catch `Throwable` and discard it, with the
+                 | comment "refused, by the trigger or by the privilege -
+                 | both are right". Both are right about whether the row
+                 | survived and neither is right about what the operator
+                 | reads. A guard can refuse correctly and still fail at
+                 | the only moment it is seen: an error about a missing
+                 | column sends whoever hit it to look for a bug in the
+                 | schema, and the thing they actually did - tried to edit
+                 | a posted entry - is nowhere in the sentence.
+                 |
+                 | It is also how a trigger with a genuine fault hides.
+                 | `OLD.status` evaluated on a `journal_lines` row would
+                 | raise 42703, the row would still not change, and a check
+                 | that asks only "did something throw" would stay green.
+                 */
+                $message = preg_replace('/\s+/', ' ', $e->getMessage()) ?? '';
+
+                /*
+                 | No early `continue` from here.
+                 |
+                 | The savepoint is rolled back at the END of this loop body,
+                 | and a `continue` skips it - which leaves the transaction
+                 | aborted and every later check in this suite failing with
+                 | "current transaction is aborted". Written that way first,
+                 | and the suite reported 0 passed and 1 failed, which is at
+                 | least an unmissable way to find out.
+                 */
+                if ($layer === 'privilege' && ! str_contains($message, 'permission denied')) {
+                    $violations[] = sprintf(
+                        '"%s" should be refused by the revoked privilege, before any trigger runs, and '.
+                        'was refused by something else: "%s". If the privilege has been granted back, '.
+                        'the only thing standing between a posted entry and a DELETE is a trigger - '.
+                        'and a trigger can be disabled by whoever owns the table.',
+                        $operation,
+                        Str::limit($message, 180),
+                    );
+                } elseif ($layer === 'trigger'
+                    && (! str_contains($message, 'posted') || ! str_contains($message, 'reversal'))) {
+                    $violations[] = sprintf(
+                        '"%s" was refused, correctly, by a message that does not say the entry is '.
+                        'posted or that the correction is a reversal: "%s". The row is safe and the '.
+                        'person who hit this is now reading about something else - which is how a '.
+                        'trigger with a real fault hides, because the row not changing looks the same '.
+                        'either way.',
+                        $operation,
+                        Str::limit($message, 180),
+                    );
+                }
             }
 
             $this->connection->statement('ROLLBACK TO SAVEPOINT '.$savepoint);
