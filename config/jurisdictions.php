@@ -503,9 +503,48 @@ return [
         'artefact_path' => base_path('schematron'),
         'fetch_at_runtime' => false,
 
-        // The four ordered stages. Each catches a different class of error,
-        // and running them out of order produces unhelpful messages.
-        'stages' => ['internal', 'xsd', 'en16931', 'profile'],
+        /*
+         | The vendored code lists, by name, under `artefact_path`.
+         |
+         | The version is in the FILE NAME and therefore in this file, which
+         | is the point: "the EAS code list" is not a thing that can be
+         | pinned, and `v9.7` is. Bumping it is a visible change to a tracked
+         | line next to the artefact it names.
+         */
+        'codelists' => [
+            'peppol_eas' => 'codelists/peppol-participant-identifier-schemes-v9.7.json',
+        ],
+
+        /*
+         | The vendored rule sets, by name, under `artefact_path`.
+         |
+         | They are read rather than run: executing either needs the syntax
+         | binding compiled to XSLT 2.0 and PHP ships libxslt, which is 1.0.
+         | What they are the authority for is WHICH rules exist and what they
+         | are called, which is what `EInvoicingCoverageRules` checks the
+         | `Exchange` sources against. Running them is PF-115.
+         */
+        'rulesets' => [
+            'en16931' => 'en16931/EN16931-model.sch',
+            'peppol' => 'peppol/PEPPOL-EN16931-UBL.sch',
+        ],
+
+        /*
+         | The four ordered stages. Each catches a different class of error,
+         | and running them out of order produces unhelpful messages.
+         |
+         | These are the names `ValidationPipeline` dispatches on and the
+         | names `JurisdictionProfile::validatorChain()` returns, and
+         | `EInvoicingCoverageRules` asserts all three agree. Until PF-114
+         | they were `internal, xsd, en16931, profile` - four plausible names
+         | for the same four stages that matched nothing in the code, in a
+         | configuration key nothing read. A list of stage names that the
+         | pipeline does not use is worse than no list: somebody reading the
+         | configuration to find out what runs learns four words that appear
+         | nowhere else, and a profile naming one of them would be refused by
+         | the pipeline as a stage that does not exist.
+         */
+        'stages' => ['model', 'schema', 'en16931', 'cius'],
     ],
 
 ];

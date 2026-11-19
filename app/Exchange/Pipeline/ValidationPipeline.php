@@ -8,7 +8,9 @@ use App\Exchange\Profiles\JurisdictionProfile;
 use App\Exchange\Semantics\SemanticInvoice;
 use App\Exchange\Validation\CalculationRules;
 use App\Exchange\Validation\CardinalityRules;
+use App\Exchange\Validation\CategoryRules;
 use App\Exchange\Validation\ConditionalRules;
+use App\Exchange\Validation\SchemaFailure;
 use App\Exchange\Validation\SemanticViolation;
 use App\Support\Xml\MalformedXml;
 use App\Support\Xml\SafeXmlReader;
@@ -50,6 +52,18 @@ final class ValidationPipeline
         private readonly CardinalityRules $cardinality,
         private readonly ConditionalRules $conditional,
         private readonly CalculationRules $calculation,
+        /*
+         | Defaulted, unlike the three above, and deliberately.
+         |
+         | The pipeline is constructed by hand in a couple of places that
+         | care about one stage only - the hardening checks build it to prove
+         | the external entity loader is installed around stage 2 and never
+         | reach stage 3. Adding a required argument would have broken those
+         | call sites to no purpose: this rule set holds no state and no
+         | dependencies of its own, so a default is the whole of what the
+         | container would have provided.
+         */
+        private readonly CategoryRules $categories = new CategoryRules(),
     ) {}
 
     /**
@@ -175,11 +189,23 @@ final class ValidationPipeline
             ];
         }
 
-        return ['violations' => $this->validateAgainst($xml, $schema), 'xml' => $xml];
+        return [
+            'violations' => $this->validateAgainst($xml, $schema, $serializer->syntax()),
+            'xml' => $xml,
+        ];
     }
 
     /**
      * Stage 3: EN 16931.
+     *
+     * Three rule sets, and the third is here rather than in
+     * {@see SemanticInvoice::validate()} on purpose. The conditional and
+     * calculation rules are the model's own and run at stage 1 as well, so
+     * a draft is told about them while somebody is looking at it. The
+     * per-category rules in {@see CategoryRules} are a summary checked
+     * against the lines it summarises - there is nothing a user can do
+     * about them and nothing to say until the document is complete, which
+     * is what stage 3 is.
      *
      * @return list<SemanticViolation>
      */
@@ -188,6 +214,7 @@ final class ValidationPipeline
         return [
             ...$this->conditional->check($invoice->root),
             ...$this->calculation->check($invoice->root),
+            ...$this->categories->check($invoice->root),
         ];
     }
 
@@ -237,7 +264,7 @@ final class ValidationPipeline
      *
      * @return list<SemanticViolation>
      */
-    private function validateAgainst(string $xml, string $schema): array
+    private function validateAgainst(string $xml, string $schema, string $syntax = ''): array
     {
         $document = SafeXmlReader::parse($xml);
 
@@ -250,11 +277,97 @@ final class ValidationPipeline
          | back is only restored when it is actually callable - the same
          | reason SafeXmlReader does it this way.
          */
-        $previousLoader = libxml_set_external_entity_loader(
-            static function (?string $publicId, string $systemId) use ($root, &$refused) {
-                $resolved = realpath($systemId);
+        /*
+         | The base a RELATIVE reference is resolved against.
+         |
+         | ## Measured, because this is where the defence broke the feature
+         |
+         | libxml hands this loader the absolute path of the schema it was
+         | given, and then hands it every `schemaLocation` inside that schema
+         | EXACTLY AS WRITTEN, with no base:
+         |
+         |     /…/resources/schemas/ubl/maindoc.xsd
+         |     ../common/UBL-CommonAggregateComponents-2.1.xsd
+         |
+         | `realpath()` on the second resolves against the PROCESS working
+         | directory, which is wherever the queue worker was started. So the
+         | confinement refused it - and every import in the official UBL 2.1
+         | and CII D16B distributions is relative. Vendoring the schemas
+         | would have produced a validator that reported
+         | `EN16931-SCHEMA-REFERENCE` on every document it was given, which
+         | is the opposite of the criterion the hardening was protecting:
+         | vendoring is supposed to be the only thing needed to turn the
+         | stage on.
+         |
+         | So a relative reference is resolved against a base, and the base
+         | is the directory of the last file this loader served - which is
+         | how libxml walks an import graph: it asks for the parent, reads
+         | it, then asks for what the parent references. The schema's own
+         | directory and the schema root are tried after that, and anything
+         | that still cannot be placed is refused and reported.
+         */
+        $base = \dirname($schema);
 
-                if ($root !== false && $resolved !== false && str_starts_with($resolved, $root.\DIRECTORY_SEPARATOR)) {
+        $previousLoader = libxml_set_external_entity_loader(
+            static function (?string $publicId, string $systemId) use ($root, $schema, &$base, &$refused) {
+                if ($root === false) {
+                    $refused[] = $systemId;
+
+                    return null;
+                }
+
+                /*
+                 | A URI is never a path.
+                 |
+                 | Checked before any filesystem resolution, and not after:
+                 | treating `http://attacker/stolen.xsd` as a relative path
+                 | would make the search below look for a file called
+                 | `stolen.xsd` under the schema directory, and find one the
+                 | day somebody vendors a schema with that name.
+                 */
+                if (preg_match('#^[a-zA-Z][a-zA-Z0-9+.-]*://#', $systemId) === 1) {
+                    $refused[] = $systemId;
+
+                    return null;
+                }
+
+                $candidates = [$systemId];
+
+                if (! str_starts_with($systemId, \DIRECTORY_SEPARATOR)) {
+                    $candidates[] = $base.\DIRECTORY_SEPARATOR.$systemId;
+                    $candidates[] = \dirname($schema).\DIRECTORY_SEPARATOR.$systemId;
+                    $candidates[] = $root.\DIRECTORY_SEPARATOR.$systemId;
+                }
+
+                foreach ($candidates as $candidate) {
+                    $resolved = realpath($candidate);
+
+                    if ($resolved === false || ! is_file($resolved)) {
+                        continue;
+                    }
+
+                    if (! str_starts_with($resolved, $root.\DIRECTORY_SEPARATOR)) {
+                        /*
+                         | Resolvable and outside the schema directory, which
+                         | is the case the confinement exists for: `../../.env`
+                         | is a path and is not a schema.
+                         |
+                         | `continue`, not `break`: the first candidate for a
+                         | relative reference is the reference itself, which
+                         | `realpath()` resolves against the PROCESS working
+                         | directory. A worker started in the project root
+                         | would then have `../common/X.xsd` land on whatever
+                         | sits beside the project - and breaking here would
+                         | refuse the reference without ever trying the base
+                         | it was actually written against. Every candidate
+                         | is still tested against the root, so nothing
+                         | outside it can be served either way.
+                         */
+                        continue;
+                    }
+
+                    $base = \dirname($resolved);
+
                     return fopen($resolved, 'rb') ?: null;
                 }
 
@@ -332,10 +445,7 @@ final class ValidationPipeline
         return [
             ...$violations,
             ...array_map(
-                static fn (\LibXMLError $error): SemanticViolation => SemanticViolation::internal(
-                    'EN16931-SCHEMA',
-                    detail: sprintf('line %d: %s', $error->line, trim($error->message)),
-                ),
+                static fn (\LibXMLError $error): SemanticViolation => SchemaFailure::from($error, $syntax),
                 $errors,
             ),
         ];

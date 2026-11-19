@@ -270,6 +270,7 @@ if ($only === 'all' || $only === 'exchange') {
     $suites['Profiles and the pipeline'] = $suite(static fn (): array => (new Tests\Support\ProfilePipelineRules())->all());
     $suites['Peppol BIS Billing 3.0'] = $suite(static fn (): array => (new Tests\Support\PeppolProfileRules())->all());
     $suites['ZATCA'] = $suite(static fn (): array => (new Tests\Support\ZatcaProfileRules())->all());
+    $suites['Vendored artefacts and coverage'] = $suite(static fn (): array => (new Tests\Support\EInvoicingCoverageRules())->all());
 }
 
 if ($only === 'all' || $only === 'purchasing') {

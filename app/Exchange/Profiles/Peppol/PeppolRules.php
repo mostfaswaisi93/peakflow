@@ -214,12 +214,18 @@ final class PeppolRules
      * be delivered, and "issued but undeliverable" is a worse state than
      * "not yet issued".
      *
-     * ## The scheme is checked for shape, not membership
+     * ## The scheme is checked for shape AND membership
      *
-     * `PEPPOL-COMMON-R050` requires the scheme to be from the EAS code list,
-     * which is a vendored artefact. Checking membership against a partial
-     * copy would reject valid addresses, so the shape - four digits - is
-     * what is asserted, and the list arrives with the corpus.
+     * The shape - four digits - is `PEPPOL-COMMON-R050` below, and see the
+     * note on that identifier in {@see electronicAddressSchemeIsKnown()}.
+     * Membership in the EAS code list is `PEPPOL-EN16931-CL008`, which is
+     * the identifier the official Peppol Schematron gives that rule, and it
+     * can be checked now that {@see EasCodes} has the published list -
+     * PF-120.
+     *
+     * The two are reported separately because they fail differently.
+     * `EMAIL` is not a scheme at all; `9999` is four digits and is not a
+     * registry, and a recipient's access point says exactly that.
      *
      * @return list<SemanticViolation>
      */
@@ -265,10 +271,70 @@ final class PeppolRules
                         $scheme === null ? 'absent' : '"'.$scheme.'"',
                     ),
                 );
+
+                continue;
             }
+
+            $violations = [
+                ...$violations,
+                ...$this->electronicAddressSchemeIsKnown($scheme, $term, $group),
+            ];
         }
 
         return $violations;
+    }
+
+    /**
+     * PEPPOL-EN16931-CL008: the scheme is one the network resolves.
+     *
+     * ## Why this identifier and not `PEPPOL-COMMON-R050`
+     *
+     * `PEPPOL-COMMON-R050` in the vendored Peppol Schematron
+     * (`schematron/peppol/PEPPOL-EN16931-UBL.sch`, 3.0.22) reads
+     * *"Australian Business Number (ABN) MUST be stated in the correct
+     * format."* It is one of the per-registry format rules, and it is not
+     * about the code list at all. The rule that tests the scheme against
+     * the code list is `PEPPOL-EN16931-CL008`: *"Electronic address
+     * identifier scheme must be from the codelist 'Electronic Address
+     * Identifier Scheme'"*.
+     *
+     * So the membership failure is reported under `CL008`, because a
+     * supplier who is sent an identifier and looks it up has to arrive at
+     * the rule they broke. The shape failure above keeps `R050` for now -
+     * changing it is a separate change with its own check to update, and
+     * the two of them reading differently is recorded rather than tidied
+     * away.
+     *
+     * @return list<SemanticViolation>
+     */
+    private function electronicAddressSchemeIsKnown(string $scheme, BT $term, BG $group): array
+    {
+        if (EasCodes::has($scheme)) {
+            return [];
+        }
+
+        return [SemanticViolation::fatal(
+            'PEPPOL-EN16931-CL008',
+            term: $term,
+            group: $group,
+            value: $scheme,
+            detail: sprintf(
+                '%s is not one of the %d schemes an address may be registered under in the Peppol '.
+                'participant identifier scheme code list v%s%s. The network resolves a participant by '.
+                '(scheme, identifier), so an unknown scheme is an address that routes nowhere.',
+                $scheme,
+                \count(EasCodes::cl008()),
+                EasCodes::version(),
+                EasCodes::knows($scheme)
+                    ? sprintf(
+                        ' - it is listed as %s with the state "%s", which is readable on a document '.
+                        'already issued and not usable on a new one',
+                        (string) EasCodes::scheme($scheme),
+                        (string) (EasCodes::state($scheme) ?? 'unknown'),
+                    )
+                    : '',
+            ),
+        )];
     }
 
     /**

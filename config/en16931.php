@@ -322,6 +322,196 @@ return [
             'ar' => 'يجب أن يكون البائع قابلاً للتعريف برقم تعريف أو سجل قانوني أو رقم ضريبي.',
         ],
         /*
+         | The per-category families - PF-116.
+         |
+         | Ten rules per VAT category in EN 16931, of which the rate rules
+         | (-05, -06, -07) and the calculation rules (-08, -09) are
+         | implemented in `CategoryRules`. The identifiers are read from the
+         | vendored abstract rule set, which is why `K` is `BR-IC-*` and
+         | `L` and `M` are `BR-IG-*` and `BR-IP-*`: the family is named after
+         | the regime, not after the code list value.
+         */
+        'BR-S-05' => [
+            'en' => 'An invoice line that is standard-rated must state a VAT rate above zero (BT-152).',
+            'ar' => 'يجب أن يذكر سطر الفاتورة المصنف ضمن الخضوع للنسبة الأساسية نسبة ضريبة أكبر من صفر (BT-152).',
+        ],
+        'BR-S-06' => [
+            'en' => 'A document-level allowance that is standard-rated must state a VAT rate above zero (BT-96).',
+            'ar' => 'يجب أن يذكر الخصم على مستوى المستند المصنف ضمن الخضوع للنسبة الأساسية نسبة ضريبة أكبر من صفر (BT-96).',
+        ],
+        'BR-S-07' => [
+            'en' => 'A document-level charge that is standard-rated must state a VAT rate above zero (BT-103).',
+            'ar' => 'يجب أن يذكر الرسم على مستوى المستند المصنف ضمن الخضوع للنسبة الأساسية نسبة ضريبة أكبر من صفر (BT-103).',
+        ],
+        'BR-S-08' => [
+            'en' => 'The taxable amount (BT-116) for the standard-rated category must equal the line net amounts plus the charges less the allowances in it at that rate.',
+            'ar' => 'يجب أن يساوي الوعاء الضريبي (BT-116) للفئة الخضوع للنسبة الأساسية مجموع صافي مبالغ السطور زائداً الرسوم ناقصاً الخصومات في تلك الفئة وبالنسبة نفسها.',
+        ],
+        'BR-S-09' => [
+            'en' => 'The VAT amount (BT-117) for the standard-rated category must equal its taxable amount multiplied by its rate.',
+            'ar' => 'يجب أن يساوي مبلغ الضريبة (BT-117) للفئة الخضوع للنسبة الأساسية وعاءها الضريبي مضروباً في نسبتها.',
+        ],
+        'BR-Z-05' => [
+            'en' => 'An invoice line that is zero-rated must state a VAT rate of 0 (BT-152).',
+            'ar' => 'يجب أن يذكر سطر الفاتورة المصنف ضمن النسبة الصفرية نسبة ضريبة صفراً (BT-152).',
+        ],
+        'BR-Z-06' => [
+            'en' => 'A document-level allowance that is zero-rated must state a VAT rate of 0 (BT-96).',
+            'ar' => 'يجب أن يذكر الخصم على مستوى المستند المصنف ضمن النسبة الصفرية نسبة ضريبة صفراً (BT-96).',
+        ],
+        'BR-Z-07' => [
+            'en' => 'A document-level charge that is zero-rated must state a VAT rate of 0 (BT-103).',
+            'ar' => 'يجب أن يذكر الرسم على مستوى المستند المصنف ضمن النسبة الصفرية نسبة ضريبة صفراً (BT-103).',
+        ],
+        'BR-Z-08' => [
+            'en' => 'The taxable amount (BT-116) for the zero-rated category must equal the line net amounts plus the charges less the allowances in it.',
+            'ar' => 'يجب أن يساوي الوعاء الضريبي (BT-116) للفئة النسبة الصفرية مجموع صافي مبالغ السطور زائداً الرسوم ناقصاً الخصومات في تلك الفئة.',
+        ],
+        'BR-Z-09' => [
+            'en' => 'The VAT amount (BT-117) for the zero-rated category must be zero.',
+            'ar' => 'يجب أن يكون مبلغ الضريبة (BT-117) للفئة النسبة الصفرية صفراً.',
+        ],
+        'BR-E-05' => [
+            'en' => 'An invoice line that is VAT-exempt must state a VAT rate of 0 (BT-152).',
+            'ar' => 'يجب أن يذكر سطر الفاتورة المصنف ضمن الإعفاء من الضريبة نسبة ضريبة صفراً (BT-152).',
+        ],
+        'BR-E-06' => [
+            'en' => 'A document-level allowance that is VAT-exempt must state a VAT rate of 0 (BT-96).',
+            'ar' => 'يجب أن يذكر الخصم على مستوى المستند المصنف ضمن الإعفاء من الضريبة نسبة ضريبة صفراً (BT-96).',
+        ],
+        'BR-E-07' => [
+            'en' => 'A document-level charge that is VAT-exempt must state a VAT rate of 0 (BT-103).',
+            'ar' => 'يجب أن يذكر الرسم على مستوى المستند المصنف ضمن الإعفاء من الضريبة نسبة ضريبة صفراً (BT-103).',
+        ],
+        'BR-E-08' => [
+            'en' => 'The taxable amount (BT-116) for the VAT-exempt category must equal the line net amounts plus the charges less the allowances in it.',
+            'ar' => 'يجب أن يساوي الوعاء الضريبي (BT-116) للفئة الإعفاء من الضريبة مجموع صافي مبالغ السطور زائداً الرسوم ناقصاً الخصومات في تلك الفئة.',
+        ],
+        'BR-E-09' => [
+            'en' => 'The VAT amount (BT-117) for the VAT-exempt category must be zero.',
+            'ar' => 'يجب أن يكون مبلغ الضريبة (BT-117) للفئة الإعفاء من الضريبة صفراً.',
+        ],
+        'BR-AE-05' => [
+            'en' => 'An invoice line that is reverse-charge must state a VAT rate of 0 (BT-152).',
+            'ar' => 'يجب أن يذكر سطر الفاتورة المصنف ضمن التحصيل العكسي نسبة ضريبة صفراً (BT-152).',
+        ],
+        'BR-AE-06' => [
+            'en' => 'A document-level allowance that is reverse-charge must state a VAT rate of 0 (BT-96).',
+            'ar' => 'يجب أن يذكر الخصم على مستوى المستند المصنف ضمن التحصيل العكسي نسبة ضريبة صفراً (BT-96).',
+        ],
+        'BR-AE-07' => [
+            'en' => 'A document-level charge that is reverse-charge must state a VAT rate of 0 (BT-103).',
+            'ar' => 'يجب أن يذكر الرسم على مستوى المستند المصنف ضمن التحصيل العكسي نسبة ضريبة صفراً (BT-103).',
+        ],
+        'BR-AE-08' => [
+            'en' => 'The taxable amount (BT-116) for the reverse-charge category must equal the line net amounts plus the charges less the allowances in it.',
+            'ar' => 'يجب أن يساوي الوعاء الضريبي (BT-116) للفئة التحصيل العكسي مجموع صافي مبالغ السطور زائداً الرسوم ناقصاً الخصومات في تلك الفئة.',
+        ],
+        'BR-AE-09' => [
+            'en' => 'The VAT amount (BT-117) for the reverse-charge category must be zero.',
+            'ar' => 'يجب أن يكون مبلغ الضريبة (BT-117) للفئة التحصيل العكسي صفراً.',
+        ],
+        'BR-IC-05' => [
+            'en' => 'An invoice line that is intra-community supply must state a VAT rate of 0 (BT-152).',
+            'ar' => 'يجب أن يذكر سطر الفاتورة المصنف ضمن التوريد البيني داخل الاتحاد الأوروبي نسبة ضريبة صفراً (BT-152).',
+        ],
+        'BR-IC-06' => [
+            'en' => 'A document-level allowance that is intra-community supply must state a VAT rate of 0 (BT-96).',
+            'ar' => 'يجب أن يذكر الخصم على مستوى المستند المصنف ضمن التوريد البيني داخل الاتحاد الأوروبي نسبة ضريبة صفراً (BT-96).',
+        ],
+        'BR-IC-07' => [
+            'en' => 'A document-level charge that is intra-community supply must state a VAT rate of 0 (BT-103).',
+            'ar' => 'يجب أن يذكر الرسم على مستوى المستند المصنف ضمن التوريد البيني داخل الاتحاد الأوروبي نسبة ضريبة صفراً (BT-103).',
+        ],
+        'BR-IC-08' => [
+            'en' => 'The taxable amount (BT-116) for the intra-community supply category must equal the line net amounts plus the charges less the allowances in it.',
+            'ar' => 'يجب أن يساوي الوعاء الضريبي (BT-116) للفئة التوريد البيني داخل الاتحاد الأوروبي مجموع صافي مبالغ السطور زائداً الرسوم ناقصاً الخصومات في تلك الفئة.',
+        ],
+        'BR-IC-09' => [
+            'en' => 'The VAT amount (BT-117) for the intra-community supply category must be zero.',
+            'ar' => 'يجب أن يكون مبلغ الضريبة (BT-117) للفئة التوريد البيني داخل الاتحاد الأوروبي صفراً.',
+        ],
+        'BR-G-05' => [
+            'en' => 'An invoice line that is export outside the EU must state a VAT rate of 0 (BT-152).',
+            'ar' => 'يجب أن يذكر سطر الفاتورة المصنف ضمن التصدير خارج الاتحاد الأوروبي نسبة ضريبة صفراً (BT-152).',
+        ],
+        'BR-G-06' => [
+            'en' => 'A document-level allowance that is export outside the EU must state a VAT rate of 0 (BT-96).',
+            'ar' => 'يجب أن يذكر الخصم على مستوى المستند المصنف ضمن التصدير خارج الاتحاد الأوروبي نسبة ضريبة صفراً (BT-96).',
+        ],
+        'BR-G-07' => [
+            'en' => 'A document-level charge that is export outside the EU must state a VAT rate of 0 (BT-103).',
+            'ar' => 'يجب أن يذكر الرسم على مستوى المستند المصنف ضمن التصدير خارج الاتحاد الأوروبي نسبة ضريبة صفراً (BT-103).',
+        ],
+        'BR-G-08' => [
+            'en' => 'The taxable amount (BT-116) for the export outside the EU category must equal the line net amounts plus the charges less the allowances in it.',
+            'ar' => 'يجب أن يساوي الوعاء الضريبي (BT-116) للفئة التصدير خارج الاتحاد الأوروبي مجموع صافي مبالغ السطور زائداً الرسوم ناقصاً الخصومات في تلك الفئة.',
+        ],
+        'BR-G-09' => [
+            'en' => 'The VAT amount (BT-117) for the export outside the EU category must be zero.',
+            'ar' => 'يجب أن يكون مبلغ الضريبة (BT-117) للفئة التصدير خارج الاتحاد الأوروبي صفراً.',
+        ],
+        'BR-O-05' => [
+            'en' => 'An invoice line that is not subject to VAT must state no VAT rate (BT-152) - the absence of a rate is not a rate of zero.',
+            'ar' => 'لا يجوز أن يذكر سطر الفاتورة المصنف ضمن عدم الخضوع للضريبة نسبة ضريبة (BT-152)، فغياب النسبة ليس نسبة صفرية.',
+        ],
+        'BR-O-06' => [
+            'en' => 'A document-level allowance that is not subject to VAT must state no VAT rate (BT-96) - the absence of a rate is not a rate of zero.',
+            'ar' => 'لا يجوز أن يذكر الخصم على مستوى المستند المصنف ضمن عدم الخضوع للضريبة نسبة ضريبة (BT-96)، فغياب النسبة ليس نسبة صفرية.',
+        ],
+        'BR-O-07' => [
+            'en' => 'A document-level charge that is not subject to VAT must state no VAT rate (BT-103) - the absence of a rate is not a rate of zero.',
+            'ar' => 'لا يجوز أن يذكر الرسم على مستوى المستند المصنف ضمن عدم الخضوع للضريبة نسبة ضريبة (BT-103)، فغياب النسبة ليس نسبة صفرية.',
+        ],
+        'BR-O-08' => [
+            'en' => 'The taxable amount (BT-116) for the not subject to VAT category must equal the line net amounts plus the charges less the allowances in it.',
+            'ar' => 'يجب أن يساوي الوعاء الضريبي (BT-116) للفئة عدم الخضوع للضريبة مجموع صافي مبالغ السطور زائداً الرسوم ناقصاً الخصومات في تلك الفئة.',
+        ],
+        'BR-O-09' => [
+            'en' => 'The VAT amount (BT-117) for the not subject to VAT category must be zero.',
+            'ar' => 'يجب أن يكون مبلغ الضريبة (BT-117) للفئة عدم الخضوع للضريبة صفراً.',
+        ],
+        'BR-IG-05' => [
+            'en' => 'An invoice line that is IGIC must state a VAT rate of zero or more (BT-152).',
+            'ar' => 'يجب أن يذكر سطر الفاتورة المصنف ضمن ضريبة جزر الكناري IGIC نسبة ضريبة صفراً أو أكبر (BT-152).',
+        ],
+        'BR-IG-06' => [
+            'en' => 'A document-level allowance that is IGIC must state a VAT rate of zero or more (BT-96).',
+            'ar' => 'يجب أن يذكر الخصم على مستوى المستند المصنف ضمن ضريبة جزر الكناري IGIC نسبة ضريبة صفراً أو أكبر (BT-96).',
+        ],
+        'BR-IG-07' => [
+            'en' => 'A document-level charge that is IGIC must state a VAT rate of zero or more (BT-103).',
+            'ar' => 'يجب أن يذكر الرسم على مستوى المستند المصنف ضمن ضريبة جزر الكناري IGIC نسبة ضريبة صفراً أو أكبر (BT-103).',
+        ],
+        'BR-IG-08' => [
+            'en' => 'The taxable amount (BT-116) for the IGIC category must equal the line net amounts plus the charges less the allowances in it at that rate.',
+            'ar' => 'يجب أن يساوي الوعاء الضريبي (BT-116) للفئة ضريبة جزر الكناري IGIC مجموع صافي مبالغ السطور زائداً الرسوم ناقصاً الخصومات في تلك الفئة وبالنسبة نفسها.',
+        ],
+        'BR-IG-09' => [
+            'en' => 'The VAT amount (BT-117) for the IGIC category must equal its taxable amount multiplied by its rate.',
+            'ar' => 'يجب أن يساوي مبلغ الضريبة (BT-117) للفئة ضريبة جزر الكناري IGIC وعاءها الضريبي مضروباً في نسبتها.',
+        ],
+        'BR-IP-05' => [
+            'en' => 'An invoice line that is IPSI must state a VAT rate of zero or more (BT-152).',
+            'ar' => 'يجب أن يذكر سطر الفاتورة المصنف ضمن ضريبة سبتة ومليلة IPSI نسبة ضريبة صفراً أو أكبر (BT-152).',
+        ],
+        'BR-IP-06' => [
+            'en' => 'A document-level allowance that is IPSI must state a VAT rate of zero or more (BT-96).',
+            'ar' => 'يجب أن يذكر الخصم على مستوى المستند المصنف ضمن ضريبة سبتة ومليلة IPSI نسبة ضريبة صفراً أو أكبر (BT-96).',
+        ],
+        'BR-IP-07' => [
+            'en' => 'A document-level charge that is IPSI must state a VAT rate of zero or more (BT-103).',
+            'ar' => 'يجب أن يذكر الرسم على مستوى المستند المصنف ضمن ضريبة سبتة ومليلة IPSI نسبة ضريبة صفراً أو أكبر (BT-103).',
+        ],
+        'BR-IP-08' => [
+            'en' => 'The taxable amount (BT-116) for the IPSI category must equal the line net amounts plus the charges less the allowances in it at that rate.',
+            'ar' => 'يجب أن يساوي الوعاء الضريبي (BT-116) للفئة ضريبة سبتة ومليلة IPSI مجموع صافي مبالغ السطور زائداً الرسوم ناقصاً الخصومات في تلك الفئة وبالنسبة نفسها.',
+        ],
+        'BR-IP-09' => [
+            'en' => 'The VAT amount (BT-117) for the IPSI category must equal its taxable amount multiplied by its rate.',
+            'ar' => 'يجب أن يساوي مبلغ الضريبة (BT-117) للفئة ضريبة سبتة ومليلة IPSI وعاءها الضريبي مضروباً في نسبتها.',
+        ],
+        /*
          | The Peppol CIUS - PF-120.
          |
          | Peppol's own identifiers, because the supplier reads our message
@@ -340,6 +530,10 @@ return [
         'PEPPOL-COMMON-R050' => [
             'en' => 'An electronic address must carry a four-digit EAS scheme code.',
             'ar' => 'يجب أن يحمل العنوان الإلكتروني رمز مخطط EAS من أربعة أرقام.',
+        ],
+        'PEPPOL-EN16931-CL008' => [
+            'en' => 'The electronic address scheme must be one in the Peppol participant identifier scheme code list.',
+            'ar' => 'يجب أن يكون مخطط العنوان الإلكتروني من المخططات الواردة في قائمة رموز مخططات معرفات المشاركين في بيبول.',
         ],
         'PEPPOL-EN16931-R001' => [
             'en' => 'A Peppol document must state its business process (BT-23).',
@@ -469,6 +663,201 @@ return [
         'EN16931-CARDINALITY' => [
             'en' => 'A business term or group appears a number of times EN 16931 does not permit.',
             'ar' => 'ظهر مصطلح أو مجموعة أعمال بعدد مرات لا يسمح به EN 16931.',
+        ],
+
+    ],
+
+    /*
+    |---------------------------------------------------------------------------
+    | What the vendored rule set carries and this code does not - PF-117
+    |---------------------------------------------------------------------------
+    |
+    | `EInvoicingCoverageRules` reads every rule identifier out of
+    | `schematron/en16931/EN16931-model.sch` and requires each one to be either
+    | implemented in `Exchange` or listed here with the reason it is not. The
+    | check runs both ways: an identifier listed here that the code CAN emit fails
+    | as well, so the register cannot go stale the day a rule is implemented.
+    |
+    | It is keyed by reason rather than by rule because the reasons are shared -
+    | twenty-one `BR-DEC-*` rules are unimplemented for one reason, and twenty-one
+    | copies of it would be read by nobody.
+    |
+    | This is the difference PF-117 asks to be *recorded rather than claimed*:
+    | 201 rules in the vendored set, and the lists below say which of them a
+    | PeakFlow document is not checked against.
+    |
+    */
+
+    'not_implemented' => [
+
+        'The `BR-DEC-*` family: the maximum number of decimals permitted for one amount. '.
+            'Every amount in a PeakFlow document comes out of a PostgreSQL `numeric` column '.
+            'and is written by the serializer at its currency ISO 4217 exponent, so this '.
+            'family asserts a property of the money layer rather than a property of a '.
+            'document. Implementing it would be the money configuration said a second time, '.
+            'in a place where the two could disagree.' => [
+            'BR-DEC-01', 'BR-DEC-02', 'BR-DEC-05', 'BR-DEC-06', 'BR-DEC-09',
+            'BR-DEC-10', 'BR-DEC-11', 'BR-DEC-12', 'BR-DEC-13', 'BR-DEC-14',
+            'BR-DEC-15', 'BR-DEC-16', 'BR-DEC-17', 'BR-DEC-18', 'BR-DEC-19',
+            'BR-DEC-20', 'BR-DEC-23', 'BR-DEC-24', 'BR-DEC-25', 'BR-DEC-27',
+            'BR-DEC-28',
+        ],
+
+        'The `-01` rule of every category family: a category used on a line, an allowance '.
+            'or a charge obliges the document to carry a VAT breakdown group for that '.
+            'category. It is the walk from the lines TO the summary, and the summary is built '.
+            'from the same stored tax breakdown rows as the lines - so this is a gap in the '.
+            'proof rather than a gap in the document.' => [
+            'BR-S-01', 'BR-Z-01', 'BR-E-01', 'BR-AE-01', 'BR-IC-01',
+            'BR-G-01', 'BR-O-01', 'BR-IG-01', 'BR-IP-01',
+        ],
+
+        'The `-02`, `-03` and `-04` rules of every category family: a category on a line, '.
+            'on a document-level allowance or on a document-level charge obliges the document '.
+            'to carry a particular combination of the seller VAT identifier, the seller tax '.
+            'registration identifier, the tax representative identifier and the buyer VAT '.
+            'identifier - and for `O`, to carry none of them. `BR-CO-26` requires the seller '.
+            'to be identifiable at all and is implemented; the per-category refinement is '.
+            'not.' => [
+            'BR-S-02', 'BR-S-03', 'BR-S-04', 'BR-Z-02', 'BR-Z-03',
+            'BR-Z-04', 'BR-E-02', 'BR-E-03', 'BR-E-04', 'BR-AE-02',
+            'BR-AE-03', 'BR-AE-04', 'BR-IC-02', 'BR-IC-03', 'BR-IC-04',
+            'BR-G-02', 'BR-G-03', 'BR-G-04', 'BR-O-02', 'BR-O-03',
+            'BR-O-04', 'BR-IG-02', 'BR-IG-03', 'BR-IG-04', 'BR-IP-02',
+            'BR-IP-03', 'BR-IP-04',
+        ],
+
+        'The `-10` rules that FORBID an exemption reason on a category that is taxed. '.
+            '`ConditionalRules` implements the requiring half - `BR-E-10`, `BR-AE-10`, '.
+            '`BR-IC-10`, `BR-G-10` and `BR-O-10` - and not the forbidding half.' => [
+            'BR-S-10', 'BR-Z-10', 'BR-IG-10', 'BR-IP-10',
+        ],
+
+        'The reason-or-reason-code obligations the standard states twice. `BR-33`, '.
+            '`BR-38`, `BR-42` and `BR-44` are the same requirements as `BR-CO-21`, '.
+            '`BR-CO-22`, `BR-CO-23` and `BR-CO-24`, which are implemented. Reporting both '.
+            'would report one defect under two identifiers, and the supplier would be told to '.
+            'fix two things.' => [
+            'BR-33', 'BR-38', 'BR-42', 'BR-44',
+        ],
+
+        '`BR-CO-05` to `BR-CO-08`: a coded reason and its free text shall indicate the '.
+            'same type of allowance or charge. That is a judgement about whether two strings '.
+            'mean the same thing, and a mechanical version of it would refuse documents for '.
+            'their wording.' => [
+            'BR-CO-05', 'BR-CO-06', 'BR-CO-07', 'BR-CO-08',
+        ],
+
+        '`BR-CO-04`: every invoice line is categorised with `BT-151`. The cardinality '.
+            'walk already requires `BG-30` within a line and `BT-151` within it, so a line '.
+            'with no category is refused - under `EN16931-CARDINALITY` rather than under this '.
+            'identifier.' => [
+            'BR-CO-04',
+        ],
+
+        '`BR-29` and `BR-30`: a period whose end date precedes its start date. '.
+            '`ConditionalRules` implements `BR-CO-19` and `BR-CO-20`, which require a period '.
+            'to state at least one boundary, and not the ordering of the two.' => [
+            'BR-29', 'BR-30',
+        ],
+
+        '`BR-27` and `BR-28`: the item net price and the item gross price shall not be '.
+            'negative.' => [
+            'BR-27', 'BR-28',
+        ],
+
+        '`BR-48`: each VAT breakdown shall state a VAT category rate unless the invoice '.
+            'is not subject to VAT. Both `CalculationRules` and `CategoryRules` skip a '.
+            'breakdown group with no rate and name this rule as the one that should have '.
+            'refused it - and it is not implemented, so a breakdown with no rate is at '.
+            'present refused by nothing. The most useful line in this register.' => [
+            'BR-48',
+        ],
+
+        '`BR-61`: a payment means that is a credit transfer requires the payment account '.
+            'identifier `BT-84`.' => [
+            'BR-61',
+        ],
+
+        '`BR-CL-08`: the invoice note subject code is coded using UNCL 4451. A code-list '.
+            'membership rule, and the vendored UNCL lists are PF-115.' => [
+            'BR-CL-08',
+        ],
+
+        '`BR-B-01` and `BR-B-02`: the Italian split-payment category `B`, which the tax '.
+            'category enumeration does not model at all.' => [
+            'BR-B-01', 'BR-B-02',
+        ],
+
+        '`BR-IC-11` and `BR-IC-12`: an intra-community supply needs an actual delivery '.
+            'date or an invoicing period, and a deliver-to country code.' => [
+            'BR-IC-11', 'BR-IC-12',
+        ],
+
+        '`BR-O-11` to `BR-O-14`: a not-subject-to-VAT breakdown may not coexist with any '.
+            'other breakdown group, line, allowance or charge.' => [
+            'BR-O-11', 'BR-O-12', 'BR-O-13', 'BR-O-14',
+        ],
+
+    ],
+
+    /*
+    |---------------------------------------------------------------------------
+    | Where this code's identifier is NOT the vendored set's - PF-117
+    |---------------------------------------------------------------------------
+    |
+    | Every identifier the `Exchange` sources can emit has to be one the vendored
+    | rule sets contain, or be listed here. The point of the register is that a
+    | divergence is a thing somebody decided, with a date and a reason, rather
+    | than a typo that reads as a rule.
+    |
+    | `official` names the identifier the recipient's access point would quote
+    | for the same defect, or is null where there is none.
+    |
+    */
+
+    'divergences' => [
+
+        'BR-CO-3' => [
+            'official' => 'BR-CO-03',
+            'reason' => 'The official identifier is zero-padded. `schematron/en16931/EN16931-model.sch` '.
+                'contains `BR-CO-03` and contains no `BR-CO-3`, so a supplier told `BR-CO-3` '.
+                'finds nothing in the recipient\'s report and nothing in the standard\'s own '.
+                'artefact. The rule itself - the tax point date and its code are mutually '.
+                'exclusive - is implemented in `ConditionalRules`. Renaming it is a one-line '.
+                'change and a change to `tests/Support/SemanticModelRules.php`, which pins the '.
+                'unpadded string, and is recorded here rather than done quietly.',
+        ],
+
+        'BR-CO-9' => [
+            'official' => 'BR-CO-09',
+            'reason' => 'The same zero-padding divergence, for the rule that requires a VAT identifier '.
+                'to carry its ISO 3166-1 country prefix.',
+        ],
+
+        'BR-CO-25' => [
+            'official' => null,
+            'reason' => 'EN 16931-1 defines `BR-CO-25` - an invoice with a positive amount due states a '.
+                'due date or payment terms - and the CEF validation artefacts do not implement '.
+                'it: release 1.3.17 runs `BR-CO-24` and then `BR-CO-26`. The rule is '.
+                'implemented here and is worth keeping, because a document with money owed and '.
+                'no date is a document nobody can pay. What the reader has to know is that no '.
+                'access point will quote this identifier back.',
+        ],
+
+        'PEPPOL-DOCUMENT-TYPE' => [
+            'official' => null,
+            'reason' => 'PeakFlow\'s own refusal, before a number is allocated: Peppol BIS Billing '.
+                'carries no flow for a debit note (383). It is not a Schematron rule because a '.
+                'Schematron rule runs on a document that already exists, and a gap in a gapless '.
+                'series cannot be closed.',
+        ],
+
+        'PEPPOL-PAYMENT-MEANS' => [
+            'official' => null,
+            'reason' => 'PeakFlow\'s own refusal for a payment means outside the profile\'s list. The '.
+                'nearest official rule is `PEPPOL-EN16931-CL001` to `CL007`, which are '.
+                'code-list rules over UNCL lists that are not vendored yet.',
         ],
 
     ],

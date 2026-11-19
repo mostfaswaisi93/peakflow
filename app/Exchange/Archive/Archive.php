@@ -65,6 +65,43 @@ final class Archive
      */
     public const KINDS = ['sent_xml', 'received_xml', 'cleared_xml', 'signature', 'receipt', 'pdf', 'qr'];
 
+    /**
+     * The kinds the archive holds that nothing in the application writes yet.
+     *
+     * ## Why an absent call site is declared rather than left to be noticed
+     *
+     * `received_xml` is written by `InboundDocuments`, and that is the only
+     * place in `app/` that archives anything. Every other kind is a kind the
+     * archive accepts, stores, hashes, retains and refuses to let anybody
+     * delete - and which no code path produces, because the thing that
+     * produces it is not built: there is no transport, no cryptographic
+     * stamp, no clearance call and no PDF/A pipeline.
+     *
+     * That is a legitimate state and it is also exactly the state that reads
+     * as finished work. An artefact kind in an array, a retention period, a
+     * WORM trigger and a manifest all exist for `receipt`, and a reader
+     * reasonably concludes that receipts are archived. So each one names the
+     * task that will write it, and `EInvoicingCoverageRules` asserts the
+     * list both ways: a kind here with a call site in `app/` fails, and a
+     * kind with no call site and no entry here fails. The day PF-122 archives
+     * an AS4 receipt, deleting the line below is part of the change rather
+     * than something somebody might notice - PF-129.
+     *
+     * @var array<string, string>
+     */
+    public const AWAITING_A_CALL_SITE = [
+        'sent_xml' => 'PF-122 and PF-124 - nothing transmits a document yet, so there are as yet no '.
+            '"bytes that were sent". The round trip is exercised by the archive checks, which serialize '.
+            'through the profile\'s own serializer and archive that string.',
+        'cleared_xml' => 'PF-124 - the authority\'s cleared copy, which is the legal document. It needs '.
+            'onboarding, a production CSID and the clearance API.',
+        'signature' => 'PF-124 - the cryptographic stamp, with the key in a KMS or HSM.',
+        'receipt' => 'PF-122 - the AS4 receipt, which is the evidence the document was delivered.',
+        'pdf' => 'PF-102 and PF-125 - the PDF/A-3 pipeline, whose toolchain is not installable here.',
+        'qr' => 'PF-123 builds the TLV QR payload and puts it in the document; archiving it separately '.
+            'belongs with the submission that sends it, so PF-124.',
+    ];
+
     public function __construct(private readonly AuditTrail $audit) {}
 
     /**
