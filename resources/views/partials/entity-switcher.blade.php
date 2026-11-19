@@ -21,7 +21,9 @@
         <span title="{{ $currentName }}"
               class="inline-flex h-9 min-w-0 max-w-64 shrink items-center gap-2 rounded-button border border-outline-subtle bg-surface-sunken px-3 text-label font-medium text-on-surface">
             <x-icon name="building" class="size-4 text-on-surface-muted"/>
-            <span class="truncate">{{ $currentName }}</span>
+            {{-- `dir="auto"`: a Latin legal name in an Arabic page otherwise
+                 truncates from its first letters ("...mo Trading Co"). --}}
+            <span dir="auto" class="truncate">{{ $currentName }}</span>
         </span>
     @else
         <form method="POST" action="{{ route('entity.switch') }}" class="flex min-w-0 shrink items-center gap-2">

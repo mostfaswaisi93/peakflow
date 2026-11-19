@@ -263,6 +263,57 @@ final class PartyEnforcementRules
         }
 
         /*
+         | And with NOBODY signed in - PF-250.
+         |
+         | The condition was `$changedBy !== null && $current !== null &&
+         | $changedBy === $current`, and the middle term read as care. It was
+         | the hole: with no session - every console run, every queued job -
+         | it was false, and this returned as though the pair had been
+         | checked.
+         |
+         | A caller that cannot say who is releasing cannot be told that the
+         | releaser is a different person from whoever changed the account,
+         | because there is no releaser to compare. No answer is not "no
+         | conflict", and this is the one pair the seeder marks
+         | `overridable = false` because nothing in the application may grant
+         | an exception.
+         */
+        $signedIn = auth()->guard('web')->user();
+
+        /*
+         | Verified FIRST, by somebody else.
+         |
+         | An unverified account is refused by `isUsableForPayment()` for an
+         | entirely different reason, and a probe run before that would be
+         | satisfied by the wrong refusal - which is how a check comes to
+         | pass against a guard that does nothing.
+         */
+        $registry->verify($account->fresh(), (string) $this->approver?->getKey(), 'phoned the published number');
+
+        auth()->guard('web')->logout();
+
+        try {
+            $withNobody = $this->refusal(fn () => $registry->assertUsable($account->fresh()));
+        } finally {
+            if ($signedIn !== null) {
+                auth()->guard('web')->setUser($signedIn);
+            }
+        }
+
+        if ($withNobody === null) {
+            $violations[] = 'with nobody signed in, a verified account was declared payable without the '.
+                'pair being checked at all. "Is the releaser the person who changed it" cannot be '.
+                'answered without a releaser, and answering "no conflict" grants the one exception '.
+                'this pair forbids - on the console and queue paths, where nobody is watching';
+        } elseif (! str_contains($withNobody, 'you cannot release a payment to it')) {
+            $violations[] = sprintf(
+                'the no-session case was refused for some other reason: "%s". The account was verified '.
+                'first precisely so the only thing left to refuse is the pair',
+                Str::limit($withNobody, 140),
+            );
+        }
+
+        /*
          | And the rule may not be marked overridable.
          |
          | Every other pair has a legitimate exception - a tenant with three

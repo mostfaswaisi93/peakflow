@@ -80,9 +80,11 @@
             sidebar too, and from `lg` the start area is the sidebar's width,
             so the company starts where the page does.
         --}}
-        {{-- Inline `@php(...)`, never a `@php ... @endphp` block, in this file:
-             Blade compiles a block from the FIRST `@php` to the `@endphp`, so a
-             block here swallows the `@php($theme ...)` lines at the top. --}}
+        {{-- One-line php directives only in this file, never the block form:
+             Blade compiles a php block from the FIRST php directive in the file
+             to the block's end, so a block here swallows the theme and density
+             lines at the top - and it does so before comments are removed, so
+             not even a comment may spell the directives out. --}}
         @php($userName = (string) (auth()->user()?->name ?? ''))
         @php($userEmail = (string) (auth()->user()?->email ?? ''))
         @php($initials = collect(preg_split('/\s+/u', trim($userName)) ?: [])->filter()->take(2)->map(static fn (string $word): string => mb_strtoupper(mb_substr($word, 0, 1)))->implode(''))
@@ -97,11 +99,17 @@
 
                 {{-- The way home from anywhere. The kit's own sizes: the
                      monogram under 120 px, the small logo (32 px high, about
-                     172 px wide) inside its 120-200 px band. --}}
+                     172 px wide) inside its 120-200 px band.
+
+                     The small logo where there is room for it: on `sm`, where
+                     the company has a row of its own, and from `lg`, where the
+                     start area is the sidebar's width. Between `md` and `lg`
+                     the company shares the one row, and the 140 px the
+                     monogram saves are what keep its name whole. --}}
                 <a href="{{ route('overview') }}"
                    class="flex items-center rounded-button p-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
-                    <span class="sm:hidden"><x-brand.logo size="monogram" class="h-8"/></span>
-                    <span class="hidden sm:block"><x-brand.logo size="small" class="h-8"/></span>
+                    <span class="sm:hidden md:block lg:hidden"><x-brand.logo size="monogram" class="h-8"/></span>
+                    <span class="hidden sm:block md:hidden lg:block"><x-brand.logo size="small" class="h-8"/></span>
                 </a>
             </div>
 
@@ -224,10 +232,18 @@
         A printout that does not say which company it is for is the failure
         this prevents: a trial balance for the wrong subsidiary looks exactly
         like a trial balance for the right one.
+
+        Asked with `bound()` first, as every partial in the header does. A page
+        that belongs to the PERSON rather than to a company - their security
+        settings - is served with no entity in the container, and an unguarded
+        `app('currentEntity')` there is a 500 instead of a page.
     --}}
-    <footer class="hidden print:fixed print:inset-x-0 print:bottom-0 print:block print:border-t print:border-outline print:px-6 print:py-2 print:text-xs">
-        {{ app('currentEntity')?->legal_name }} · {{ app('currentEntity')?->code }}
-    </footer>
+    @php($printedEntity = app()->bound('currentEntity') ? app('currentEntity') : null)
+    @if ($printedEntity !== null)
+        <footer class="hidden print:fixed print:inset-x-0 print:bottom-0 print:block print:border-t print:border-outline print:px-6 print:py-2 print:text-xs">
+            {{ $printedEntity->legal_name }} · {{ $printedEntity->code }}
+        </footer>
+    @endif
 
     {{-- The header's menus close on Escape and on a click outside, and the
          company switcher submits on change - js/header.js. Last, so the

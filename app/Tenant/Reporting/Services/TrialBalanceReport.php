@@ -182,19 +182,37 @@ final class TrialBalanceReport
      */
     private function declare(array $closing, string $currency): array
     {
+        /*
+         | The figures through ICU, each in its sentence's own language.
+         |
+         | `toPresentation()` is the rounded number with no grouping, which
+         | is right for a file and wrong for a sentence: "1280908.00" is a
+         | figure a reader has to count the digits of before they can say
+         | it. The Arabic sentence names the total too - it used to say only
+         | that the two sides agree, so the reader of one language got the
+         | figure and the reader of the other did not.
+         */
+        $amount = static fn (Money $money, string $locale): string => $money->format($locale, false).' '.$currency;
+
         if ((bool) $closing['balances']) {
+            $total = Money::of((string) $closing['total_debit'], $currency);
+
             return [
                 'severity' => 'ok',
                 'en' => sprintf(
                     'Debits and credits both come to %s. The trial balance balances.',
-                    (string) Money::of((string) $closing['total_debit'], $currency)->toPresentation(),
+                    $amount($total, 'en'),
                 ),
-                'ar' => 'المدين والدائن متساويان. ميزان المراجعة متوازن.',
+                'ar' => sprintf(
+                    'المدين والدائن متساويان، ومجموع كلٍّ منهما %s. ميزان المراجعة متوازن.',
+                    $amount($total, 'ar'),
+                ),
             ];
         }
 
-        $difference = Money::of((string) $closing['total_debit'], $currency)
-            ->minus(Money::of((string) $closing['total_credit'], $currency));
+        $debit = Money::of((string) $closing['total_debit'], $currency);
+        $credit = Money::of((string) $closing['total_credit'], $currency);
+        $difference = $debit->minus($credit);
 
         /*
          | Named as what it is: the ledger's own invariant, broken.
@@ -212,14 +230,14 @@ final class TrialBalanceReport
                 'Every figure below is unreliable. An unbalanced entry is refused by the database, so '.
                 'this is either a row written around the posting path or a read model that has '.
                 'drifted - run `ledger:rebuild-balances --check` before reading anything else.',
-                (string) Money::of((string) $closing['total_debit'], $currency)->toPresentation(),
-                (string) Money::of((string) $closing['total_credit'], $currency)->toPresentation(),
-                (string) $difference->toPresentation(),
+                $amount($debit, 'en'),
+                $amount($credit, 'en'),
+                $amount($difference, 'en'),
             ),
             'ar' => sprintf(
                 'ميزان المراجعة هذا غير متوازن. الفرق %s. كل رقم أدناه غير موثوق، والقيد غير المتوازن '.
                 'مرفوض في قاعدة البيانات - فهذا إمّا صفٌّ كُتب خارج مسار الترحيل أو نموذج قراءة انحرف.',
-                (string) $difference->toPresentation(),
+                $amount($difference, 'ar'),
             ),
         ];
     }

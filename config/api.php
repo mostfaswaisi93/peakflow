@@ -114,4 +114,48 @@ return [
          */
         'maximum_offset_page' => 200,
     ],
+
+    /*
+     | A person's device, signed in - PF-260.
+     |
+     | Two credentials, because they answer two different risks. The ACCESS
+     | token is what every request carries, so it is the one that ends up in a
+     | proxy log, a crash report or a screenshot; an hour is short enough that
+     | a copy found tomorrow is already dead. The REFRESH token is shown to the
+     | server once an hour and nowhere else, so it can live for weeks - and it
+     | is single-use, so a copy that is used AFTER the device used it is proof
+     | that somebody else holds it, and the whole session is closed.
+     |
+     | The session itself ends after `session_max_days` however actively it is
+     | refreshed: a phone that is never put down must still sign in again now
+     | and then, or "lost phone" has no upper bound.
+     */
+    'sessions' => [
+        'access_token_minutes' => 60,
+        'refresh_token_days' => 30,
+        'session_max_days' => 90,
+
+        /*
+         | How long a second-factor challenge stays open.
+         |
+         | Five minutes covers finding the phone and typing six digits. A
+         | longer window is a password that keeps working without the code for
+         | longer than anybody needs it to.
+         */
+        'challenge_seconds' => 300,
+    ],
+
+    /*
+     | Requests per minute, per tenant and per token - PF-221, conventions.md.
+     |
+     | Writes tighter than reads, because a write is what a runaway loop
+     | duplicates. The refresh exchange has its own bucket per address: it is
+     | the one unauthenticated call a client makes routinely, so it is the one
+     | a credential-stuffing script would aim at.
+     */
+    'rate_limits' => [
+        'reads_per_minute' => 300,
+        'writes_per_minute' => 60,
+        'refreshes_per_minute' => 30,
+    ],
 ];

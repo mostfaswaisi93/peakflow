@@ -225,6 +225,42 @@ final class BankDetailRegistry
         $changedBy = $this->whoLastChanged($account);
         $current = auth()->guard('web')->id();
 
+        /*
+         | No session means no answer, and no answer is not "no conflict"
+         | - PF-250.
+         |
+         | `$current !== null` read as care and was the hole: with nobody
+         | signed in - every console run, every queued job - the condition
+         | was false and this returned as though the pair had been checked.
+         | A caller that cannot say who is releasing cannot be told that the
+         | releaser is a different person from whoever changed the account,
+         | because there is no releaser to compare.
+         |
+         | Refused rather than passed, for the same reason PF-249 gave in
+         | the segregation engine: this is the one pair the seeder marks
+         | `overridable = false` because "nothing in the application can
+         | grant an exception", and treating an unnameable actor as no
+         | conflict grants it.
+         |
+         | An account nobody has ever changed - `$changedBy` null - is a
+         | different case and stays allowed: there is no earlier act to
+         | conflict with, which is true whoever is asking.
+         */
+        if ($changedBy !== null && $current === null) {
+            $this->audit->refusal(
+                category: 'party',
+                action: 'payment.release.refused',
+                subjectType: PartyBankAccount::class,
+                subjectId: (string) $account->getKey(),
+                subjectLabel: (string) $account->party?->legal_name,
+                reason: 'no user could be identified, so it cannot be shown that the releaser is not the '.
+                    'person who changed the bank account - the one pair that can never be overridden',
+                partyId: (string) $account->party_id,
+            );
+
+            throw BankAccountNotVerified::byTheSamePersonWhoChangedIt($account->masked());
+        }
+
         if ($changedBy !== null && $current !== null && $changedBy === (string) $current) {
             $this->audit->refusal(
                 category: 'party',
