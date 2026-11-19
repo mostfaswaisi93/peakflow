@@ -398,7 +398,36 @@ final class BankBalances
                  */
                 $query->selectRaw('1')
                     ->from('matches')
-                    ->whereColumn('matches.bank_transaction_id', 'bank_transactions.id');
+                    ->whereColumn('matches.bank_transaction_id', 'bank_transactions.id')
+                    /*
+                     | And a REVERSED match explains nothing - PF-146.
+                     |
+                     | This clause was missing, and it is present in the four
+                     | other places that ask the same question:
+                     | `Splits::applied()`, `Matches::remainderOf()`,
+                     | `Reconciliations::lineCounts()` and `OverviewQuery`.
+                     |
+                     | So after a reversal the line was unexplained again by
+                     | every definition in this module except this one - and
+                     | this one is the definition the four-way reconciliation
+                     | uses. Measured on a 1,000 line matched then reversed:
+                     | unrecorded items read 0 while `Splits::remainder()`
+                     | read 1,000, so `reconcile()` reported the whole 1,000
+                     | as UNEXPLAINED and refused the account for a
+                     | difference that was already accounted for.
+                     |
+                     | Which is worse than a wrong figure. The itemisation
+                     | exists so a difference arrives explained: "3,500 of
+                     | unpresented payments" is where a month of work
+                     | finishes, and "the bank says 90,000 and we say 93,500"
+                     | is where it starts.
+                     |
+                     | Reconciliations signed before this are not restated -
+                     | their components are frozen rows, and a signed
+                     | document that moves when the code changes is not a
+                     | signed document.
+                     */
+                    ->whereNull('matches.reversed_at');
             })
             ->sum('amount');
 

@@ -15,6 +15,7 @@ use App\Tenant\Banking\Models\MatchProposal;
 use App\Tenant\Banking\Models\MatchingRule as RuleModel;
 
 use App\Tenant\Banking\Models\PartyBankIdentifier;
+use App\Tenant\Banking\Services\BankBalances;
 use App\Tenant\Banking\Services\Matches;
 use App\Tenant\Banking\Services\MatchingRules as RuleWriter;
 use App\Tenant\Sales\Models\Invoice;
@@ -131,6 +132,7 @@ final class MatchingRules
                 'and is reversible on its own' => fn (): array => $this->reversible(),
                 'accuracy counts out of decided, not proposed' => fn (): array => $this->accuracyIsHonest(),
                 'a reversal counts as corrected' => fn (): array => $this->reversalIsCorrected(),
+                'and a reversed match leaves the bank line unexplained again' => fn (): array => $this->aReversedMatchIsUnexplainedAgain(),
 
                 // ---- Deciding - PF-156, PF-161 -------------------------
                 'a proposal cannot be decided twice' => fn (): array => $this->decidedOnce(),
@@ -1834,6 +1836,115 @@ final class MatchingRules
 
         if (! str_contains((string) $report['why'], 'out of decided')) {
             $failures[] = 'the report does not say what it is dividing by';
+        }
+
+        return $failures;
+    }
+
+    /**
+     * A reversed match does not explain anything - PF-146.
+     *
+     * ## The defect
+     *
+     * `BankBalances::unrecordedBankItems()` asks whether a `matches` row
+     * exists for the transaction, and nothing more. Four other places in
+     * this module ask the same question with `reversed_at IS NULL` -
+     * `Splits::applied()`, `Matches::remainderOf()`,
+     * `Reconciliations::lineCounts()` and `OverviewQuery`. This one did not.
+     *
+     * So after a reversal the line is unexplained again by every definition
+     * in the module except this one, and this one is the definition the
+     * four-way reconciliation uses. Measured on a 1,000 line matched and
+     * then reversed: unrecorded bank items reads 0 and
+     * `Splits::remainder()` reads 1,000, so `reconcile()` reports the whole
+     * 1,000 as **unexplained** rather than as the unrecorded item it is -
+     * and then refuses the account with "1,000.00 of the difference is not
+     * accounted for".
+     *
+     * ## Why that is worse than a wrong figure
+     *
+     * The itemisation exists so that a difference arrives already
+     * explained. "3,500 of unpresented payments" is where a month of work
+     * finishes; "the bank says 90,000 and we say 93,500" is where it
+     * starts. Reporting a recorded item as unexplained sends somebody
+     * hunting for a cause that is already in front of them, and the
+     * reconciliation refuses until they find it.
+     *
+     * Reversing a match is ordinary - `Matches::reverse()` exists for it
+     * and PF-161's review flow produces them - so this was live, not
+     * latent.
+     *
+     * ## Frozen documents are not restated
+     *
+     * A reconciliation signed before this fix keeps the figures it was
+     * signed with, because its components are frozen rows. That is correct:
+     * a signed document that changes when the code changes is not a signed
+     * document. Only reconciliations performed from now on differ.
+     *
+     * @return list<string>
+     */
+    private function aReversedMatchIsUnexplainedAgain(): array
+    {
+        $this->postTheOpeningEntry();
+
+        $invoice = $this->issue();
+        $gross = (string) $invoice->gross_amount;
+
+        $this->importLines([$this->line($gross, [
+            'bank_reference' => 'REF-REVU',
+            'remittance_unstructured' => (string) $invoice->number,
+        ])]);
+
+        $unexplained = fn (): string => (string) app(BankBalances::class)
+            ->unrecordedBankItems($this->bank(), $this->date->copy())->amount;
+
+        $beforeMatch = $unexplained();
+
+        $result = app(Matches::class)->settle($this->transactionBy('REF-REVU'), $this->actorId());
+
+        $whileMatched = $unexplained();
+
+        app(Matches::class)->reverse((string) $result['match_id'], $this->actorId(), 'wrong invoice');
+
+        $afterReversal = $unexplained();
+
+        $failures = [];
+
+        /*
+         | The first two assertions are the positive control.
+         |
+         | Without them this check passes on a method that always returns
+         | the line's amount - and "a reversed line is unexplained" would be
+         | true for the wrong reason. Matching has to make the figure fall
+         | before a reversal putting it back means anything.
+         */
+        if (! \Brick\Math\BigDecimal::of($beforeMatch)->isEqualTo($gross)) {
+            $failures[] = sprintf(
+                'an unmatched bank line of %s is reported as %s of unrecorded items, so the figure '.
+                'this check reads is not the one it thinks it is',
+                $gross,
+                $beforeMatch,
+            );
+        }
+
+        if (! \Brick\Math\BigDecimal::of($whileMatched)->isZero()) {
+            $failures[] = sprintf(
+                'a matched bank line still counts as %s of unrecorded items, so matching explains '.
+                'nothing and the comparison below proves nothing',
+                $whileMatched,
+            );
+        }
+
+        if (! \Brick\Math\BigDecimal::of($afterReversal)->isEqualTo($gross)) {
+            $failures[] = sprintf(
+                'a bank line whose only match was REVERSED counts as %s of unrecorded items rather '.
+                'than %s. Four other places in this module ask the same question with '.
+                '`reversed_at IS NULL`; this is the one the four-way reconciliation uses, so the '.
+                'line is reported as UNEXPLAINED and the account is then refused for a difference '.
+                'that is already accounted for.',
+                $afterReversal,
+                $gross,
+            );
         }
 
         return $failures;
