@@ -64,13 +64,30 @@ pf-restore expose --target isolated-restore-01 --read-only --expires 72h
 4. Run `ledger:verify` across a **sample of tenants**, weighted toward the largest, before reopening writes.
 5. Reopen writes; reconcile any `Exchange` transmissions that were in flight — the dead-letter queue is the authority on what to re-drive.
 
-### A single tenant's logical export
+### A single tenant, on its own
+
+Two commands, because a data request and a migration want different files.
 
 ```bash
-php artisan tenants:dump 01JD3X... --include-attachments
+# A data request, or a departing customer: JSON Lines, one row per line,
+# with a manifest carrying a row count and a sha256 per table.
+# Attachments travel with it; there is no flag to omit them.
+php artisan tenants:export acme
+
+# A migration to another cluster: pg_dump custom format, which carries the
+# sequences at their current values, the partitions as partitions and every
+# constraint - and which pg_restore reads back.
+php artisan tenants:dump acme
+php artisan tenants:restore storage/app/dumps/acme.dump --into=acme_moved
 ```
 
-Used for data requests, for migrations, and for a departing customer. It exports **everything that tenant owns and nothing else**, with a manifest and checksums.
+Both export **everything that tenant owns and nothing else**, with a manifest and checksums. Three things about the second pair are worth knowing before you need them at 3am.
+
+**The restore creates its target and refuses an existing one.** `pg_restore` without `--clean` *merges*: aimed at a serving database it gives that tenant another tenant's rows, and every per-row check still passes, because every row is individually valid. A target that any row in `database_connections` points at is refused outright.
+
+**A restored database has no grants.** `--no-owner --no-privileges` is deliberate - the roles are generated per tenant, so the role names in a dump do not exist on the cluster you are restoring to, and a restore that tried to set them would fail on every object. Run `tenants:provision --attach` against the restored database before anything serves traffic from it.
+
+**The dump refuses to run if it cannot see a table's rows.** `pg_dump` defaults to `row_security = off`, which does not mean "ignore policies" - PostgreSQL errors if a policy would apply, and here one applies to every financial table. So the dump runs with row security *on* and relies on the migrator's bypass policy, which moves the risk: a table whose bypass is missing dumps as **empty** and the manifest still looks healthy. A preflight refuses to start unless every table with row security carries a bypass for the dumping role. If it refuses, the answer is to give that table a bypass policy, never to take `FORCE ROW LEVEL SECURITY` off it.
 
 ## The drill — the part that makes this real
 
@@ -86,6 +103,8 @@ A **scheduled restore drill** runs automatically:
 | **Weekly** | `archive:verify` — re-checksums the archive manifest against object storage and verifies PDF/A conformance of a restored sample |
 
 Each drill **reports**, and a failure is an alert rather than a line in a log. The measured RTO goes into the release notes next to the ASVS result, so a degrading restore time is visible before it is needed.
+
+> **State of this table: the restore-and-compare half is built; the schedule is not.** `bin/verify dump` takes a dump, creates a database, restores into it, and compares every table and every sequence against the source - which is the part that proves a dump is a backup. What the table above describes and the code does not yet do is run it on a cadence, restore to a *point in time* (that needs the WAL archiving in criterion 1 of PF-244 - without it the only moment you can restore to is the moment the dump was taken), and run `ledger:verify` against the restored copy. Read the rows above as the target, and PF-244 in [`docs/tasks/phase-13-hardening.md`](../tasks/phase-13-hardening.md) for where each one stands.
 
 ## What a restore cannot fix
 

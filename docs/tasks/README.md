@@ -19,7 +19,7 @@
 | [10](phase-10-reporting.md) | Reporting, close, consolidation | 17 | 87 |
 | [11](phase-11-design-system.md) | Design system, data grid, accessibility, RTL | 25 | 135 |
 | [12](phase-12-api-exchange.md) | REST API, webhooks, the Exchange plane | 14 | 57 |
-| [13](phase-13-hardening.md) | 8 / 16 | 48 | 25 |
+| [13](phase-13-hardening.md) | 8 / 16 | 49 | 24 |
 | [14](phase-14-operations.md) | Stock, serials, returns, sync, payroll | 11 | 58 |
 | [15](phase-15-verticals.md) | The industry verticals - **a scope decision** | 8 | 47 |
 | | **Total** | **267** | **1,301** |
@@ -59,10 +59,10 @@ nobody can find is a task nobody will do.
 | [10](phase-10-reporting.md) | 9 / 17 | 50 | 26 |
 | [11](phase-11-design-system.md) | 3 / 25 | 43 | 88 |
 | [12](phase-12-api-exchange.md) | 4 / 14 | 25 | 39 |
-| [13](phase-13-hardening.md) | 8 / 16 | 48 | 25 |
+| [13](phase-13-hardening.md) | 8 / 16 | 49 | 24 |
 | [14](phase-14-operations.md) | 10 / 11 | 53 | 1 |
 | [15](phase-15-verticals.md) | 0 / 8 | 0 | 36 |
-| **all** | **177 / 273** | **1434** | **305** |
+| **all** | **177 / 273** | **1435** | **304** |
 
 Phases 00 to 09 are the ones that have been worked, and Phase 08 is closed. An open criterion in a worked phase is one that depends on a later phase and says so in its own task file, with the task that brings it - never one that was skipped.
 

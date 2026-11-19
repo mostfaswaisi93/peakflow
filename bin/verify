@@ -22,6 +22,7 @@ declare(strict_types=1);
  |   php bin/verify wiring     wiring rules only (the booted application)
  |   php bin/verify tenant     what the tenant database actually enforces
  |   php bin/verify rollback   provisioning rollback, by injecting a failure at each step (slow)
+ |   php bin/verify dump      a tenant dump, restored into a fresh database and compared (slow, writes)
  |   php bin/verify concurrency  gapless numbering under 20 parallel issuers (slow, writes data)
  |   php bin/verify public     the customer-facing quote link, over real HTTP (writes data)
  |   php bin/verify api        the REST contract, over real HTTP (writes data, spawns workers)
@@ -163,6 +164,12 @@ if ($only === 'api') {
 
 if ($only === 'rollback') {
     $suites['Provisioning rollback'] = $suite(static fn (): array => (new Tests\Support\ProvisioningRollbackRules())->all());
+}
+
+if ($only === 'dump') {
+    // Its own target: it shells out to pg_dump and pg_restore and creates and
+    // drops databases, so it is slow and it writes.
+    $suites['Tenant dump and restore'] = $suite(static fn (): array => (new Tests\Support\TenantDumpRules())->all());
 }
 
 if ($only === 'all' || $only === 'tenant') {
