@@ -35,6 +35,38 @@ final class ResolveEntity
 
     public function handle(Request $request, Closure $next): Response
     {
+        /*
+         | This resolver needs a SESSION, and says so rather than finding out.
+         |
+         | It reads `entity_id` from the session and writes it back, twice,
+         | unconditionally. On a request with no session store - any route
+         | outside the web group - that is `Session store not set on
+         | request`, a framework exception with no hint about what was
+         | misconfigured or what to use instead.
+         |
+         | Only web routes mount `entity.scope` today, so this is a trap
+         | rather than a live fault. The trap is worth closing because the
+         | API deliberately has its own resolver: `api.entity` reads
+         | `X-Entity`, checks it against the TOKEN's entity list and then
+         | against the owner's grants, and a machine must not fall back to
+         | "the entity this user last looked at in a browser". Somebody
+         | reaching for `entity.scope` on an API route is reaching for the
+         | wrong one, and this is the sentence that tells them.
+         |
+         | A LogicException and not a refusal: a refusal is an answer to the
+         | caller, and there is no caller at fault here - the route is
+         | misconfigured, which is a programming mistake and belongs in the
+         | log with a stack trace.
+         */
+        if (! $request->hasSession()) {
+            throw new \LogicException(
+                'ResolveEntity needs a session and this request has none, so `entity.scope` is on a '.
+                'route outside the web group. The API has its own resolver: use `api.entity`, which '.
+                'reads X-Entity against the token\'s own entity list rather than falling back to '.
+                'whichever company this user last opened in a browser.',
+            );
+        }
+
         $user = $request->user();
 
         if (! $user instanceof User) {

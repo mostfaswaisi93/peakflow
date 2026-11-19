@@ -69,6 +69,8 @@ final class ErrorResponseRules
             'an API error is problem+json and names its type' => $this->apiErrorsAreProblemJson(),
             'refusing an entity you hold no role in is a 403, not a 400' =>
                 $this->anEntityThatIsNotYoursIsForbidden(),
+            'the web entity resolver says to use the API one, rather than failing' =>
+                $this->theWebResolverNamesTheApiOne(),
         ];
     }
 
@@ -543,5 +545,71 @@ final class ErrorResponseRules
         }
 
         return $problems;
+    }
+
+    /**
+     * `entity.scope` on a session-less route says which resolver to use.
+     *
+     * It reads `entity_id` from the session and writes it back, twice,
+     * unconditionally. On any route outside the web group that was `Session
+     * store not set on request` - a framework exception naming neither what
+     * was misconfigured nor what to use instead.
+     *
+     * Only web routes mount it today, so this was a trap rather than a live
+     * fault. It is worth closing because the API has its own resolver by
+     * design: `api.entity` reads `X-Entity` against the TOKEN's entity list
+     * and then the owner's grants, and a machine must not fall back to "the
+     * entity this user last opened in a browser". Somebody putting
+     * `entity.scope` on an API route is reaching for the wrong one.
+     *
+     * The assertion is on the SENTENCE, not on the exception class. A
+     * `LogicException` would be thrown by the framework's own session
+     * failure too, so asserting the class would pass against the defect.
+     * What is being fixed is what the next person reads.
+     *
+     * @return list<string>
+     */
+    private function theWebResolverNamesTheApiOne(): array
+    {
+        $request = Request::create('/app/invoices', 'GET');
+
+        try {
+            app(\App\Http\Middleware\ResolveEntity::class)->handle(
+                $request,
+                static fn (): \Symfony\Component\HttpFoundation\Response => new \Illuminate\Http\Response('never reached'),
+            );
+        } catch (Throwable $e) {
+            $message = preg_replace('/\s+/', ' ', $e->getMessage()) ?? '';
+
+            if (str_contains($message, 'api.entity')) {
+                return [];
+            }
+
+            return [sprintf(
+                'a session-less request to the web entity resolver failed with "%s", which names '.
+                'neither the misconfiguration nor the resolver to use instead. `api.entity` is the '.
+                'one an API route wants, and it is the only thing the next person needs to be told.',
+                \Illuminate\Support\Str::limit($message, 160),
+            )];
+        }
+
+        /*
+         | Reaching here is the defect, and worth spelling out.
+         |
+         | Without the guard this request is ANSWERED - unauthenticated, so
+         | it redirects to login before any session line is reached. The
+         | misconfiguration is therefore invisible until the first
+         | AUTHENTICATED request arrives on that route, which happens in
+         | production rather than here, and arrives as `Session store not
+         | set on request` with no hint about which middleware to use.
+         |
+         | So the guard's value is not that it refuses - it is that it
+         | refuses EARLY, before the branch that hides the problem.
+         */
+        return ['a session-less request passed through the web entity resolver without complaint. '.
+            'The resolver reads and writes the session twice, so the route is misconfigured - and '.
+            'because an unauthenticated request redirects before reaching those lines, nothing says '.
+            'so until the first authenticated request hits it in production. `api.entity` is the '.
+            'resolver an API route wants.'];
     }
 }
