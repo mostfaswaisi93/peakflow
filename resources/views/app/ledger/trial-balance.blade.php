@@ -103,11 +103,11 @@
             the figure being discussed has to be reachable by the person being
             asked about it.
         --}}
-        <form method="GET" class="mt-6 flex flex-wrap items-end gap-3">
-            <div>
+        <form method="GET" class="flex flex-wrap items-end gap-3">
+            <div class="min-w-0">
                 <label for="period" class="block text-label font-medium text-on-surface">{{ __('الفترة المحاسبية') }}</label>
                 <select name="period" id="period" dir="ltr"
-                        class="mt-1.5 block rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface
+                        class="mt-1.5 block min-h-11 w-full max-w-full rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface
                                focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                     @foreach ($periods as $option)
                         <option value="{{ $option->id }}" @selected((string) $option->id === (string) $period->id)>
@@ -120,7 +120,7 @@
             <div>
                 <label for="present" class="block text-label font-medium text-on-surface">{{ __('عملة العرض') }}</label>
                 <select name="present" id="present" aria-describedby="why-present"
-                        class="mt-1.5 block rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface
+                        class="min-h-(--control-height) mt-1.5 block rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface
                                focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                     <option value="">{{ __('العملة الوظيفية، كما تُحفظ الدفاتر') }}</option>
                     @foreach ($presentable as $code)
@@ -134,7 +134,7 @@
             <x-button type="submit">{{ __('اعرض') }}</x-button>
         </form>
 
-        <p id="why-present" class="mt-2 max-w-2xl text-caption text-on-surface-muted">
+        <p id="why-present" class="flow-tight max-w-2xl text-caption text-on-surface-muted">
             {{ __('تُعرَض فقط العملات التي يوجد لها سعر مسجَّل من العملة الوظيفية حتى نهاية الفترة. العرض بعملة أخرى ترجمةٌ للدفاتر وليس دفاتر ثانية.') }}
         </p>
 
@@ -220,7 +220,7 @@
             --}}
             <section role="{{ $balances ? 'status' : 'alert' }}" tabindex="-1"
                      @class([
-                        'avoid-break mt-6 rounded-card border px-4 py-4',
+                        'avoid-break rounded-card border px-4 py-4',
                         'border-success bg-success-subtle text-on-success-subtle' => $balances,
                         'border-danger bg-danger-subtle text-on-danger-subtle' => ! $balances,
                      ])>
@@ -273,7 +273,7 @@
                 </section>
             @endif
 
-            <div class="mt-6 overflow-x-auto rounded-card border border-outline">
+            <div class="overflow-x-auto rounded-card border border-outline">
                 <table class="w-full text-label">
                     <caption class="sr-only">{{ __('ميزان المراجعة') }}</caption>
 
@@ -384,7 +384,7 @@
                 choice made any difference, which it does not on a range that
                 holds no adjustments.
             --}}
-            <div class="mt-4 flex flex-wrap items-baseline justify-between gap-3 text-caption text-on-surface-muted">
+            <div class="flex flex-wrap items-baseline justify-between gap-3 text-caption text-on-surface-muted">
                 <p class="max-w-3xl">{{ $report['basis'][$locale === 'ar' ? 'declaration_ar' : 'declaration_en'] }}</p>
                 <p>
                     {{ __('عدد الحسابات') }}

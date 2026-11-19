@@ -82,7 +82,7 @@
             {{ __('لا يوجد حساب بنكي مسجّل في هذه الشركة بعد.') }}
         </div>
     @else
-        <div class="mt-8 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
             @foreach ($accounts as $account)
                 @php
                     $label = $account['label'];

@@ -90,7 +90,7 @@
                 <div class="min-w-64 grow">
                     <label for="q" class="block text-label font-medium text-on-surface">{{ __('ابحث بالاسم أو بالرمز') }}</label>
                     <input type="search" name="q" id="q" value="{{ $term }}" autocomplete="off"
-                           class="mt-2 block w-full rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-label text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
+                           class="min-h-(--control-height) mt-2 block w-full rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-label text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                 </div>
 
                 <x-button type="submit" variant="outline">{{ __('ابحث') }}</x-button>
@@ -133,13 +133,13 @@
                                         <span class="flex flex-wrap gap-x-4 gap-y-1">
                                             @if ($candidate->is_customer)
                                                 <a href="{{ $customerUrl }}"
-                                                   class="rounded-sm text-link underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
+                                                   class="inline-flex min-h-11 items-center rounded-sm text-link underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                                                     {{ __('كشف عميل') }}
                                                 </a>
                                             @endif
                                             @if ($candidate->is_supplier)
                                                 <a href="{{ $supplierUrl }}"
-                                                   class="rounded-sm text-link underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
+                                                   class="inline-flex min-h-11 items-center rounded-sm text-link underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                                                     {{ __('كشف مورد') }}
                                                 </a>
                                             @endif
@@ -187,12 +187,12 @@
             <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-label">
                 @if ($otherSideUrl !== null)
                     <a href="{{ $otherSideUrl }}"
-                       class="rounded-sm text-link underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
+                       class="inline-flex min-h-11 items-center rounded-sm text-link underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                         {{ __('اعرض :statement لهذا الطرف', ['statement' => $otherSideName]) }}
                     </a>
                 @endif
                 <a href="{{ $pickerUrl }}"
-                   class="rounded-sm text-link underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
+                   class="inline-flex min-h-11 items-center rounded-sm text-link underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                     {{ __('اختر طرفًا آخر') }}
                 </a>
             </div>
@@ -207,19 +207,19 @@
             <div>
                 <label for="from" class="block text-label font-medium text-on-surface">{{ __('من تاريخ') }}</label>
                 <input type="date" name="from" id="from" value="{{ $from }}"
-                       class="mt-2 block rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-label text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
+                       class="min-h-(--control-height) mt-2 block rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-label text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
             </div>
 
             <div>
                 <label for="as_of" class="block text-label font-medium text-on-surface">{{ __('حتى تاريخ') }}</label>
                 <input type="date" name="as_of" id="as_of" value="{{ $as_of }}"
-                       class="mt-2 block rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-label text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
+                       class="min-h-(--control-height) mt-2 block rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-label text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
             </div>
 
             <div>
                 <label for="currency" class="block text-label font-medium text-on-surface">{{ __('العملة') }}</label>
                 <select name="currency" id="currency"
-                        class="mt-2 block rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-label text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
+                        class="min-h-(--control-height) mt-2 block rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-label text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                     @if ($currencies === [])
                         <option value="{{ $currency }}" selected>{{ $currency }}</option>
                     @else

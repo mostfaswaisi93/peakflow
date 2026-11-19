@@ -143,7 +143,7 @@
                     <label for="code" class="block text-label font-medium text-on-surface">{{ __('الرمز المعروض في التطبيق') }}</label>
                     <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code"
                            maxlength="9" required dir="ltr"
-                           class="mt-1.5 block w-40 rounded-field border border-outline-control bg-surface-sunken px-3 py-2 font-mono text-body tracking-widest text-on-surface focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
+                           class="min-h-(--control-height) mt-1.5 block w-40 rounded-field border border-outline-control bg-surface-sunken px-3 py-2 font-mono text-body tracking-widest text-on-surface focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                 </div>
 
                 <x-button type="submit">{{ __('تأكيد') }}</x-button>
@@ -216,7 +216,7 @@
             <div>
                 <label for="name" class="block text-label font-medium text-on-surface">{{ __('اسم الجهاز') }}</label>
                 <input id="name" name="name" maxlength="60" placeholder="{{ __('هاتف العمل') }}"
-                       class="mt-1.5 block w-56 max-w-full rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
+                       class="min-h-(--control-height) mt-1.5 block w-56 max-w-full rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
             </div>
             <x-button type="submit" variant="tonal">{{ __('تسجيل تطبيق مصادقة') }}</x-button>
         </form>

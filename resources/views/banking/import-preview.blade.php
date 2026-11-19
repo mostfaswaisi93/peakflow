@@ -100,7 +100,7 @@
                         <div>
                             <label for="delimiter" class="block text-sm font-medium text-on-surface">{{ __('الفاصل') }}</label>
                             <select name="delimiter" id="delimiter" aria-describedby="why-delimiter"
-                                    class="mt-2 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-sm text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
+                                    class="min-h-(--control-height) mt-2 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-sm text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                                 @foreach ([',' => ',', ';' => ';', 'tab' => __('مسافة جدولة'), '|' => '|'] as $value => $label)
                                     <option value="{{ $value }}"
                                         @selected(($value === 'tab' ? "\t" : $value) === $dialect->delimiter)>{{ $label }}</option>
@@ -112,7 +112,7 @@
                         <div>
                             <label for="decimal_separator" class="block text-sm font-medium text-on-surface">{{ __('الفاصلة العشرية') }}</label>
                             <select name="decimal_separator" id="decimal_separator" aria-describedby="why-decimal"
-                                    class="mt-2 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-sm text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
+                                    class="min-h-(--control-height) mt-2 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-sm text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                                 @foreach (['.' => '.', ',' => ','] as $value => $label)
                                     <option value="{{ $value }}" @selected($value === $dialect->decimalSeparator)>{{ $label }}</option>
                                 @endforeach
@@ -123,7 +123,7 @@
                         <div>
                             <label for="thousands_separator" class="block text-sm font-medium text-on-surface">{{ __('فاصل الآلاف') }}</label>
                             <select name="thousands_separator" id="thousands_separator"
-                                    class="mt-2 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-sm text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
+                                    class="min-h-(--control-height) mt-2 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-sm text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                                 @foreach (['' => __('بلا'), ',' => ',', '.' => '.'] as $value => $label)
                                     <option value="{{ $value }}" @selected($value === $dialect->thousandsSeparator)>{{ $label }}</option>
                                 @endforeach
@@ -141,7 +141,7 @@
                         <div>
                             <label for="sign_convention" class="block text-sm font-medium text-on-surface">{{ __('اتجاه المبالغ') }}</label>
                             <select name="sign_convention" id="sign_convention" aria-describedby="why-sign"
-                                    class="mt-2 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-sm text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
+                                    class="min-h-(--control-height) mt-2 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-sm text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                                 <option value="signed" @selected($dialect->signConvention === 'signed')>{{ __('عمود واحد بإشارة') }}</option>
                                 <option value="debit_credit_columns" @selected($dialect->signConvention === 'debit_credit_columns')>{{ __('عمودا مدين ودائن') }}</option>
                                 <option value="indicator_column" @selected($dialect->signConvention === 'indicator_column')>{{ __('عمود يحدد الاتجاه') }}</option>
@@ -169,7 +169,7 @@
                             <div>
                                 <label for="map-{{ $field }}" class="block text-sm font-medium text-on-surface">{{ $label }}</label>
                                 <select name="map[{{ $field }}]" id="map-{{ $field }}"
-                                        class="mt-2 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-sm text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
+                                        class="min-h-(--control-height) mt-2 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-sm text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                                     <option value="">{{ __('لا شيء') }}</option>
                                     @foreach ($preview['header'] as $index => $column)
                                         <option value="{{ $index }}" @selected(($map[$field] ?? null) === $index)>

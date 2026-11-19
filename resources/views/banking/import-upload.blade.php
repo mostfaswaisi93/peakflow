@@ -78,7 +78,7 @@
                 <input type="file" name="statement" id="statement" required
                        aria-describedby="statement-help"
                        @error('statement') aria-invalid="true" @enderror
-                       class="mt-2 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-sm text-on-surface
+                       class="min-h-(--control-height) mt-2 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-sm text-on-surface
                               file:me-3 file:rounded-md file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-sm file:text-on-primary
                               focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                 <p id="statement-help" class="mt-2 text-sm text-on-surface-subtle">
@@ -92,7 +92,7 @@
                 </label>
                 <select name="format" id="format"
                         aria-describedby="format-help"
-                        class="mt-2 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-sm text-on-surface
+                        class="min-h-(--control-height) mt-2 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-sm text-on-surface
                                focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                     <option value="">{{ __('تعرَّف عليها تلقائيًا') }}</option>
                     @foreach ($formats as $format)
@@ -111,7 +111,7 @@
                     </label>
                     <select name="template" id="template"
                             aria-describedby="template-help"
-                            class="mt-2 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-sm text-on-surface
+                            class="min-h-(--control-height) mt-2 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-sm text-on-surface
                                    focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                         <option value="">{{ __('بدون قالب') }}</option>
                         @foreach ($templates as $saved)

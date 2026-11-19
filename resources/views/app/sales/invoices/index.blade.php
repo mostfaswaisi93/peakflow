@@ -202,12 +202,13 @@
             </x-slot:empty>
         </x-grid>
 
-        <p class="mt-3 text-caption text-on-surface-muted">
-            {{ __('الرصيد المفتوح هو الإجمالي بعد خصم الإشعارات الدائنة والدفعات المخصَّصة وفروق المطابقة والمبالغ المشطوبة.') }}
-        </p>
-        <p class="mt-1 text-caption text-on-surface-muted">
-            {{ __('ولا يظهر إلا للفواتير المُصدَرة؛ المسودة لم تُطالَب بها بعد، فلا رصيد عليها.') }}
-        </p>
+        {{-- Two sentences about the table above, so one block rather than
+             two sections. The page's rhythm puts the gap between SECTIONS,
+             and these are a footnote to the thing before them. --}}
+        <div class="flow-tight space-y-1 text-caption text-on-surface-muted">
+            <p>{{ __('الرصيد المفتوح هو الإجمالي بعد خصم الإشعارات الدائنة والدفعات المخصَّصة وفروق المطابقة والمبالغ المشطوبة.') }}</p>
+            <p>{{ __('ولا يظهر إلا للفواتير المُصدَرة؛ المسودة لم تُطالَب بها بعد، فلا رصيد عليها.') }}</p>
+        </div>
 
         {{--
             The paginator is built from the paginator's own methods rather than

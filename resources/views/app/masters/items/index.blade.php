@@ -75,7 +75,7 @@
                  and a field that imposes one direction puts the cursor at the
                  wrong end for half of what is typed into it. --}}
             <input id="q" name="q" type="search" dir="auto" value="{{ $term }}" maxlength="120"
-                   class="mt-1.5 block w-full rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface
+                   class="min-h-(--control-height) mt-1.5 block w-full rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface
                           focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
         </div>
 

@@ -230,7 +230,7 @@
             </p>
         </section>
 
-        <section class="mt-10">
+        <section>
             <h2 class="text-title font-semibold text-on-surface">{{ __('أسعار الصرف') }}</h2>
 
             <p class="mt-1 max-w-3xl text-label text-on-surface-muted">
@@ -247,7 +247,7 @@
                         <div>
                             <label for="set" class="block text-label font-medium text-on-surface">{{ __('مجموعة الأسعار') }}</label>
                             <select name="set" id="set"
-                                    class="mt-1.5 block rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-label text-on-surface
+                                    class="min-h-(--control-height) mt-1.5 block rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-label text-on-surface
                                            focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                                 @foreach ($sets as $option)
                                     <option value="{{ $option->code }}" @selected((string) $option->code === $setCode)>

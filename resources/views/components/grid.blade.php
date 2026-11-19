@@ -348,7 +348,7 @@
                                 {{ __('احفظ هذا العرض باسم') }}
                             </label>
                             <input type="text" id="{{ $gridId }}-view-name" name="view" required maxlength="60"
-                                   class="mt-1.5 block rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface
+                                   class="min-h-(--control-height) mt-1.5 block rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface
                                           focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                         </div>
                         <x-button type="submit" variant="outline">{{ __('حفظ') }}</x-button>

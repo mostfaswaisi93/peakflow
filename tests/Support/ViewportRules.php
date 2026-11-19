@@ -98,11 +98,39 @@ final class ViewportRules
             return $results;
         }
 
+        $results['the application boots for a browser to drive'] = $this->everyPageLoaded($measured);
         $results['no page scrolls sideways at 320 pixels, in either direction'] = $this->reflow($measured);
         $results['a touch target is 44 by 44, measured on the glass'] = $this->touchTargets($measured);
         $results['the gaps between sections are steps of the scale'] = $this->spacing($measured);
 
         return $results;
+    }
+
+    /**
+     * Every page in the list actually loaded.
+     *
+     * Without this a wrong path is a screen that is never measured and
+     * never missed: the suite reports green and the check that mattered
+     * ran on three pages instead of four.
+     *
+     * @param  array<string, mixed>  $measured
+     * @return list<string>
+     */
+    private function everyPageLoaded(array $measured): array
+    {
+        $problems = [];
+
+        foreach ((array) ($measured['unreachable'] ?? []) as $page) {
+            $problems[] = \sprintf(
+                '%s answered %d in %s, so it was not measured. A screen the suite skips is a screen the '.
+                'suite reports nothing about, in green',
+                (string) $page['path'],
+                (int) $page['status'],
+                (string) $page['direction'],
+            );
+        }
+
+        return $problems;
     }
 
     /**
@@ -194,19 +222,30 @@ final class ViewportRules
     private function spacing(array $measured): array
     {
         $problems = [];
-        $steps = array_map(
-            static fn (string $step): float => (float) $step * 4.0,
-            DesignFoundationRules::spacingSteps(),
-        );
+
+        /*
+         | The declared rhythm, not merely the scale - PF-277.
+         |
+         | Being on the scale and agreeing with each other are different
+         | properties, and only the second makes a product look like one
+         | product. Before this was tightened, seven screens had gaps of
+         | 32, 24, 16, 12, 8 and 4 - every one a step of the scale, every
+         | one passing a check that only asked about the scale.
+         |
+         |   0   the first thing on the page, and anything with no box
+         |   8   a note that belongs to the thing above it (`.flow-tight`)
+         |  24   between sections (`--section-gap`)
+         |  32   under the page header (`--page-header-gap`)
+         |
+         | A fifth value is a page setting its own rhythm, which is the
+         | thing the rhythm was moved into one place to stop.
+         */
+        $steps = [0.0, 8.0, 24.0, 32.0];
 
         foreach ((array) ($measured['pages'] ?? []) as $page) {
             foreach ((array) ($page['widths'] ?? []) as $at) {
                 foreach ((array) ($at['gaps'] ?? []) as $gap) {
                     $pixels = (float) $gap['pixels'];
-
-                    if ($pixels <= 0.0) {
-                        continue;
-                    }
 
                     foreach ($steps as $step) {
                         if (abs($pixels - $step) < 0.51) {
@@ -215,9 +254,10 @@ final class ViewportRules
                     }
 
                     $problems[] = \sprintf(
-                        '%s at %dpx: the gap above %s computes to %.1fpx, which is not a step of the '.
-                        'scale. A page that reaches its spacing through overrides reads as correct in '.
-                        'the markup and is the one that breaks on the next change',
+                        '%s at %dpx: the gap above %s computes to %.1fpx, and the page rhythm is 0, 8, '.
+                        '24 or 32. It is probably an `mt-` on a direct child of <main>, which wins over '.
+                        'the rhythm because a Tailwind utility is in a later cascade layer - so the '.
+                        'rhythm is in one place and this page is in another',
                         (string) $page['path'],
                         (int) $at['width'],
                         (string) $gap['what'],
@@ -334,11 +374,13 @@ const WIDTHS = (process.env.PF_WIDTHS || '320').split(',').map(Number);
 const TOUCH = Number(process.env.PF_TOUCH || 44);
 const BASE = `http://127.0.0.1:${PORT}`;
 
-const PAGES = ['/overview', '/sales/invoices', '/purchases/bills', '/banking/accounts'];
+const PAGES = ['/overview', '/sales/invoices', '/purchasing/bills', '/banking/accounts',
+               '/ledger/trial-balance', '/ledger/financial-position', '/masters/parties',
+               '/masters/currencies', '/settlement/payment-runs', '/settlement/statements'];
 
 (async () => {
   const browser = await chromium.launch();
-  const out = { pages: [], targetsSeen: 0, gapsSeen: 0 };
+  const out = { pages: [], targetsSeen: 0, gapsSeen: 0, unreachable: [] };
 
   try {
     for (const direction of ['rtl', 'ltr']) {
@@ -367,7 +409,18 @@ const PAGES = ['/overview', '/sales/invoices', '/purchases/bills', '/banking/acc
           await page.setViewportSize({ width, height: 900 });
           const response = await page.goto(BASE + path, { waitUntil: 'domcontentloaded' });
 
+          /*
+           | A page that does not load is a measurement that did not happen,
+           | and skipping it silently is how a suite reports four screens as
+           | green while one of them is a 404.
+           |
+           | That is not hypothetical: this list carried `/purchases/bills`
+           | for its first few runs. Every check passed and that screen was
+           | never measured - found when a bite on another page failed to
+           | bite, because the page it was on had never been visited either.
+           */
           if (response && response.status() >= 400) {
+            out.unreachable.push({ path, status: response.status(), direction });
             continue;
           }
 
@@ -377,21 +430,55 @@ const PAGES = ['/overview', '/sales/invoices', '/purchases/bills', '/banking/acc
             const doc = document.documentElement;
             const scrollWidth = Math.ceil(doc.scrollWidth);
 
-            // What is actually wider than the viewport, named so the failure
-            // points at something rather than at the page.
+            /*
+             | What actually pushes the page out, which is not the widest
+             | element.
+             |
+             | The widest element on a ledger page is a 951px table - and it
+             | is scrolled correctly inside its own container, which is why
+             | it is 951px. Naming it sends somebody to fix a table that is
+             | behaving. The culprit is an element that extends past the
+             | viewport edge AND has no scrolling ancestor to contain it.
+             */
             let widest = null;
             if (scrollWidth > width + 1) {
+              const contained = (el) => {
+                /*
+                 | A collapsed <details> is the other kind of containment.
+                 |
+                 | Its contents still have boxes - a header menu measures
+                 | 256px and 240px past the edge while closed - and none of
+                 | it is on screen or reachable. This check reported one of
+                 | those as the cause of a 2px overflow, which sent me to
+                 | reposition a menu that was never visible.
+                 */
+                if (el.closest('details:not([open])')) return true;
+
+                for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+                  const ox = getComputedStyle(p).overflowX;
+                  if (ox === 'auto' || ox === 'scroll' || ox === 'hidden') return true;
+                }
+                return false;
+              };
+
               let worst = 0;
               for (const el of document.querySelectorAll('body *')) {
                 const box = el.getBoundingClientRect();
-                if (box.width > worst && box.width > width + 1) {
-                  worst = box.width;
+                const past = Math.max(box.right - width, -box.left);
+                if (past > worst && past > 1 && !contained(el)) {
+                  worst = past;
                   widest = el.tagName.toLowerCase()
                     + (el.id ? '#' + el.id : '')
                     + (el.className && typeof el.className === 'string'
                         ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.')
-                        : '');
+                        : '')
+                    + ` (${Math.round(past)}px past the edge)`;
                 }
+              }
+
+              if (widest === null) {
+                widest = 'nothing outside a scroller - the overflow is '
+                  + (scrollWidth - width) + 'px and every candidate is contained';
               }
             }
 

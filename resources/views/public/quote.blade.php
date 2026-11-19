@@ -151,7 +151,7 @@
                         <span class="text-sm text-on-surface-muted">{{ __('الاسم') }}</span>
                         <input type="text" name="accepted_by" required minlength="2" maxlength="200"
                                autocomplete="name"
-                               class="w-full rounded-md border border-outline-control bg-background px-3 py-2 text-on-background outline-offset-2 focus:outline-2 focus:outline-focus-ring">
+                               class="min-h-(--control-height) w-full rounded-md border border-outline-control bg-background px-3 py-2 text-on-background outline-offset-2 focus:outline-2 focus:outline-focus-ring">
                     </label>
                     @error('accepted_by')
                         <p class="text-sm text-on-danger-subtle">{{ $message }}</p>

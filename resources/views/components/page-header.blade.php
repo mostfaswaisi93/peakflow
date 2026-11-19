@@ -42,7 +42,7 @@
     'description' => null,
 ])
 
-<div {{ $attributes->class(['flex flex-wrap items-end justify-between gap-4']) }}>
+<div {{ $attributes->class(['page-header flex flex-wrap items-end justify-between gap-4']) }}>
     <div>
         @isset($eyebrow)
             <p class="text-label text-on-surface-muted">{{ $eyebrow }}</p>

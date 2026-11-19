@@ -109,11 +109,11 @@
 
     {{-- The filter is a GET form: it reads, and the URL it produces is one
          somebody can keep. --}}
-    <form method="GET" class="mt-6 flex flex-wrap items-end gap-3 rounded-card border border-outline bg-surface p-4">
+    <form method="GET" class="flex flex-wrap items-end gap-3 rounded-card border border-outline bg-surface p-4">
         <div>
             <label for="state" class="block text-label font-medium text-on-surface">{{ __('الحالة') }}</label>
             <select name="state" id="state"
-                    class="mt-2 block rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-label text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
+                    class="min-h-(--control-height) mt-2 block rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-label text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                 <option value="">{{ __('كل الحالات') }}</option>
                 @foreach ($states as $value)
                     @php
@@ -186,7 +186,7 @@
     @endif
 
     @if ($runs === [])
-        <div class="mt-6 rounded-card border border-outline bg-surface p-6 text-label text-on-surface-muted">
+        <div class="rounded-card border border-outline bg-surface p-6 text-label text-on-surface-muted">
             @if ($state === null)
                 {{ __('لا توجد مسيّرات دفع في هذه الشركة بعد.') }}
             @else

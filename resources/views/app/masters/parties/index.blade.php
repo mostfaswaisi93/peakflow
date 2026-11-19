@@ -53,14 +53,14 @@
         </x-slot:aside>
     </x-page-header>
 
-    <form method="GET" class="mt-6 flex flex-wrap items-end gap-3">
+    <form method="GET" class="flex flex-wrap items-end gap-3">
         <div class="w-full max-w-sm">
             <label for="q" class="block text-label font-medium text-on-surface">{{ __('بحث بالاسم أو الرمز') }}</label>
             {{-- `dir="auto"` because the term may be Arabic or a Latin code,
                  and a field that imposes one direction puts the cursor at the
                  wrong end for half of what is typed into it. --}}
             <input id="q" name="q" type="search" dir="auto" value="{{ $term }}" maxlength="120"
-                   class="mt-1.5 block w-full rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface
+                   class="min-h-(--control-height) mt-1.5 block w-full rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface
                           focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
         </div>
 
@@ -75,11 +75,11 @@
         @endif
     </form>
 
-    <p class="mt-4 text-label text-on-surface-muted">
+    <p class="flow-tight text-label text-on-surface-muted">
         {{ \App\Support\Lang\Message::of('parties.found', ['count' => $parties->total()]) }}
     </p>
 
-    <div class="mt-4 overflow-x-auto rounded-card border border-outline">
+    <div class="overflow-x-auto rounded-card border border-outline">
         <table class="w-full text-label">
             <caption class="sr-only">{{ __('العملاء والموردون') }}</caption>
             <thead class="bg-surface-sunken text-on-surface-muted">
@@ -187,5 +187,5 @@
         </table>
     </div>
 
-    <div class="mt-4">{{ $parties->links() }}</div>
+    <div class="">{{ $parties->links() }}</div>
 @endsection

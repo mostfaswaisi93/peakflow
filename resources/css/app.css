@@ -1154,6 +1154,40 @@
     --font-step: 0.8125rem;
 }
 
+/* ---------------------------------------------------------------------------
+ *  A FINGER IS NOT A MOUSE - PF-276.
+ *
+ *  Density is the user's decision and a breakpoint may not overrule it -
+ *  `bin/verify design-system` holds that line, and it refused the first
+ *  version of this, which raised `--control-height` on a narrow screen.
+ *  It was right to: the density a person chose is the density they get on
+ *  the screen they chose it for.
+ *
+ *  But 44px is not a preference. WCAG 2.5.5 asks for it where the pointer
+ *  is a finger, and all three density heights - 36px, 40px, 28px - are
+ *  below it. Those clear 2.5.8's 24px floor, which is what a mouse needs.
+ *
+ *  So this is a FLOOR on the controls rather than a change to the tokens.
+ *  Density still decides row height, padding and type - most of what it is
+ *  for - and a control cannot go under a finger's size on a screen a
+ *  finger is likely to be using. The two settings are about different
+ *  things and now say so separately.
+ *
+ *  Width rather than `pointer: coarse`, because a narrow window on a
+ *  desktop is the case where somebody has made the product phone-shaped
+ *  and the layout has to work anyway.
+ * ------------------------------------------------------------------------ */
+@media (max-width: 768px) {
+    button,
+    [role='button'],
+    summary,
+    select,
+    input:not([type='hidden']):not([type='checkbox']):not([type='radio']),
+    textarea {
+        min-block-size: 2.75rem;
+    }
+}
+
 /* ===========================================================================
  *  BASE
  * ======================================================================== */
@@ -1487,6 +1521,66 @@
     .pf-skeleton__cell--label  { inline-size: 40%; }
     .pf-skeleton__cell--figure { inline-size: 65%; block-size: 1.75em; }
     .pf-skeleton__cell--note   { inline-size: 30%; }
+
+    /* ----------------------------------------------------------------------
+     *  THE PAGE'S VERTICAL RHYTHM - PF-277.
+     *
+     *  The gap between a page header and its first section, and between
+     *  sections, set HERE and nowhere else.
+     *
+     *  ## What it was
+     *
+     *  A convention, which is to say seven different answers. Measured
+     *  across seven screens: the gap after the header was 32px on three
+     *  and 24px on four, and the gaps between sections were 24, 16, 12, 8
+     *  and 4. Every one of those is a step of the scale, so the spacing
+     *  check passed - being on the scale and agreeing with each other are
+     *  different properties, and only the second one is what makes a
+     *  product look like one product.
+     *
+     *  ## Why the owl rather than a margin on each section
+     *
+     *  `> * + *` puts the gap BETWEEN things, so the first section has no
+     *  margin to collapse against the header's and the last has none
+     *  trailing into the footer. A page that adds or removes a section
+     *  gets the right spacing without anybody editing a class.
+     *
+     *  ## And why the header's gap is its own
+     *
+     *  It is a different relationship. The gap between two sections says
+     *  "these are siblings"; the one under the header says "everything
+     *  below belongs to this title". Making them equal reads as a page
+     *  with no title, just a first section that happens to be bold.
+     * ------------------------------------------------------------------- */
+    :root {
+        --section-gap: calc(var(--spacing) * 6);
+        --page-header-gap: calc(var(--spacing) * 8);
+    }
+
+    /* Not script, style or template: they render nothing, and a gap above
+       something with no box pushes the next real section down by a
+       section's distance for no visible reason. The invoice list had
+       exactly that - a <script> taking the page-header gap. */
+    #content > * + *:not(script):not(style):not(template) {
+        margin-block-start: var(--section-gap);
+    }
+
+    #content > .page-header + *:not(script):not(style):not(template) {
+        margin-block-start: var(--page-header-gap);
+    }
+
+    /*
+     | The one exception, and it is a class rather than a number.
+     |
+     | A sentence explaining the filter above it is not a section - it
+     | belongs to the thing before it and reads as orphaned at a section's
+     | distance. The alternative is moving it inside that thing, which is
+     | the better fix and a larger one; this names the relationship instead
+     | of leaving a `mt-2` nobody can account for.
+     */
+    #content > * + .flow-tight {
+        margin-block-start: calc(var(--spacing) * 2);
+    }
 
     /* Focus is always visible, and tested as its own token pair against both
        the component and the adjacent background (WCAG 2.4.11). */

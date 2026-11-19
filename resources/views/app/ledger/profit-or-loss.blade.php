@@ -141,10 +141,10 @@
             controls on screen.
         --}}
         <form method="GET" class="no-print mt-6 flex flex-wrap items-end gap-3">
-            <div>
+            <div class="min-w-0">
                 <label for="period" class="block text-label font-medium text-on-surface">{{ __('الفترة المحاسبية') }}</label>
                 <select name="period" id="period" dir="ltr"
-                        class="mt-1.5 block rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface
+                        class="mt-1.5 block min-h-11 w-full max-w-full rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface
                                focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                     @foreach ($periods as $option)
                         <option value="{{ $option->id }}" @selected((string) $option->id === (string) $period->id)>
@@ -157,7 +157,7 @@
             <div>
                 <label for="comparative" class="block text-label font-medium text-on-surface">{{ __('فترة المقارنة') }}</label>
                 <select name="comparative" id="comparative" dir="ltr" aria-describedby="why-comparative"
-                        class="mt-1.5 block rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface
+                        class="min-h-(--control-height) mt-1.5 block rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface
                                focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                     {{--
                         "No comparative" carries a word rather than an empty

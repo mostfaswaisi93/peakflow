@@ -17,13 +17,13 @@
                 <label for="email" class="block text-sm font-medium text-on-surface">{{ __('البريد الإلكتروني') }}</label>
                 <input id="email" name="email" type="email" required autofocus autocomplete="username" dir="ltr"
                        value="{{ old('email') }}"
-                       class="mt-1.5 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-on-surface
+                       class="min-h-(--control-height) mt-1.5 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-on-surface
                               focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
             </div>
             <div>
                 <label for="password" class="block text-sm font-medium text-on-surface">{{ __('كلمة المرور') }}</label>
                 <input id="password" name="password" type="password" required autocomplete="current-password" dir="ltr"
-                       class="mt-1.5 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-on-surface
+                       class="min-h-(--control-height) mt-1.5 block w-full rounded-lg border border-outline-control bg-surface-sunken px-3 py-2 text-on-surface
                               focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
             </div>
             <button type="submit"

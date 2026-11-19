@@ -117,10 +117,10 @@
             figures - so nothing is lost by leaving the controls on screen.
         --}}
         <form method="GET" class="no-print mt-6 flex flex-wrap items-end gap-3">
-            <div>
+            <div class="min-w-0">
                 <label for="period" class="block text-label font-medium text-on-surface">{{ __('الفترة المحاسبية') }}</label>
                 <select name="period" id="period" dir="ltr"
-                        class="mt-1.5 block rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface
+                        class="mt-1.5 block min-h-11 w-full max-w-full rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface
                                focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                     @foreach ($periods as $option)
                         <option value="{{ $option->id }}" @selected((string) $option->id === (string) $period->id)>
@@ -133,7 +133,7 @@
             <div>
                 <label for="comparative" class="block text-label font-medium text-on-surface">{{ __('فترة المقارنة') }}</label>
                 <select name="comparative" id="comparative" dir="ltr" aria-describedby="why-comparative"
-                        class="mt-1.5 block rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface
+                        class="min-h-(--control-height) mt-1.5 block rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface
                                focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                     {{--
                         "No comparative" carries a word rather than an empty
@@ -160,13 +160,13 @@
         </p>
 
         @if ($unknownPeriod)
-            <p class="mt-4 rounded-card border border-outline bg-surface px-4 py-3 text-label text-on-surface-muted">
+            <p class="rounded-card border border-outline bg-surface px-4 py-3 text-label text-on-surface-muted">
                 {{ __('الفترة المطلوبة في الرابط ليست فترة في هذه الشركة، وما يظهر أدناه هو آخر فترة فيها قيود.') }}
             </p>
         @endif
 
         @if ($unknownComparative)
-            <p class="mt-4 rounded-card border border-outline bg-surface px-4 py-3 text-label text-on-surface-muted">
+            <p class="rounded-card border border-outline bg-surface px-4 py-3 text-label text-on-surface-muted">
                 {{ __('فترة المقارنة المطلوبة في الرابط ليست فترة أسبق من الفترة المعروضة، وعمود المقارنة أدناه هو المقابل من السنة السابقة إن وُجد.') }}
             </p>
         @endif
@@ -413,7 +413,7 @@
                                                 --}}
                                                 <details @if ($unclassified) open @endif
                                                          class="rounded-field">
-                                                    <summary class="cursor-pointer rounded-field focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
+                                                    <summary class="flex min-h-(--control-height) cursor-pointer items-center rounded-field focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                                                         <span class="text-on-surface">{{ $item['primary'] }}</span>
                                                         <span dir="{{ $locale === 'ar' ? 'ltr' : 'rtl' }}" class="block text-caption text-on-surface-subtle">{{ $item['secondary'] }}</span>
                                                     </summary>
@@ -610,7 +610,7 @@
                 entity, the same date, two different figures and nothing on
                 either page to say why.
             --}}
-            <p class="mt-4 max-w-3xl text-caption text-on-surface-muted">
+            <p class="flow-tight max-w-3xl text-caption text-on-surface-muted">
                 {{ $statement['basis'][$locale === 'ar' ? 'declaration_ar' : 'declaration_en'] }}
             </p>
         @endif

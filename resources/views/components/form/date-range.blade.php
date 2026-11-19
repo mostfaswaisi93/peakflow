@@ -149,7 +149,7 @@
                    value="{{ $from }}"
                    dir="ltr"
                    @if ($error !== null) aria-invalid="true" @endif
-                   class="figure mt-1.5 rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface
+                   class="min-h-(--control-height) figure mt-1.5 rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface
                           focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
         </span>
 
@@ -161,7 +161,7 @@
                    value="{{ $to }}"
                    dir="ltr"
                    @if ($error !== null) aria-invalid="true" @endif
-                   class="figure mt-1.5 rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface
+                   class="min-h-(--control-height) figure mt-1.5 rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface
                           focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
         </span>
     </div>

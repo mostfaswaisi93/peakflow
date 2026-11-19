@@ -126,7 +126,7 @@
         {{-- The scroll is on the wrapper, not the page: the shell's content
              column is `min-w-0` precisely so a wide table cannot push the
              navigation off screen. --}}
-        <div class="mt-6 overflow-x-auto rounded-card border border-outline bg-surface">
+        <div class="overflow-x-auto rounded-card border border-outline bg-surface">
             <table class="w-full text-start text-label">
                 <caption class="sr-only">{{ __('فواتير الموردين') }}</caption>
                 <thead>
@@ -231,20 +231,20 @@
                 those colours cannot be re-pointed and the pager would be the
                 one element on the page that ignores the user's choice.
             --}}
-            <nav aria-label="{{ $pagerLabel }}" class="mt-4 flex flex-wrap items-center justify-between gap-3 text-label">
+            <nav aria-label="{{ $pagerLabel }}" class="flex flex-wrap items-center justify-between gap-3 text-label">
                 <p class="text-on-surface-muted">
                     {{ __('صفحة :page من :pages', ['page' => $bills->currentPage(), 'pages' => $bills->lastPage()]) }}
                 </p>
 
                 <div class="flex items-center gap-2">
                     @if ($bills->onFirstPage())
-                        <span class="rounded-button border border-outline px-3 py-1.5 text-on-surface-subtle opacity-60">
+                        <span class="inline-flex min-h-11 items-center rounded-button border border-outline px-3 py-1.5 text-on-surface-subtle opacity-60">
                             {{ __('السابقة') }}
                         </span>
                     @else
                         <a href="{{ $bills->previousPageUrl() }}"
                            rel="prev"
-                           class="rounded-button border border-outline-strong px-3 py-1.5 text-on-surface
+                           class="inline-flex min-h-11 items-center rounded-button border border-outline-strong px-3 py-1.5 text-on-surface
                                   hover:bg-surface-hover
                                   focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                             {{ __('السابقة') }}
@@ -254,13 +254,13 @@
                     @if ($bills->hasMorePages())
                         <a href="{{ $bills->nextPageUrl() }}"
                            rel="next"
-                           class="rounded-button border border-outline-strong px-3 py-1.5 text-on-surface
+                           class="inline-flex min-h-11 items-center rounded-button border border-outline-strong px-3 py-1.5 text-on-surface
                                   hover:bg-surface-hover
                                   focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                             {{ __('التالية') }}
                         </a>
                     @else
-                        <span class="rounded-button border border-outline px-3 py-1.5 text-on-surface-subtle opacity-60">
+                        <span class="inline-flex min-h-11 items-center rounded-button border border-outline px-3 py-1.5 text-on-surface-subtle opacity-60">
                             {{ __('التالية') }}
                         </span>
                     @endif
