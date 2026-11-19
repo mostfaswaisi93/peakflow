@@ -4,12 +4,31 @@ declare(strict_types=1);
 
 namespace App\Tenant\Sales\Http\Controllers\Api;
 
+use App\Support\Http\Api\DatabaseRefusal;
 use App\Support\Http\Api\Page;
 use App\Support\Http\Api\Row;
 use App\Support\Http\Api\SortOrder;
 use App\Support\Http\Api\Wire;
+use App\Support\Http\Problem;
+use App\Support\Http\ProblemType;
+use App\Tenant\Catalog\Models\PaymentTerm;
+use App\Tenant\Sales\Exceptions\IssueRefused;
 use App\Tenant\Sales\Models\Invoice;
+use App\Tenant\Sales\Services\InvoiceDrafts;
+use App\Tenant\Sales\Services\Issuer;
+use App\Tenant\Tax\Exceptions\EvidenceMissing;
+use App\Tenant\Tax\Exceptions\TaxCodeRefused;
+use App\Tenant\Tax\Services\TaxCodes;
+use App\Tenant\Tenancy\Exceptions\EntityNotInScope;
+use App\Tenant\Tenancy\Models\Entity;
+use App\Tenant\Tenancy\Services\EntityContext;
+use Illuminate\Auth\AuthenticationException;
+use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Database\QueryException;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -35,6 +54,13 @@ use Illuminate\Support\Facades\Gate;
  */
 final class InvoiceApiController
 {
+    public function __construct(
+        private readonly InvoiceDrafts $drafts,
+        private readonly Issuer $issuer,
+        private readonly TaxCodes $taxCodes,
+        private readonly EntityContext $entities,
+    ) {}
+
     /** @var array<string, string> NOT NULL columns only - see SortOrder. */
     private const SORTABLE = [
         'issue_date' => 'invoices.issue_date',
@@ -148,6 +174,313 @@ final class InvoiceApiController
         ));
 
         return new JsonResponse($body);
+    }
+
+    /**
+     * What a draft can be made of here - PF-266.
+     *
+     * The revenue accounts, the tax codes in force today with their rates,
+     * and the payment terms: everything an app needs to build an invoice form
+     * without the chart of accounts, which `account.manage` guards and a sales
+     * clerk does not hold.
+     */
+    public function options(): JsonResponse
+    {
+        Gate::authorize('invoice.draft');
+
+        $today = Carbon::today();
+
+        $taxCodes = [];
+
+        foreach ($this->taxCodes->availableOn($today) as $code) {
+            try {
+                [$taxCode, $rate] = $this->taxCodes->resolve((string) $code->code, $today);
+            } catch (TaxCodeRefused) {
+                continue;
+            }
+
+            $taxCodes[] = [
+                'code' => (string) $taxCode->code,
+                'category' => $taxCode->category->value,
+                'rate' => (string) $rate->rate,
+                'label' => ['ar' => Row::text($taxCode, 'label_ar'), 'en' => Row::text($taxCode, 'label_en')],
+            ];
+        }
+
+        return new JsonResponse([
+            'revenue_accounts' => DB::connection('tenant')->table('accounts')
+                ->where('type', 'revenue')
+                ->where('postable', true)
+                ->where('blocked', false)
+                ->whereNull('deleted_at')
+                ->orderBy('code')
+                ->get(['code', 'name_ar', 'name_en'])
+                ->map(static fn (object $a): array => [
+                    'code' => Row::text($a, 'code'),
+                    'name' => ['ar' => Row::text($a, 'name_ar'), 'en' => Row::text($a, 'name_en')],
+                ])
+                ->values()
+                ->all(),
+            'tax_codes' => $taxCodes,
+            'payment_terms' => DB::connection('tenant')->table('payment_terms')
+                ->where('active', true)
+                ->orderBy('code')
+                ->get(['code', 'name_ar', 'name_en'])
+                ->map(static fn (object $t): array => [
+                    'code' => Row::text($t, 'code'),
+                    'name' => ['ar' => Row::text($t, 'name_ar'), 'en' => Row::text($t, 'name_en')],
+                ])
+                ->values()
+                ->all(),
+        ]);
+    }
+
+    /**
+     * Draft an invoice from lines - PF-266.
+     *
+     * Every figure is computed; none is accepted. Drafting books nothing, so
+     * there is no Idempotency-Key: a retried draft is a second draft the list
+     * shows and a person deletes, which is a different order of mistake from
+     * a second posted invoice.
+     */
+    public function store(Request $request): JsonResponse|Problem
+    {
+        Gate::authorize('invoice.draft');
+
+        $request->validate([
+            'customer_id' => ['required', 'string', 'size:26'],
+            'issue_date' => ['nullable', 'date_format:Y-m-d'],
+            'delivery_date' => ['nullable', 'date_format:Y-m-d'],
+            'currency' => ['nullable', 'string', 'size:3'],
+            'revenue_account_code' => ['nullable', 'string', 'max:40'],
+            'note' => ['nullable', 'string', 'max:1000'],
+            'lines' => ['required', 'array', 'min:1', 'max:200'],
+            'lines.*.description' => ['required', 'string', 'max:500'],
+            'lines.*.quantity' => ['required', 'string', 'regex:/^\d{1,13}(\.\d{1,8})?$/'],
+            'lines.*.unit_price' => ['required', 'string', 'regex:/^\d{1,13}(\.\d{1,8})?$/'],
+            'lines.*.unit_code' => ['nullable', 'string', 'max:3'],
+            'lines.*.item_id' => ['nullable', 'string', 'size:26'],
+            'lines.*.tax_code' => ['required', 'string', 'max:32'],
+            'lines.*.revenue_account_code' => ['nullable', 'string', 'max:40'],
+        ]);
+
+        $entity = $this->entity();
+        $userId = $this->actor($request);
+        $currency = $request->filled('currency')
+            ? $request->string('currency')->upper()->value()
+            : (string) $entity->functional_currency;
+
+        $problem = Problem::of(ProblemType::ValidationFailed)
+            ->withDetail('The invoice was not drafted: one or more fields name something that cannot be used.');
+        $refused = false;
+
+        $customerId = $request->string('customer_id')->value();
+        $customer = DB::connection('tenant')->table('parties')
+            ->where('id', $customerId)
+            ->whereNull('deleted_at')
+            ->first(['is_customer', 'active']);
+
+        if ($customer === null || ! Row::bool($customer, 'is_customer') || ! Row::bool($customer, 'active')) {
+            $problem->withFieldError('/customer_id', 'not_a_customer', 'No active customer has that id.');
+            $refused = true;
+        }
+
+        $defaultAccount = $request->filled('revenue_account_code') ? $request->string('revenue_account_code')->value() : null;
+        $lines = [];
+
+        foreach (array_values((array) $request->input('lines', [])) as $index => $line) {
+            $line = \is_array($line) ? $line : [];
+            $accountCode = \is_string($line['revenue_account_code'] ?? null) ? $line['revenue_account_code'] : $defaultAccount;
+            $accountId = $accountCode === null ? null : $this->revenueAccount($accountCode);
+
+            if ($accountId === null) {
+                $problem->withFieldError(
+                    '/lines/'.$index.'/revenue_account_code',
+                    'not_a_revenue_account',
+                    $accountCode === null
+                        ? 'Name the revenue account - on the line, or once as revenue_account_code for every line.'
+                        : sprintf('%s is not a postable revenue account here.', $accountCode),
+                );
+                $refused = true;
+            }
+
+            [$itemId, $itemCode, $unit] = $this->item($line['item_id'] ?? null);
+
+            if (($line['item_id'] ?? null) !== null && $itemId === null) {
+                $problem->withFieldError('/lines/'.$index.'/item_id', 'not_sellable', 'No active, sellable item has that id.');
+                $refused = true;
+            }
+
+            $lines[] = [
+                'description' => self::field($line, 'description', ''),
+                'quantity' => self::field($line, 'quantity', '0'),
+                'unit_price' => self::field($line, 'unit_price', '0'),
+                'unit_code' => \is_string($line['unit_code'] ?? null) ? $line['unit_code'] : ($unit ?? 'C62'),
+                'item_id' => $itemId,
+                'item_code' => $itemCode,
+                'tax_code' => self::field($line, 'tax_code', ''),
+                'revenue_account_id' => (string) $accountId,
+            ];
+        }
+
+        if ($refused) {
+            return $problem;
+        }
+
+        try {
+            $invoice = $this->drafts->create(
+                entity: $entity,
+                partyId: $customerId,
+                issueDate: $request->filled('issue_date')
+                    ? Carbon::createFromFormat('Y-m-d', $request->string('issue_date')->value())?->startOfDay() ?? Carbon::today()
+                    : Carbon::today(),
+                deliveryDate: $request->filled('delivery_date')
+                    ? Carbon::createFromFormat('Y-m-d', $request->string('delivery_date')->value())?->startOfDay()
+                    : null,
+                currency: $currency,
+                lines: $lines,
+                note: $request->filled('note') ? $request->string('note')->value() : null,
+                userId: $userId,
+            );
+        } catch (TaxCodeRefused $e) {
+            return Problem::of(ProblemType::ValidationFailed)->withDetail($e->getMessage());
+        } catch (QueryException $e) {
+            return DatabaseRefusal::problem($e) ?? throw $e;
+        }
+
+        $response = $this->show($invoice->id);
+        $response->setStatusCode(JsonResponse::HTTP_CREATED);
+        $response->headers->set('Location', sprintf('%s/invoices/%s', rtrim(URL::to(Config::string('api.prefix')), '/'), $invoice->id));
+
+        return $response;
+    }
+
+    /**
+     * Issue a draft: validated, numbered, posted, frozen - PF-266.
+     *
+     * Through {@see Issuer::issue()}, unchanged - segregation of duties, the
+     * validator, the number, the posting and the hash chain are all its. It
+     * posts to the ledger, so the route requires an Idempotency-Key.
+     */
+    public function issue(Request $request, string $id): JsonResponse|Problem
+    {
+        Gate::authorize('invoice.issue');
+
+        $request->validate(['payment_term' => ['nullable', 'string', 'max:32']]);
+
+        /** @var Invoice $draft */
+        $draft = Invoice::query()->findOrFail($id);
+        $entity = $this->entity();
+        $userId = $this->actor($request);
+
+        if ((string) $draft->status !== 'draft') {
+            return Problem::of(ProblemType::StateTransitionNotAllowed)->withDetail(sprintf(
+                'This invoice is %s already. An issued invoice is corrected by a credit note, never by issuing it again.',
+                (string) $draft->status,
+            ));
+        }
+
+        $terms = null;
+
+        if ($request->filled('payment_term')) {
+            $terms = PaymentTerm::query()->where('code', $request->string('payment_term')->value())->where('active', true)->first();
+
+            if (! $terms instanceof PaymentTerm) {
+                return Problem::of(ProblemType::ValidationFailed)
+                    ->withFieldError('/payment_term', 'unknown', 'No active payment term has that code.');
+            }
+        }
+
+        $first = DB::connection('tenant')->table('invoice_lines')->where('invoice_id', $id)->orderBy('line_no')->first(['tax_category', 'tax_rate']);
+
+        try {
+            $this->issuer->issue(
+                $draft,
+                $entity,
+                $userId,
+                [
+                    'country' => \is_string($entity->country) ? $entity->country : 'SA',
+                    'rule' => 'domestic',
+                    'category' => $first === null ? null : Row::text($first, 'tax_category'),
+                    'rate' => $first === null ? null : Row::text($first, 'tax_rate'),
+                ],
+                $terms,
+            );
+        } catch (IssueRefused|EvidenceMissing $refused) {
+            /*
+             | The validator's findings, or a missing piece of tax evidence -
+             | the document is not valid to issue as it stands. Nothing was
+             | numbered or posted; correct the draft and issue it again.
+             */
+            return Problem::of(ProblemType::DocumentValidationFailed)->withDetail($refused->getMessage());
+        } catch (QueryException $e) {
+            return DatabaseRefusal::problem($e) ?? throw $e;
+        }
+
+        return $this->show($id);
+    }
+
+    private function entity(): Entity
+    {
+        $entity = $this->entities->entity();
+
+        if (! $entity instanceof Entity) {
+            throw EntityNotInScope::forQueryOn(Invoice::class);
+        }
+
+        return $entity;
+    }
+
+    private function actor(Request $request): string
+    {
+        $user = $request->user();
+        $id = $user instanceof Authenticatable ? $user->getAuthIdentifier() : null;
+
+        if (! \is_string($id) || $id === '') {
+            throw new AuthenticationException();
+        }
+
+        return $id;
+    }
+
+    private function revenueAccount(string $code): ?string
+    {
+        $id = DB::connection('tenant')->table('accounts')
+            ->where('code', $code)
+            ->where('type', 'revenue')
+            ->where('postable', true)
+            ->where('blocked', false)
+            ->whereNull('deleted_at')
+            ->value('id');
+
+        return \is_string($id) ? $id : null;
+    }
+
+    /** @return array{0: ?string, 1: ?string, 2: ?string} id, code, unit - all null when no item, or not a sellable one */
+    private function item(mixed $id): array
+    {
+        if (! \is_string($id) || $id === '') {
+            return [null, null, null];
+        }
+
+        $item = DB::connection('tenant')->table('items')
+            ->where('id', $id)
+            ->where('sellable', true)
+            ->where('active', true)
+            ->whereNull('deleted_at')
+            ->first(['id', 'code', 'unit_code']);
+
+        return $item === null
+            ? [null, null, null]
+            : [Row::text($item, 'id'), Row::nullableText($item, 'code'), Row::nullableText($item, 'unit_code')];
+    }
+
+    /** @param array<mixed> $line */
+    private static function field(array $line, string $key, string $default): string
+    {
+        $value = $line[$key] ?? null;
+
+        return \is_string($value) ? $value : $default;
     }
 
     /** @return array<string, mixed> */

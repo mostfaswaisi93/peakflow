@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Tenant\Purchasing\Http\Controllers\Api;
 
-use Illuminate\Contracts\Auth\Authenticatable;
 use App\Support\Http\Api\DatabaseRefusal;
 use App\Support\Http\Api\Page;
 use App\Support\Http\Api\Row;
@@ -20,6 +19,7 @@ use App\Tenant\Tenancy\Exceptions\EntityNotInScope;
 use App\Tenant\Tenancy\Models\Entity;
 use App\Tenant\Tenancy\Services\EntityContext;
 use Illuminate\Auth\AuthenticationException;
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\QueryException;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Http\JsonResponse;
@@ -161,7 +161,7 @@ final class BillApiController
 
         [$bill, $entity, $user] = $this->subject($request, $id);
 
-        $this->approvals->submit($bill, $entity, $user->getAuthIdentifier());
+        $this->approvals->submit($bill, $entity, $user);
 
         return $this->show($id);
     }
@@ -198,7 +198,7 @@ final class BillApiController
             $this->approvals->decide(
                 $bill,
                 $entity,
-                $user->getAuthIdentifier(),
+                $user,
                 $decision,
                 $request->filled('comment') ? $request->string('comment')->trim()->value() : null,
             );
@@ -217,7 +217,7 @@ final class BillApiController
         return $this->show($id);
     }
 
-    /** @return array{0: Bill, 1: Entity, 2: Authenticatable} */
+    /** @return array{0: Bill, 1: Entity, 2: string} the bill, the entity, and who is acting */
     private function subject(Request $request, string $id): array
     {
         /** @var Bill $bill */
@@ -229,11 +229,13 @@ final class BillApiController
             throw EntityNotInScope::forQueryOn(Bill::class);
         }
 
-        if (! $user instanceof Authenticatable) {
+        $userId = $user instanceof Authenticatable ? $user->getAuthIdentifier() : null;
+
+        if (! \is_string($userId) || $userId === '') {
             throw new AuthenticationException();
         }
 
-        return [$bill, $entity, $user];
+        return [$bill, $entity, $userId];
     }
 
     /**

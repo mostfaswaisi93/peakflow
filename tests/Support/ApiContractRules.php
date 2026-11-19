@@ -232,6 +232,7 @@ final class ApiContractRules
                 'every read endpoint answers a token holding its scope' => fn (): array => $this->theReadSurfaceAnswers(),
                 'a payment settles only what it can, or is not recorded' => fn (): array => $this->aPaymentSettlesOnlyWhatItCan(),
                 'a bill decision is refused before it is recorded' => fn (): array => $this->billDecisionsAreGuarded(),
+                'an invoice is drafted and issued only by the rules' => fn (): array => $this->invoiceWritesAreGuarded(),
                 'a second factor is required, and one code opens one session' => fn (): array => $this->theSecondFactorStage(),
 
                 // PF-222 - money and dates.
@@ -3357,6 +3358,83 @@ final class ApiContractRules
             if ($answer->getStatusCode() !== $expected) {
                 $problems[] = sprintf('POST %s answered %d rather than %d', $uri, $answer->getStatusCode(), $expected);
             }
+        }
+
+        $this->signOutQuietly($session);
+
+        return $problems;
+    }
+
+    /**
+     * Drafting and issuing, at the HTTP edge - PF-266.
+     *
+     * The issuer's own rules are InvoiceIssuingRules' to prove. Here: the
+     * form's options answer, a draft naming no customer is refused by
+     * pointer, and issuing needs its key and a draft that exists here.
+     *
+     * @return list<string>
+     */
+    private function invoiceWritesAreGuarded(): array
+    {
+        foreach (['invoice.draft', 'invoice.issue'] as $key) {
+            DB::connection('tenant')->table('role_permissions')->insertOrIgnore([
+                'id' => (string) Str::ulid(),
+                'role_id' => $this->roleId,
+                'permission_id' => (string) Permission::query()->where('key', $key)->value('id'),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        [$response, $session] = $this->signInOnADevice();
+
+        if ($response->getStatusCode() !== 201) {
+            return ['could not sign in to draft an invoice'];
+        }
+
+        $problems = [];
+        $headers = $this->deviceHeaders($session);
+        $unknown = strtolower((string) Str::ulid());
+
+        $options = $this->request('GET', '/api/v1/invoice-options', headers: $headers, operation: 'getInvoiceOptions');
+
+        if ($options->getStatusCode() !== 200) {
+            $problems[] = sprintf('GET /invoice-options answered %d', $options->getStatusCode());
+        }
+
+        $draft = $this->request('POST', '/api/v1/invoices', [
+            'customer_id' => $unknown,
+            'revenue_account_code' => 'no-such-account',
+            'lines' => [['description' => 'A line', 'quantity' => '1', 'unit_price' => '10', 'tax_code' => 'NONE']],
+        ], $headers, 'draftInvoice');
+
+        $pointers = array_column((array) ($this->problem($draft)['errors'] ?? []), 'pointer');
+
+        if ($draft->getStatusCode() !== 422 || ! \in_array('/customer_id', $pointers, true)
+            || ! \in_array('/lines/0/revenue_account_code', $pointers, true)) {
+            $problems[] = sprintf(
+                'a draft for no customer, on no revenue account, answered %d without addressing both: %s',
+                $draft->getStatusCode(),
+                Str::limit((string) $draft->getContent(), 200),
+            );
+        }
+
+        $noKey = $this->request('POST', '/api/v1/invoices/'.$unknown.'/issue', [], $headers, 'issueInvoice');
+
+        if ($noKey->getStatusCode() !== 422) {
+            $problems[] = sprintf('issuing with no Idempotency-Key answered %d rather than 422', $noKey->getStatusCode());
+        }
+
+        $missing = $this->request(
+            'POST',
+            '/api/v1/invoices/'.$unknown.'/issue',
+            [],
+            $headers + ['Idempotency-Key' => 'contract-suite-'.Str::random(24)],
+            'issueInvoice',
+        );
+
+        if ($missing->getStatusCode() !== 404) {
+            $problems[] = sprintf('issuing an invoice that does not exist answered %d rather than 404', $missing->getStatusCode());
         }
 
         $this->signOutQuietly($session);

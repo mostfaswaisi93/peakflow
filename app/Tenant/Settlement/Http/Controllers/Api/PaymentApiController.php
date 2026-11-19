@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Tenant\Settlement\Http\Controllers\Api;
 
-use Illuminate\Contracts\Auth\Authenticatable;
 use App\Support\Http\Api\DatabaseRefusal;
 use App\Support\Http\Api\Wire;
 use App\Support\Http\Problem;
@@ -18,6 +17,7 @@ use App\Tenant\Settlement\Services\Payments;
 use App\Tenant\Tenancy\Exceptions\EntityNotInScope;
 use App\Tenant\Tenancy\Models\Entity;
 use App\Tenant\Tenancy\Services\EntityContext;
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -101,8 +101,9 @@ final class PaymentApiController
         }
 
         $user = $request->user();
+        $userId = $user instanceof Authenticatable ? $user->getAuthIdentifier() : null;
 
-        if (! $user instanceof Authenticatable) {
+        if (! \is_string($userId) || $userId === '') {
             abort(401);
         }
 
@@ -126,14 +127,14 @@ final class PaymentApiController
         }
 
         try {
-            $result = DB::connection('tenant')->transaction(function () use ($request, $entity, $user, $currency, $wanted): array {
+            $result = DB::connection('tenant')->transaction(function () use ($request, $entity, $userId, $currency, $wanted): array {
                 $recorded = $this->payments->record(
                     entityId: $entity->id,
                     direction: PaymentDirection::from($request->string('direction')->value()),
                     method: PaymentMethod::from($request->string('method')->value()),
                     amount: Money::of($request->string('amount')->value(), $currency),
                     valueDate: Carbon::createFromFormat('Y-m-d', $request->string('value_date')->value())?->startOfDay() ?? now()->startOfDay(),
-                    userId: $user->getAuthIdentifier(),
+                    userId: $userId,
                     bankAccountId: self::optional($request, 'bank_account_id'),
                     cashAccountId: self::optional($request, 'cash_account_id'),
                     partyId: self::optional($request, 'party_id'),
@@ -150,7 +151,7 @@ final class PaymentApiController
                         documentType: (string) $line['document_type'],
                         documentId: (string) $line['document_id'],
                         amount: Money::of((string) $line['amount'], $currency),
-                        userId: $user->getAuthIdentifier(),
+                        userId: $userId,
                     );
 
                     $applied[] = [

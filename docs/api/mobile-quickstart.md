@@ -58,7 +58,37 @@ POST /api/v1/auth/refresh        (X-Tenant header)
 - If the app ever sends an old refresh token again, the server treats it as stolen. It closes the whole session, and the person signs in again.
 - Refresh from one place in the app at a time. Two refreshes racing with the same token look exactly like theft.
 
-## 4. Sign out
+## 4. Write
+
+Every write that posts to the ledger needs an `Idempotency-Key`: a UUID made once per action, and reused unchanged on every retry of that same action.
+
+- **Sell:**
+  1. `GET /invoice-options` returns the revenue accounts, tax codes with today's rates, and payment terms.
+  2. `POST /invoices` sends a customer and lines (quantity, unit price, tax code, revenue account).
+     - The server computes every figure. Never send a total.
+  3. `POST /invoices/{id}/issue` `{"payment_term": "NET30"}` (key required) numbers it, posts it and freezes it.
+     - A draft that breaks a rule answers 422 `document-validation-failed`.
+- **Record a payment:** `POST /payments`
+  - It can apply the payment to invoices or bills in the same request. All or nothing.
+  - A receipt settles an **issued** invoice, and a disbursement a **posted** bill, with the same party.
+- **Bill approval:**
+  1. `POST /bills/{id}/submit` (`bill.create`) opens the chain.
+  2. `GET /bills/{id}` shows `approval.who_can_decide`.
+  3. `POST /bills/{id}/approve` (`bill.approve`, key required): the **last** approval books the bill.
+  4. `POST /bills/{id}/reject` `{"comment": "what to fix"}` returns it to draft.
+- **Who may approve:**
+  - The person who submitted cannot approve (403 `segregation-of-duties-conflict`). Show `who_can_decide` instead.
+  - A bill edited during approval answers 412 `stale-write`, and its chain starts again.
+
+Demo accounts for the chain (password `peakflow`):
+
+| Account | Role |
+|---|---|
+| `ap@demo.test` | Submits bills |
+| `controller@demo.test` | Approves bills |
+| `owner@demo.test` | Second approver above 20,000 |
+
+## 5. Sign out
 
 - `POST /api/v1/auth/sign-out` ends this device's session.
 - `GET /api/v1/auth/sessions` lists the person's devices.
