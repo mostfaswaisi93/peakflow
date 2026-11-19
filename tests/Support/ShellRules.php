@@ -493,14 +493,28 @@ final class ShellRules
         $labels = array_map(static fn (array $s): string => $s['label_en'], $sections);
 
         /*
-         | A user with no role at all still gets the Overview.
+         | Two sections survive a user with no role at all, and each names
+         | no permission for its own reason.
          |
-         | That item names no permission, deliberately: the page itself
-         | shows figures only to somebody who may see them, and a shell
-         | with no navigation whatsoever reads as a broken deployment
-         | rather than as an account waiting for a role.
+         | The Overview, because the page shows figures only to somebody who
+         | may see them, and a shell with no navigation whatsoever reads as a
+         | broken deployment rather than as an account waiting for a role.
+         |
+         | My account, because it is where a user enrols a second factor -
+         | and `RoleGrantService` refuses any role carrying a permission
+         | marked `requires_mfa` to a user who has no confirmed factor. A
+         | permission on that item would be a lock whose key is behind it,
+         | which is precisely the state the product was in before PF-246:
+         | the enrolment half of `MfaService` had no caller anywhere, so
+         | nobody could ever be granted `payment.release`.
+         |
+         | The list is exact on purpose. A THIRD always-visible section is a
+         | decision somebody should have to come here and justify, because
+         | the cost of getting it wrong is a heading over nothing - and the
+         | rule this check is named for is that such a heading reads as
+         | something broken.
          */
-        if ($labels !== ['Overview']) {
+        if ($labels !== ['Overview', 'My account']) {
             return [sprintf(
                 'a user with no role saw the sections [%s]. A heading over no items reads as something '.
                 'broken, and four of them reads as a broken product.',

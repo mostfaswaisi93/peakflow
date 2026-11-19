@@ -1,7 +1,7 @@
 {{--
     <x-icon name="..."> - the interface's line icons.
 
-        name   home | sales | purchasing | bank | ledger | masters | menu
+        name   home | sales | purchasing | bank | ledger | masters | shield | menu
         class  the size; 20px (size-5) in the sidebar, 16px (size-4) inline
 
     Inline SVG rather than a sprite or a font, for three reasons that each
@@ -36,6 +36,7 @@
         'bank' => 'M3 9.75 12 4.5l9 5.25M4.5 9.75v9.75h15V9.75M8.25 12.75v4.5M12 12.75v4.5M15.75 12.75v4.5M2.25 19.5h19.5',
         'ledger' => 'M5.25 3.75h10.5l3 3v13.5H5.25V3.75ZM8.25 8.25h6M8.25 11.25h7.5M8.25 14.25h7.5M8.25 17.25h4.5',
         'masters' => 'M9 11.25a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM2.25 19.5a6.75 6.75 0 0 1 13.5 0M16.5 11.25a2.25 2.25 0 1 0 0-4.5M18 19.5a5.25 5.25 0 0 0-2.25-4.3',
+        'shield' => 'M12 3 4.5 6v6c0 4.2 3 7.5 7.5 9 4.5-1.5 7.5-4.8 7.5-9V6L12 3ZM9.375 11.625l1.875 1.875 3.375-3.75',
         'menu' => 'M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5',
     ];
 @endphp

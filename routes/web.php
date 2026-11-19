@@ -9,6 +9,9 @@ use App\Tenant\Banking\Http\Controllers\StatementImportController;
 use App\Tenant\Identity\Http\Controllers\EntitySwitchController;
 use App\Tenant\Identity\Http\Controllers\DensityPreferenceController;
 use App\Tenant\Identity\Http\Controllers\ThemePreferenceController;
+use App\Tenant\Identity\Http\Controllers\RecoveryCodesController;
+use App\Tenant\Identity\Http\Controllers\SecurityController;
+use App\Tenant\Identity\Http\Controllers\TotpEnrolmentController;
 use App\Tenant\Banking\Http\Controllers\BankAccountListController;
 use App\Tenant\Catalog\Http\Controllers\CurrencyListController;
 use App\Tenant\Catalog\Http\Controllers\ItemListController;
@@ -189,6 +192,33 @@ Route::middleware(['tenant.session', 'auth'])->group(static function (): void {
     // And the density, for the same reason: a person who works at `dense`
     // should not have to establish an entity before they can say so - PF-203.
     Route::post('/preferences/density', DensityPreferenceController::class)->name('preferences.density');
+
+    /*
+    | A user's own second factor - PF-246.
+    |
+    | No `can:` on any of these, and that is the whole point. `RoleGrantService`
+    | refuses a role carrying a permission marked `requires_mfa` unless the user
+    | already has a confirmed factor, so a permission gate here would be a lock
+    | whose key is behind it - which is the state the product was in: the
+    | enrolment half of `MfaService` had no caller anywhere, so no user could
+    | obtain a factor and therefore no user could ever be granted
+    | `payment.release`.
+    |
+    | Every handler resolves the authenticator against the CURRENT user by
+    | query rather than by route-model binding. Binding would resolve any id in
+    | the table and leave ownership to whoever wrote the handler, and the thing
+    | being confirmed is a second factor: an id from another user is somebody
+    | enrolling their own phone against a colleague's account.
+    */
+    Route::get('/security', SecurityController::class)->name('security.index');
+    Route::post('/security/factors', [TotpEnrolmentController::class, 'begin'])
+        ->name('security.factors.begin');
+    Route::post('/security/factors/{authenticator}/confirm', [TotpEnrolmentController::class, 'confirm'])
+        ->name('security.factors.confirm');
+    Route::delete('/security/factors/{authenticator}', [TotpEnrolmentController::class, 'destroy'])
+        ->name('security.factors.destroy');
+    Route::post('/security/recovery-codes', RecoveryCodesController::class)
+        ->name('security.recovery-codes');
 });
 
 Route::middleware(['tenant.session', 'auth', 'entity.scope'])->group(static function (): void {

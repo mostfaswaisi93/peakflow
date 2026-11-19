@@ -14,6 +14,9 @@ use App\Tenant\Identity\Models\Permission;
 use App\Tenant\Identity\Models\User;
 use App\Tenant\Identity\Services\LoginThrottle;
 use App\Tenant\Identity\Services\MfaService;
+use App\Tenant\Identity\Services\RoleGrantService;
+use App\Tenant\Identity\Models\Role;
+use App\Tenant\Identity\Http\Controllers\TotpEnrolmentController;
 use App\Tenant\Identity\Services\StepUpGuard;
 use Illuminate\Auth\AuthManager;
 use Illuminate\Contracts\Session\Session;
@@ -88,7 +91,7 @@ final class IdentityCoverageRules
     /** @return array<string, list<string>> */
     public function all(): array
     {
-        $tenant = Tenant::query()->whereHas('connection')->orderBy('slug')->first();
+        $tenant = $this->aTenantHoldingAnEntity();
 
         if ($tenant === null) {
             return ['the sign-in challenge (no tenant provisioned - skipped)' => []];
@@ -127,6 +130,8 @@ final class IdentityCoverageRules
                 'a tenant sign-in authenticates nobody on the operator plane' => $this->planesStaySeparate(),
                 'a recovery code finishes a challenge, and does so exactly once' => $this->recoveryCodeWorksOnce(),
                 'the challenge form asks for a code, and does not ask for the account again' => $this->challengeFormAsksForACode(),
+                'a user with no factor can enrol one, and only then holds the role that needs it'
+                    => $this->aUserCanEnrolAndThenHoldTheRole(),
             ];
         } finally {
             $this->connection->rollBack();
@@ -712,6 +717,285 @@ final class IdentityCoverageRules
         }
 
         return $violations;
+    }
+
+    /**
+     * A user with no factor can get one, and then be granted the role.
+     *
+     * ## The deadlock this is about
+     *
+     * `RoleGrantService::grant()` refuses any role carrying a permission
+     * marked `requires_mfa` unless `MfaService::hasConfirmedFactor()` is
+     * true. That is true only when a confirmed `Authenticator` exists, and
+     * one is created by `beginTotpEnrolment()` and confirmed by
+     * `confirmTotpEnrolment()`.
+     *
+     * Measured before PF-246: those two, and `regenerateRecoveryCodes()` and
+     * `removeAuthenticator()` with them, had **zero callers anywhere in the
+     * application**. No route, no controller, no command. So no user could
+     * obtain a factor, and therefore no user could ever be granted
+     * `payment.release`.
+     *
+     * Nothing reported it. Every piece existed, each had checks, and each
+     * worked when called - `TenantEnforcementRules::totpCodeWorksOnce()`
+     * proves the ceremony itself. `mfa:status` even listed who was missing a
+     * factor, which reads as a gap in enrolment rather than as the absence
+     * of any way to enrol.
+     *
+     * ## Driven through the controllers, not the service
+     *
+     * Calling `MfaService` would prove what was already true: the service
+     * always worked. What was missing was a way in, so this goes through the
+     * HTTP handlers with a real session.
+     *
+     * And the code is computed from the secret the HANDLER returned, not
+     * from the model. An enrolment page that displayed one secret and stored
+     * another would confirm nothing - the person enrols an app that can
+     * never sign them in, and finds out at the worst possible moment.
+     *
+     * @return list<string>
+     */
+    private function aUserCanEnrolAndThenHoldTheRole(): array
+    {
+        $role = Role::query()
+            ->whereHas('permissions', static fn ($query) => $query->where('requires_mfa', true))
+            ->orderBy('key')
+            ->first();
+
+        if ($role === null) {
+            return ['no role carries a permission marked requires_mfa, so the grant this check is '.
+                'about cannot be attempted and it proves nothing'];
+        }
+
+        $entityId = (string) DB::connection('tenant')->table('entities')->orderBy('code')->value('id');
+
+        if ($entityId === '') {
+            return ['the tenant holds no entity, so no role can be granted in one'];
+        }
+
+        [$user] = $this->probeUser();
+
+        $grants = app(RoleGrantService::class);
+        $mfa = app(MfaService::class);
+
+        /*
+         | The refusal FIRST.
+         |
+         | Without it, everything below would pass just as well against a
+         | grant service that had stopped checking - and the enrolment page
+         | would be decoration on a control that no longer runs.
+         */
+        try {
+            $grants->grant($user, $role, $entityId);
+
+            return [sprintf(
+                'a user with no second factor was granted "%s", which carries a permission marked '.
+                'requires_mfa. The control this page exists to serve is not running, so nothing '.
+                'below would mean anything',
+                (string) $role->key,
+            )];
+        } catch (Throwable) {
+            // Refused, as it should be. Now the user needs a way out of it.
+        }
+
+        $problems = [];
+
+        /*
+         | The routes, before the handlers.
+         |
+         | Everything below calls the controller directly, which proves the
+         | logic and nothing about reachability - and reachability is the
+         | entire defect: the handlers would have worked perfectly before
+         | PF-246 too, if anything had been able to call them. A missing or
+         | misspelled route name is a page whose buttons post to nowhere.
+         */
+        foreach ([
+            'security.index',
+            'security.factors.begin',
+            'security.factors.confirm',
+            'security.factors.destroy',
+            'security.recovery-codes',
+        ] as $name) {
+            if (! \Illuminate\Support\Facades\Route::has($name)) {
+                $problems[] = sprintf(
+                    'the route "%s" does not exist, so the enrolment page either cannot be reached '.
+                    'or its form posts nowhere. The handlers below would still pass, which is '.
+                    'exactly how this defect survived: every piece worked when called, and nothing '.
+                    'called them',
+                    $name,
+                );
+            }
+        }
+
+        if ($problems !== []) {
+            return $problems;
+        }
+
+        $controller = app(TotpEnrolmentController::class);
+
+        $begin = $this->asUser($user, 'POST', ['name' => 'Enrolment probe']);
+
+        $controller->begin($begin, $mfa);
+
+        $enrolment = $this->session?->get('mfa.enrolment');
+
+        if (! is_array($enrolment) || ! isset($enrolment['secret'], $enrolment['id'])) {
+            return ['the enrolment handler returned no secret, so there is no way for a user to '.
+                'enrol - which is the whole of the defect this is about'];
+        }
+
+        $confirm = $this->asUser($user, 'POST', [
+            /*
+             | With the space every authenticator app displays.
+             |
+             | They all render "123 456". Somebody copying it copies the
+             | space, and a form that answers "that code is wrong" to a
+             | correct code is how a person concludes the feature is broken -
+             | at the exact moment they are being asked to trust it.
+             */
+            'code' => substr(Totp::at((string) $enrolment['secret']), 0, 3).' '.
+                substr(Totp::at((string) $enrolment['secret']), 3),
+        ]);
+
+        $controller->confirm($confirm, $mfa, (string) $enrolment['id']);
+
+        if (! $mfa->hasConfirmedFactor($user->refresh())) {
+            $problems[] = 'the code computed from the secret the enrolment handler returned did not '.
+                'confirm the factor. Either the secret a user is shown is not the one the '.
+                'confirmation verifies against - so they enrol an app that can never sign them in - '.
+                'or the space every authenticator app displays was refused';
+
+            return $problems;
+        }
+
+        /*
+         | Removing the last factor while holding a money-moving permission
+         | is refused, and the user is SHOWN the refusal.
+         |
+         | Two different things, and only the first was true. `MfaService`
+         | has always refused it and written the refusal to the audit trail.
+         | What it does is throw - so with no handler the person clicking
+         | "remove" got a 500, from a refusal that was working perfectly.
+         |
+         | That is the shape worth keeping in mind here: the control was
+         | sound, the audit record was written, and the experience was an
+         | error page. A check driving the service would have seen a correct
+         | refusal; only one driving the handler sees what the person sees.
+         */
+        $granted = false;
+
+        try {
+            $grants->grant($user->refresh(), $role, $entityId);
+            $granted = true;
+        } catch (Throwable $e) {
+            $problems[] = sprintf(
+                'the role was still refused after the user enrolled a factor through the real '.
+                'handler: %s',
+                Str::limit($e->getMessage(), 160),
+            );
+        }
+
+        if ($granted) {
+            $factor = Authenticator::query()->whereKey((string) $enrolment['id'])->first();
+
+            if ($factor !== null) {
+                $destroy = $this->asUser($user->refresh(), 'DELETE');
+
+                try {
+                    $controller->destroy($destroy, $mfa, (string) $factor->getKey());
+                } catch (Throwable $e) {
+                    $problems[] = sprintf(
+                        'removing the last factor threw out of the handler (%s), so the person '.
+                        'clicking "remove" gets a 500 from a refusal that is working correctly',
+                        class_basename($e),
+                    );
+                }
+
+                if (Authenticator::query()->whereKey($factor->getKey())->first() === null) {
+                    $problems[] = 'a user holding a permission that requires a factor removed their '.
+                        'LAST one. They keep the permission and lose the control, and nothing says '.
+                        'so until mfa:status next runs - which reports it as a gap rather than as '.
+                        'something that just happened';
+                }
+
+                /*
+                 | And the refusal reached the page rather than escaping.
+                 |
+                 | An uncaught CannotRemoveLastFactor is a 500 on a button
+                 | the interface offers. The redirect carries the service's
+                 | own sentence, which names the permissions at stake and
+                 | the two ways out - neither of which an error page says.
+                 */
+                $shown = $this->session?->get('errors');
+
+                if (! $shown instanceof ViewErrorBag || ! $shown->has('factor')) {
+                    $problems[] = 'removing the last factor was refused and the person was shown '.
+                        'nothing about it. The refusal is correct and is in the audit trail; what '.
+                        'reaches the user is an error page, from a control that is working';
+                }
+            }
+        }
+
+        return $problems;
+    }
+
+    /**
+     * A request from a signed-in user, with this suite's session attached.
+     *
+     * The user resolver is set rather than the guard being logged in: these
+     * handlers read `$request->user()`, and binding it on the request is
+     * what the authentication middleware does. Going through the guard would
+     * also rotate the session, which this check is holding open.
+     *
+     * @param  array<string, mixed>  $input
+     */
+    private function asUser(User $user, string $method, array $input = []): Request
+    {
+        $request = Request::create('/security/factors', $method, $input, server: [
+            'REMOTE_ADDR' => $this->ip,
+            'HTTP_USER_AGENT' => self::AGENT,
+        ]);
+
+        $request->setLaravelSession($this->session);
+        $request->setUserResolver(static fn (): User => $user);
+
+        return $request;
+    }
+
+    /**
+     * The first provisioned tenant that actually holds an entity.
+     *
+     * Alphabetical order alone picks `acme`, which holds none - and a role
+     * is granted IN an entity, so a check about granting one had nothing to
+     * grant in and reported "the tenant holds no entity" rather than
+     * anything about the thing it tests.
+     *
+     * This is the same shape of mistake as choosing a fixture by
+     * `created_at` among rows written in the same second: the selection
+     * looks deterministic and the thing being selected FOR is not what is
+     * being compared. Fixing the selection is not narrowing the assertion -
+     * every check in this suite reads better against a tenant with data in
+     * it, and one with none quietly takes the empty branch.
+     */
+    private function aTenantHoldingAnEntity(): ?Tenant
+    {
+        $tenants = Tenant::query()->with('connection')->whereHas('connection')->orderBy('slug')->get();
+        $resolver = app(TenantConnectionResolver::class);
+
+        foreach ($tenants as $tenant) {
+            try {
+                $resolver->point($tenant);
+
+                if (DB::connection('tenant')->table('entities')->exists()) {
+                    return $tenant;
+                }
+            } catch (Throwable) {
+                // A tenant whose database cannot be reached is not a fixture.
+                // `bin/verify tenant` is where that is reported.
+            }
+        }
+
+        return $tenants->first();
     }
 
     /** The sign-in page as a browser would receive it. */

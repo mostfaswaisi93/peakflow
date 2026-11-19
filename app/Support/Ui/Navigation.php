@@ -134,6 +134,25 @@ final class Navigation
                     ['label_ar' => 'الضرائب', 'label_en' => 'Tax', 'route' => null, 'permission' => 'tax.manage'],
                 ],
             ],
+
+            /*
+             | The user's own account - PF-246.
+             |
+             | `permission => null`, and that is the point rather than an
+             | oversight. `RoleGrantService` refuses any role carrying a
+             | permission marked `requires_mfa` unless the user already has a
+             | confirmed factor, so gating this behind a permission would be
+             | a lock whose key is behind it. Every user has to be able to
+             | reach it, including one who holds nothing yet.
+             */
+            [
+                'label_ar' => 'حسابي',
+                'label_en' => 'My account',
+                'icon' => 'shield',
+                'items' => [
+                    ['label_ar' => 'الأمان', 'label_en' => 'Security', 'route' => 'security.index', 'permission' => null],
+                ],
+            ],
         ];
     }
 
