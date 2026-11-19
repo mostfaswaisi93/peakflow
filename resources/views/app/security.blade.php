@@ -78,10 +78,18 @@
             <p class="mt-2 text-body text-on-surface-muted">
                 {{ __('تحمل صلاحيات تُحرّك المال، وكل واحدة منها تشترط عاملًا ثانيًا مؤكَّدًا:') }}
             </p>
-            <ul class="mt-3 flex flex-wrap gap-2">
+            {{-- The name in the reader's language, the key beneath it. The key's
+                 own `dir="ltr"` is on an inline span inside a block, so it reads
+                 left to right without pulling the line to the left edge of an
+                 Arabic card. --}}
+            <ul class="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 @foreach ($moneyMoving as $permission)
-                    <li class="rounded-full border border-outline-subtle bg-surface-sunken px-3 py-1 font-mono text-caption text-on-surface" dir="ltr">
-                        {{ $permission }}
+                    <li class="flex items-start gap-3 rounded-field border border-outline-subtle bg-surface-sunken px-3 py-2.5">
+                        <x-icon name="shield" class="mt-0.5 size-5 text-on-surface-muted"/>
+                        <span class="min-w-0">
+                            <span class="block text-label font-medium text-on-surface">{{ $permission['label'] }}</span>
+                            <span class="block truncate text-caption text-on-surface-muted"><span dir="ltr" class="font-mono">{{ $permission['key'] }}</span></span>
+                        </span>
                     </li>
                 @endforeach
             </ul>

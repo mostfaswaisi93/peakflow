@@ -7,6 +7,7 @@ namespace App\Tenant\Identity\Http\Controllers;
 use App\Tenant\Identity\Models\Authenticator;
 use App\Tenant\Identity\Models\RecoveryCode;
 use App\Tenant\Identity\Services\MfaService;
+use App\Tenant\Identity\Services\PermissionCatalogue;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\Request;
 
@@ -57,11 +58,35 @@ final class SecurityController
      * BEFORE they can be granted the role that requires one. Gating this
      * page would put the key behind the lock it opens.
      */
-    public function __invoke(Request $request, MfaService $mfa): View
+    public function __invoke(Request $request, MfaService $mfa, PermissionCatalogue $catalogue): View
     {
         $user = $request->user();
 
         abort_if($user === null, 403);
+
+        /*
+         | Each permission by its NAME, in the reader's language, with the key
+         | beneath it.
+         |
+         | The catalogue already carries a bilingual label for every
+         | permission - written for a controller configuring roles, not for
+         | a developer - and this page used to print the bare keys instead:
+         | `journal.post`, `sod.override`, in a monospaced list in an Arabic
+         | interface. The key stays, smaller, because it is what support and
+         | the role screens call the same thing. A key the catalogue does not
+         | know, or a blank label, falls back to the key rather than to a
+         | blank chip.
+         */
+        $moneyMoving = $mfa->moneyMovingPermissionsHeldBy($user)
+            ->map(static function (string $key) use ($catalogue): array {
+                $label = trim((string) $catalogue->get($key)?->label());
+
+                return [
+                    'key' => $key,
+                    'label' => $label !== '' ? $label : $key,
+                ];
+            })
+            ->values();
 
         $session = $request->hasSession() ? $request->session() : null;
 
@@ -98,7 +123,7 @@ final class SecurityController
              | empty the page says that too, so somebody enrolling for a
              | role they are about to be given is not told they need nothing.
              */
-            'moneyMoving' => $mfa->moneyMovingPermissionsHeldBy($user),
+            'moneyMoving' => $moneyMoving,
 
             /*
              | Everything that comes out of the session is read HERE, once,
