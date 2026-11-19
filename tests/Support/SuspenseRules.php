@@ -85,6 +85,7 @@ final class SuspenseRules
                 'only the unexplained part of a line is parked' => fn (): array => $this->parksTheRemainder(),
                 'money out parks on the other side' => fn (): array => $this->parkingMoneyOut(),
                 'an entity with no suspense account is refused' => fn (): array => $this->noSuspenseAccount(),
+                'a draft entry is not a balance, on either control account' => fn (): array => $this->aDraftIsNotABalance(),
 
                 // ---- Clearing ------------------------------------------
                 'clearing reclassifies and leaves the original alone' => fn (): array => $this->clearingIsAReclassification(),
@@ -170,6 +171,140 @@ final class SuspenseRules
         }
 
         return $failures;
+    }
+
+    /**
+     * A draft entry is somebody's unfinished work, not a balance - PF-146.
+     *
+     * ## Three places disagreed about what a control-account balance is
+     *
+     * `TrialBalance` and `AgingReport::controlAccountBalance()` both filter
+     * `journal_entries.status IN ('posted','reversed')` and say why in
+     * comments. `BankBalances::ledger()` joined `journal_entries` only for
+     * the date and filtered no status; `Suspense::balance()` did not join
+     * it at all.
+     *
+     * So two of the four produced the figure **frozen into a reconciliation
+     * document an auditor re-performs** and the figure a period close signs
+     * off, and they counted rows the other two did not. A control account
+     * has to mean one thing. Where it means two, a reconciliation can be
+     * made to agree or disagree by which service was asked.
+     *
+     * ## Latent, and that is not a reason to leave it
+     *
+     * Nothing in the application creates a draft `journal_entries` row -
+     * PF-188 recorded that, and a posted entry cannot be moved back to
+     * draft - so no reachable state has draft lines today. The status is
+     * modelled, the API controller filters on it and the journal register
+     * needs it, so the row is one the schema expects to exist.
+     *
+     * A latent inconsistency between two definitions of a control-account
+     * balance is a defect waiting for the day somebody builds the screen
+     * that saves a draft. On that day it would arrive as a reconciliation
+     * that will not tie, with the difference explained by nothing.
+     *
+     * The draft is written straight onto the table because no service will
+     * write one, which is exactly why this could not be proved before.
+     *
+     * @return list<string>
+     */
+    private function aDraftIsNotABalance(): array
+    {
+        $this->importLines([$this->line('900.0000', ['bank_reference' => 'SUS-DRAFT'])]);
+        app(Suspense::class)->park($this->transactionBy('SUS-DRAFT'), $this->actorId(), 'unidentified');
+
+        $bankBefore = (string) app(BankBalances::class)->ledger($this->bank(), $this->date->copy())->amount;
+        $suspenseBefore = (string) app(Suspense::class)
+            ->balance($this->entityId, (string) $this->entity()->functional_currency)->amount;
+
+        $this->aDraftTouching([
+            (string) $this->bank()->gl_account_id,
+            $this->suspenseAccountId(),
+        ]);
+
+        $bankAfter = (string) app(BankBalances::class)->ledger($this->bank(), $this->date->copy())->amount;
+        $suspenseAfter = (string) app(Suspense::class)
+            ->balance($this->entityId, (string) $this->entity()->functional_currency)->amount;
+
+        $failures = [];
+
+        foreach ([
+            ['the bank account\'s ledger balance', $bankBefore, $bankAfter],
+            ['the suspense control balance', $suspenseBefore, $suspenseAfter],
+        ] as [$what, $before, $after]) {
+            if ($before !== $after) {
+                $failures[] = sprintf(
+                    '%s moved from %s to %s when a DRAFT entry was written. A draft is unfinished '.
+                    'work: `TrialBalance` and the ageing both exclude it and say why, so counting it '.
+                    'here makes two services disagree about one control account - and this is the '.
+                    'one whose figure is frozen into a reconciliation document.',
+                    $what,
+                    $before,
+                    $after,
+                );
+            }
+        }
+
+        return $failures;
+    }
+
+    /**
+     * A balanced draft entry touching the given accounts.
+     *
+     * `accounting_date` and `period_id` are supplied although a trigger
+     * overwrites them: `journal_lines` is RANGE-partitioned on the date and
+     * PostgreSQL routes the row before the trigger runs, so a row left to
+     * the trigger lands in the default partition and cannot then be moved.
+     *
+     * @param  list<string>  $accountIds
+     */
+    private function aDraftTouching(array $accountIds): void
+    {
+        $connection = DB::connection('tenant');
+
+        $reference = $connection->table('journal_entries')
+            ->where('entity_id', $this->entityId)
+            ->where('status', 'posted')
+            ->orderByDesc('accounting_date')
+            ->first();
+
+        if ($reference === null) {
+            return;
+        }
+
+        $entryId = (string) Str::ulid();
+
+        $connection->table('journal_entries')->insert([
+            'id' => $entryId,
+            'entity_id' => $this->entityId,
+            'journal_id' => (string) $reference->journal_id,
+            'period_id' => (string) $reference->period_id,
+            'number' => 'DRAFT-'.Str::upper(Str::random(5)),
+            'accounting_date' => (string) $reference->accounting_date,
+            'narration' => 'Half-finished, and no balance may count it',
+            'status' => 'draft',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        foreach ($accountIds as $index => $accountId) {
+            $signed = $index === 0 ? '400.0000' : '-400.0000';
+
+            $connection->table('journal_lines')->insert([
+                'id' => (string) Str::ulid(),
+                'journal_entry_id' => $entryId,
+                'entity_id' => $this->entityId,
+                'accounting_date' => (string) $reference->accounting_date,
+                'period_id' => (string) $reference->period_id,
+                'account_id' => $accountId,
+                'amount' => $signed,
+                'currency' => (string) $this->entity()->functional_currency,
+                'functional_amount' => $signed,
+                'narration' => 'A draft line',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
     }
 
     /** @return list<string> */

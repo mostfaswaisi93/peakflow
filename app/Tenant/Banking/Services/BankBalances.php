@@ -157,6 +157,27 @@ final class BankBalances
             JOIN journal_entries e ON e.id = l.journal_entry_id
             WHERE l.account_id = ?
               AND e.accounting_date <= ?::date
+              /*
+               | A DRAFT is not a balance - PF-146.
+               |
+               | `TrialBalance` and `AgingReport::controlAccountBalance()`
+               | both filter this and say why; this did not, and neither did
+               | `Suspense::balance()`. So two of the four definitions of a
+               | control-account balance counted rows the other two did not -
+               | and these two produce the figure frozen into a
+               | reconciliation document an auditor re-performs.
+               |
+               | Latent today, because nothing in the application creates a
+               | draft entry (PF-188) and a posted one cannot go back. The
+               | day somebody builds the screen that saves a draft, it would
+               | have arrived as a reconciliation that will not tie with the
+               | difference explained by nothing.
+               |
+               | `reversed` is included with `posted`: a reversal is itself
+               | a posted entry carrying the opposite lines, so both sides
+               | are already in the sum.
+               */
+              AND e.status IN ('posted', 'reversed')
         SQL, [(string) $account->gl_account_id, $day->toDateString()]);
 
         return Money::of((string) ($row->balance ?? '0'), (string) $account->currency);

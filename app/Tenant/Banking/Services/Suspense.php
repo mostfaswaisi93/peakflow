@@ -545,10 +545,32 @@ final class Suspense
         }
 
         $row = DB::connection('tenant')->selectOne(<<<'SQL'
-            SELECT coalesce(sum(functional_amount), 0)::text AS balance
-            FROM journal_lines
-            WHERE entity_id = ?
-              AND account_id = ?
+            SELECT coalesce(sum(l.functional_amount), 0)::text AS balance
+            FROM journal_lines l
+            JOIN journal_entries e ON e.id = l.journal_entry_id
+            WHERE l.entity_id = ?
+              AND l.account_id = ?
+              /*
+               | A DRAFT is not a balance - PF-146.
+               |
+               | `TrialBalance` and `AgingReport::controlAccountBalance()`
+               | both filter this and say why; this did not, and neither did
+               | `Suspense::balance()`. So two of the four definitions of a
+               | control-account balance counted rows the other two did not -
+               | and these two produce the figure frozen into a
+               | reconciliation document an auditor re-performs.
+               |
+               | Latent today, because nothing in the application creates a
+               | draft entry (PF-188) and a posted one cannot go back. The
+               | day somebody builds the screen that saves a draft, it would
+               | have arrived as a reconciliation that will not tie with the
+               | difference explained by nothing.
+               |
+               | `reversed` is included with `posted`: a reversal is itself
+               | a posted entry carrying the opposite lines, so both sides
+               | are already in the sum.
+               */
+              AND e.status IN ('posted', 'reversed')
         SQL, [$entityId, (string) $accountId]);
 
         return Money::of((string) ($row->balance ?? '0'), $currency);
