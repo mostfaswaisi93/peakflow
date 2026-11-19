@@ -50,6 +50,20 @@ enum ProblemType: string
     case TenantRequired = 'tenant-required';
     case EntityRequired = 'entity-required';
     case EntityNotPermitted = 'entity-not-permitted';
+
+    /*
+     | A SESSION in an entity the signed-in user holds no role in - PF-026.
+     |
+     | Separate from `entity-not-permitted`, which is the token's refusal,
+     | because the two have different audiences and different remedies. A
+     | machine is told which entities its token names; a person is told they
+     | hold no role in that company and that somebody has to grant them one.
+     |
+     | `EntityNotInScope::notPermitted()` rendered as `entity-required` - a
+     | 400 - so "you hold no role here" arrived as "you did not say which
+     | entity", which sends the reader to check a header that was correct.
+     */
+    case EntityNotYours = 'entity-not-yours';
     case SubscriptionInactive = 'subscription-inactive';
     case TenantMigrating = 'tenant-migrating';
 
@@ -102,6 +116,7 @@ enum ProblemType: string
             self::MfaEnrolmentRequired,
             self::TokenScopeMissing,
             self::EntityNotPermitted,
+            self::EntityNotYours,
             self::ControlAccountNotPostable => 403,
 
             self::TenantRequired,
@@ -156,6 +171,7 @@ enum ProblemType: string
             self::TenantRequired => 'A tenant must be identified',
             self::EntityRequired => 'An entity must be identified',
             self::EntityNotPermitted => 'This token may not act in that entity',
+            self::EntityNotYours => 'You hold no role in that company',
             self::SubscriptionInactive => 'The subscription is not active',
             self::TenantMigrating => 'The workspace is being migrated',
             self::ValidationFailed => 'The request could not be validated',
@@ -215,6 +231,7 @@ enum ProblemType: string
             self::TenantRequired => 'Send the workspace in the X-Tenant header. It is resolved before authentication, so it cannot be guessed from the token.',
             self::EntityRequired => 'Send the legal entity in the X-Entity header. Every figure in this product belongs to exactly one.',
             self::EntityNotPermitted => 'This token names the entities it may act in, and that is not one of them.',
+            self::EntityNotYours => 'Access is granted per company: a role in one company of a group grants nothing in another. Ask an administrator of that company to grant you one.',
             self::SubscriptionInactive => 'This workspace is not currently entitled to be served.',
             self::TenantMigrating => 'This workspace is being upgraded. Retry after the interval in Retry-After.',
             self::ValidationFailed => 'One or more fields could not be accepted. Each is addressed by a JSON pointer in errors.',
@@ -253,6 +270,7 @@ enum ProblemType: string
             self::TenantRequired => 'أرسل مساحة العمل في ترويسة X-Tenant. تُحَل قبل التوثيق، فلا يمكن استنتاجها من الرمز.',
             self::EntityRequired => 'أرسل الكيان القانوني في ترويسة X-Entity. كل رقم في هذا النظام يعود إلى كيان واحد بعينه.',
             self::EntityNotPermitted => 'هذا الرمز يسمّي الكيانات التي يعمل فيها، وهذا ليس أحدها.',
+            self::EntityNotYours => 'الوصول يُمنح لكل شركة على حدة: دورٌ في شركة من المجموعة لا يمنح شيئًا في أخرى. اطلب من مسؤول تلك الشركة أن يمنحك دورًا.',
             self::SubscriptionInactive => 'مساحة العمل هذه غير مستحقة للخدمة حاليًا.',
             self::TenantMigrating => 'يجري ترقية مساحة العمل. أعد المحاولة بعد المدة المذكورة في Retry-After.',
             self::ValidationFailed => 'تعذّر قبول حقل أو أكثر. كل حقل مُعنوَن بمؤشّر JSON في errors.',

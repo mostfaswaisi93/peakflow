@@ -20,6 +20,17 @@ use Symfony\Component\HttpFoundation\Response;
  */
 final class EntityNotInScope extends RuntimeException
 {
+    /**
+     * True when no entity was established at all, false when one was and is
+     * not this person's.
+     *
+     * A property rather than two exception classes, because every catch site
+     * in the product wants both - "this query had no entity" and "this
+     * entity is not yours" are the same thing to go wrong at a call site and
+     * two different things to answer with.
+     */
+    private bool $permitted = true;
+
     private function __construct(string $message, public readonly ?string $model = null)
     {
         parent::__construct($message);
@@ -42,16 +53,36 @@ final class EntityNotInScope extends RuntimeException
 
     public static function notPermitted(string $entityId): self
     {
-        return new self(sprintf(
+        $refusal = new self(sprintf(
             'You hold no role in entity %s. Access is granted per entity: having a role in one company of a '.
             'group does not grant anything in another.',
             $entityId,
         ));
+
+        $refusal->permitted = false;
+
+        return $refusal;
     }
 
+    /**
+     * Which refusal this is, because the two are not the same answer.
+     *
+     * `forQueryOn()` is "no entity was established at all" - a routing or a
+     * programming mistake, and a 400: the request did not say which company
+     * it was about.
+     *
+     * `notPermitted()` is "you hold no role in THAT company" - a 403. The
+     * request said exactly which company and was understood; the answer is
+     * that this person may not see it, and the remedy is somebody granting
+     * them a role rather than anybody changing a header.
+     *
+     * Both rendered as `entity-required`, a 400, so the second arrived as
+     * the first: "you did not say which entity" to somebody who had, which
+     * sends them to check a header that was correct.
+     */
     public function render(Request $request): Response
     {
-        return Problem::of(ProblemType::EntityRequired)
+        return Problem::of($this->permitted ? ProblemType::EntityRequired : ProblemType::EntityNotYours)
             ->withDetail($this->getMessage())
             ->toResponse($request);
     }

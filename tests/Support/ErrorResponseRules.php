@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Support;
 
 use App\Support\Iso\LanguageRegistry;
+use App\Tenant\Tenancy\Exceptions\EntityNotInScope;
 use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Http\Request;
@@ -66,6 +67,8 @@ final class ErrorResponseRules
             'they depend on no build artifact and no session' => $this->theyDependOnNothing(),
             'an unauthenticated request reaches the right login' => $this->theRightLogin(),
             'an API error is problem+json and names its type' => $this->apiErrorsAreProblemJson(),
+            'refusing an entity you hold no role in is a 403, not a 400' =>
+                $this->anEntityThatIsNotYoursIsForbidden(),
         ];
     }
 
@@ -463,6 +466,80 @@ final class ErrorResponseRules
                 'switches on, so it has to name the condition rather than restate the status.',
                 (string) $body['type'],
             );
+        }
+
+        return $problems;
+    }
+
+    /**
+     * "You hold no role there" is a 403. It was a 400.
+     *
+     * `EntityNotInScope` carries two refusals and rendered both as
+     * `entity-required`:
+     *
+     *   `forQueryOn()`  - no entity was established at all. A routing or a
+     *                     programming mistake, and a 400 is right: the
+     *                     request did not say which company it was about.
+     *
+     *   `notPermitted()` - "you hold no role in THAT company". The request
+     *                     said exactly which, and was understood. That is a
+     *                     403, and the remedy is somebody granting a role
+     *                     rather than anybody changing a header.
+     *
+     * So the second arrived as the first: "an entity must be identified" to
+     * somebody who had identified one, which sends them to check a header
+     * that was correct. A status code is the one part of an error a client
+     * branches on without reading, and 400 tells it to stop retrying and
+     * fix the request while 403 tells it to ask for access.
+     *
+     * The type is its own rather than the API's `entity-not-permitted`,
+     * which is 403 already but phrased for a machine - "this token names
+     * the entities it may act in". A person reading that about their own
+     * browser session learns nothing.
+     *
+     * @return list<string>
+     */
+    private function anEntityThatIsNotYoursIsForbidden(): array
+    {
+        $problems = [];
+
+        $cases = [
+            'no entity established at all' => [
+                EntityNotInScope::forQueryOn('Invoice'),
+                400,
+                'entity-required',
+            ],
+            'an entity you hold no role in' => [
+                EntityNotInScope::notPermitted('01ABCDEF0123456789ABCDEFGH'),
+                403,
+                'entity-not-yours',
+            ],
+        ];
+
+        foreach ($cases as $description => [$refusal, $status, $type]) {
+            $response = $refusal->render(Request::create('/app/invoices', 'GET'));
+            $body = json_decode((string) $response->getContent(), true);
+
+            if ($response->getStatusCode() !== $status) {
+                $problems[] = sprintf(
+                    '%s answers %d and should answer %d. A status code is the one part of an error a '.
+                    'client branches on without reading it: 400 says stop retrying and fix the '.
+                    'request, 403 says ask for access.',
+                    $description,
+                    $response->getStatusCode(),
+                    $status,
+                );
+            }
+
+            if (! \is_array($body) || ! str_ends_with((string) ($body['type'] ?? ''), $type)) {
+                $problems[] = sprintf(
+                    '%s names the type "%s" and should name "%s". The type is what a client switches '.
+                    'on, and two different refusals under one type cannot be told apart.',
+                    $description,
+                    \is_array($body) ? (string) ($body['type'] ?? '(none)') : '(not json)',
+                    $type,
+                );
+            }
         }
 
         return $problems;
