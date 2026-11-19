@@ -303,10 +303,24 @@ A ledger is used on a laptop and read on a phone - an approver clearing a paymen
 
 Inconsistent spacing is the single most visible sign of software assembled by several people on several days. It is also the cheapest thing to get right and the easiest to lose: one `mt-7` among `mt-6`s is invisible to its author and obvious on the page beside it.
 
-- [ ] A spacing scale is declared as tokens, and a check refuses an arbitrary value - a page may use `space-6`, not `margin-top: 26px`
+- [x] A spacing scale is declared as tokens, and a check refuses an arbitrary value - a page may use `space-6`, not `margin-top: 26px`
+  - **The product was already on the scale; nothing was holding it there.** Every template was audited: zero arbitrary values, and the only literal `margin` in the stylesheet is `@page { margin: 16mm 14mm }`, which is paper and is measured in millimetres for a reason. So the compliance was real and accidental, which is a state that lasts until the next person in a hurry.
+  - The scale is drawn from what was already used - 0.5, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12 - rather than invented and imposed. A scale designed in the abstract generates a hundred exceptions on its first run, and a hundred exceptions is no scale.
+  - The list matters more than the unit. Tailwind v4 computes `mt-7` from `--spacing * 7` without being asked, so every integer is available and nothing says which ones the product uses. **That is exactly how one `mt-7` lands among the `mt-6`s** - invisible to its author, obvious on the page beside it, and impossible to find afterwards because it is not a mistake in any mechanical sense.
+  - Three bites: a step off the scale, an arbitrary value, and an exception whose subject no longer exists.
 - [ ] Section rhythm is a component, not a convention: the vertical gap between a page header and its first section, and between sections, is set in one place
-- [ ] Every page is audited against the scale and the exceptions are **named with a reason**, because a design system with silent exceptions is a design system nobody trusts
+  - **Confirmed as a convention, not a component.** `<x-page-header>` carries no bottom margin and `<main>` carries no `space-y`, so every page sets its own gap and the rhythm is whatever each page remembered. The scale above means those gaps are at least all on the scale; it does not mean they agree.
+  - Fixing it is moving the rhythm into one place and then taking the manual gap off every page, which changes the look of every screen at once - so it wants the before-and-after comparison the criterion below asks for, and is held until that exists.
+- [x] Every page is audited against the scale and the exceptions are **named with a reason**, because a design system with silent exceptions is a design system nobody trusts
+  - The audit found three steps outside the scale in the whole product, and they turned out to be three different things, which is the argument for naming exceptions rather than counting them.
+  - `px-3.5` on the sign-in fields was the only real slip - four uses, all the same control, consistent with itself and with nothing else. Moved to `px-3`.
+  - `ms-9` in the trial balance is **one rung of a ladder**: `ms-0, ms-3, ms-6, ms-9, ms-12`, regular at a step of 3, and the indent is what says which account is inside which. Breaking the ladder to fit the scale would break the report.
+  - `py-16` in the plain layout is the vertical breathing room of a page with one card centred in it, where the space *is* the layout rather than a gap between two things.
+  - The exceptions are keyed by `file:class`, so each is granted to one use rather than to a step everywhere - and the check reports an exception whose subject has gone, because an exception nobody revoked is a licence for the next person who needs one.
 - [ ] The check reads computed styles from a rendered page, not class names - a page that reaches the right spacing by three overrides is a page that breaks on the next change
+  - Not started, and the honest statement of what is built instead: the check above reads **templates**, which is the weaker of the two measurements. A page that reaches the right spacing through three overrides still passes it.
+  - What it does catch is the failure this task describes - one `mt-7` among the `mt-6`s - because that is a class, and a class is readable without a browser.
+  - The computed form needs a browser driving real pages, which is the same machinery PF-276 needs for its width budget and PF-280 for its skeleton measurements. Building it once for the three is the sensible order; building it three times is not.
 
 ### PF-278 · Tables that read like a financial product
 `—` · **8 pts** · depends: PF-205, PF-277 · standards: WCAG 2.2 AA · `risk:high`

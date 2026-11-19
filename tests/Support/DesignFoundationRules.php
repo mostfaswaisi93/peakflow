@@ -119,6 +119,9 @@ final class DesignFoundationRules
             'every foreground and background written onto one element is a declared pair' => $this->renderedPairsAreDeclared($css),
             'a row\'s three states are three, and the selected one survives losing colour' => $this->rowStatesStayThree($css),
 
+            // PF-277 - the spacing scale
+            'every space on every page is a step of the declared scale' => $this->spacingIsOnTheScale($css),
+
             // PF-201 - typography
             'no font is fetched from a third party at runtime' => $this->fontsAreNotFetchedAtRuntime($css),
             'the figure face is a face with real tabular figures, and the fallbacks carry Arabic' => $this->figuresAreSetForFigures($css),
@@ -502,6 +505,151 @@ final class DesignFoundationRules
     /* =======================================================================
      |  PF-200 - the contrast matrix
      * ==================================================================== */
+
+    /**
+     * The steps the product uses, and nothing else - PF-277.
+     *
+     * Drawn from what was already there rather than invented: a scale
+     * designed in the abstract and then imposed generates a hundred
+     * exceptions on its first run, and a hundred exceptions is no scale.
+     */
+    private const SPACING_STEPS = [
+        '0', '0.5', '1', '1.5', '2', '2.5', '3', '4', '5', '6', '8', '10', '12',
+    ];
+
+    /**
+     * Steps off the scale that are allowed, each with the reason.
+     *
+     * The list is the point of the check as much as the scale is. A design
+     * system with silent exceptions is one nobody trusts - the next person
+     * cannot tell a decision from a slip, so they copy both.
+     *
+     * Keyed by `file:class`, so an exception is granted to one use and not
+     * to a step everywhere.
+     */
+    private const SPACING_EXCEPTIONS = [
+        'resources/views/app/ledger/trial-balance.blade.php:ms-9' =>
+            'one rung of the account tree\'s indent ladder - ms-0, ms-3, ms-6, ms-9, ms-12 - which is '.
+            'regular at a step of 3 and has to stay regular, because the indent is what says which '.
+            'account is inside which',
+        'resources/views/layouts/plain.blade.php:py-16' =>
+            'the vertical breathing room of a page with one card centred in it - sign in, an error, a '.
+            'confirmation - where the space IS the layout rather than a gap between two things',
+    ];
+
+    /**
+     * Every spacing class in every template is a step of the scale - PF-277.
+     *
+     * ## What it refuses, and what it cannot
+     *
+     * An arbitrary value (`mt-[26px]`) and a step outside the list. It
+     * reads the templates rather than a rendered page, which is the weaker
+     * of the two measurements the task asks for - a page that reaches the
+     * right spacing through three overrides still passes here. The computed
+     * form needs a browser and is its own criterion.
+     *
+     * What this half does catch is the failure the task actually describes:
+     * one `mt-7` among the `mt-6`s, invisible to its author and obvious on
+     * the page beside it. That is a class, and a class is readable here.
+     *
+     * @return list<string>
+     */
+    public function spacingIsOnTheScale(string $css): array
+    {
+        if (! str_contains($css, '--spacing:')) {
+            return ['the stylesheet declares no `--spacing` unit, so the scale is whatever Tailwind\'s '.
+                'default arithmetic allows and nothing says which steps the product uses'];
+        }
+
+        $violations = [];
+        $properties = 'mt|mb|ms|me|mx|my|pt|pb|ps|pe|px|py|gap-x|gap-y|gap|space-x|space-y|p|m';
+        $files = $this->templates();
+
+        if ($files === []) {
+            return ['no templates were found at all, so this check just asserted something about an '.
+                'empty list'];
+        }
+
+        foreach ($files as $file) {
+            $relative = $this->relative($file);
+            $source = (string) file_get_contents($file);
+
+            // An arbitrary value is off the scale by construction.
+            if (preg_match_all('/\b(?:'.$properties.')-\[([^\]]+)\]/', $source, $arbitrary) > 0) {
+                foreach ($arbitrary[0] as $class) {
+                    $violations[] = \sprintf(
+                        '%s writes "%s". A space given as a literal is a space that belongs to one page '.
+                        'and drifts from every other, and it is the one somebody later matches by eye',
+                        $relative,
+                        $class,
+                    );
+                }
+            }
+
+            if (preg_match_all('/\b((?:'.$properties.')-([0-9]+(?:\.[0-9]+)?))\b/', $source, $found, PREG_SET_ORDER) === 0) {
+                continue;
+            }
+
+            foreach ($found as [, $class, $step]) {
+                if (\in_array($step, self::SPACING_STEPS, true)) {
+                    continue;
+                }
+
+                if (isset(self::SPACING_EXCEPTIONS[$relative.':'.$class])) {
+                    continue;
+                }
+
+                $violations[] = \sprintf(
+                    '%s writes "%s", and %s is not a step of the scale (%s). Either move it to the '.
+                    'nearest step, or add it to SPACING_EXCEPTIONS with the reason - a design system '.
+                    'with silent exceptions is one nobody trusts, because the next person cannot tell a '.
+                    'decision from a slip and copies both',
+                    $relative,
+                    $class,
+                    $step,
+                    implode(', ', self::SPACING_STEPS),
+                );
+            }
+        }
+
+        // An exception granted to something that no longer exists is a
+        // licence nobody revoked. It also makes the list read as longer
+        // than the debt actually is.
+        foreach (self::SPACING_EXCEPTIONS as $where => $reason) {
+            [$file, $class] = explode(':', $where, 2);
+            $path = $this->base.'/'.$file;
+
+            if (! is_file($path) || ! preg_match('/\b'.preg_quote($class, '/').'\b/', (string) file_get_contents($path))) {
+                $violations[] = \sprintf(
+                    'the scale still grants "%s" an exception in %s, and it is not there any more. An '.
+                    'exception nobody revoked is a licence for the next person who needs one',
+                    $class,
+                    $file,
+                );
+            }
+        }
+
+        return $violations;
+    }
+
+    /** Every Blade template in the product. @return list<string> */
+    private function templates(): array
+    {
+        $found = [];
+        $directory = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($this->base.'/resources/views', \FilesystemIterator::SKIP_DOTS),
+        );
+
+        foreach ($directory as $file) {
+            if ($file instanceof \SplFileInfo && str_ends_with($file->getFilename(), '.blade.php')) {
+                $found[] = $file->getPathname();
+            }
+        }
+
+        sort($found);
+
+        return $found;
+    }
 
     /**
      * Zebra, hover and selected are three states - PF-278.

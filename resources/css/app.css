@@ -828,6 +828,30 @@
  *  THEME MAPPING - the single place primitives become utilities
  * ======================================================================== */
 @theme {
+    /* ----------------------------------------------------------------------
+     *  THE SPACING SCALE - PF-277.
+     *
+     *  Declared, so that it is a decision rather than whatever Tailwind's
+     *  default arithmetic happens to allow. `--spacing` is the unit every
+     *  step is a multiple of; the steps themselves are the list in
+     *  `DesignFoundationRules::SPACING_STEPS`, and a class outside that list
+     *  is refused by `bin/verify design-system`.
+     *
+     *  ## Why a LIST and not a formula
+     *
+     *  Tailwind v4 computes `mt-7` from `--spacing * 7` without being asked,
+     *  so every integer is available and nothing says which ones the product
+     *  uses. That is how one `mt-7` lands among the `mt-6`s: invisible to
+     *  its author, obvious on the page beside it, and impossible to find
+     *  afterwards because it is not a mistake in any mechanical sense.
+     *
+     *  The list is drawn from what the product already used - 0.5, 1, 1.5,
+     *  2, 2.5, 3, 4, 5, 6, 8, 10, 12 - because a scale invented in the
+     *  abstract and then imposed is a scale that generates a hundred
+     *  exceptions on its first run.
+     * ------------------------------------------------------------------- */
+    --spacing: 0.25rem;
+
     --color-background:        oklch(var(--c-background));
     --color-surface:           oklch(var(--c-surface));
     --color-surface-raised:    oklch(var(--c-surface-raised));

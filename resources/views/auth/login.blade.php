@@ -81,7 +81,7 @@
                         <input id="code" name="code" type="text" required autofocus
                                autocomplete="one-time-code" inputmode="text" dir="ltr"
                                @error('email') aria-invalid="true" @enderror
-                               class="mt-1.5 block min-h-11 w-full rounded-field border border-outline-control bg-surface px-3.5 py-2 text-on-surface
+                               class="mt-1.5 block min-h-11 w-full rounded-field border border-outline-control bg-surface px-3 py-2 text-on-surface
                                       transition-colors duration-(--duration-fast) ease-(--ease-standard)
                                       focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                         <p class="mt-1.5 text-caption text-on-surface-muted">{{ __('إعادة التحقق المعزز') }}</p>
@@ -102,7 +102,7 @@
                         </label>
                         <input id="workspace" name="workspace" type="text" required
                                autocomplete="organization" dir="ltr" value="{{ old('workspace') }}"
-                               class="mt-1.5 block min-h-11 w-full rounded-field border border-outline-control bg-surface px-3.5 py-2 text-on-surface
+                               class="mt-1.5 block min-h-11 w-full rounded-field border border-outline-control bg-surface px-3 py-2 text-on-surface
                                       transition-colors duration-(--duration-fast) ease-(--ease-standard)
                                       placeholder:text-on-surface-subtle
                                       focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
@@ -117,7 +117,7 @@
                     <input id="email" name="email" type="email" required autofocus
                            autocomplete="username" dir="ltr" value="{{ old('email') }}"
                            @error('email') aria-invalid="true" @enderror
-                           class="mt-1.5 block min-h-11 w-full rounded-field border border-outline-control bg-surface px-3.5 py-2 text-on-surface
+                           class="mt-1.5 block min-h-11 w-full rounded-field border border-outline-control bg-surface px-3 py-2 text-on-surface
                                   transition-colors duration-(--duration-fast) ease-(--ease-standard)
                                   placeholder:text-on-surface-subtle
                                   focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
@@ -130,7 +130,7 @@
                     <input id="password" name="password" type="password" required
                            autocomplete="current-password" dir="ltr"
                            @error('email') aria-invalid="true" @enderror
-                           class="mt-1.5 block min-h-11 w-full rounded-field border border-outline-control bg-surface px-3.5 py-2 text-on-surface
+                           class="mt-1.5 block min-h-11 w-full rounded-field border border-outline-control bg-surface px-3 py-2 text-on-surface
                                   transition-colors duration-(--duration-fast) ease-(--ease-standard)
                                   focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                 </div>
