@@ -205,6 +205,61 @@ final class ProductionConfiguration
         }
 
         /*
+         | The log channel has to be one that filters its own lines.
+         |
+         | ## Measured, because this is a bypass and not a preference
+         |
+         | `config/logging.php` declares eleven channels and exactly TWO -
+         | `single` and `daily` - carry `'tap' => [JsonLog::class]`, which is
+         | what installs `AllowlistProcessor`. Read off the resolved logger:
+         |
+         |     single   ContextLogProcessor, AllowlistProcessor, PsrLogMessage
+         |     stderr   ContextLogProcessor, PsrLogMessage
+         |
+         | So a line written on `stderr` has been through no allowlist at
+         | all. Nothing constrained the choice: `LOG_CHANNEL` and `LOG_STACK`
+         | had no reader in this class or in the configuration checks. And
+         | `LOG_STACK=single,stderr` is the ordinary choice in a container -
+         | one copy to a file, one to the collector - which sends every log
+         | line, every span and every alert through the unfiltered half.
+         |
+         | `config/telemetry.php`'s own narrative says a line may not carry
+         | "a bound value, an account number, a party name or anything
+         | else". The allowlist is what enforces that sentence, and it could
+         | be left out of the path by one environment variable.
+         |
+         | ## The whole stack, not just the default
+         |
+         | A stack writes to every member, so checking only `logging.default`
+         | would pass a stack whose first channel filters and whose second
+         | does not - which is the shape above, and the one somebody arrives
+         | at by adding a collector to a working setup.
+         |
+         | ## Why it refuses rather than installing the tap
+         |
+         | Adding the processor to all eleven channels would make the guard
+         | unnecessary and the product worse: `null` exists to discard,
+         | `emergency` exists for when logging itself is broken, and quietly
+         | rewriting a chosen channel hides the decision. A refusal names
+         | the channel and the fix.
+         */
+        foreach (self::channelsThatWillBeWritten($get) as $channel) {
+            $taps = $get(sprintf('logging.channels.%s.tap', $channel));
+
+            if (\is_array($taps) && \in_array(\App\Support\Telemetry\JsonLog::class, $taps, true)) {
+                continue;
+            }
+
+            $problems[] = sprintf(
+                'the log channel "%s" will be written to and declares no allowlist tap, so every line, '.
+                'span and alert reaching it has been through no field allowlist at all - bound values, '.
+                'account numbers and party names included. Only "single" and "daily" carry it: write '.
+                'to one of those, or add the JsonLog tap to that channel.',
+                $channel,
+            );
+        }
+
+        /*
          | The stub drivers.
          |
          | Both are the committed defaults so that a fresh clone works with no
@@ -334,5 +389,38 @@ final class ProductionConfiguration
         if ($problems !== []) {
             throw ConfigurationIsUnsafe::because($problems);
         }
+    }
+
+    /**
+     * Every channel a log line can actually land on, a stack expanded.
+     *
+     * One level of expansion, deliberately. Laravel permits a stack whose
+     * member is another stack, and resolving that recursively would need a
+     * cycle guard for a configuration nobody writes. A nested stack falls
+     * through to the tap check and is reported by name, which is the right
+     * answer for a shape this guard does not understand - rather than
+     * silently accepting it.
+     *
+     * @param  callable(string): mixed  $get
+     * @return list<string>
+     */
+    private static function channelsThatWillBeWritten(callable $get): array
+    {
+        $default = (string) $get('logging.default');
+
+        if ($default === '') {
+            return [];
+        }
+
+        $members = $get(sprintf('logging.channels.%s.channels', $default));
+
+        if (! \is_array($members) || $members === []) {
+            return [$default];
+        }
+
+        return array_values(array_unique(array_map(
+            static fn (mixed $member): string => (string) $member,
+            $members,
+        )));
     }
 }

@@ -360,6 +360,31 @@ final class ConfigurationRules
             'migrations without a safety declaration' => ['tenancy.migrate.require_online_safety_declaration' => false],
             'webhooks allowed into private ranges' => ['exchange.webhooks.refuse_private_ranges' => false],
             'webhooks following redirects' => ['exchange.webhooks.follow_redirects' => true],
+
+            /*
+             | The log channel, both shapes.
+             |
+             | `single` and `daily` are the only two of eleven channels that
+             | carry the allowlist tap, and nothing constrained the choice
+             | until 2026-11-19. Measured off the resolved logger: `stderr`
+             | has `ContextLogProcessor` and `PsrLogMessageProcessor` and no
+             | `AllowlistProcessor` at all, so every line, span and alert
+             | reaching it had been through no field allowlist.
+             |
+             | The stack case is the one that actually happens. Nobody sets
+             | `LOG_CHANNEL=stderr` on a product that writes financial logs;
+             | plenty of people add a collector to a working setup and get
+             | `LOG_STACK=single,stderr`, where the first member filters and
+             | the second does not. A guard that only read `logging.default`
+             | would pass it.
+             */
+            'a log channel with no allowlist tap' => [
+                'logging.default' => 'stderr',
+            ],
+            'a log STACK one of whose members has no tap' => [
+                'logging.default' => 'stack',
+                'logging.channels.stack.channels' => ['single', 'stderr'],
+            ],
         ];
 
         foreach ($cases as $description => $overrides) {
