@@ -69,49 +69,64 @@ return Application::configure(basePath: dirname(__DIR__))
         | header parse and buys correct language on error responses.
         */
         /*
-         | The correlation id FIRST, before anything that might log - PF-014.
+         | THE GLOBAL ORDER, written once, because four separate `prepend()`
+         | calls each reasoned about in isolation produced the wrong one.
          |
-         | Prepended ahead of the locale middleware because a failure in any
-         | later middleware is logged, and a log line with no correlation id
-         | is a line that cannot be joined to the request that produced it -
-         | which is exactly the request somebody is trying to understand.
+         | ## What it was, and why that was not what anybody wrote
+         |
+         | `prepend()` puts a middleware in FRONT of whatever is already
+         | there, so the LAST prepend runs FIRST. Three of these four
+         | comments claimed the outermost position for their own middleware -
+         | the correlation id said "FIRST, before anything that might log",
+         | the security headers said "prepended, so it is the LAST middleware
+         | the response passes on the way out" - and the one that happened to
+         | be written last won. Measured off the kernel:
+         |
+         |     SecurityHeaders, SetLocale, AssignCorrelationId, TraceRequest
+         |
+         | So the correlation id ran THIRD. Two consequences, both real. A
+         | failure inside `SecurityHeaders` or `SetLocale` answered with no
+         | `X-Correlation-Id` header at all - and `docs/operations/
+         | observability.md` promises it "including on an error response -
+         | the error page is exactly when somebody needs it". And
+         | `AssignCorrelationId`'s `finally` never ran for such a request, so
+         | under Octane or a long-lived worker the id leaked into the next
+         | one: two unrelated requests joined in the logs, which is worse
+         | than no id, because it reads as causation.
+         |
+         | ## The order, outermost first, and why each is where it is
+         |
+         | 1. `AssignCorrelationId`. Outermost because every other entry on
+         |    this list can fail and every failure is logged. It is also the
+         |    cheapest thing here - adopt a header or generate an id - so
+         |    there is least to go wrong ahead of the ones that can.
+         |
+         | 2. `SecurityHeaders`. Second, which still makes it the last thing
+         |    a response passes on the way out of everything that can
+         |    produce one: the exception handler renders inside the unwinding
+         |    stack, so a 404, a 500 and `/workspace-unavailable` all pass
+         |    back through it. It gives up only the headers on a response
+         |    produced by a failure in step 1.
+         |
+         | 3. `TraceRequest`. Inside the correlation id, because the trace id
+         |    IS the correlation id: a span opened outside it would take
+         |    whatever the previous request left bound.
+         |
+         | 4. `SetLocale`. Innermost of the four, and globally it runs before
+         |    routing so a 404 still answers in the right language. It runs
+         |    again in the web group with the session available.
+         |
+         | The calls below are therefore in REVERSE of that list. An
+         | architecture check asserts the resolved order rather than trusting
+         | this comment, because the comment is what was wrong before.
          */
-        /*
-         | The request span, just INSIDE the correlation id - PF-240.
-         |
-         | Prepended before the correlation id's own prepend, so the
-         | correlation id ends up in front of it: a `prepend` goes ahead of
-         | whatever is already there, so the LAST prepend runs first. The
-         | trace id IS the correlation id, and a span opened outside
-         | AssignCorrelationId would take the id the previous request left
-         | bound - two requests under one trace id, which reads as causation.
-         |
-         | Global rather than in the web group, for the same reason as the
-         | security headers: a 404 from an unmatched URL and a 500 from the
-         | exception handler are the requests somebody is looking for, and
-         | neither reaches a route.
-         */
-        $middleware->prepend(TraceRequest::class);
-
-        $middleware->prepend(AssignCorrelationId::class);
-
         $middleware->prepend(SetLocale::class);
 
-        /*
-         | The security headers, GLOBAL and prepended - PF-237.
-         |
-         | Global rather than in the web group, because the responses that
-         | most need them never reach a route: a 404 from an unmatched URL, a
-         | 500 from the exception handler, and `/workspace-unavailable`, which
-         | exists precisely because the tenant could not be resolved.
-         |
-         | Prepended, so it is the LAST middleware the response passes on the
-         | way out. A header set earlier in the stack would be set on the
-         | response the next middleware was going to replace, and an error
-         | response built by the exception handler after the stack unwound
-         | would carry none at all.
-         */
+        $middleware->prepend(TraceRequest::class);
+
         $middleware->prepend(SecurityHeaders::class);
+
+        $middleware->prepend(AssignCorrelationId::class);
 
         $middleware->web(append: [
             SetLocale::class,

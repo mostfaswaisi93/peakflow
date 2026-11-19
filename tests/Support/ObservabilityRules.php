@@ -148,6 +148,8 @@ final class ObservabilityRules
                 // ---- PF-240 · distributed tracing -------------------------
                 'the request span is wired into the global stack, inside the correlation id'
                     => fn (): array => $this->theRequestSpanIsWired(),
+                'and the four global middleware run in the order bootstrap declares'
+                    => fn (): array => $this->theGlobalOrderIsTheDeclaredOne(),
                 'a database span carries the statement shape and never a bound value'
                     => fn (): array => $this->statementShapeNotBindings(),
                 'two statements differing only in their values are one shape'
@@ -379,6 +381,71 @@ final class ObservabilityRules
         }
 
         return $violations;
+    }
+
+    /**
+     * The four global middleware, in the order `bootstrap/app.php` declares.
+     *
+     * ## Why an absolute order and not four relative rules
+     *
+     * `prepend()` puts a middleware in FRONT of what is there, so the LAST
+     * prepend runs FIRST. Three of the four comments in `bootstrap/app.php`
+     * each claimed the outermost position for their own middleware - the
+     * correlation id said "FIRST, before anything that might log", the
+     * security headers said "prepended, so it is the LAST middleware the
+     * response passes on the way out" - and the one written last won.
+     * Measured before the fix:
+     *
+     *     SecurityHeaders, SetLocale, AssignCorrelationId, TraceRequest
+     *
+     * So the correlation id ran third. A failure inside `SecurityHeaders` or
+     * `SetLocale` answered with no `X-Correlation-Id`, which
+     * `docs/operations/observability.md` promises "including on an error
+     * response - the error page is exactly when somebody needs it". And
+     * `AssignCorrelationId`'s `finally` never ran for such a request, so
+     * under a long-lived worker the id leaked into the next one: two
+     * unrelated requests joined in the logs, which is worse than no id
+     * because it reads as causation.
+     *
+     * Each of those four comments was individually correct about its own
+     * requirement and collectively wrong about the result. Relative rules
+     * have the same failure: four pairwise assertions can all hold while
+     * the order still is not the one anybody intended. So this asserts the
+     * whole sequence, and the sequence is written down in one place.
+     *
+     * Only our own middleware is compared. The framework's entries are not
+     * this product's decision and asserting their positions would make the
+     * check fail on a Laravel upgrade that is none of its business.
+     *
+     * @return list<string>
+     */
+    private function theGlobalOrderIsTheDeclaredOne(): array
+    {
+        $expected = [
+            AssignCorrelationId::class,
+            \App\Http\Middleware\SecurityHeaders::class,
+            TraceRequest::class,
+            \App\Http\Middleware\SetLocale::class,
+        ];
+
+        $ours = array_values(array_filter(
+            $this->globalMiddleware(),
+            static fn (string $class): bool => str_starts_with($class, 'App\\Http\\Middleware\\'),
+        ));
+
+        if ($ours === $expected) {
+            return [];
+        }
+
+        return [sprintf(
+            'the global middleware run as [%s] and bootstrap/app.php declares [%s]. The order is '.
+            'load-bearing in both directions: the correlation id has to be outermost so that every '.
+            'response and every log line carries it and its `finally` always runs, and the security '.
+            'headers have to be next so an error response rendered inside the unwinding stack still '.
+            'passes back through them.',
+            implode(', ', array_map(static fn (string $c): string => class_basename($c), $ours)),
+            implode(', ', array_map(static fn (string $c): string => class_basename($c), $expected)),
+        )];
     }
 
     /**
