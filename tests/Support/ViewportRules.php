@@ -491,6 +491,29 @@ const PAGES = ['/overview', '/sales/invoices', '/purchases/bills', '/banking/acc
         out.pages.push(record);
       }
 
+      /*
+       | The loader's frame rate is NOT measured here, and the reason is
+       | worth keeping - PF-279.
+       |
+       | A first version counted requestAnimationFrame ticks over a second
+       | with the CPU throttled 6x, and reported 59.9fps. The bite - a
+       | full-screen blur and hue-rotate on the overlay, which is about as
+       | expensive as a page animation gets - did not move the number at
+       | all.
+       |
+       | It does not move because rAF in headless Chromium is scheduled on
+       | a timer rather than by the compositor: an EMPTY page throttled 6x
+       | also reports 62fps. So the measurement was of the scheduler, not
+       | of the paint, and a check built on it would have been green
+       | whatever the loader did.
+       |
+       | The throttling itself works - an 8-million-iteration loop goes
+       | from 16ms to 102ms - so the gap is in what rAF reports, not in the
+       | emulation. Counting real frames needs the compositor's own
+       | numbers, which is a headed browser or a screencast, and that is
+       | the work this criterion is still waiting on.
+       */
+
       await ctx.close();
     }
   } finally {
