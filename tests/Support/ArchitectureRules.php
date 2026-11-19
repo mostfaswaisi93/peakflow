@@ -47,6 +47,7 @@ final class ArchitectureRules
             'no migration is unsafe to run against live traffic' => $this->migrationsAreSafeToRunLive(),
             'and every migration says whether it is' => $this->everyMigrationDeclaresItsSafety(),
             'and the playbook names every hazard the inspector knows' => $this->everyHazardIsInThePlaybook(),
+            'the Exchange plane reads no secret from configuration' => $this->theExchangePlaneReadsNoSecret(),
             'the built assets are not stale' => $this->builtAssetsAreNotStale(),
             'translation catalogs agree' => $this->translationCatalogsAgree(),
             'strict types everywhere' => $this->strictTypesDeclared(),
@@ -1266,6 +1267,156 @@ final class ArchitectureRules
             $newestAt - $builtAt,
         )];
     }
+
+    /**
+     * The Exchange plane reads no secret from configuration - PF-234.
+     *
+     * ## Why this plane specifically
+     *
+     * `Exchange` is the module that talks to tax authorities and trading
+     * partners. It signs documents, it holds transport credentials, and it
+     * is the one part of the product whose outbound calls carry a key that
+     * authenticates the WHOLE TENANT to somebody else. A leak there is not
+     * a leak of one customer's data; it is the ability to issue documents
+     * in their name.
+     *
+     * So the rule is narrower than "do not put secrets in config": it is
+     * that this module must not be able to READ one, whatever is in the
+     * config file. A module that cannot read a key cannot log it, cannot
+     * put it in a span attribute, and cannot pass it to a serializer that
+     * writes it into a document.
+     *
+     * Measured when this was written: two `config()` calls in the whole
+     * module, both reading `jurisdictions.enabled`, which is a map of
+     * booleans. The criterion was already met and nothing held it there -
+     * and the next person to need a transport credential would reach for
+     * `config()` because that is what the rest of the product does.
+     *
+     * ## What it looks for
+     *
+     * A credential word as a whole dot-segment of a config key, and any
+     * call to `env()`, `getenv()` or `$_ENV` at all. Segment-wise rather
+     * than substring, so `jurisdictions.enabled` is not caught for
+     * containing nothing and `exchange.zatca.certificate` is caught for
+     * its last one. A variable key - `config($whatever)` - cannot be read
+     * statically and is reported as something to look at rather than
+     * ignored, because an unreadable key is where this rule would be
+     * broken if it were going to be.
+     *
+     * @return list<string>
+     */
+    public function theExchangePlaneReadsNoSecret(): array
+    {
+        $credential = ['secret', 'secrets', 'key', 'keys', 'password', 'passwd', 'token',
+            'credential', 'credentials', 'certificate', 'cert', 'private', 'passphrase'];
+
+        $files = glob($this->basePath.'/app/Exchange/*.php') ?: [];
+
+        $directory = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($this->basePath.'/app/Exchange', \FilesystemIterator::SKIP_DOTS),
+        );
+
+        foreach ($directory as $file) {
+            if ($file instanceof \SplFileInfo && $file->getExtension() === 'php') {
+                $files[] = $file->getPathname();
+            }
+        }
+
+        if ($files === []) {
+            return ['no file was found under app/Exchange, so this scan asserted nothing about an '.
+                'empty set'];
+        }
+
+        $problems = [];
+
+        foreach (array_unique($files) as $path) {
+            $source = (string) file_get_contents($path);
+            $name = 'app/Exchange/'.ltrim(str_replace($this->basePath.'/app/Exchange', '', $path), '/');
+
+            /*
+             | `env()` anywhere in the module.
+             |
+             | Not "env() reading a secret" - env() at all. Configuration is
+             | cached in production, so a runtime `env()` returns null there
+             | and the value silently becomes absent; and the only reason to
+             | reach past `config()` is to read something the config files
+             | deliberately do not expose.
+             */
+            foreach (['env(', 'getenv(', '$_ENV'] as $reach) {
+                $at = strpos($source, $reach);
+
+                if ($at !== false && ! $this->isInAComment($source, $at)) {
+                    $problems[] = sprintf(
+                        '%s:%d reaches the environment directly with `%s`. Configuration is cached '.
+                        'in production, so this returns null there and the value becomes silently '.
+                        'absent - and the only reason to reach past config() is to read something '.
+                        'the config files deliberately do not expose',
+                        $name,
+                        substr_count($source, "\n", 0, $at) + 1,
+                        rtrim($reach, '('),
+                    );
+                }
+            }
+
+            if (preg_match_all('/\bconfig\(\s*[\'"]([^\'"]+)[\'"]/', $source, $matches, PREG_OFFSET_CAPTURE) > 0) {
+                foreach ($matches[1] as $index => [$key, $_]) {
+                    $offset = (int) $matches[0][$index][1];
+
+                    foreach (explode('.', (string) $key) as $segment) {
+                        /*
+                         | The segment is split again on `_` and `-`.
+                         |
+                         | An exact match against the segment missed
+                         | `private_key`, `api_key` and `secret_key` - which
+                         | are the three commonest spellings there are. The
+                         | bite found it: a planted `exchange.zatca.private_key`
+                         | went straight past the first version of this.
+                         |
+                         | Splitting rather than substring-matching, because
+                         | a substring rule would catch `monkey` for `key`
+                         | and `secretary` for `secret`, and a rule that
+                         | fires on ordinary words is one somebody argues
+                         | with until it is deleted.
+                         */
+                        $words = preg_split('/[_-]/', strtolower(trim($segment))) ?: [];
+
+                        if (array_intersect($words, $credential) === []) {
+                            continue;
+                        }
+
+                        $problems[] = sprintf(
+                            '%s:%d reads config("%s"), whose "%s" names a credential. This module '.
+                            'signs documents and authenticates a whole tenant to a tax authority: a '.
+                            'key it cannot read is a key it cannot log, cannot put in a span '.
+                            'attribute, and cannot hand to a serializer',
+                            $name,
+                            substr_count($source, "\n", 0, $offset) + 1,
+                            (string) $key,
+                            $segment,
+                        );
+
+                        break;
+                    }
+                }
+            }
+        }
+
+        return $problems;
+    }
+
+    /** Is this offset inside a `//`, `#` or `*` comment line? */
+    private function isInAComment(string $source, int $offset): bool
+    {
+        $start = strrpos(substr($source, 0, $offset), "\n");
+        $line = ltrim(substr($source, $start === false ? 0 : $start + 1, $offset - ($start === false ? 0 : $start + 1)));
+
+        return str_starts_with($line, '//')
+            || str_starts_with($line, '#')
+            || str_starts_with($line, '*')
+            || str_starts_with($line, '/*')
+            || str_starts_with($line, '|');
+    }
+
 
     /**
      * The playbook names every hazard the inspector knows.
