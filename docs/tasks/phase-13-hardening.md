@@ -124,7 +124,12 @@ The distinguishing idea is **alerting on invariants**. A dashboard of CPU and p9
   - Asserted on the **addresses**, because they are the identifying half - a made-up name is a made-up name, an email address is routable. RFC 2606 reserves `.test`, `.example` and `.invalid` so they can never be delegated, which makes an address under one provably nobody's. A seeder writing `@gmail.com` is writing an address that could belong to a person, whether or not it does today.
   - A **source** scan rather than a database one: by the time a real address is in a table, the thing to assert about it is no longer where it came from.
   - The check also refuses a script that looks like a scrub of restored production data. One would mean the product had chosen copy-then-clean after all, and the check would be asserting the second half of a design its first half contradicts. Bitten both ways.
-- [ ] Data residency recorded per tenant, and a tenant's data provably does not leave its declared region
+- [x] Data residency recorded per tenant, and a tenant's data provably does not leave its declared region
+  - **The column was a promise nothing kept.** `tenants.data_region` has been on the platform schema since it was created, with a comment calling residency "a per-tenant fact". Measured: nothing wrote it and nothing read it. Every tenant carried the default and no code had ever compared it with anything.
+  - `config/regions.php` is the other half - per region, the exact database hosts and storage disks a tenant declared to be in it may use - and a check compares the two per tenant.
+  - **What cannot be asserted is said plainly.** This is a claim about *storage*. A cleared invoice goes to a tax authority and a payment file goes to a bank, and both leave the region by law rather than by accident - that is what clearance *is*. A check asserting no byte crosses a border would be asserting against the product's purpose.
+  - **A region with nothing configured permits nothing**, deliberately: the failure mode of a residency rule has to be refusal, because a rule that admitted everything when its configuration was missing would pass on exactly the deployment that forgot to configure it. `default` is the exception and is *not* a region - it is the absence of a declaration, and it is not a guarantee.
+  - Exact hostnames, no wildcards: `*.example.com` admits a host in any country the DNS owner points it at, and the point of a declaration is that somebody checked. Bitten twice - a tenant moved to a region its host does not serve, and a tenant declaring a region nobody configured.
 
 ### PF-241 · Business metrics
 `—` · **5 pts** · depends: PF-240 · standards: — · `risk:high`

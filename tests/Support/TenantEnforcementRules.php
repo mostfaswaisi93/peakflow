@@ -80,6 +80,7 @@ final class TenantEnforcementRules
             'row-level security refuses writes into another entity' => [],
             'the seeded baseline is present' => [],
             'a tenant mid-migration answers 503 with Retry-After' => [],
+            'every tenant\'s database is where its declared region permits' => [],
             'the Eloquent scope refuses an unscoped query' => [],
             'the Eloquent scope fills and freezes entity_id' => [],
             'permissions resolve per entity' => [],
@@ -124,6 +125,7 @@ final class TenantEnforcementRules
                 'row-level security refuses writes into another entity' => $this->rlsRefusesForeignWrites(),
                 'the seeded baseline is present' => $this->baselineIsSeeded(),
                 'a tenant mid-migration answers 503 with Retry-After' => $this->migratingAnswers503($tenant),
+                'every tenant\'s database is where its declared region permits' => $this->everyTenantIsWhereItSaysItIs(),
                 'the Eloquent scope refuses an unscoped query' => $this->eloquentScopeRefusesUnscoped(),
                 'the Eloquent scope fills and freezes entity_id' => $this->eloquentScopeFillsAndFreezes(),
                 'permissions resolve per entity' => $this->permissionsResolvePerEntity(),
@@ -342,6 +344,111 @@ final class TenantEnforcementRules
 
         return $violation === null ? [] : [$violation];
     }
+
+    /**
+     * A tenant's database is where its declared region permits - PF-239.
+     *
+     * ## The column was a promise nothing kept
+     *
+     * `tenants.data_region` has been on the platform schema since it was
+     * created, with a comment calling residency "a per-tenant fact".
+     * Measured: nothing wrote it and nothing read it. Every tenant carried
+     * the default and no code had ever compared it with anything - so the
+     * product recorded a residency claim and had no way to keep it.
+     *
+     * ## What is asserted, and what cannot be
+     *
+     * This is a claim about STORAGE. A cleared invoice goes to a tax
+     * authority and a payment file goes to a bank, and both leave the region
+     * by law rather than by accident - that is what clearance is. A check
+     * asserting no byte ever crosses a border would be asserting against the
+     * product's purpose.
+     *
+     * What it does assert: the host the tenant's database is on is one its
+     * region permits. That is the fact a residency clause is actually about,
+     * and it is the one a provisioning run can get wrong silently.
+     *
+     * ## A region with nothing configured permits nothing
+     *
+     * Deliberately, and it is the half worth stating. The failure mode of a
+     * residency rule has to be refusal: a rule that admitted everything when
+     * its configuration was missing would pass on exactly the deployment
+     * that forgot to configure it.
+     *
+     * `default` is the exception, and it is not a region - it is the absence
+     * of a declaration, it permits everything, and it is not a guarantee.
+     * A deployment that sells residency declares real regions and moves its
+     * tenants onto them.
+     *
+     * @return list<string>
+     */
+    public function everyTenantIsWhereItSaysItIs(): array
+    {
+        $regions = (array) config('regions', []);
+
+        if ($regions === []) {
+            return ['config/regions.php declares no region at all, not even the default - so the '.
+                'residency column has nothing to be checked against'];
+        }
+
+        $tenants = \App\Platform\Models\Tenant::query()->with('connection')->get();
+
+        if ($tenants->isEmpty()) {
+            return ['no tenant is registered, so this asserted nothing'];
+        }
+
+        $problems = [];
+
+        foreach ($tenants as $tenant) {
+            $declared = (string) ($tenant->data_region ?: 'default');
+
+            if (! \array_key_exists($declared, $regions)) {
+                $problems[] = sprintf(
+                    'tenant "%s" declares the region "%s" and config/regions.php does not define it. '.
+                    'A residency claim naming a region nobody configured is a claim with nothing '.
+                    'behind it',
+                    (string) $tenant->slug,
+                    $declared,
+                );
+
+                continue;
+            }
+
+            $permitted = (array) ($regions[$declared]['hosts'] ?? []);
+            $host = (string) ($tenant->connection->host ?? '');
+
+            if ($host === '') {
+                continue;
+            }
+
+            if (\in_array('*', $permitted, true)) {
+                continue;
+            }
+
+            if (! \in_array($host, $permitted, true)) {
+                /*
+                 | The host is named and the permitted list is not.
+                 |
+                 | A finding that printed every permitted host would put a
+                 | deployment's whole topology in a check's output, which
+                 | ends up in CI logs. What somebody needs is which tenant
+                 | and which host.
+                 */
+                $problems[] = sprintf(
+                    'tenant "%s" declares the region "%s" and its database is on a host that region '.
+                    'does not permit. Either the tenant was provisioned somewhere its contract does '.
+                    'not allow, or the region\'s host list is wrong - and both are answered before '.
+                    'somebody is told their data is in %s',
+                    (string) $tenant->slug,
+                    $declared,
+                    (string) ($regions[$declared]['label'] ?? $declared),
+                );
+            }
+        }
+
+        return $problems;
+    }
+
 
     /**
      * A maintenance window answers, rather than failing - PF-246.
