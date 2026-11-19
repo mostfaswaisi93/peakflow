@@ -217,8 +217,8 @@ return Application::configure(basePath: dirname(__DIR__))
         | Last in the group, because it reads the response rather than the
         | request: it appends a banner to an html page that was rendered
         | without a stylesheet, naming which of the three causes applies -
-        | a left-behind `public/hot`, no build, or an APP_URL that is not the
-        | address the browser is at.
+        | a left-behind `public/hot`, no build, or asset urls that name an
+        | origin other than the one the browser is at.
         |
         | Registered unconditionally and inert in production, where the same
         | three are refused at boot by `ProductionConfiguration` instead. One

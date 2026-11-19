@@ -110,7 +110,7 @@ final class SecurityHeaders
         $response = $next($request);
 
         $headers = [
-            $this->policy->headerName() => $this->policy->header(),
+            $this->policy->headerName() => $this->policy->header($request->isSecure()),
             'X-Content-Type-Options' => 'nosniff',
             'Referrer-Policy' => 'no-referrer',
             /*

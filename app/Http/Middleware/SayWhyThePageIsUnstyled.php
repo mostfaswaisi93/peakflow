@@ -39,10 +39,11 @@ use Symfony\Component\HttpFoundation\Response;
  *    throws rather than rendering, but a stale manifest naming files that
  *    were deleted renders instead.
  *
- * 3. `APP_URL` is not the address the browser is at. Every asset url is
- *    absolute and built from it - Laravel does not derive it from the
- *    request, because a queued job rendering a mail has no request - so a
- *    mismatch sends every stylesheet, logo and favicon to a host the
+ * 3. The asset urls name an origin the browser is not at. They are
+ *    absolute, and inside a web request Laravel builds them from the
+ *    REQUEST - so a plain `APP_URL` that differs from the address bar is
+ *    harmless here, and it is `ASSET_URL`, or a root url forced from
+ *    config, that sends every stylesheet, logo and favicon to a host the
  *    visitor cannot reach. This is the one that also breaks the images, and
  *    the one `curl` from the server will not reproduce.
  *
@@ -137,28 +138,39 @@ final class SayWhyThePageIsUnstyled
         }
 
         /*
-         | The origin comparison, scheme, host and port.
+         | The origin comparison, scheme, host and port - of the url the page
+         | ACTUALLY links, not of APP_URL.
          |
-         | Compared against the url the REQUEST arrived on rather than the
-         | Host header alone, because a scheme or a port mismatch produces the
-         | same unreachable asset url as a wrong hostname - and the port is
-         | the one that actually happens, when APP_URL says :80 and the
-         | developer is on :8000.
+         | Inside a web request the url generator takes its root from the
+         | request, so with nothing forced a page served on
+         | https://peakflow.test links https://peakflow.test assets whatever
+         | APP_URL says. Comparing APP_URL itself raised this banner on a page
+         | that had its stylesheet - on whichever of http and https APP_URL
+         | did not name - and told the developer to change a setting that was
+         | not the cause. `asset()` is what `@vite` and the logo use, and it
+         | is where `ASSET_URL` and a forced root url take effect, so its
+         | origin is the one the browser will be sent to.
+         |
+         | Scheme and port count as much as the host: either produces the same
+         | unreachable url as a wrong hostname.
          */
-        $configured = (string) config('app.url', '');
-        $declared = $this->originOf($configured);
+        $linked = $this->originOf(asset('build/manifest.json'));
         $actual = $this->originOf($request->getSchemeAndHttpHost());
 
-        if ($declared !== '' && $actual !== '' && $declared !== $actual) {
+        if ($linked !== '' && $actual !== '' && $linked !== $actual) {
+            $assetUrl = config('app.asset_url');
+            $assetUrl = is_string($assetUrl) ? trim($assetUrl) : '';
+
             return [
                 'what' => sprintf(
-                    'APP_URL is %s and you are browsing %s. Every stylesheet, logo and favicon url on '.
-                    'this page is absolute and built from APP_URL, so all of them point at an address '.
-                    'this browser is not at.',
-                    $declared,
+                    'Every stylesheet, logo and favicon url on this page points at %s and you are '.
+                    'browsing %s, so none of them reach this browser.',
+                    $linked,
                     $actual,
                 ),
-                'fix' => sprintf('Set APP_URL=%s in .env and run `php artisan config:clear`.', $actual),
+                'fix' => $assetUrl !== ''
+                    ? sprintf('ASSET_URL is %s. Set it to %s, or remove it, in .env and run `php artisan config:clear`.', $assetUrl, $actual)
+                    : sprintf('The url root is forced to %s. Set APP_URL=%s in .env and run `php artisan config:clear`.', $linked, $actual),
             ];
         }
 

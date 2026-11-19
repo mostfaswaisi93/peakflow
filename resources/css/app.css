@@ -1128,6 +1128,24 @@
     }
 
     /* ----------------------------------------------------------------------
+     *  THE POINTER on everything that acts.
+     *
+     *  Tailwind v4's preflight sets buttons back to the browser's `default`
+     *  arrow (v3 gave them `pointer`), so the sign-in button, the theme
+     *  switcher and every form submit read as inert text under the mouse.
+     *  Restored here once rather than as a `cursor-pointer` on each button,
+     *  which the next button would forget. A disabled control keeps the
+     *  arrow: a hand over a button that will not act is a promise broken.
+     * ------------------------------------------------------------------- */
+    button:not(:disabled),
+    [role='button']:not([aria-disabled='true']),
+    input:is([type='submit'], [type='button'], [type='reset']):not(:disabled),
+    summary,
+    select:not(:disabled) {
+        cursor: pointer;
+    }
+
+    /* ----------------------------------------------------------------------
      *  TABULAR NUMERALS - applied to every figure, everywhere.
      *
      *  A proportional `1` in a currency column is the single most common

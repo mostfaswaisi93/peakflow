@@ -99,8 +99,11 @@ final class ContentSecurityPolicy
      * Built from an ordered map so the directives come out in a stable order:
      * a header that reorders between requests is one no diff and no cache key
      * can be compared.
+     *
+     * `$secure` is whether the response is going out over HTTPS; see
+     * `upgrade-insecure-requests` below for the one directive it decides.
      */
-    public function header(): string
+    public function header(bool $secure = true): string
     {
         $nonce = sprintf("'nonce-%s'", $this->nonce());
 
@@ -165,18 +168,27 @@ final class ContentSecurityPolicy
             'worker-src' => "'self'",
 
             'manifest-src' => "'self'",
-
-            /*
-             | Upgrade, not block.
-             |
-             | `block-all-mixed-content` is deprecated and
-             | `upgrade-insecure-requests` is what remains: a stylesheet
-             | reference somebody wrote as `http://` is fetched over HTTPS
-             | instead of failing. On a development machine served over plain
-             | HTTP it does nothing, because the page itself is not secure.
-             */
-            'upgrade-insecure-requests' => '',
         ];
+
+        /*
+         | Upgrade, not block - and only over HTTPS.
+         |
+         | `block-all-mixed-content` is deprecated and
+         | `upgrade-insecure-requests` is what remains: a stylesheet reference
+         | somebody wrote as `http://` is fetched over HTTPS instead of failing.
+         |
+         | It is NOT inert on a page served over plain HTTP. Browsers upgrade
+         | every insecure request the page makes, its own same-origin
+         | stylesheet, images and form posts included, whatever the page's own
+         | scheme. A development machine without working HTTPS then renders
+         | the sign-in page unstyled, and signing in posts to an `https://`
+         | URL that does not answer. On a plain-HTTP page there is no mixed
+         | content to protect, so the directive is sent where HSTS is: only
+         | over HTTPS.
+         */
+        if ($secure) {
+            $directives['upgrade-insecure-requests'] = '';
+        }
 
         $reportUri = trim((string) config('security.csp.report_uri', ''));
 
