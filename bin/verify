@@ -167,6 +167,7 @@ if ($only === 'rollback') {
 
 if ($only === 'all' || $only === 'tenant') {
     $suites['Tenant enforcement'] = $suite(static fn (): array => (new Tests\Support\TenantEnforcementRules())->all());
+    $suites['Tenant export'] = $suite(static fn (): array => (new Tests\Support\TenantExportRules())->all());
 }
 
 if ($only === 'all' || $only === 'ledger') {
