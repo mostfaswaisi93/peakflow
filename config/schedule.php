@@ -228,6 +228,11 @@ return [
 
         'tenants:provision' => 'creates a tenant. An operator does this.',
 
+        'tenants:export' => 'produced when a tenant asks for its data, which is a request with a '.
+            'recipient and a date. A scheduled export is a complete copy of a customer\'s database '.
+            'sitting on disk that nobody asked for and nobody is waiting to collect - which is a '.
+            'second place to lose it from, created monthly.',
+
         'compliance:report' => 'produced on request, for a date somebody names. An auditor asks for '.
             'a point in time and the pack is built for that point; a monthly one nobody asked for '.
             'is a file nobody opens, dated a day nobody cares about.',
