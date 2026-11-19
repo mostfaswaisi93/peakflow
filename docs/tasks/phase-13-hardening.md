@@ -100,7 +100,12 @@ The distinguishing idea is **alerting on invariants**. A dashboard of CPU and p9
 ### PF-239 · Data protection
 `—` · **5 pts** · depends: PF-129 · standards: GDPR and local equivalents · `risk:high` `type:compliance`
 
-- [ ] A documented lawful basis and retention period per data category
+- [x] A documented lawful basis and retention period per data category
+  - `docs/operations/data-protection.md`, one row per table that holds a personal-data shape, with the basis, the retention and **what an erasure request does to it**.
+  - The table list is **read out of `information_schema`** by a check, not maintained by hand. A register written by hand describes the schema as it was on the day somebody wrote it, and the first migration afterwards makes it a document that is believed and wrong - at the moment it matters, which is somebody answering a subject request on the strength of it. A new table with an `email` column fails the check until its basis and retention have been decided, which is the decision the register exists to record.
+  - It caught a mistake in the register the first time it ran: a row for `messaging_delivery_preferences`, a table that does not exist. An entry for a dropped table is the same failure from the other side - it reads as a category still being held.
+  - **A column shape is a weaker test than a person reading the schema, and it is the one that can be enforced.** It over-reports (`entities.legal_name` is the customer's own company) and over-reporting costs a line in a document while under-reporting costs an unregistered category. A bare `name` counts on four tables only; everywhere else it is a file's or an institution's, and a rule calling `bank_statements.file_name` personal data is one somebody argues with until it is deleted. Partitions are excluded: a register with twenty-four monthly rows for one category is a register nobody reads.
+  - The hardest row is `audit_log`, and it is the one that makes the point of the whole task: the log is hash-chained, so removing a record breaks every link after it. Retention **wins over erasure** there and the register says so plainly rather than implying a deletion that cannot happen.
 - [ ] A tenant can **export everything it owns and nothing else**, including attachments, as a machine-readable archive
 - [ ] Erasure requests are **reconciled against statutory retention, which wins**, and the product says so in the UI rather than pretending to delete - a tax authority requiring seven years of invoice retention overrides a deletion request
 - [ ] Personal data in non-production environments is pseudonymized by the process that creates them, not by a cleanup afterwards

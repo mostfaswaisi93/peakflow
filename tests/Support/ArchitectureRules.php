@@ -48,6 +48,7 @@ final class ArchitectureRules
             'and every migration says whether it is' => $this->everyMigrationDeclaresItsSafety(),
             'and the playbook names every hazard the inspector knows' => $this->everyHazardIsInThePlaybook(),
             'the Exchange plane reads no secret from configuration' => $this->theExchangePlaneReadsNoSecret(),
+            'every table holding personal data is in the register' => $this->everyPersonalTableIsRegistered(),
             'the built assets are not stale' => $this->builtAssetsAreNotStale(),
             'translation catalogs agree' => $this->translationCatalogsAgree(),
             'strict types everywhere' => $this->strictTypesDeclared(),
@@ -1267,6 +1268,179 @@ final class ArchitectureRules
             $newestAt - $builtAt,
         )];
     }
+
+    /**
+     * Every table holding a personal-data shape is in the register - PF-239.
+     *
+     * ## Why the schema drives the document and not the other way round
+     *
+     * A register of data categories written by hand describes the schema as
+     * it was on the day somebody wrote it. The first migration afterwards
+     * makes it a document that is believed and wrong - and the moment it
+     * matters is a subject request, where somebody reads it to decide what
+     * can be deleted and answers a person on the strength of it.
+     *
+     * So the table list is read out of `information_schema` and the document
+     * is held to it. A new table with an `email` column fails this until
+     * somebody has decided what its lawful basis and retention are, which is
+     * the decision the register exists to record.
+     *
+     * ## A column shape is a weaker test than a person reading the schema
+     *
+     * And it is the one that can be enforced. It over-reports -
+     * `entities.legal_name` is the customer's own company - and
+     * over-reporting costs a line in a document, while under-reporting costs
+     * an unregistered category of personal data.
+     *
+     * A bare `name` is only personal on four tables. Everywhere else it is a
+     * file's, an institution's or a rule's, and a rule that called
+     * `bank_statements.file_name` personal data would be one somebody argues
+     * with until it is deleted.
+     *
+     * Partitions are excluded: `audit_log_2026_05` is `audit_log`, and a
+     * register with twenty-four monthly rows for one category is a register
+     * nobody reads.
+     *
+     * @return list<string>
+     */
+    public function everyPersonalTableIsRegistered(): array
+    {
+        $path = $this->basePath.'/docs/operations/data-protection.md';
+
+        if (! is_file($path)) {
+            return ['docs/operations/data-protection.md does not exist. Somebody answering a subject '.
+                'request has nothing to read, and the answer they give is the one the product is '.
+                'held to'];
+        }
+
+        $register = (string) file_get_contents($path);
+
+        $connection = $this->tenantConnection();
+
+        if ($connection === null) {
+            return ['no tenant database could be reached, so the register was checked against '.
+                'nothing - which is how a register comes to pass for ever'];
+        }
+
+        $shapes = ['email', 'phone', 'mobile', 'iban', 'bic', 'legal_name', 'trade_name',
+            'holder_legal_name', 'counterparty_name', 'actor_name', 'first_name', 'last_name',
+            'full_name', 'address', 'street', 'city', 'postal_code', 'tax_number', 'vat_number',
+            'registration_number', 'national_id', 'ip_address', 'user_agent', 'date_of_birth',
+            'contact_name', 'contact_email', 'account_number', 'last_four'];
+
+        $nameIsPersonalOn = ['users', 'parties', 'party_contacts', 'operators'];
+
+        $partitions = array_map(
+            static fn (object $row): string => (string) $row->relname,
+            $connection->select('SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid'),
+        );
+
+        $columns = $connection->select(
+            'SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = ?',
+            ['public'],
+        );
+
+        $personal = [];
+
+        foreach ($columns as $column) {
+            $table = (string) $column->table_name;
+            $name = (string) $column->column_name;
+
+            if (\in_array($table, $partitions, true)) {
+                continue;
+            }
+
+            if (\in_array($name, $shapes, true) || ($name === 'name' && \in_array($table, $nameIsPersonalOn, true))) {
+                $personal[$table] = true;
+            }
+        }
+
+        if ($personal === []) {
+            return ['no column in the tenant schema matched any personal-data shape, which cannot be '.
+                'right - this check just asserted something about an empty set'];
+        }
+
+        $problems = [];
+
+        foreach (array_keys($personal) as $table) {
+            if (! str_contains($register, '`'.$table.'`')) {
+                $problems[] = sprintf(
+                    '`%s` holds a personal-data shape and is not in the register. Somebody answering '.
+                    'a subject request reads that document to decide what can be deleted, and a '.
+                    'category missing from it is one they will answer about from memory',
+                    $table,
+                );
+            }
+        }
+
+        /*
+         | And every row names a table that exists.
+         |
+         | A register entry for a table that was dropped is the same failure
+         | from the other side: it reads as a category still being held, and
+         | the answer given about it is about nothing.
+         */
+        if (preg_match_all('/^\|\s*((?:`\w+`(?:,\s*)?)+)\s*\|/m', $register, $matches) > 0) {
+            $live = array_map(
+                static fn (object $row): string => (string) $row->table_name,
+                $connection->select(
+                    'SELECT table_name FROM information_schema.tables WHERE table_schema = ?',
+                    ['public'],
+                ),
+            );
+
+            foreach ($matches[1] as $cell) {
+                preg_match_all('/`(\w+)`/', (string) $cell, $named);
+
+                foreach ($named[1] as $table) {
+                    if (! \in_array($table, $live, true)) {
+                        $problems[] = sprintf(
+                            'the register has a row for `%s` and no such table exists. It reads as a '.
+                            'category still being held, and an answer given about it is an answer '.
+                            'about nothing',
+                            $table,
+                        );
+                    }
+                }
+            }
+        }
+
+        foreach (['Lawful basis', 'Retention', 'On an erasure request'] as $heading) {
+            if (! str_contains($register, $heading)) {
+                $problems[] = sprintf(
+                    'the register has no "%s" column. A list of tables without it is an inventory, '.
+                    'and what a request needs answering is the basis and the period',
+                    $heading,
+                );
+            }
+        }
+
+        return $problems;
+    }
+
+    /** The tenant connection, pointed at a provisioned tenant, or null. */
+    private function tenantConnection(): ?\Illuminate\Database\Connection
+    {
+        $tenant = \App\Platform\Models\Tenant::query()
+            ->with('connection')
+            ->whereHas('connection')
+            ->whereNotNull('provisioned_at')
+            ->orderBy('slug')
+            ->first();
+
+        if ($tenant === null) {
+            return null;
+        }
+
+        try {
+            app(\App\Platform\Services\TenantConnectionResolver::class)->point($tenant);
+
+            return \Illuminate\Support\Facades\DB::connection('tenant');
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
 
     /**
      * The Exchange plane reads no secret from configuration - PF-234.
