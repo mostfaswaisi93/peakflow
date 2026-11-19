@@ -92,6 +92,7 @@ final class PartyEnforcementRules
                 'a bank number never reaches the audit log' => $this->numberNeverReachesTheLog(),
                 'the beneficiary/release pair can never be overridden' => $this->theSodPairCannotBeOverridden(),
                 'exposure counts uninvoiced orders, not just receivables' => $this->exposureIsComplete(),
+                'an erasure request is told what can go and what is held' => $this->erasureTellsTheTruth(),
                 'a credit hold cannot exist without an author' => $this->holdsHaveAnAuthor(),
                 'an override is bounded, justified and raises TO not BY' => $this->overridesAreBounded(),
                 'a dispute suspends dunning and keeps the debt' => $this->disputesSuspendOnly(),
@@ -1183,6 +1184,163 @@ final class PartyEnforcementRules
 
         return $user;
     }
+
+    /**
+     * An erasure request gets the truth, per category - PF-239.
+     *
+     * ## The failure this prevents
+     *
+     * Saying "deleted" and keeping the rows. It is worse than refusing in
+     * both directions: the person believes something false, and the operator
+     * who later finds the data has no record of what was promised.
+     *
+     * So the assessment answers per category with a reason, and the two
+     * states are driven against the same party - once with nothing of
+     * theirs on the books, once with an invoice. Without the second, the
+     * check passes against an assessment that says everything is erasable,
+     * which is the lie it exists to prevent.
+     *
+     * ## The audit trail is the row that is never erasable
+     *
+     * And it is asserted in BOTH states. A category that becomes erasable
+     * when the party has no documents would be the same mistake one level
+     * down: the chain is hash-linked, so removing a record breaks every link
+     * after it whether or not that party ever traded.
+     *
+     * @return list<string>
+     */
+    private function erasureTellsTheTruth(): array
+    {
+        $assessment = app(\App\Tenant\Parties\Services\ErasureAssessment::class);
+
+        $party = Party::create([
+            'legal_name' => 'Erasure probe '.bin2hex(random_bytes(3)),
+            'country' => 'SA',
+            'is_customer' => true,
+        ]);
+
+        $clean = $assessment->forParty($this->entityId, $party);
+        $problems = [];
+
+        foreach (['identity', 'address', 'banking'] as $category) {
+            if (($clean['categories'][$category]['erasable'] ?? null) !== true) {
+                $problems[] = sprintf(
+                    'a party with no documents cannot have its %s erased: "%s". Refusing what the law '.
+                    'does not require is the other half of this - a product that refuses everything '.
+                    'is as useless to a request as one that pretends to delete',
+                    $category,
+                    (string) ($clean['categories'][$category]['why'] ?? '(no reason)'),
+                );
+            }
+        }
+
+        if (($clean['categories']['audit']['erasable'] ?? null) !== false) {
+            $problems[] = 'the audit trail is reported as erasable for a party with no documents. The '.
+                'chain is hash-linked whether or not that party ever traded: removing a record breaks '.
+                'every link after it';
+        }
+
+        /*
+         | And now a document in their name.
+         |
+         | Written at the table rather than issued through the service: what
+         | is under test is the assessment reading the books, and issuing an
+         | invoice needs a tax decision, a numbering series and a posting -
+         | none of which changes the answer and all of which could fail for
+         | its own reasons and be reported as this.
+         */
+        DB::connection('tenant')->table('invoices')->insert($this->aMinimalInvoiceRow($party));
+
+        $held = $assessment->forParty($this->entityId, $party);
+
+        if (($held['categories']['identity']['erasable'] ?? null) !== false) {
+            $problems[] = 'a party named on an invoice can have its legal name erased. An invoice has '.
+                'to name its counterparty - that is what makes it an invoice - so erasing the name '.
+                'leaves a document that cannot be explained to the authority that requires it';
+        }
+
+        $why = (string) ($held['categories']['identity']['why'] ?? '');
+
+        if (! str_contains($why, '1 document')) {
+            $problems[] = sprintf(
+                'the refusal does not say how much is held: "%s". A person asking to be erased is '.
+                'owed the reason and the extent, and "we cannot" with no number is what makes them '.
+                'ask again',
+                $why,
+            );
+        }
+
+        if (($held['erasable_now'] ?? null) === array_keys($held['categories'] ?? [])) {
+            $problems[] = 'every category is still reported erasable once a document exists, so the '.
+                'assessment is not reading the books at all';
+        }
+
+        return $problems;
+    }
+
+    /**
+     * The fewest columns an `invoices` row can have and still be inserted.
+     *
+     * @return array<string, mixed>
+     */
+    private function aMinimalInvoiceRow(Party $party): array
+    {
+        $columns = DB::connection('tenant')->select(
+            'SELECT column_name, data_type FROM information_schema.columns '.
+            'WHERE table_schema = ? AND table_name = ? AND is_nullable = ? AND column_default IS NULL',
+            ['public', 'invoices', 'NO'],
+        );
+
+        $row = [
+            'id' => (string) Str::ulid(),
+            'entity_id' => $this->entityId,
+            'party_id' => (string) $party->getKey(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ];
+
+        /*
+         | Everything else the table insists on, filled by shape.
+         |
+         | The invoices table has a lot of NOT NULL columns and this check is
+         | not about any of them. Reading the required ones out of the
+         | catalog means a migration that adds one does not break this with a
+         | message about a column nobody here cares about.
+         */
+        foreach ($columns as $column) {
+            $name = (string) $column->column_name;
+
+            if (\array_key_exists($name, $row)) {
+                continue;
+            }
+
+            /*
+             | Filled by the column's TYPE, not by its name.
+             |
+             | The first version guessed from the name and put the string
+             | "probe" in a smallint. The catalog already says what each
+             | column will accept, and a filler that reads it survives a
+             | migration adding one.
+             */
+            $row[$name] = match ((string) $column->data_type) {
+                'smallint', 'integer', 'bigint' => 0,
+                'numeric', 'double precision', 'real' => '0.0000',
+                'boolean' => false,
+                'date' => now()->toDateString(),
+                'timestamp without time zone', 'timestamp with time zone' => now(),
+                'jsonb', 'json' => '[]',
+                default => match ($name) {
+                    'currency' => 'SAR',
+                    'status' => 'draft',
+                    'document_type' => '380',
+                    default => 'probe',
+                },
+            };
+        }
+
+        return $row;
+    }
+
 
     private function newAccount(string $iban): \App\Tenant\Parties\Models\PartyBankAccount
     {

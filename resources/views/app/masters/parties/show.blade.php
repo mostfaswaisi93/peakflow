@@ -363,4 +363,49 @@
             </p>
         @endif
     </section>
+
+    {{-- What an erasure request can remove, and what is held - PF-239.
+
+         On the page rather than behind a button. The failure this exists to
+         prevent is the product saying "deleted" and keeping the rows: the
+         person believes something false, and the operator who later finds the
+         data has no record of what was promised. A page that offers deletion
+         and quietly refuses half of it is that failure with a nicer
+         interface. --}}
+    @if ($erasure)
+        <section class="mt-10">
+            <h2 class="text-title-s">{{ __('طلب المحو: ما يمكن حذفه وما يُحتفظ به') }}</h2>
+
+            <p class="mt-2 text-body-m text-on-surface-muted">
+                {{ __('الاحتفاظ النظامي يغلب طلب المحو. هذه الصفحة تقول ذلك بدل زرٍّ يُوهم بالحذف.') }}
+                @if ($erasure['retained_until'])
+                    {{ __('أقصى تاريخ احتفاظ:') }}
+                    <span class="figure" dir="ltr">{{ $erasure['retained_until'] }}</span>
+                @endif
+            </p>
+
+            <ul class="mt-4 space-y-3">
+                @foreach ($erasure['categories'] as $category)
+                    <li class="rounded-sheet border border-outline bg-surface px-4 py-3">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span @class([
+                                'rounded-chip px-2 py-0.5 text-label-s',
+                                'bg-success-subtle text-on-success-subtle' => $category['erasable'],
+                                'bg-warning-subtle text-on-warning-subtle' => ! $category['erasable'],
+                            ])>{{ $category['erasable'] ? __('يمكن حذفه') : __('مُحتفَظ به') }}</span>
+
+                            <span class="text-label-l">{{ $category['what'] }}</span>
+                        </div>
+
+                        <p class="mt-1 text-body-s text-on-surface-muted">
+                            {{ $category['why'] }}
+                            @if ($category['until'])
+                                {{ __('حتى') }} <span class="figure" dir="ltr">{{ $category['until'] }}</span>.
+                            @endif
+                        </p>
+                    </li>
+                @endforeach
+            </ul>
+        </section>
+    @endif
 @endsection

@@ -58,6 +58,23 @@ final class PartyDetailController
         return view('app.masters.parties.show', [
             'party' => $found,
             'entity' => $entity,
+
+            /*
+             | What an erasure request can actually remove - PF-239.
+             |
+             | On the page rather than behind a button, because the failure
+             | this exists to prevent is the product saying "deleted" and
+             | keeping the rows. A page that offers deletion and quietly
+             | refuses half of it is that failure with a nicer interface.
+             |
+             | Computed per request rather than stored: it is an answer about
+             | the books as they are now, and a stored one would be the
+             | answer as the books were when somebody last asked.
+             */
+            'erasure' => $entity === null
+                ? null
+                : app(\App\Tenant\Parties\Services\ErasureAssessment::class)
+                    ->forParty((string) $entity->getKey(), $found),
             /*
              | At most one row, because the global scope narrows it to the
              | entity this request is acting in.
