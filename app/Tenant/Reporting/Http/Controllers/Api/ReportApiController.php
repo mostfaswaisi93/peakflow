@@ -20,6 +20,7 @@ use App\Tenant\Tenancy\Services\EntityContext;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Gate;
 
 /**
@@ -87,8 +88,8 @@ final class ReportApiController
             $built = $report->forPeriod(
                 entityId: (string) $entity->id,
                 functionalCurrency: (string) $entity->functional_currency,
-                from: $period->starts_on,
-                until: $period->ends_on,
+                from: self::day($period->starts_on),
+                until: self::day($period->ends_on),
             );
         } catch (ReportRefused $refused) {
             return $this->refused($refused);
@@ -108,10 +109,10 @@ final class ReportApiController
             $built = $statement->forPeriod(
                 entityId: (string) $entity->id,
                 functionalCurrency: (string) $entity->functional_currency,
-                from: $period->starts_on,
-                until: $period->ends_on,
-                comparativeFrom: $comparative?->starts_on,
-                comparativeUntil: $comparative?->ends_on,
+                from: self::day($period->starts_on),
+                until: self::day($period->ends_on),
+                comparativeFrom: $comparative === null ? null : self::day($comparative->starts_on),
+                comparativeUntil: $comparative === null ? null : self::day($comparative->ends_on),
             );
         } catch (ReportRefused $refused) {
             return $this->refused($refused);
@@ -131,10 +132,10 @@ final class ReportApiController
             $built = $statement->asAt(
                 entityId: (string) $entity->id,
                 functionalCurrency: (string) $entity->functional_currency,
-                from: $period->starts_on,
-                until: $period->ends_on,
-                comparativeFrom: $comparative?->starts_on,
-                comparativeUntil: $comparative?->ends_on,
+                from: self::day($period->starts_on),
+                until: self::day($period->ends_on),
+                comparativeFrom: $comparative === null ? null : self::day($comparative->starts_on),
+                comparativeUntil: $comparative === null ? null : self::day($comparative->ends_on),
             );
         } catch (ReportRefused $refused) {
             return $this->refused($refused);
@@ -283,6 +284,12 @@ final class ReportApiController
             'starts_on' => Wire::accountingDate($period->starts_on),
             'ends_on' => Wire::accountingDate($period->ends_on),
         ];
+    }
+
+    /** A period boundary as the reporting services take it. */
+    private static function day(\DateTimeInterface $date): Carbon
+    {
+        return Carbon::instance($date)->startOfDay();
     }
 
     private function refused(ReportRefused $refused): Problem

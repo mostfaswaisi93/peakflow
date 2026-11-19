@@ -36,7 +36,7 @@ final readonly class SortOrder
         $asked = $request->query('sort');
 
         if ($asked === null || $asked === '') {
-            return new self($default, $sortable[$default], $defaultDirection);
+            return new self($default, $sortable[$default] ?? $default, $defaultDirection);
         }
 
         if (! \is_string($asked)) {

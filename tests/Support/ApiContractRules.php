@@ -229,6 +229,7 @@ final class ApiContractRules
                 'switching company is a refresh, held to the grants' => fn (): array => $this->switchingCompany(),
                 'signing out closes the session, and the devices are listed' => fn (): array => $this->signingOut(),
                 'a device token carries no scope that needs somebody present' => fn (): array => $this->noStepUpOnADevice(),
+                'every read endpoint answers a token holding its scope' => fn (): array => $this->theReadSurfaceAnswers(),
                 'a second factor is required, and one code opens one session' => fn (): array => $this->theSecondFactorStage(),
 
                 // PF-222 - money and dates.
@@ -3138,6 +3139,87 @@ final class ApiContractRules
         foreach (['account.manage', 'report.view'] as $held) {
             if (! \in_array($held, $issued, true)) {
                 $problems[] = sprintf('a device token is missing %s, which the person holds in that company', $held);
+            }
+        }
+
+        $this->signOutQuietly($session);
+
+        return $problems;
+    }
+
+    /**
+     * The read surface - PF-261 to PF-263 - driven once each.
+     *
+     * Not for its figures, which the suite's fixture company barely has: for
+     * the SHAPE. Every response here lands in `$seen`, and PF-222's walk then
+     * validates each against the schema its operation documents - which is
+     * the check that catches a member renamed in a controller and not in the
+     * contract.
+     *
+     * @return list<string>
+     */
+    private function theReadSurfaceAnswers(): array
+    {
+        foreach (['party.manage', 'bank.manage'] as $key) {
+            DB::connection('tenant')->table('role_permissions')->insertOrIgnore([
+                'id' => (string) Str::ulid(),
+                'role_id' => $this->roleId,
+                'permission_id' => (string) Permission::query()->where('key', $key)->value('id'),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        [$response, $session] = $this->signInOnADevice();
+
+        if ($response->getStatusCode() !== 201) {
+            return ['could not sign in to read the surface'];
+        }
+
+        $problems = [];
+        $headers = $this->deviceHeaders($session);
+        $unknown = strtolower((string) Str::ulid());
+
+        $calls = [
+            ['/api/v1/overview', 'getOverview', 200],
+            ['/api/v1/invoices?limit=10', 'listInvoices', 200],
+            ['/api/v1/invoices/'.$unknown, 'getInvoice', 404],
+            ['/api/v1/bills?limit=10&filter[status]=posted', 'listBills', 200],
+            ['/api/v1/bills/'.$unknown, 'getBill', 404],
+            ['/api/v1/parties?limit=10', 'listParties', 200],
+            ['/api/v1/parties/'.$unknown, 'getParty', 404],
+            ['/api/v1/bank-accounts', 'listBankAccounts', 200],
+            ['/api/v1/periods', 'listPeriods', 200],
+            ['/api/v1/reports/trial-balance', 'getTrialBalance', 200],
+            ['/api/v1/reports/profit-or-loss', 'getProfitOrLoss', 200],
+            ['/api/v1/reports/financial-position', 'getFinancialPosition', 200],
+            ['/api/v1/invoices?sort=number', 'listInvoices', 400],
+        ];
+
+        foreach ($calls as [$uri, $operation, $expected]) {
+            $answer = $this->request('GET', $uri, headers: $headers, operation: $operation);
+
+            if ($answer->getStatusCode() !== $expected) {
+                $problems[] = sprintf(
+                    'GET %s answered %d rather than %d: %s',
+                    $uri,
+                    $answer->getStatusCode(),
+                    $expected,
+                    Str::limit((string) $answer->getContent(), 200),
+                );
+            }
+        }
+
+        // And a detail for a real party, which the fixture does have: the
+        // list's first row, fetched by its own id.
+        $parties = $this->problem($this->request('GET', '/api/v1/parties?limit=10', headers: $headers, operation: 'listParties'));
+        $first = $parties['data'][0]['id'] ?? null;
+
+        if (\is_string($first)) {
+            $detail = $this->request('GET', '/api/v1/parties/'.$first, headers: $headers, operation: 'getParty');
+
+            if ($detail->getStatusCode() !== 200) {
+                $problems[] = sprintf('GET /parties/%s answered %d', $first, $detail->getStatusCode());
             }
         }
 

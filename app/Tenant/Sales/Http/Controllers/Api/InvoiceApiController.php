@@ -131,13 +131,7 @@ final class InvoiceApiController
 
         // The payments applied to it - the screen's own query.
         $body['payments'] = array_values(array_map(
-            static fn (object $allocation): array => [
-                'payment_number' => Row::nullableText($allocation, 'payment_number'),
-                'value_date' => Wire::accountingDate(Row::nullableText($allocation, 'value_date')),
-                'allocated_on' => Wire::accountingDate(Row::nullableText($allocation, 'allocated_on')),
-                'amount' => Row::money($allocation, 'amount', Row::text($allocation, 'currency')),
-                'reversed_at' => Wire::timestamp(Row::nullableText($allocation, 'reversed_at')),
-            ],
+            static fn (mixed $allocation): array => self::payment(\is_object($allocation) ? $allocation : new \stdClass()),
             DB::connection('tenant')->select(<<<'SQL'
                 SELECT p.number AS payment_number,
                        p.value_date,
@@ -154,6 +148,18 @@ final class InvoiceApiController
         ));
 
         return new JsonResponse($body);
+    }
+
+    /** @return array<string, mixed> */
+    private static function payment(object $allocation): array
+    {
+        return [
+            'payment_number' => Row::nullableText($allocation, 'payment_number'),
+            'value_date' => Wire::accountingDate(Row::nullableText($allocation, 'value_date')),
+            'allocated_on' => Wire::accountingDate(Row::nullableText($allocation, 'allocated_on')),
+            'amount' => Row::money($allocation, 'amount', Row::text($allocation, 'currency')),
+            'reversed_at' => Wire::timestamp(Row::nullableText($allocation, 'reversed_at')),
+        ];
     }
 
     /** The listing query, shared by the page and the detail so the two can never disagree. */
