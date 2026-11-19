@@ -98,6 +98,8 @@ tags:
     description: Accounts and journal entries.
   - name: Identity
     description: The tenant's own API tokens.
+  - name: Reports
+    description: The figures the browser's own pages show, as data, from the same queries.
   - name: Sessions
     description: |
       A person signing in on a device - a mobile app, say - and their own
@@ -841,6 +843,48 @@ paths:
                 me:
                   summary: A person who can act in two companies
                   value: {"resource": "me", "id": "01jd3xq7f8k2m9n4p5r6s7t8v7", "name": "Layla Haddad", "email": "layla@acme.example", "locale": "ar", "second_factor_enrolled": true, "entity_id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "scopes": ["journal.post", "report.view"], "entities": [{"id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "code": "ACME", "legal_name": "Acme Trading LLC", "functional_currency": "SAR"}, {"id": "01jd3xq7f8k2m9n4p5r6s7t8v9", "code": "ACME-JO", "legal_name": "Acme Trading Jordan", "functional_currency": "JOD"}]}
+        '400': {"$ref": "#/components/responses/BadRequest"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /overview:
+    get:
+      tags: ["Reports"]
+      operationId: getOverview
+      summary: The company at a glance
+      description: |
+        The browser's home page as data, **from the same query** - so a phone
+        and a desk can never disagree about how much cash there is: the cash
+        position and its daily series, receivables by age, payables due,
+        bank reconciliation progress, drafts waiting, the next tax return and
+        the latest activity.
+
+        Every amount is in the company's functional `currency`, and every
+        amount is a `Money` object - including each point of the cash series,
+        because the chart is exactly where somebody would reach for a float.
+        Documents in other currencies are counted in
+        `other_currency_documents` rather than converted at a rate nobody
+        chose.
+
+        Needs `report.view`.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+      responses:
+        '200':
+          description: The overview
+          headers:
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/Overview"}
+              examples:
+                aTradingCompany:
+                  summary: A company with cash, debtors and a return due
+                  value: {"resource": "overview", "entity_id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "currency": "SAR", "as_of": "2026-11-19", "cash": {"balance": {"amount": "232522.0000", "currency": "SAR", "presentation_exponent": 2}, "balance_then": {"amount": "199172.0000", "currency": "SAR", "presentation_exponent": 2}, "days": 2, "change_percent": "16.7", "direction": "up", "has_activity": true, "series": [{"date": "2026-11-18", "balance": {"amount": "231900.0000", "currency": "SAR", "presentation_exponent": 2}}, {"date": "2026-11-19", "balance": {"amount": "232522.0000", "currency": "SAR", "presentation_exponent": 2}}]}, "receivables": {"total": {"amount": "169878.0000", "currency": "SAR", "presentation_exponent": 2}, "overdue": {"amount": "77142.0000", "currency": "SAR", "presentation_exponent": 2}, "documents": 11, "other_currency_documents": 0, "buckets": [{"bucket": "current", "amount": {"amount": "92736.0000", "currency": "SAR", "presentation_exponent": 2}}, {"bucket": "1-30", "amount": {"amount": "12926.0000", "currency": "SAR", "presentation_exponent": 2}}, {"bucket": "31-60", "amount": {"amount": "25645.0000", "currency": "SAR", "presentation_exponent": 2}}, {"bucket": "61-90", "amount": {"amount": "12926.0000", "currency": "SAR", "presentation_exponent": 2}}, {"bucket": "90+", "amount": {"amount": "25645.0000", "currency": "SAR", "presentation_exponent": 2}}]}, "payables": {"total": {"amount": "62790.0000", "currency": "SAR", "presentation_exponent": 2}, "overdue": {"amount": "31073.0000", "currency": "SAR", "presentation_exponent": 2}, "due_this_week": {"amount": "10235.0000", "currency": "SAR", "presentation_exponent": 2}, "documents": 8, "due_this_week_documents": 1, "other_currency_documents": 0}, "reconciliation": {"matched": 24, "suggested": 1, "waiting": 1, "days": 90, "percent_matched": 92}, "drafts": {"invoices": 1, "bills": 1, "journals": 1}, "tax": {"label": "2026-10", "due_on": "2026-11-30", "overdue": false, "days_left": 11}, "activity": [{"actor": "Demo Owner", "action": "match.accepted", "subject": "SAR 21735.0000 on 2026-11-03", "at": "2026-11-19T08:12:40Z"}]}
         '400': {"$ref": "#/components/responses/BadRequest"}
         '401': {"$ref": "#/components/responses/Unauthenticated"}
         '403': {"$ref": "#/components/responses/Forbidden"}
@@ -1841,3 +1885,119 @@ components:
           description: The session closed, or null when the token was not part of one and was revoked on its own.
         token_id: {"$ref": "#/components/schemas/Ulid"}
         signed_out_at: {"$ref": "#/components/schemas/Timestamp"}
+
+    AgeingBucket:
+      type: object
+      required: ["bucket", "amount"]
+      additionalProperties: false
+      properties:
+        bucket:
+          type: string
+          enum: ["current", "1-30", "31-60", "61-90", "90+"]
+          description: Days past due. `current` is not due yet.
+        amount: {"$ref": "#/components/schemas/Money"}
+
+    Overview:
+      type: object
+      required: ["resource", "entity_id", "currency", "as_of", "cash", "receivables", "payables", "reconciliation", "drafts", "tax", "activity"]
+      additionalProperties: false
+      properties:
+        resource: {"type": "string", "const": "overview"}
+        entity_id: {"$ref": "#/components/schemas/Ulid"}
+        currency:
+          allOf: [{"$ref": "#/components/schemas/CurrencyCode"}]
+          description: The functional currency. Every amount below is in it.
+        as_of: {"$ref": "#/components/schemas/AccountingDate"}
+        cash:
+          type: object
+          required: ["balance", "balance_then", "days", "change_percent", "direction", "has_activity", "series"]
+          additionalProperties: false
+          properties:
+            balance: {"$ref": "#/components/schemas/Money"}
+            balance_then:
+              oneOf: [{"$ref": "#/components/schemas/Money"}, {"type": "null"}]
+              description: The balance `days` ago, for the trend; null with no history that far back.
+            days: {"type": "integer"}
+            change_percent:
+              type: ["string", "null"]
+              description: A decimal string, one place - a ratio, not money, and a string for the same reason.
+            direction: {"type": "string", "enum": ["up", "down", "flat"]}
+            has_activity: {"type": "boolean"}
+            series:
+              type: array
+              description: The closing balance per day, oldest first, ending `as_of`.
+              items:
+                type: object
+                required: ["date", "balance"]
+                additionalProperties: false
+                properties:
+                  date: {"$ref": "#/components/schemas/AccountingDate"}
+                  balance: {"$ref": "#/components/schemas/Money"}
+        receivables:
+          type: object
+          required: ["total", "overdue", "documents", "other_currency_documents", "buckets"]
+          additionalProperties: false
+          properties:
+            total: {"$ref": "#/components/schemas/Money"}
+            overdue: {"$ref": "#/components/schemas/Money"}
+            documents: {"type": "integer"}
+            other_currency_documents:
+              type: integer
+              description: Open invoices in another currency, counted and not converted.
+            buckets:
+              type: array
+              items: {"$ref": "#/components/schemas/AgeingBucket"}
+        payables:
+          type: object
+          required: ["total", "overdue", "due_this_week", "documents", "due_this_week_documents", "other_currency_documents"]
+          additionalProperties: false
+          properties:
+            total: {"$ref": "#/components/schemas/Money"}
+            overdue: {"$ref": "#/components/schemas/Money"}
+            due_this_week: {"$ref": "#/components/schemas/Money"}
+            documents: {"type": "integer"}
+            due_this_week_documents: {"type": "integer"}
+            other_currency_documents: {"type": "integer"}
+        reconciliation:
+          type: object
+          required: ["matched", "suggested", "waiting", "days", "percent_matched"]
+          additionalProperties: false
+          properties:
+            matched: {"type": "integer"}
+            suggested: {"type": "integer"}
+            waiting: {"type": "integer"}
+            days: {"type": "integer"}
+            percent_matched: {"type": "integer"}
+        drafts:
+          type: object
+          required: ["invoices", "bills", "journals"]
+          additionalProperties: false
+          properties:
+            invoices: {"type": "integer"}
+            bills: {"type": "integer"}
+            journals: {"type": "integer"}
+        tax:
+          description: The next tax return due, or null when there is none to file.
+          oneOf:
+            - {"type": "null"}
+            - type: object
+              required: ["label", "due_on", "overdue", "days_left"]
+              additionalProperties: false
+              properties:
+                label: {"type": "string"}
+                due_on:
+                  oneOf: [{"$ref": "#/components/schemas/AccountingDate"}, {"type": "null"}]
+                overdue: {"type": "boolean"}
+                days_left: {"type": ["integer", "null"]}
+        activity:
+          type: array
+          description: The latest entries in the audit log for this company, newest first.
+          items:
+            type: object
+            required: ["actor", "action", "subject", "at"]
+            additionalProperties: false
+            properties:
+              actor: {"type": "string"}
+              action: {"type": "string"}
+              subject: {"type": ["string", "null"]}
+              at: {"$ref": "#/components/schemas/Timestamp"}

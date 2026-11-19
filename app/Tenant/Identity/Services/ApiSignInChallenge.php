@@ -9,6 +9,7 @@ use App\Tenant\Identity\Models\User;
 use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Str;
 
@@ -48,10 +49,10 @@ final class ApiSignInChallenge
      */
     public function begin(User $user, string $tenantId, string $deviceName, ?string $entityId): array
     {
-        $expiresAt = now()->addSeconds((int) config('api.sessions.challenge_seconds', 300));
+        $expiresAt = now()->addSeconds(Config::integer('api.sessions.challenge_seconds', 300));
 
         $payload = json_encode([
-            'u' => (string) $user->getKey(),
+            'u' => $user->id,
             't' => $tenantId,
             'd' => $deviceName,
             'e' => $entityId,
@@ -108,7 +109,7 @@ final class ApiSignInChallenge
         $authenticator = $this->mfa->verifyCode($user, $code);
 
         if ($authenticator instanceof Authenticator) {
-            $factor = (string) $authenticator->type;
+            $factor = \is_string($authenticator->type) ? $authenticator->type : 'totp';
         } elseif ($this->mfa->consumeRecoveryCode($user, $code)) {
             // Second, and deliberately - see SecondFactorChallenge: trying the
             // recovery codes first would bcrypt every mistyped TOTP code ten
@@ -121,7 +122,7 @@ final class ApiSignInChallenge
                 category: 'identity',
                 action: 'device_session.factor_refused',
                 subjectType: User::class,
-                subjectId: (string) $user->getKey(),
+                subjectId: $user->id,
                 subjectLabel: $user->name,
                 reason: 'neither a code from a confirmed authenticator nor an unused recovery code matched; '.
                     'the challenge is still open until it expires',
@@ -143,7 +144,7 @@ final class ApiSignInChallenge
                 category: 'identity',
                 action: 'device_session.factor_refused',
                 subjectType: User::class,
-                subjectId: (string) $user->getKey(),
+                subjectId: $user->id,
                 subjectLabel: $user->name,
                 reason: 'a challenge that had already opened a session was presented again',
                 actor: $user,

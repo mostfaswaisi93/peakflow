@@ -12,6 +12,7 @@ use App\Tenant\Identity\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -67,10 +68,10 @@ final class DeviceSessions
     {
         return [
             'resource' => 'me',
-            'id' => (string) $user->getKey(),
-            'name' => (string) $user->name,
-            'email' => (string) $user->email,
-            'locale' => $user->locale === null ? null : (string) $user->locale,
+            'id' => self::text($user->getKey()),
+            'name' => self::text($user->name),
+            'email' => self::text($user->email),
+            'locale' => $user->locale === null ? null : self::text($user->locale),
             'second_factor_enrolled' => $this->mfa->hasConfirmedFactor($user),
             'entity_id' => $entityId,
             'scopes' => array_values($scopes),
@@ -85,20 +86,19 @@ final class DeviceSessions
      */
     public function entitiesFor(User $user): array
     {
-        return DB::connection('tenant')->table('entities')
+        return array_values(DB::connection('tenant')->table('entities')
             ->whereIn('id', $user->entityIds())
             ->where('active', true)
             ->whereNull('deleted_at')
             ->orderBy('code')
             ->get(['id', 'code', 'legal_name', 'functional_currency'])
             ->map(static fn (object $row): array => [
-                'id' => (string) $row->id,
-                'code' => (string) $row->code,
-                'legal_name' => (string) $row->legal_name,
-                'functional_currency' => (string) $row->functional_currency,
+                'id' => self::text($row->id),
+                'code' => self::text($row->code),
+                'legal_name' => self::text($row->legal_name),
+                'functional_currency' => self::text($row->functional_currency),
             ])
-            ->values()
-            ->all();
+            ->all());
     }
 
     /**
@@ -114,13 +114,12 @@ final class DeviceSessions
 
         $user->forgetResolvedPermissions();
 
-        return $user->permissionsIn($entityId)
-            ->map(static fn (mixed $key): string => (string) $key)
+        return array_values($user->permissionsIn($entityId)
+            ->map(static fn (mixed $key): string => self::text($key))
             ->filter(fn (string $key): bool => $this->scopes->exists($key) && ! $this->scopes->requiresStepUp($key))
             ->unique()
             ->sort()
-            ->values()
-            ->all();
+            ->all());
     }
 
     /**
@@ -343,7 +342,7 @@ final class DeviceSessions
     public function sessionOf(ApiToken $token): ?RefreshToken
     {
         return RefreshToken::query()
-            ->where('access_token_id', (string) $token->getKey())
+            ->where('access_token_id', self::text($token->getKey()))
             ->orderByDesc('created_at')
             ->first();
     }
@@ -356,7 +355,7 @@ final class DeviceSessions
     public function liveSessionsOf(User $user): Collection
     {
         return RefreshToken::query()
-            ->where('user_id', (string) $user->getKey())
+            ->where('user_id', self::text($user->getKey()))
             ->whereNull('used_at')
             ->whereNull('revoked_at')
             ->where('expires_at', '>', now())
@@ -379,7 +378,7 @@ final class DeviceSessions
     ): IssuedSession {
         $scopes = $this->scopesFor($user, $entityId);
 
-        $accessExpiresAt = now()->addMinutes((int) config('api.sessions.access_token_minutes', 60));
+        $accessExpiresAt = now()->addMinutes(Config::integer('api.sessions.access_token_minutes', 60));
 
         try {
             $access = $this->tokens->issue(
@@ -399,8 +398,8 @@ final class DeviceSessions
          | The refresh token ends at whichever comes first: its own lifetime,
          | or the end of the session it belongs to.
          */
-        $refreshExpiresAt = now()->addDays((int) config('api.sessions.refresh_token_days', 30));
-        $sessionEndsAt = $startedAt->copy()->addDays((int) config('api.sessions.session_max_days', 90));
+        $refreshExpiresAt = now()->addDays(Config::integer('api.sessions.refresh_token_days', 30));
+        $sessionEndsAt = $startedAt->copy()->addDays(Config::integer('api.sessions.session_max_days', 90));
 
         if ($sessionEndsAt->lessThan($refreshExpiresAt)) {
             $refreshExpiresAt = $sessionEndsAt;
@@ -412,11 +411,11 @@ final class DeviceSessions
         $row->forceFill([
             'id' => $id,
             'family_id' => $familyId,
-            'user_id' => (string) $user->getKey(),
+            'user_id' => self::text($user->getKey()),
             'token' => hash('sha256', $secret),
             'device_name' => $deviceName,
             'entity_id' => $entityId,
-            'access_token_id' => (string) $access['token']->getKey(),
+            'access_token_id' => self::text($access['token']->getKey()),
             'second_factor' => $secondFactor,
             'session_started_at' => $startedAt,
             'expires_at' => $refreshExpiresAt,
@@ -449,5 +448,11 @@ final class DeviceSessions
         if ($token instanceof ApiToken && $token->revoked_at === null) {
             $this->tokens->revoke($token, Str::limit($reason, 200, ''));
         }
+    }
+
+    /** A database or model value as the string it is stored as. */
+    private static function text(mixed $value): string
+    {
+        return \is_string($value) ? $value : (\is_int($value) || \is_float($value) ? (string) $value : '');
     }
 }

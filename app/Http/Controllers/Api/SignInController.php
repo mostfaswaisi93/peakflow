@@ -20,6 +20,7 @@ use App\Tenant\Identity\Services\LoginThrottle;
 use App\Tenant\Identity\Services\MfaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
@@ -75,7 +76,7 @@ final class SignInController
      */
     public function signIn(Request $request): JsonResponse
     {
-        $input = $request->validate([
+        $request->validate([
             'workspace' => ['required', 'string', 'max:64'],
             'email' => ['required', 'string', 'email', 'max:255'],
             'password' => ['required', 'string', 'max:1024'],
@@ -83,11 +84,13 @@ final class SignInController
             'entity_id' => ['nullable', 'string', 'size:26'],
         ]);
 
-        $email = (string) $input['email'];
+        $email = $request->string('email')->value();
+        $password = $request->string('password')->value();
         $ip = (string) $request->ip();
-        $device = trim((string) $input['device_name']);
+        $device = $request->string('device_name')->trim()->value();
+        $entityId = self::optional($request, 'entity_id');
 
-        $tenant = $this->workspace((string) $input['workspace']);
+        $tenant = $this->workspace($request->string('workspace')->value());
 
         if (! $tenant instanceof Tenant) {
             $this->throttle->recordFailure($email, $ip);
@@ -110,8 +113,8 @@ final class SignInController
         // missing user must take as long as a real one, or the timing answers
         // the question the message refuses to.
         $passwordMatches = $user === null
-            ? Hash::check((string) $input['password'], $this->dummyHash())
-            : Hash::check((string) $input['password'], (string) $user->getAuthPassword());
+            ? Hash::check($password, $this->dummyHash())
+            : Hash::check($password, $user->getAuthPassword());
 
         if (! $user instanceof User || ! $passwordMatches || ! $user->active) {
             $this->throttle->recordFailure($email, $ip);
@@ -137,12 +140,7 @@ final class SignInController
          | password fresh guesses at the code for every re-submission.
          */
         if ($this->mfa->hasConfirmedFactor($user)) {
-            $pending = $this->challenge->begin(
-                $user,
-                (string) $tenant->getKey(),
-                $device,
-                isset($input['entity_id']) ? (string) $input['entity_id'] : null,
-            );
+            $pending = $this->challenge->begin($user, self::key($tenant), $device, $entityId);
 
             return new JsonResponse([
                 'resource' => 'second_factor_challenge',
@@ -152,14 +150,7 @@ final class SignInController
             ], JsonResponse::HTTP_ACCEPTED, ['Cache-Control' => 'no-store']);
         }
 
-        return $this->establish(
-            $request,
-            $tenant,
-            $user,
-            $device,
-            null,
-            isset($input['entity_id']) ? (string) $input['entity_id'] : null,
-        );
+        return $this->establish($request, $tenant, $user, $device, null, $entityId);
     }
 
     /**
@@ -170,19 +161,20 @@ final class SignInController
      */
     public function secondFactor(Request $request): JsonResponse
     {
-        $input = $request->validate([
+        $request->validate([
             'workspace' => ['required', 'string', 'max:64'],
             'challenge' => ['required', 'string', 'max:4096'],
             'code' => ['required', 'string', 'max:64'],
         ]);
 
         $ip = (string) $request->ip();
+        $challenge = $request->string('challenge')->value();
 
         // Bounded before anything is done with it - a recovery code is
         // checked with bcrypt against every unused one the person has.
-        $code = mb_substr(trim((string) $input['code']), 0, 64);
+        $code = mb_substr($request->string('code')->trim()->value(), 0, 64);
 
-        $tenant = $this->workspace((string) $input['workspace']);
+        $tenant = $this->workspace($request->string('workspace')->value());
 
         if (! $tenant instanceof Tenant) {
             $this->throttle->recordFailure('', $ip);
@@ -191,8 +183,8 @@ final class SignInController
             throw DeviceSessionRefused::signIn('unknown or unusable workspace at the code stage');
         }
 
-        $tenantId = (string) $tenant->getKey();
-        $pending = $this->challenge->pendingUser((string) $input['challenge'], $tenantId);
+        $tenantId = self::key($tenant);
+        $pending = $this->challenge->pendingUser($challenge, $tenantId);
 
         /*
          | The throttle at THIS stage too, against the account the challenge
@@ -209,7 +201,7 @@ final class SignInController
             }
         }
 
-        $completed = $this->challenge->complete((string) $input['challenge'], $tenantId, $code);
+        $completed = $this->challenge->complete($challenge, $tenantId, $code);
 
         if ($completed === null) {
             $this->throttle->recordFailure($pending instanceof User ? $pending->email : '', $ip);
@@ -244,7 +236,7 @@ final class SignInController
          | bucket is what keeps hopeless from also being expensive.
          */
         $bucket = 'api-refresh:'.hash('sha256', (string) $request->ip());
-        $limit = (int) config('api.rate_limits.refreshes_per_minute', 30);
+        $limit = Config::integer('api.rate_limits.refreshes_per_minute', 30);
 
         if (RateLimiter::tooManyAttempts($bucket, $limit)) {
             throw DeviceSessionRefused::throttled(RateLimiter::availableIn($bucket));
@@ -252,25 +244,23 @@ final class SignInController
 
         RateLimiter::hit($bucket, 60);
 
-        $input = $request->validate([
+        $request->validate([
             'refresh_token' => ['required', 'string', 'max:200'],
             'entity_id' => ['nullable', 'string', 'size:26'],
         ]);
 
         $key = $request->header(ResolveTenantFromHeader::HEADER);
+        $tenant = \is_string($key) ? $this->workspace($key) : null;
 
-        if (! \is_string($key) || trim($key) === '' || ! $this->workspace(trim($key)) instanceof Tenant) {
+        if (! $tenant instanceof Tenant) {
             throw DeviceSessionRefused::refresh('the X-Tenant header named no usable workspace');
         }
 
         $issued = $this->sessions->refresh(
-            (string) $input['refresh_token'],
-            isset($input['entity_id']) ? (string) $input['entity_id'] : null,
+            $request->string('refresh_token')->value(),
+            self::optional($request, 'entity_id'),
             $request,
         );
-
-        /** @var Tenant $tenant */
-        $tenant = app('currentTenant');
 
         return $this->sessionResponse($tenant, $issued, JsonResponse::HTTP_OK);
     }
@@ -371,6 +361,24 @@ final class SignInController
     {
         static $hash = null;
 
-        return $hash ??= Hash::make('peakflow-timing-equalizer-'.config('app.key'));
+        if (! \is_string($hash)) {
+            $hash = Hash::make('peakflow-timing-equalizer-'.Config::string('app.key'));
+        }
+
+        return $hash;
+    }
+
+    /** A validated, optional string field: null when absent or empty. */
+    private static function optional(Request $request, string $field): ?string
+    {
+        return $request->filled($field) ? $request->string($field)->trim()->value() : null;
+    }
+
+    /** A model's key as the string it is stored as. */
+    private static function key(Tenant $tenant): string
+    {
+        $key = $tenant->getKey();
+
+        return \is_string($key) ? $key : '';
     }
 }

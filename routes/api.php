@@ -8,6 +8,12 @@ use App\Tenant\Identity\Http\Controllers\Api\ApiTokenController;
 use App\Tenant\Identity\Http\Controllers\Api\DeviceSessionController;
 use App\Tenant\Ledger\Http\Controllers\Api\AccountApiController;
 use App\Tenant\Ledger\Http\Controllers\Api\JournalEntryApiController;
+use App\Tenant\Banking\Http\Controllers\Api\BankAccountApiController;
+use App\Tenant\Parties\Http\Controllers\Api\PartyApiController;
+use App\Tenant\Purchasing\Http\Controllers\Api\BillApiController;
+use App\Tenant\Reporting\Http\Controllers\Api\OverviewApiController;
+use App\Tenant\Reporting\Http\Controllers\Api\ReportApiController;
+use App\Tenant\Sales\Http\Controllers\Api\InvoiceApiController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -117,6 +123,68 @@ Route::middleware([
     */
     Route::get('/me', [DeviceSessionController::class, 'me'])
         ->name('api.me');
+
+    /*
+    | The Overview - PF-261. The browser's home page, as data: the same
+    | query, so a phone and a desk never disagree about the cash.
+    */
+    Route::get('/overview', OverviewApiController::class)
+        ->middleware('api.scope:report.view')
+        ->name('api.overview');
+
+    /*
+    | The documents and the people they are with - PF-262. Read-only, and
+    | under the permission each browser page gates its figures on: the
+    | invoice and bill pages on `report.view`, parties on `party.manage`,
+    | the company's own bank accounts on `bank.manage`.
+    */
+    Route::get('/invoices', [InvoiceApiController::class, 'index'])
+        ->middleware('api.scope:report.view')
+        ->name('api.invoices.index');
+
+    Route::get('/invoices/{id}', [InvoiceApiController::class, 'show'])
+        ->middleware('api.scope:report.view')
+        ->name('api.invoices.show');
+
+    Route::get('/bills', [BillApiController::class, 'index'])
+        ->middleware('api.scope:report.view')
+        ->name('api.bills.index');
+
+    Route::get('/bills/{id}', [BillApiController::class, 'show'])
+        ->middleware('api.scope:report.view')
+        ->name('api.bills.show');
+
+    Route::get('/parties', [PartyApiController::class, 'index'])
+        ->middleware('api.scope:party.manage')
+        ->name('api.parties.index');
+
+    Route::get('/parties/{id}', [PartyApiController::class, 'show'])
+        ->middleware('api.scope:party.manage')
+        ->name('api.parties.show');
+
+    Route::get('/bank-accounts', BankAccountApiController::class)
+        ->middleware('api.scope:bank.manage')
+        ->name('api.bank-accounts.index');
+
+    /*
+    | The financial statements - PF-263. The same services as the browser's
+    | report pages, so a figure on a phone is the figure on the desk.
+    */
+    Route::get('/periods', [ReportApiController::class, 'periods'])
+        ->middleware('api.scope:report.view')
+        ->name('api.periods.index');
+
+    Route::get('/reports/trial-balance', [ReportApiController::class, 'trialBalance'])
+        ->middleware('api.scope:report.view')
+        ->name('api.reports.trial-balance');
+
+    Route::get('/reports/profit-or-loss', [ReportApiController::class, 'profitOrLoss'])
+        ->middleware('api.scope:report.view')
+        ->name('api.reports.profit-or-loss');
+
+    Route::get('/reports/financial-position', [ReportApiController::class, 'financialPosition'])
+        ->middleware('api.scope:report.view')
+        ->name('api.reports.financial-position');
 
     /*
     | The chart of accounts.

@@ -45,7 +45,7 @@ final class RefreshToken extends Model
 
     protected $hidden = ['token'];
 
-    public function getConnectionName(): ?string
+    public function getConnectionName(): string
     {
         return 'tenant';
     }
