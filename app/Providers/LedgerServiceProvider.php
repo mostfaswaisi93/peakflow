@@ -58,6 +58,21 @@ final class LedgerServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+
+        /*
+         | The invariants this module watches - PF-242.
+         |
+         | Registered through the registry in `Support`, the same door the
+         | closing checks and the ledger checks come through. Every condition
+         | here was already provable and none of it was WATCHED: nothing in
+         | the repository ran the check that finds it.
+         */
+        $watch = $this->app->make(\App\Support\Telemetry\Alerts\InvariantWatch::class);
+
+        $watch->register($this->app->make(\App\Tenant\Ledger\Alerts\LedgerInvariantWatcher::class));
+
+        $watch->register($this->app->make(\App\Tenant\Ledger\Alerts\ReadModelDriftWatcher::class));
+
         $registry = $this->app->make(PostingRuleRegistry::class);
 
         $registry->register(new OpeningBalanceRule());

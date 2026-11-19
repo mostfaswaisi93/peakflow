@@ -10,6 +10,58 @@ return [
 
     /*
     |---------------------------------------------------------------------------
+    | Where a span goes - a DRIVER, with a working local default
+    |---------------------------------------------------------------------------
+    |
+    | PF-240, PF-229. `log` writes each finished span as one JSON line on the
+    | channel below and needs no endpoint, no credentials and no network, so a
+    | fresh clone traces an invoice end to end with nothing stood up. An OTLP
+    | exporter is a second implementation of
+    | `App\Support\Telemetry\Contracts\SpanExporter` named here - a
+    | configuration change, not a different code path.
+    |
+    | `memory` keeps the last spans in memory, which is what the checks and a
+    | one-off diagnostic run read back. `null` drops them, and is what
+    | TELEMETRY_ENABLED=false gets whatever this says.
+    |
+    */
+
+    'exporter' => env('TELEMETRY_EXPORTER', 'log'),
+
+    /*
+    |---------------------------------------------------------------------------
+    | Which log channel a span and an alert are written on
+    |---------------------------------------------------------------------------
+    |
+    | It has to be a channel that carries the allowlist tap, because a span's
+    | attributes and an alert's fields are log context and are filtered by the
+    | channel's own processor rather than by a second mechanism. `stderr`,
+    | `syslog` and `slack` in `config/logging.php` declare NO tap, so a span
+    | exported through one of them would be unfiltered while looking
+    | configured. `bin/verify observability` asserts the resolved channel has
+    | the processor attached.
+    |
+    */
+
+    'channel' => env('TELEMETRY_LOG_CHANNEL', 'single'),
+
+    /*
+    |---------------------------------------------------------------------------
+    | Where a collected metric goes
+    |---------------------------------------------------------------------------
+    |
+    | PF-241, PF-229. The same decision as the span exporter: `log` writes each
+    | sample as one JSON line on the channel above, so a collector that already
+    | reads the log reads the metrics and a fresh clone needs no push gateway.
+    | `memory` keeps them in process, which is what the checks drive the real
+    | `metrics:report` command against.
+    |
+    */
+
+    'metric_sink' => env('TELEMETRY_METRIC_SINK', 'log'),
+
+    /*
+    |---------------------------------------------------------------------------
     | Sampling
     |---------------------------------------------------------------------------
     |
@@ -105,6 +157,49 @@ return [
         'kind',
         'key',
         'count',
+
+        /*
+         | The fields a SPAN, a METRIC and an ALERT are made of - PF-240,
+         | PF-241, PF-242.
+         |
+         | A span's attributes and a metric's labels are log context: they go
+         | through this list because they are written as log context, not
+         | because somebody remembered to filter them twice. Which means the
+         | span's own structural fields have to be on it, or a span would
+         | arrive with its trace id stripped - and a metric's label names
+         | have to be on it, or every dashboard would be unlabelled.
+         |
+         | Every name here is an id, a count or a classification, which is
+         | the rule the list is kept by. `jurisdiction`, `authority`,
+         | `age_bucket`, `task` and `state` are the label names the business
+         | metrics use, and each is a code or a bucket: a metric labelled by
+         | customer id is a customer list on whoever's dashboard, so no
+         | metric may label by one and `Metrics::register()` refuses a label
+         | name that is not on this list.
+         */
+        'trace_id',
+        'span_id',
+        'parent_span_id',
+        'span',
+        'operation',
+        'sampled',
+        'duration_us',
+        'alert',
+        'severity',
+        'runbook',
+        'first_divergence',
+        'observed',
+        'threshold',
+        'metric',
+        'audience',
+        'unit',
+        'labels',
+        'samples',
+        'jurisdiction',
+        'authority',
+        'age_bucket',
+        'task',
+        'state',
     ],
 
     /*
@@ -150,6 +245,74 @@ return [
         'archive_checksum_mismatch',
         'statement_continuity_gap',
         'clearance_rejection_spike',
+
+        /*
+         | And the watch itself - PF-242.
+         |
+         | Added when the watch was built, because a watch that failed
+         | silently is indistinguishable from one that found nothing, and
+         | the second is the reassuring reading: the hour a query was
+         | refused is the hour every invariant above reports as healthy.
+         |
+         | `InvariantWatch::run()` turns a throwing watcher into this,
+         | rather than letting it stop the remaining ones.
+         */
+        'watch_failed',
     ],
+
+    /*
+    |---------------------------------------------------------------------------
+    | Where an invariant alert goes
+    |---------------------------------------------------------------------------
+    |
+    | PF-242, PF-229. A driver, with a committed default that needs no paging
+    | provider: `log` writes the alert as one JSON line, at `critical`, on the
+    | channel above. A paging integration is a second implementation of
+    | `App\Support\Telemetry\Contracts\AlertSink` named here.
+    |
+    | This is deliberately NOT gated on `telemetry.enabled`. Tracing is off by
+    | default because a span per statement costs something; an alert that
+    | stopped firing because somebody turned tracing off would be the exact
+    | failure this whole section exists to prevent, and nobody would find out
+    | until the incident it was built for.
+    |
+    */
+
+    'alert_sink' => env('TELEMETRY_ALERT_SINK', 'log'),
+
+    /*
+    |---------------------------------------------------------------------------
+    | Thresholds the watch compares against
+    |---------------------------------------------------------------------------
+    |
+    | A decimal STRING, not a float: it is compared against a control account
+    | balance read out of `numeric`, and a threshold that had been through a
+    | float would make the comparison disagree with the ledger at the fourth
+    | decimal - which on a boundary is the difference between an alert firing
+    | and not.
+    |
+    | Not zero, because a few hundred in suspense on the day a statement is
+    | imported is ordinary, and an alert that fires every morning is an alert
+    | nobody reads.
+    |
+    */
+
+    'thresholds' => [
+        'suspense' => (string) env('ALERT_SUSPENSE_THRESHOLD', '5000.0000'),
+    ],
+
+    /*
+    |---------------------------------------------------------------------------
+    | When the watch runs
+    |---------------------------------------------------------------------------
+    |
+    | Read by `routes/console.php`, which is the only place this product
+    | schedules anything. A cron expression rather than a `->hourly()` call so
+    | that an operator can slow it down on a large fleet without a deployment -
+    | and so the schedule is a value a check can assert about.
+    |
+    */
+
+    'watch_schedule' => (string) env('ALERT_WATCH_SCHEDULE', '30 * * * *'),
 
 ];

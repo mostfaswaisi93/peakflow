@@ -68,6 +68,39 @@ final class PeriodStateMachine
         string $reason,
         bool $isReopening = false,
     ): Period {
+        /*
+         | `period.close` and `period.reopen` are kept at any rate - PF-240.
+         |
+         | Two names rather than one `period.transition`, because the
+         | always-sampled list names two: closing and reopening are different
+         | acts with different consequences, and a reopening is the one an
+         | auditor asks about. Which of them this is is decided from the
+         | TARGET state and the reopening flag, not from the caller.
+         */
+        $operation = match (true) {
+            $isReopening => 'period.reopen',
+            $to === PeriodState::Closed, $to === PeriodState::SoftClosed, $to === PeriodState::Locked => 'period.close',
+            default => 'period.transition',
+        };
+
+        return app(\App\Support\Telemetry\Tracer::class)->measure(
+            $operation,
+            \App\Support\Telemetry\SpanKind::Internal,
+            [
+                'period_id' => (string) $period->getKey(),
+                'entity_id' => (string) $period->entity_id,
+                'state' => $to->value,
+            ],
+            fn (): Period => $this->transitionNow($period, $to, $reason, $isReopening),
+        );
+    }
+
+    private function transitionNow(
+        Period $period,
+        PeriodState $to,
+        string $reason,
+        bool $isReopening = false,
+    ): Period {
         $from = $period->state;
 
         if ($from === $to) {

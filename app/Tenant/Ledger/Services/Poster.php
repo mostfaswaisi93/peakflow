@@ -52,8 +52,53 @@ final class Poster
      * Post an event through a registered rule.
      *
      * @param  array<string, mixed>  $event
+     *
+     * ## The traced entry point - PF-240.
+     *
+     * `journal.post` is one of the operations `config/telemetry.php` keeps at
+     * any sample rate, and this is where that name comes from. A list of
+     * always-sampled operation names with nothing emitting them would be a
+     * sampling policy nobody can test and nobody benefits from: the first
+     * time it mattered, the trace would be absent and the configuration would
+     * still look right.
+     *
+     * A wrapper rather than a span opened inside the body, because the body
+     * is a transaction and has four early refusals before it - a span that
+     * started after them would not measure the refusal that took the time.
      */
     public function post(
+        Entity $entity,
+        string $ruleKey,
+        array $event,
+        Carbon $accountingDate,
+        string $journalCode = 'GEN',
+        ?string $sourceType = null,
+        ?string $sourceId = null,
+        ?string $narration = null,
+        ?Period $into = null,
+    ): JournalEntry {
+        return app(\App\Support\Telemetry\Tracer::class)->measure(
+            'journal.post',
+            \App\Support\Telemetry\SpanKind::Internal,
+            ['key' => $ruleKey, 'document_type' => $sourceType],
+            fn (): JournalEntry => $this->postNow(
+                $entity,
+                $ruleKey,
+                $event,
+                $accountingDate,
+                $journalCode,
+                $sourceType,
+                $sourceId,
+                $narration,
+                $into,
+            ),
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $event
+     */
+    private function postNow(
         Entity $entity,
         string $ruleKey,
         array $event,

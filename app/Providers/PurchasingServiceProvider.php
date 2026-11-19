@@ -25,6 +25,20 @@ final class PurchasingServiceProvider extends ServiceProvider
 {
     public function boot(): void
     {
+
+        /*
+         | The business metrics this module owns - PF-241.
+         |
+         | Registered through the registry in `Support` for the same reason
+         | the closing checks and the ledger checks are: a metrics service
+         | that asked each module directly would depend on all of them, and
+         | the dashboards are derived from what is registered rather than
+         | written out somewhere that drifts.
+         */
+        $metrics = $this->app->make(\App\Support\Telemetry\Metrics\Metrics::class);
+
+        $metrics->register($this->app->make(\App\Tenant\Purchasing\Metrics\DocumentsAwaitingApproval::class));
+
         $registry = $this->app->make(PostingRuleRegistry::class);
 
         $registry->register(new BillPostedRule());

@@ -18,6 +18,7 @@ use App\Http\Middleware\ApplyDisplayDigits;
 use App\Http\Middleware\AssignCorrelationId;
 use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\SetLocale;
+use App\Http\Middleware\TraceRequest;
 use App\Support\Http\Problem;
 use App\Support\Http\ProblemType;
 use Illuminate\Auth\AuthenticationException;
@@ -75,6 +76,23 @@ return Application::configure(basePath: dirname(__DIR__))
          | is a line that cannot be joined to the request that produced it -
          | which is exactly the request somebody is trying to understand.
          */
+        /*
+         | The request span, just INSIDE the correlation id - PF-240.
+         |
+         | Prepended before the correlation id's own prepend, so the
+         | correlation id ends up in front of it: a `prepend` goes ahead of
+         | whatever is already there, so the LAST prepend runs first. The
+         | trace id IS the correlation id, and a span opened outside
+         | AssignCorrelationId would take the id the previous request left
+         | bound - two requests under one trace id, which reads as causation.
+         |
+         | Global rather than in the web group, for the same reason as the
+         | security headers: a 404 from an unmatched URL and a 500 from the
+         | exception handler are the requests somebody is looking for, and
+         | neither reaches a route.
+         */
+        $middleware->prepend(TraceRequest::class);
+
         $middleware->prepend(AssignCorrelationId::class);
 
         $middleware->prepend(SetLocale::class);

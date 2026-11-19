@@ -72,6 +72,31 @@ final class ReturnFiler
         ?string $submissionReference = null,
         ?string $override = null,
     ): ReturnFiling {
+        /*
+         | `tax_return.file` is kept at any sample rate - PF-240.
+         |
+         | The last of the five names in `telemetry.sampling.always_sample`.
+         | Filing is irreversible from the authority's side, so the trace of
+         | the one that went wrong is the only account of what was sent.
+         */
+        return app(\App\Support\Telemetry\Tracer::class)->measure(
+            'tax_return.file',
+            \App\Support\Telemetry\SpanKind::Internal,
+            [
+                'jurisdiction' => (string) $period->jurisdiction,
+                'period_id' => (string) $period->getKey(),
+            ],
+            fn (): ReturnFiling => $this->fileNow($entity, $period, $filedBy, $submissionReference, $override),
+        );
+    }
+
+    private function fileNow(
+        Entity $entity,
+        ReturnPeriod $period,
+        string $filedBy,
+        ?string $submissionReference = null,
+        ?string $override = null,
+    ): ReturnFiling {
         if ($period->isFiled()) {
             throw FilingRefused::alreadyFiled($period->label);
         }

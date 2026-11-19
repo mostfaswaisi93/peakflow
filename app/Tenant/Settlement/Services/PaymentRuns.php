@@ -386,6 +386,27 @@ final class PaymentRuns
      */
     public function release(string $runId, string $userId, ?string $note = null): array
     {
+        /*
+         | `payment.release` is the one trace you needed - PF-240.
+         |
+         | The first name on `telemetry.sampling.always_sample`, and the
+         | reason that list exists: a sampled-away payment release is found
+         | to have been sampled away at the moment somebody asks what
+         | happened to the money. The span wraps the whole act, including the
+         | maker-checker refusal, because "it was refused" is the answer as
+         | often as "it took four minutes".
+         */
+        return app(\App\Support\Telemetry\Tracer::class)->measure(
+            'payment.release',
+            \App\Support\Telemetry\SpanKind::Internal,
+            ['reference' => $runId],
+            fn (): array => $this->releaseNow($runId, $userId, $note),
+        );
+    }
+
+    /** @return array<string, mixed> */
+    private function releaseNow(string $runId, string $userId, ?string $note = null): array
+    {
         $run = $this->runOr404($runId);
 
         if ((string) $run->state !== 'prepared') {

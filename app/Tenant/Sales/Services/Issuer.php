@@ -102,6 +102,49 @@ final class Issuer
         array $taxDecision,
         ?\App\Tenant\Catalog\Models\PaymentTerm $terms = null,
     ): Invoice {
+        /*
+         | `invoice.issue` is kept at any sample rate - PF-240.
+         |
+         | Named in `config/telemetry.php`, emitted here, and wrapped around
+         | the whole act rather than opened inside the transaction: issuing
+         | is the operation whose duration somebody asks about, and the
+         | numbering allocation and the refusals before the transaction are
+         | part of it.
+         */
+        return app(\App\Support\Telemetry\Tracer::class)->measure(
+            'invoice.issue',
+            \App\Support\Telemetry\SpanKind::Internal,
+            [
+                /*
+                 | The enum's VALUE, never the enum.
+                 |
+                 | `document_type` is cast to `DocumentType`, and `(string)`
+                 | on it throws - which took eleven sales checks down with
+                 | "could not be converted to string" the first time this
+                 | span was added. A span is diagnostic and must not be able
+                 | to fail the thing it is measuring, so the one place it
+                 | reads a model attribute reads it defensively.
+                 */
+                'document_type' => $draft->document_type instanceof \App\Tenant\Sales\Enums\DocumentType
+                    ? $draft->document_type->value
+                    : (is_scalar($draft->document_type) ? (string) $draft->document_type : null),
+                'currency' => is_scalar($draft->currency) ? (string) $draft->currency : null,
+                'jurisdiction' => is_string($taxDecision['country'] ?? null) ? $taxDecision['country'] : null,
+            ],
+            fn (): Invoice => $this->issueNow($draft, $entity, $userId, $taxDecision, $terms),
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $taxDecision
+     */
+    private function issueNow(
+        Invoice $draft,
+        Entity $entity,
+        string $userId,
+        array $taxDecision,
+        ?\App\Tenant\Catalog\Models\PaymentTerm $terms = null,
+    ): Invoice {
         if ($draft->isIssued()) {
             throw IssueRefused::alreadyIssued((string) $draft->number);
         }
