@@ -610,7 +610,7 @@ final class SupplierCredits
         }
 
         foreach ($creditNote->taxBreakdown as $group) {
-            $jurisdiction = (string) ($creditNote->tax_decision_snapshot['jurisdiction'] ?? 'SA');
+            $jurisdiction = $this->jurisdictionOf($creditNote);
             $amount = Money::of((string) $group->recoverable_amount, $currency);
 
             if ($amount->isZero()) {
@@ -649,6 +649,32 @@ final class SupplierCredits
      *
      * @throws BillRefused
      */
+    /**
+     * Which jurisdiction's tax accounts this credit note's tax belongs to.
+     *
+     * The same read as {@see Bills::jurisdictionOf()}, and the same defect:
+     * it was `tax_decision_snapshot['jurisdiction'] ?? 'SA'`, nothing writes
+     * a credit note's snapshot, and the frozen decision spells that key
+     * `country` anyway - so every supplier credit's tax reversal posted to
+     * Saudi control accounts whatever the entity's country.
+     *
+     * Duplicated rather than extracted, and that is a judgement: a shared
+     * helper would have to live in `Support` or in `Tax`, and neither owns
+     * "which of a purchasing document's accounts" - the first is a layer
+     * this does not belong in and the second may not depend on Purchasing.
+     * Two private methods with one docblock each is the smaller cost.
+     */
+    private function jurisdictionOf(Bill $document): string
+    {
+        $frozen = $document->tax_decision_snapshot['country'] ?? null;
+
+        if (\is_string($frozen) && $frozen !== '') {
+            return $frozen;
+        }
+
+        return (string) $document->entity->country;
+    }
+
     private function raise(
         Entity $entity,
         Bill $bill,

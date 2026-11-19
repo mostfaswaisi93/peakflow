@@ -449,12 +449,9 @@ final class Bills
         }
 
         foreach ($bill->taxBreakdown as $group) {
-            $jurisdiction = (string) ($bill->tax_decision_snapshot['jurisdiction'] ?? 'SA');
+            $jurisdiction = $this->jurisdictionOf($bill);
             $recoverableAmount = Money::of((string) $group->recoverable_amount, $currency);
-
-            if ($recoverableAmount->isZero()) {
-                continue;
-            }
+            $groupTax = Money::of((string) $group->tax_amount, $currency);
 
             $entry = [
                 'jurisdiction' => $jurisdiction,
@@ -472,15 +469,44 @@ final class Bills
 
             if ($group->reverse_charge) {
                 /*
-                 | Both sides, and not in the payable.
+                 | Three legs, not two, and the third is why this was wrong.
                  |
-                 | The supplier charged nothing: they are owed the net. The
-                 | tax is owed to the authority and claimed back from them in
-                 | the same breath, which is two postings of the same amount
-                 | in two different boxes of the return.
+                 | The recipient OWES the authority the whole tax and may
+                 | CLAIM only the recoverable share of it. The difference is
+                 | cost and rides with the line's expense, which the loop
+                 | above already does through `nonRecoverableTax()`.
+                 |
+                 |   Dr expense       net + the irrecoverable share
+                 |   Dr vat_input     the recoverable share
+                 |   Cr vat_output    the WHOLE tax
+                 |
+                 | One figure used to be carried for both tax legs, which is
+                 | right at 100% recovery - the only recovery percentage any
+                 | fixture had ever combined with a reverse charge. At 50% it
+                 | credited the output with the recoverable half, understating
+                 | the liability by the other half. At 0% the zero-amount
+                 | guard above skipped the group before it reached this
+                 | branch, so NEITHER leg posted and the whole tax ended up in
+                 | `rounding_difference` - an account whose own docblock is
+                 | about sub-cent translation error.
+                 |
+                 | The guard is gone from the top of the loop for that
+                 | reason: a reverse-charge group with nothing recoverable
+                 | still carries a liability. A group with no tax at all is
+                 | skipped here instead, where it means what it says.
                  */
-                $reverseCharge[] = $entry;
+                if ($groupTax->isZero()) {
+                    continue;
+                }
 
+                $reverseCharge[] = $entry + [
+                    'liability' => (string) $groupTax->amount,
+                ];
+
+                continue;
+            }
+
+            if ($recoverableAmount->isZero()) {
                 continue;
             }
 
@@ -627,7 +653,33 @@ final class Bills
 
             $net = $net->plus($lineNet);
             $tax = $tax->plus($lineTax);
-            $recoverable = $recoverable->plus($lineRecoverable);
+
+            /*
+             | The bill-level recoverable accumulator counts NON-reverse-
+             | charge lines only, and that is the whole of PF-079's defect.
+             |
+             | `bills` carries a database CHECK that `tax_amount =
+             | recoverable_tax_amount + non_recoverable_tax_amount`, and
+             | `tax_amount` is the tax payable TO THE SUPPLIER - which under
+             | the reverse charge is nothing, because they charged nothing.
+             | So the two columns are about the payable tax and a reverse-
+             | charge line contributes to neither.
+             |
+             | It used to add every line here and then subtract the WHOLE
+             | reverse-charge tax at the end, from an accumulator that had
+             | only ever held the recoverable SHARE of it. On a 50% line the
+             | columns came out as -150 and +150: wrong in opposite
+             | directions by the same amount, so the CHECK was satisfied and
+             | the row looked consistent. A negative recoverable tax is not
+             | a smaller claim, it is a claim in the wrong direction.
+             |
+             | The GROUP's own `recoverable` below still counts it, because
+             | that is what the recipient may claim back from the authority -
+             | a different question from what the supplier is owed.
+             */
+            if (! $reverse) {
+                $recoverable = $recoverable->plus($lineRecoverable);
+            }
 
             /*
              | Grouped by category, rate AND the reverse-charge flag.
@@ -674,10 +726,44 @@ final class Bills
             'net' => $net,
             'tax' => $payableTax,
             'gross' => $net->plus($payableTax),
-            'recoverable' => $recoverable->minus($reverseChargeTax),
-            'non_recoverable' => $payableTax->minus($recoverable->minus($reverseChargeTax)),
+            'recoverable' => $recoverable,
+            'non_recoverable' => $payableTax->minus($recoverable),
             'groups' => $groups,
         ];
+    }
+
+    /**
+     * Which jurisdiction's tax accounts this document's tax belongs to.
+     *
+     * ## It used to be Saudi Arabia, always
+     *
+     * The read was `tax_decision_snapshot['jurisdiction'] ?? 'SA'`, and it
+     * was wrong twice over. Nothing writes a bill's
+     * `tax_decision_snapshot` at all, so the fallback was the only branch
+     * that ever ran - and even once something does write it,
+     * `PlaceOfSupplyDecision::jsonSerialize()` spells that key `country`,
+     * so the lookup would have missed a correctly frozen decision and kept
+     * falling back. Every bill's input and output tax posted to Saudi
+     * control accounts, in every entity, in every country.
+     *
+     * The sales side reads `country` and has done since PF-089.
+     *
+     * The entity's own country is the fallback now rather than a literal,
+     * because an entity that has not frozen a place-of-supply decision is
+     * most likely buying at home - and if it is not, a tax account in the
+     * wrong country is a figure in a return the entity does not file, which
+     * is visible, rather than a figure in a Saudi return it does not file
+     * either, which looks ordinary.
+     */
+    private function jurisdictionOf(Bill $document): string
+    {
+        $frozen = $document->tax_decision_snapshot['country'] ?? null;
+
+        if (\is_string($frozen) && $frozen !== '') {
+            return $frozen;
+        }
+
+        return (string) $document->entity->country;
     }
 
     /** @param list<array<string, mixed>> $lines */

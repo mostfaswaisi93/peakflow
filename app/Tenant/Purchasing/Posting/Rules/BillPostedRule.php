@@ -109,8 +109,8 @@ final class BillPostedRule implements PostingRule
             'The posting a supplier bill produces',
             [
                 ['Dr', 'the line\'s expense or asset account', 'each line\'s net, plus its non-recoverable tax'],
-                ['Dr', 'vat_input (per jurisdiction)', 'the recoverable tax, and the reverse-charge input'],
-                ['Cr', 'vat_output (per jurisdiction)', 'the reverse-charge output - the half most systems forget'],
+                ['Dr', 'vat_input (per jurisdiction)', 'the recoverable tax, and the reverse-charge claim'],
+                ['Cr', 'vat_output (per jurisdiction)', 'the reverse-charge liability, in full - the half most systems forget'],
                 ['Cr', 'accounts_payable', 'the gross the supplier is owed'],
                 ['Dr/Cr', 'rounding_difference', 'the residual from translating a foreign-currency bill'],
             ],
@@ -235,37 +235,68 @@ final class BillPostedRule implements PostingRule
          | The reverse charge, both sides.
          |
          | The input because the recipient may claim it, the output because
-         | the recipient owes it. Equal and opposite in the accounts, and
-         | two different boxes on the return - which is why they cannot be
-         | netted here even though the entry would still balance.
+         | the recipient owes it. Two different boxes on the return, which is
+         | why they cannot be netted here even though the entry would still
+         | balance.
+         |
+         | Equal and opposite only when the tax is FULLY recoverable. Where
+         | it is not, the output is the whole tax, the input is the
+         | recoverable share, and the difference is cost sitting in the
+         | line's own expense - see the loop below.
          */
         foreach ($event['reverse_charge'] ?? [] as $tax) {
-            $amount = Money::of((string) $tax['amount'], $currency);
+            /*
+             | TWO figures, because the two legs are not the same claim.
+             |
+             | The recipient OWES the authority the whole tax and may CLAIM
+             | only the recoverable share of it. `liability` is the first and
+             | `amount` the second; they are equal only when recovery is
+             | 100%, which is the case every fixture had.
+             |
+             | One figure used to be carried for both, so at 50% recovery the
+             | output was credited with the recoverable half and the
+             | liability was understated by the other half - in the one box
+             | the authority compares against the supplier's own declaration.
+             | `liability` falls back to `amount` so an event built by
+             | anything older still posts what it used to.
+             */
+            $liability = Money::of((string) ($tax['liability'] ?? $tax['amount']), $currency);
+            $claim = Money::of((string) $tax['amount'], $currency);
 
-            if ($amount->isZero()) {
+            if ($liability->isZero()) {
                 continue;
             }
 
             /*
-             | Translated from the SAME original on both sides.
-             |
-             | Negating the original rather than the translated figure would
-             | round the two sides independently, and a 0.01 that lands on
-             | the input and not on the output is an input box and an output
-             | box that no longer agree - the exact discrepancy the
-             | authority compares.
+             | The input leg is skipped when nothing is recoverable, and that
+             | is not an optimisation: `journal_lines` refuses a zero amount,
+             | so a 0% line would make the whole bill unpostable. The
+             | irrecoverable tax is already in the expense, carried there by
+             | the line's own `nonRecoverableTax()`, so the entry balances
+             | without it.
              */
-            $input = $this->taxLine(
-                ControlRole::VatInput,
-                $tax,
-                $amount,
-                $party,
-                $narration,
-                $rate,
-                $policy,
-            );
+            if (! $claim->isZero()) {
+                /*
+                 | Translated from the SAME original on both sides.
+                 |
+                 | Negating the original rather than the translated figure
+                 | would round the two sides independently, and a 0.01 that
+                 | lands on the input and not on the output is an input box
+                 | and an output box that no longer agree - the exact
+                 | discrepancy the authority compares.
+                 */
+                $lines[] = $this->taxLine(
+                    ControlRole::VatInput,
+                    $tax,
+                    $claim,
+                    $party,
+                    $narration,
+                    $rate,
+                    $policy,
+                );
+            }
 
-            $lines[] = $input;
+            $amount = $liability;
 
             $lines[] = $rate instanceof Rate
                 ? PostingLine::translatedToRoleIn(
@@ -361,8 +392,32 @@ final class BillPostedRule implements PostingRule
      * of them, and an unbalanced entry is refused outright - which would
      * make a foreign-currency bill unpostable for the sake of a penny.
      *
+     * ## And it has a CEILING, because it did not
+     *
+     * A plug with no limit does not balance an entry, it conceals whatever
+     * is wrong with it. PF-079's reverse-charge defect posted 450.00 of
+     * irrecoverable tax into this account on a 3,000 bill in a single
+     * currency - where this method's own docblock says nothing is added at
+     * all - and the entry balanced, the trial balance balanced, and the one
+     * figure that would have announced the bug went into the account opened
+     * to announce exactly that class of bug.
+     *
+     * One hundredth of the functional currency per line. Generous: a line's
+     * rounding error at the amount scale is at most a twenty-thousandth, so
+     * the ceiling is two thousand times the worst legitimate case and will
+     * not refuse a real bill. Tight enough that the 450.00 above is refused
+     * by a factor of twenty-two thousand.
+     *
+     * A refusal and not a split. Capping the line and dropping the rest
+     * would leave an unbalanced entry the Poster refuses anyway, with a
+     * message about balance rather than about the real cause; capping and
+     * logging would put the one sentence somebody needs in a place nobody
+     * reads. The bill does not post, and the reason names the figure.
+     *
      * @param  list<PostingLine>  $lines
      * @return list<PostingLine>
+     *
+     * @throws BillRefused
      */
     private function balanced(array $lines, PostingContext $context): array
     {
@@ -374,6 +429,17 @@ final class BillPostedRule implements PostingRule
 
         if ($residual->isZero()) {
             return $lines;
+        }
+
+        $ceiling = $context->money((string) \Brick\Math\BigDecimal::of('0.01')
+            ->multipliedBy(\count($lines)));
+
+        if ($residual->abs()->isGreaterThan($ceiling)) {
+            throw BillRefused::aResidualTooLargeToBeRounding(
+                (string) $residual->abs()->amount,
+                (string) $ceiling->amount,
+                \count($lines),
+            );
         }
 
         $lines[] = PostingLine::toRole(

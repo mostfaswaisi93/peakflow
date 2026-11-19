@@ -133,6 +133,36 @@ final class BillRefused extends \RuntimeException
         ));
     }
 
+    /**
+     * A residual too large to be rounding - PF-079.
+     *
+     * The rounding account exists for the hundredth of a unit that is left
+     * when every line of a translated bill is rounded separately. A figure
+     * far above that is not rounding: it is the arithmetic above it being
+     * wrong by exactly that much, and plugging it would make the entry
+     * balance while the books carried the error.
+     *
+     * The message names both figures, because the ratio is the diagnosis. A
+     * residual of twice the ceiling is a rate or a scale; a residual of a
+     * thousand times it is a whole amount in the wrong place.
+     */
+    public static function aResidualTooLargeToBeRounding(
+        string $residual,
+        string $ceiling,
+        int $lines,
+    ): self {
+        return new self(sprintf(
+            'This bill does not balance by %s, and the most that rounding %d line%s could leave is '.
+            '%s. The difference is not rounding - something above it is wrong by that amount, and '.
+            'putting it in the rounding account would balance the entry while leaving the error in '.
+            'the books. Nothing has been posted.',
+            $residual,
+            $lines,
+            $lines === 1 ? '' : 's',
+            $ceiling,
+        ));
+    }
+
     public static function taxDoesNotTie(string $stated, string $computed): self
     {
         return new self(sprintf(

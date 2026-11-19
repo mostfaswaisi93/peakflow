@@ -107,6 +107,9 @@ final class PurchasingCoverageRules
                 'but it refuses the posting, rather than booking the face value' => fn (): array => $this->postingIsRefused(),
                 'the payables figure is the ledger\'s posted balance, in the books\' currency' => fn (): array => $this->theControlBalanceIsFunctionalAndPosted(),
                 'and DPO is one currency, named, with what it left out counted' => fn (): array => $this->dpoIsOneCurrency(),
+                'a reverse charge owes the whole tax and claims only what is recoverable' => fn (): array => $this->partialReverseCharge(),
+                'and a residual too large to be rounding is refused, not plugged' => fn (): array => $this->theRoundingPlugHasACeiling(),
+                'a bill\'s tax belongs to the jurisdiction the document decided, not to Saudi Arabia' => fn (): array => $this->theJurisdictionIsNotHardcoded(),
                 'and the ledger still proves its own invariants' => fn (): array => [],
             ]), $this->entityId);
         } finally {
@@ -914,6 +917,472 @@ final class PurchasingCoverageRules
                 'updated_at' => now(),
             ]);
         }
+    }
+
+    /**
+     * A reverse charge whose input tax is only partly recoverable - PF-079.
+     *
+     * ## The three legs, and why two of them used to be one
+     *
+     * Under the reverse charge the supplier charges nothing. The recipient
+     * self-assesses: they OWE the authority the whole tax and they may
+     * CLAIM only the recoverable share of it. The difference is cost, and
+     * it belongs to the expense the purchase was for.
+     *
+     *   Dr expense            net + the irrecoverable share
+     *   Dr vat_input          the recoverable share
+     *   Cr vat_output         the WHOLE tax
+     *   Cr accounts_payable   the net, because nothing was charged
+     *
+     * The posting carried ONE figure for a reverse-charge group and used it
+     * on both tax legs - correct when recovery is 100%, which is the only
+     * case any fixture had ever combined with a reverse charge. At 50% it
+     * credited the output with the recoverable half, understating the
+     * liability by the other half; at 0% it skipped both legs entirely,
+     * because the loop short-circuited on a zero recoverable amount before
+     * it ever reached the reverse-charge branch.
+     *
+     * Measured on net 3,000 / tax 450 / 0% recovery: no `vat_input` line, no
+     * `vat_output` line, and 450.00 in `rounding_difference`.
+     *
+     * ## What made it invisible
+     *
+     * The entry BALANCED, twice over. `bills` carries a database CHECK that
+     * `tax_amount = recoverable_tax_amount + non_recoverable_tax_amount`,
+     * and `compute()` satisfied it by subtracting the whole reverse-charge
+     * tax from an accumulator that only ever held part of it - so the two
+     * columns came out as -150 and +150, wrong in opposite directions by
+     * the same amount, and the constraint was content. Then the journal
+     * balanced because the residual went into `rounding_difference`, whose
+     * own docblock is about sub-cent translation error.
+     *
+     * So: a correct-looking bill row, a balanced entry, a passing trial
+     * balance, and a return whose output box understates the liability by
+     * exactly the irrecoverable tax. Nothing in the ledger could see it,
+     * because nothing in the ledger was inconsistent.
+     *
+     * @return list<string>
+     */
+    private function partialReverseCharge(): array
+    {
+        $problems = [];
+
+        /*
+         | A different NET per case, and that is not cosmetic.
+         |
+         | `DuplicateBillDetector` matches on the supplier, the currency and
+         | the GROSS within a window of days, and a reverse charge's gross
+         | is its net - so two cases at 2,000 would be a suspected duplicate
+         | and `Bills` would refuse to post the second until a person had
+         | looked at it. Correctly: paying an invoice twice is the error that
+         | guard exists to prevent. The first draft of this check hit exactly
+         | that, which is a guard doing its job rather than an obstacle.
+         */
+        $cases = [
+            // percent, net, tax, what may be claimed, what is cost
+            ['50', '2000.0000', '300.0000', '150.0000', '150.0000'],
+            ['0', '5000.0000', '750.0000', '0.0000', '750.0000'],
+        ];
+
+        foreach ($cases as [$percent, $net, $tax, $claim, $cost]) {
+            $bill = $this->post($this->enterBill(
+                lines: [$this->partlyRecoverableReverseChargeLine($percent, $net, $tax)],
+                number: 'RC-'.Str::upper(Str::random(6)),
+                documentDate: Carbon::parse(self::TAX_POINT),
+                taxPoint: Carbon::parse(self::TAX_POINT),
+                postingDate: $this->date->copy(),
+                currency: $this->entity()->functional_currency,
+            ));
+
+            $lines = $this->journalLines($bill);
+            $byRole = [];
+
+            foreach ($lines as $line) {
+                $role = (string) ($line['role'] ?? '');
+                $byRole[$role] = BigDecimal::of((string) ($byRole[$role] ?? '0'))
+                    ->plus((string) $line['functional_amount']);
+            }
+
+            $input = $byRole['vat_input'] ?? BigDecimal::zero();
+            $output = $byRole['vat_output'] ?? BigDecimal::zero();
+            $plug = $byRole['rounding_difference'] ?? BigDecimal::zero();
+
+            /*
+             | The OUTPUT is the whole tax, at every recovery percentage.
+             |
+             | This is the half most systems forget, and the half the
+             | authority checks: they compare the output box against the
+             | supplier's own declaration, and an output understated by the
+             | irrecoverable tax is a discrepancy with a receipt behind it.
+             */
+            if (! $output->negated()->isEqualTo($tax)) {
+                $problems[] = sprintf(
+                    'at %s%% recovery the reverse charge credited %s of output tax on a tax of %s. The '.
+                    'recipient owes the authority the WHOLE tax whatever they may claim back, so the '.
+                    'output box is understated by the part that is not recoverable - and the authority '.
+                    'compares that box against the supplier\'s own declaration.',
+                    $percent,
+                    (string) $output->negated(),
+                    $tax,
+                );
+            }
+
+            if (! $input->isEqualTo($claim)) {
+                $problems[] = sprintf(
+                    'at %s%% recovery the reverse charge debited %s of input tax rather than %s. The '.
+                    'input box is what may be claimed, and claiming more than that is a claim the '.
+                    'authority will disallow with interest.',
+                    $percent,
+                    (string) $input,
+                    $claim,
+                );
+            }
+
+            /*
+             | And the irrecoverable part is COST, not a rounding residual.
+             |
+             | `rounding_difference` exists for sub-cent translation error -
+             | its own docblock says "for the sake of a penny". A plug that
+             | swallows 300.00 of irrecoverable tax hides the class of error
+             | the account was opened to reveal, and the cost never reaches
+             | the cost centre that incurred it.
+             */
+            if (! $plug->isZero()) {
+                $problems[] = sprintf(
+                    'at %s%% recovery, %s landed in rounding_difference. That is the irrecoverable tax, '.
+                    'and it is cost: it belongs to the expense the purchase was for, where the cost '.
+                    'centre that bought this carries it.',
+                    $percent,
+                    (string) $plug,
+                );
+            }
+
+            $expense = ($byRole['cost_of_sales'] ?? null)
+                ?? $this->expenseTotal($lines);
+
+            if (! $expense->isEqualTo(BigDecimal::of($net)->plus($cost))) {
+                $problems[] = sprintf(
+                    'at %s%% recovery the expense is %s and should be %s plus the %s that cannot be '.
+                    'claimed. The cost of a purchase includes the tax nobody will refund, and it '.
+                    'belongs to the cost centre that bought it.',
+                    $percent,
+                    (string) $expense,
+                    $net,
+                    $cost,
+                );
+            }
+
+            /*
+             | The bill's own two columns, which the CHECK constraint let
+             | through as -150 and +150.
+             |
+             | The payable tax under a pure reverse charge is zero, so both
+             | columns are zero. A negative recoverable tax is not a smaller
+             | claim, it is a claim in the wrong direction.
+             */
+            if (BigDecimal::of((string) $bill->recoverable_tax_amount)->isNegative()) {
+                $problems[] = sprintf(
+                    'at %s%% recovery the bill records %s of RECOVERABLE tax - a negative claim. The '.
+                    'database CHECK that tax = recoverable + non-recoverable was satisfied, because '.
+                    'both columns are wrong by the same amount in opposite directions.',
+                    $percent,
+                    (string) $bill->recoverable_tax_amount,
+                );
+            }
+        }
+
+        return $problems;
+    }
+
+    /**
+     * A reverse-charge line whose input tax is only partly recoverable.
+     *
+     * @return array<string, mixed>
+     */
+    private function partlyRecoverableReverseChargeLine(
+        string $percent,
+        string $net,
+        string $tax,
+    ): array {
+        return [
+            'description' => 'Consultancy from a non-resident supplier, partly for entertainment',
+            'quantity' => '1',
+            'unit_price' => $net,
+            'net_amount' => $net,
+            'expense_account_id' => $this->expenseAccountId,
+            'tax_code_id' => $this->taxCodeId,
+            'tax_category' => 'AE',
+            'tax_rate' => '15.000000',
+            'tax_amount' => $tax,
+            'reverse_charge' => true,
+            'recoverable_percent' => $percent,
+        ];
+    }
+
+    /**
+     * Everything debited that is not a tax or a payable, which is the expense.
+     *
+     * Read by exclusion rather than by role, because the expense account in
+     * this fixture carries no control role at all - a control role is what
+     * makes an account refuse a manual journal, and an expense account is
+     * one anybody may post to.
+     *
+     * @param  list<array<string, mixed>>  $lines
+     */
+    private function expenseTotal(array $lines): BigDecimal
+    {
+        $total = BigDecimal::zero();
+
+        foreach ($lines as $line) {
+            if ((string) ($line['role'] ?? '') !== '') {
+                continue;
+            }
+
+            $total = $total->plus((string) $line['functional_amount']);
+        }
+
+        return $total;
+    }
+
+    /**
+     * The rounding account has a ceiling - PF-079.
+     *
+     * ## Why an unlimited plug is worse than an unbalanced entry
+     *
+     * `BillPostedRule::balanced()` added whatever was left over to
+     * `rounding_difference` so the Poster's balance check would pass. Its
+     * own docblock is about sub-cent translation error - "for the sake of a
+     * penny" - and says nothing is added at all in the single-currency
+     * case.
+     *
+     * PF-079's reverse-charge defect put **450.00** through it, on a 3,000
+     * bill, in a single currency. The entry balanced. The trial balance
+     * balanced. `ledger:verify` passed. And the one figure that would have
+     * announced the bug went into the account opened to announce exactly
+     * that class of bug - which is why the defect survived: the mechanism
+     * that was supposed to make it visible is what hid it.
+     *
+     * A plug with no limit does not balance an entry. It conceals whatever
+     * is wrong with it, and the larger the error the more completely.
+     *
+     * ## The ceiling, and why a refusal rather than a cap
+     *
+     * One hundredth of the functional currency per line. A line's rounding
+     * error at the amount scale is at most a twenty-thousandth, so the
+     * ceiling is two thousand times the worst legitimate case and cannot
+     * refuse a real bill; the 450.00 above exceeds it by a factor of
+     * twenty-two thousand.
+     *
+     * Capping the line and dropping the rest would leave an unbalanced
+     * entry the Poster refuses anyway, with a message about balance rather
+     * than about the cause. Capping and logging would put the one sentence
+     * somebody needs where nobody reads. So the bill does not post, and the
+     * refusal names both figures - because the ratio is the diagnosis: twice
+     * the ceiling is a rate or a scale, a thousand times it is a whole
+     * amount in the wrong place.
+     *
+     * The event is tampered with rather than the production arithmetic,
+     * because the question here is what `balanced()` does with a residual
+     * and not how one arises. The sweep breaks the arithmetic separately.
+     *
+     * @return list<string>
+     */
+    private function theRoundingPlugHasACeiling(): array
+    {
+        $this->recordBothRates();
+
+        $bill = $this->enterBill(
+            number: 'CEIL-'.Str::upper(Str::random(6)),
+            documentDate: Carbon::parse(self::TAX_POINT),
+            taxPoint: Carbon::parse(self::TAX_POINT),
+            postingDate: $this->date->copy(),
+            currency: $this->entity()->functional_currency,
+        );
+
+        $event = app(Bills::class)->event($bill, $this->entity());
+        $context = new \App\Tenant\Ledger\Posting\PostingContext(
+            $this->entityId,
+            (string) $this->entity()->functional_currency,
+            $this->date->copy(),
+        );
+
+        $rule = new \App\Tenant\Purchasing\Posting\Rules\BillPostedRule();
+        $problems = [];
+
+        /*
+         | A residual of the size PF-079 actually produced.
+         |
+         | Understating the payable by 450 is the same arithmetic the
+         | reverse-charge defect produced from the other direction, so the
+         | figure in the refusal is the figure that was being absorbed.
+         */
+        $tampered = $event;
+        $tampered['payable'] = (string) BigDecimal::of((string) $event['payable'])->minus('450.0000');
+
+        try {
+            $rule->lines($tampered, $context);
+
+            $problems[] = 'a 450.00 residual was absorbed into rounding_difference rather than refused. '.
+                'That account exists for the hundredth of a unit left by rounding each translated line '.
+                'separately; a plug that swallows 450 balances the entry and leaves the error in the '.
+                'books, which is how PF-079 survived.';
+        } catch (BillRefused $e) {
+            foreach (['450', 'rounding'] as $expected) {
+                if (! str_contains($e->getMessage(), $expected)) {
+                    $problems[] = sprintf(
+                        'the refusal does not mention %s: "%s". The ratio between the residual and what '.
+                        'rounding could leave is the diagnosis, so both figures have to be in the '.
+                        'sentence.',
+                        $expected,
+                        $e->getMessage(),
+                    );
+                }
+            }
+        }
+
+        /*
+         | And the ceiling still admits a real rounding residual.
+         |
+         | A ceiling tight enough to refuse what rounding actually leaves
+         | would make every foreign-currency bill unpostable, which is the
+         | failure the plug was introduced to prevent. One hundredth is two
+         | thousand times the worst case; this proves the direction rather
+         | than the margin.
+         */
+        $small = $event;
+        $small['payable'] = (string) BigDecimal::of((string) $event['payable'])->minus('0.0001');
+
+        try {
+            $lines = $rule->lines($small, $context);
+
+            $plug = null;
+
+            foreach ($lines as $line) {
+                if ($line->role === \App\Tenant\Ledger\Enums\ControlRole::RoundingDifference) {
+                    $plug = $line;
+                }
+            }
+
+            if ($plug === null) {
+                $problems[] = 'a 0.0001 residual produced no rounding line, so the entry does not '.
+                    'balance and a foreign-currency bill is unpostable for the sake of a ten-thousandth';
+            }
+        } catch (BillRefused $e) {
+            $problems[] = sprintf(
+                'a residual of 0.0001 was refused: "%s". The ceiling has to admit what rounding each '.
+                'translated line separately actually leaves, or no foreign bill posts at all.',
+                $e->getMessage(),
+            );
+        }
+
+        return $problems;
+    }
+
+    /**
+     * Which country's tax accounts a purchase bill's tax posts to - PF-079.
+     *
+     * ## It was Saudi Arabia, in every entity, in every country
+     *
+     * `Bills::event()` read `tax_decision_snapshot['jurisdiction'] ?? 'SA'`,
+     * and that was wrong twice over. Nothing writes a bill's
+     * `tax_decision_snapshot` at all, so the fallback was the only branch
+     * that ever ran - and even once something does write it,
+     * `PlaceOfSupplyDecision::jsonSerialize()` spells the key `country`, so
+     * the lookup would have missed a correctly frozen decision and gone on
+     * falling back. The sales side reads `country` and has since PF-089.
+     *
+     * ## Why no bite could catch it, which is the part worth recording
+     *
+     * Every fixture entity in this repository is in Saudi Arabia. So
+     * `'SA'`, `$entity->country` and any frozen decision all agree, and
+     * restoring the hardcoded literal changed no observable figure - the
+     * suite stayed green on a bite that put the defect straight back.
+     *
+     * That is the shape of a check that cannot fail, arriving through the
+     * fixture rather than through the assertion. The fix is not a better
+     * assertion, it is a fixture that can tell the two apart: this one
+     * moves the entity to Jordan inside the transaction, and freezes a
+     * decision naming a third country, so the literal, the fallback and
+     * the frozen value are three different strings.
+     *
+     * @return list<string>
+     */
+    private function theJurisdictionIsNotHardcoded(): array
+    {
+        $this->recordBothRates();
+
+        $entity = $this->entity();
+        $problems = [];
+
+        /*
+         | The entity moves to Jordan for the duration of the savepoint.
+         |
+         | Not a second entity: provisioning one means a chart of accounts,
+         | a calendar, a numbering series and a tax registration, and none
+         | of that is what is under test. The country is the only field this
+         | check reads, and the transaction puts it back.
+         */
+        $this->connection->table('entities')
+            ->where('id', $this->entityId)
+            ->update(['country' => 'JO']);
+
+        $bill = $this->enterBill(
+            number: 'JUR-'.Str::upper(Str::random(6)),
+            documentDate: Carbon::parse(self::TAX_POINT),
+            taxPoint: Carbon::parse(self::TAX_POINT),
+            postingDate: $this->date->copy(),
+            currency: (string) $entity->functional_currency,
+        );
+
+        $event = app(Bills::class)->event($bill->refresh(), $entity->refresh());
+
+        foreach (($event['recoverable_tax'] ?? []) as $tax) {
+            if ((string) $tax['jurisdiction'] !== 'JO') {
+                $problems[] = sprintf(
+                    'an entity in Jordan posted its input tax to %s. With no frozen decision the '.
+                    'entity\'s own country is the only honest fallback - a literal means every bill in '.
+                    'every country files in a return the entity does not file.',
+                    (string) $tax['jurisdiction'],
+                );
+            }
+        }
+
+        if (($event['recoverable_tax'] ?? []) === []) {
+            $problems[] = 'the bill produced no recoverable tax entry, so this check read nothing';
+        }
+
+        /*
+         | And a FROZEN decision outranks the entity, under the key the
+         | decision actually writes.
+         |
+         | `country`, not `jurisdiction`. This half is what the sales side
+         | has always done and the purchase side never did, and it is the
+         | half that will matter the day something starts freezing a
+         | place-of-supply decision onto a bill.
+         */
+        $this->connection->table('bills')
+            ->where('id', $bill->getKey())
+            ->update(['tax_decision_snapshot' => json_encode([
+                'country' => 'EG',
+                'category' => 'S',
+                'rule' => 'goods-delivered-in-egypt',
+            ], JSON_THROW_ON_ERROR)]);
+
+        $frozen = app(Bills::class)->event($bill->refresh(), $entity);
+
+        foreach (($frozen['recoverable_tax'] ?? []) as $tax) {
+            if ((string) $tax['jurisdiction'] !== 'EG') {
+                $problems[] = sprintf(
+                    'a bill carrying a frozen place-of-supply decision for Egypt posted its tax to %s. '.
+                    'The decision is frozen on the document precisely so a later reading cannot move '.
+                    'it, and a lookup that misses the key it is stored under reads as though no '.
+                    'decision had ever been made.',
+                    (string) $tax['jurisdiction'],
+                );
+            }
+        }
+
+        return $problems;
     }
 
     private function recordBothRates(): void
