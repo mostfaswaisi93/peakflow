@@ -48,7 +48,7 @@ final class DeviceSessionController
             throw EntityNotInScope::forQueryOn(User::class);
         }
 
-        return new JsonResponse($this->sessions->describe($user, (string) $entity->getKey(), $token->scopes()));
+        return new JsonResponse($this->sessions->describe($user, $entity->id, $token->scopes()));
     }
 
     /**
@@ -117,7 +117,7 @@ final class DeviceSessionController
         return new JsonResponse([
             'resource' => 'sign_out',
             'session_id' => $session?->family_id,
-            'token_id' => (string) $token->getKey(),
+            'token_id' => $token->id,
             'signed_out_at' => Wire::timestamp(now()),
         ]);
     }

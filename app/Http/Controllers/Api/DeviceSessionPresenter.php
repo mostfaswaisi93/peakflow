@@ -32,7 +32,7 @@ final class DeviceSessionPresenter
             'session_started_at' => Wire::timestamp($issued->sessionStartedAt),
             'second_factor' => $issued->secondFactor,
             'tenant' => [
-                'id' => (string) $tenant->getKey(),
+                'id' => $tenant->id,
                 'slug' => (string) $tenant->slug,
                 'name' => (string) $tenant->name,
             ],

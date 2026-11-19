@@ -7,6 +7,11 @@ namespace Tests\Support;
 use App\Platform\Models\Tenant;
 use App\Platform\Services\TenantConnectionResolver;
 use App\Support\Http\ProblemType;
+use App\Support\Mfa\Totp;
+use App\Tenant\Identity\Models\RefreshToken;
+use App\Tenant\Identity\Services\MfaService;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\RateLimiter;
 use App\Tenant\Identity\Exceptions\TokenRefused;
 use App\Tenant\Identity\Models\ApiToken;
 use App\Tenant\Identity\Models\Permission;
@@ -213,6 +218,18 @@ final class ApiContractRules
                 'a cursor that was altered, or came from another listing, is refused' => fn (): array => $this->aTamperedCursor(),
                 'a page size outside the allowlist is refused, naming the allowlist' => fn (): array => $this->thePageSizeAllowlist(),
                 'offset pagination is available, capped, and says which mode answered' => fn (): array => $this->offsetIsTheSlowerPath(),
+
+                // PF-260 - a person signing in on a device. Before PF-222, so
+                // every response these produce is validated against the
+                // contract by the check that walks them all.
+                'a device sign-in opens a session whose token works' => fn (): array => $this->aDeviceSignsIn(),
+                'every sign-in failure is one answer' => fn (): array => $this->signInRefusalsAreOne(),
+                'a refresh rotates both credentials and retires the old access token' => fn (): array => $this->aRefreshRotates(),
+                'a spent refresh token closes its whole session' => fn (): array => $this->aReusedRefreshClosesTheSession(),
+                'switching company is a refresh, held to the grants' => fn (): array => $this->switchingCompany(),
+                'signing out closes the session, and the devices are listed' => fn (): array => $this->signingOut(),
+                'a device token carries no scope that needs somebody present' => fn (): array => $this->noStepUpOnADevice(),
+                'a second factor is required, and one code opens one session' => fn (): array => $this->theSecondFactorStage(),
 
                 // PF-222 - money and dates.
                 'a live response matches the schema the contract documents for it' => fn (): array => $this->liveResponsesMatchTheContract(),
@@ -2692,6 +2709,507 @@ final class ApiContractRules
      * @param  array<string, mixed>|null  $body
      * @param  array<string, string>  $headers
      */
+    /*
+    |--------------------------------------------------------------------------
+    | PF-260 - a person signing in on a device
+    |--------------------------------------------------------------------------
+    |
+    | Driven through the kernel like everything else here, so every response is
+    | in `$seen` and is validated against the contract by PF-222's walk.
+    */
+
+    /** The suite user's password, set to one this suite knows the first time it is needed. */
+    private string $knownPassword = '';
+
+    /**
+     * @param  array<string, mixed>  $overrides
+     * @return array<string, mixed>
+     */
+    private function signInBody(array $overrides = []): array
+    {
+        \assert($this->user !== null);
+
+        if ($this->knownPassword === '') {
+            $this->knownPassword = Str::random(32);
+            $this->user->forceFill(['password' => $this->knownPassword])->saveQuietly();
+        }
+
+        return array_merge([
+            'workspace' => (string) Tenant::query()->whereKey($this->tenantId)->value('slug'),
+            'email' => (string) $this->user->email,
+            'password' => $this->knownPassword,
+            'device_name' => 'Contract suite phone',
+            'entity_id' => $this->entityId,
+        ], $overrides);
+    }
+
+    /**
+     * @param  array<string, mixed>  $overrides
+     * @return array{0: Response, 1: array<string, mixed>}
+     */
+    private function signInOnADevice(array $overrides = []): array
+    {
+        $response = $this->request('POST', '/api/v1/auth/sign-in', $this->signInBody($overrides), operation: 'signIn');
+
+        return [$response, $this->problem($response)];
+    }
+
+    /**
+     * @param  array<string, mixed>  $session
+     * @return array{0: Response, 1: array<string, mixed>}
+     */
+    private function refreshOnADevice(array $session, ?string $entityId = null, ?string $refreshToken = null): array
+    {
+        $body = ['refresh_token' => $refreshToken ?? (string) ($session['refresh_token'] ?? '')];
+
+        if ($entityId !== null) {
+            $body['entity_id'] = $entityId;
+        }
+
+        $response = $this->request('POST', '/api/v1/auth/refresh', $body, ['X-Tenant' => $this->tenantId], 'refreshSession');
+
+        return [$response, $this->problem($response)];
+    }
+
+    /**
+     * @param  array<string, mixed>  $session
+     * @return array<string, string>
+     */
+    private function deviceHeaders(array $session, ?string $entityId = null): array
+    {
+        return [
+            'Authorization' => 'Bearer '.(string) ($session['access_token'] ?? 'none'),
+            'X-Tenant' => $this->tenantId,
+            'X-Entity' => $entityId ?? (string) ($session['entity_id'] ?? $this->entityId),
+        ];
+    }
+
+    /** @param array<string, mixed> $session */
+    private function meStatus(array $session, ?string $entityId = null): int
+    {
+        return $this->request('GET', '/api/v1/me', headers: $this->deviceHeaders($session, $entityId), operation: 'getMe')
+            ->getStatusCode();
+    }
+
+    /** @param array<string, mixed> $session */
+    private function signOutQuietly(array $session): void
+    {
+        $headers = $this->deviceHeaders($session);
+        unset($headers['X-Entity']);
+
+        $this->request('POST', '/api/v1/auth/sign-out', [], $headers, 'signOut');
+    }
+
+    /** @return list<string> */
+    private function aDeviceSignsIn(): array
+    {
+        [$response, $session] = $this->signInOnADevice();
+
+        if ($response->getStatusCode() !== 201) {
+            return [sprintf(
+                'signing in answered %d rather than 201: %s',
+                $response->getStatusCode(),
+                Str::limit((string) $response->getContent(), 300),
+            )];
+        }
+
+        $problems = [];
+
+        if (! str_contains((string) $response->headers->get('Cache-Control'), 'no-store')) {
+            $problems[] = 'the response carrying both credentials is not marked no-store, so a cache may keep what '.
+                'is in effect a password';
+        }
+
+        if (($session['tenant']['id'] ?? null) !== $this->tenantId) {
+            $problems[] = 'the session does not name the tenant id, which is what the app must send as X-Tenant';
+        }
+
+        if (($session['entity_id'] ?? null) !== $this->entityId) {
+            $problems[] = 'the session did not open in the company the sign-in asked for';
+        }
+
+        if ($this->meStatus($session) !== 200) {
+            $problems[] = 'the new access token cannot read GET /me';
+        }
+
+        $accounts = $this->request('GET', '/api/v1/accounts?limit=10', headers: $this->deviceHeaders($session), operation: 'listAccounts');
+
+        if ($accounts->getStatusCode() !== 200) {
+            $problems[] = sprintf('the new access token reading the chart answered %d', $accounts->getStatusCode());
+        }
+
+        foreach (['RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset'] as $header) {
+            if (! $accounts->headers->has($header)) {
+                $problems[] = sprintf(
+                    'an authenticated response carries no %s, so a client can only find the limit by hitting it',
+                    $header,
+                );
+            }
+        }
+
+        $this->signOutQuietly($session);
+
+        return $problems;
+    }
+
+    /** @return list<string> */
+    private function signInRefusalsAreOne(): array
+    {
+        $answers = [
+            'a wrong password' => $this->signInOnADevice(['password' => 'not-the-password-'.Str::random(8)]),
+            'an unknown workspace' => $this->signInOnADevice(['workspace' => 'no-such-workspace-'.Str::lower(Str::random(8))]),
+            'an unknown address' => $this->signInOnADevice(['email' => 'nobody-'.$this->entityId.'@peakflow.test']),
+        ];
+
+        $problems = [];
+        $first = null;
+
+        foreach ($answers as $case => [$response, $body]) {
+            $shape = [$response->getStatusCode(), $body['type'] ?? null, $body['title'] ?? null, $body['detail'] ?? null];
+
+            if ($shape[0] !== 401 || $shape[1] !== ProblemType::SignInRefused->uri()) {
+                $problems[] = sprintf(
+                    '%s answered %d %s rather than 401 sign-in-refused',
+                    $case,
+                    $shape[0],
+                    (string) $shape[1],
+                );
+            }
+
+            $first ??= $shape;
+
+            if ($shape !== $first) {
+                $problems[] = sprintf(
+                    '%s is answered differently from a wrong password, which tells anybody who asks whether '.
+                    'it exists',
+                    $case,
+                );
+            }
+        }
+
+        return $problems;
+    }
+
+    /** @return list<string> */
+    private function aRefreshRotates(): array
+    {
+        [$response, $first] = $this->signInOnADevice();
+
+        if ($response->getStatusCode() !== 201) {
+            return ['could not sign in to check a refresh'];
+        }
+
+        [$refreshed, $next] = $this->refreshOnADevice($first);
+
+        if ($refreshed->getStatusCode() !== 200) {
+            return [sprintf('a refresh answered %d rather than 200', $refreshed->getStatusCode())];
+        }
+
+        $problems = [];
+
+        if (($next['id'] ?? null) !== ($first['id'] ?? null)) {
+            $problems[] = 'a refresh opened a different session rather than continuing the same one';
+        }
+
+        if (($next['access_token'] ?? null) === ($first['access_token'] ?? null)
+            || ($next['refresh_token'] ?? null) === ($first['refresh_token'] ?? null)) {
+            $problems[] = 'a refresh handed back a credential it had already issued';
+        }
+
+        if ($this->meStatus($first) !== 401) {
+            $problems[] = 'the access token a refresh replaced still works, so a device holds two live tokens';
+        }
+
+        if ($this->meStatus($next) !== 200) {
+            $problems[] = 'the access token a refresh issued does not work';
+        }
+
+        $this->signOutQuietly($next);
+
+        return $problems;
+    }
+
+    /** @return list<string> */
+    private function aReusedRefreshClosesTheSession(): array
+    {
+        [$response, $first] = $this->signInOnADevice();
+
+        if ($response->getStatusCode() !== 201) {
+            return ['could not sign in to check a reused refresh token'];
+        }
+
+        [, $next] = $this->refreshOnADevice($first);
+        [$reused, $body] = $this->refreshOnADevice($first);
+
+        $problems = [];
+
+        if ($reused->getStatusCode() !== 401 || ($body['type'] ?? null) !== ProblemType::Unauthenticated->uri()) {
+            $problems[] = sprintf('a spent refresh token was answered %d rather than 401', $reused->getStatusCode());
+        }
+
+        if ($this->meStatus($next) !== 401) {
+            $problems[] = 'after a spent refresh token was presented again, the session\'s newest access token '.
+                'still works - whoever holds the copy and the device both stay signed in';
+        }
+
+        [$after] = $this->refreshOnADevice($next);
+
+        if ($after->getStatusCode() !== 401) {
+            $problems[] = 'after a reuse, the session\'s newest refresh token can still be exchanged';
+        }
+
+        $live = RefreshToken::query()
+            ->where('family_id', (string) ($first['id'] ?? ''))
+            ->whereNull('revoked_at')
+            ->count();
+
+        if ($live !== 0) {
+            $problems[] = sprintf('%d refresh token(s) of the closed session are not marked revoked', $live);
+        }
+
+        return $problems;
+    }
+
+    /** @return list<string> */
+    private function switchingCompany(): array
+    {
+        [$response, $first] = $this->signInOnADevice();
+
+        if ($response->getStatusCode() !== 201) {
+            return ['could not sign in to check switching company'];
+        }
+
+        $problems = [];
+
+        // A company the person holds nothing in is refused - and the refusal
+        // does not spend the token, so the app can carry on where it was.
+        [$refused] = $this->refreshOnADevice($first, strtolower((string) Str::ulid()));
+
+        if ($refused->getStatusCode() !== 403) {
+            $problems[] = sprintf(
+                'a refresh into a company the person holds no role in answered %d rather than 403',
+                $refused->getStatusCode(),
+            );
+        }
+
+        [$moved, $other] = $this->refreshOnADevice($first, $this->otherEntityId);
+
+        if ($moved->getStatusCode() !== 200 || ($other['entity_id'] ?? null) !== $this->otherEntityId) {
+            $problems[] = sprintf(
+                'a refresh into the other company the person holds a role in answered %d%s',
+                $moved->getStatusCode(),
+                $moved->getStatusCode() === 200 ? ' in the wrong company' : '',
+            );
+
+            $this->signOutQuietly($first);
+
+            return $problems;
+        }
+
+        if ($this->meStatus($other, $this->otherEntityId) !== 200) {
+            $problems[] = 'the token issued for the other company cannot act there';
+        }
+
+        if ($this->meStatus($other, $this->entityId) !== 403) {
+            $problems[] = 'the token issued for the other company can still act in the first - an access token '.
+                'must name one company';
+        }
+
+        $this->signOutQuietly($other);
+
+        return $problems;
+    }
+
+    /** @return list<string> */
+    private function signingOut(): array
+    {
+        [$phoneResponse, $phone] = $this->signInOnADevice();
+        [$tabletResponse, $tablet] = $this->signInOnADevice(['device_name' => 'Contract suite tablet']);
+
+        if ($phoneResponse->getStatusCode() !== 201 || $tabletResponse->getStatusCode() !== 201) {
+            return ['could not sign in on two devices to check signing out'];
+        }
+
+        $problems = [];
+        $headers = $this->deviceHeaders($phone);
+        unset($headers['X-Entity']);
+
+        $list = $this->request('GET', '/api/v1/auth/sessions', headers: $headers, operation: 'listDeviceSessions');
+        $rows = (array) ($this->problem($list)['data'] ?? []);
+        $ids = array_column($rows, 'id');
+        $current = array_values(array_filter($rows, static fn (mixed $row): bool => \is_array($row) && ($row['current'] ?? false) === true));
+
+        if (! \in_array($phone['id'] ?? null, $ids, true) || ! \in_array($tablet['id'] ?? null, $ids, true)) {
+            $problems[] = 'the list of signed-in devices is missing one of the two the person just signed in on';
+        }
+
+        if (\count($current) !== 1 || ($current[0]['id'] ?? null) !== ($phone['id'] ?? null)) {
+            $problems[] = 'the device asking is not the one session marked current';
+        }
+
+        $closed = $this->request(
+            'DELETE',
+            '/api/v1/auth/sessions/'.(string) ($tablet['id'] ?? ''),
+            null,
+            $headers,
+            'closeDeviceSession',
+        );
+
+        if ($closed->getStatusCode() !== 200 || $this->meStatus($tablet) !== 401) {
+            $problems[] = 'signing the tablet out from the phone did not end the tablet\'s access';
+        }
+
+        [$tabletRefresh] = $this->refreshOnADevice($tablet);
+
+        if ($tabletRefresh->getStatusCode() !== 401) {
+            $problems[] = 'the tablet, signed out from the phone, can still refresh its way back in';
+        }
+
+        $unknown = $this->request(
+            'DELETE',
+            '/api/v1/auth/sessions/'.strtolower((string) Str::ulid()),
+            null,
+            $headers,
+            'closeDeviceSession',
+        );
+
+        if ($unknown->getStatusCode() !== 404) {
+            $problems[] = sprintf('closing a session that is not the person\'s answered %d rather than 404', $unknown->getStatusCode());
+        }
+
+        $out = $this->request('POST', '/api/v1/auth/sign-out', [], $headers, 'signOut');
+
+        if ($out->getStatusCode() !== 200 || $this->meStatus($phone) !== 401) {
+            $problems[] = 'signing out did not end the access token it was sent with';
+        }
+
+        [$phoneRefresh] = $this->refreshOnADevice($phone);
+
+        if ($phoneRefresh->getStatusCode() !== 401) {
+            $problems[] = 'a signed-out device can still refresh its way back in';
+        }
+
+        return $problems;
+    }
+
+    /** @return list<string> */
+    private function noStepUpOnADevice(): array
+    {
+        $scopes = app(ApiScopes::class);
+
+        /*
+         | A step-up permission granted to the suite role for this check.
+         |
+         | Without one in the role, "no step-up scope on the token" would pass
+         | because there was nothing to leave out. The teardown removes the
+         | role's grants with the role.
+         */
+        $stepUp = collect($scopes->all())->first(static fn (string $key): bool => $scopes->requiresStepUp($key));
+
+        if (! \is_string($stepUp)) {
+            return [];
+        }
+
+        DB::connection('tenant')->table('role_permissions')->insertOrIgnore([
+            'id' => (string) Str::ulid(),
+            'role_id' => $this->roleId,
+            'permission_id' => (string) Permission::query()->where('key', $stepUp)->value('id'),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        [$response, $session] = $this->signInOnADevice();
+
+        if ($response->getStatusCode() !== 201) {
+            return [sprintf('signing in with a step-up permission in the role answered %d', $response->getStatusCode())];
+        }
+
+        $problems = [];
+        $issued = (array) ($session['me']['scopes'] ?? []);
+
+        if (\in_array($stepUp, $issued, true)) {
+            $problems[] = sprintf(
+                'a device token carries %s, which needs somebody present at the moment of the act - a token '.
+                'on a phone outlives the moment anybody was looking at it',
+                $stepUp,
+            );
+        }
+
+        foreach (['account.manage', 'report.view'] as $held) {
+            if (! \in_array($held, $issued, true)) {
+                $problems[] = sprintf('a device token is missing %s, which the person holds in that company', $held);
+            }
+        }
+
+        $this->signOutQuietly($session);
+
+        return $problems;
+    }
+
+    /** @return list<string> */
+    private function theSecondFactorStage(): array
+    {
+        \assert($this->user !== null);
+        $mfa = app(MfaService::class);
+
+        $this->signInBody();
+        $enrolment = $mfa->beginTotpEnrolment($this->user, 'Contract suite');
+        $mfa->confirmTotpEnrolment($enrolment['authenticator'], Totp::at($enrolment['secret']));
+        $recovery = $mfa->regenerateRecoveryCodes($this->user, 2)->values()->all();
+
+        [$response, $challenge] = $this->signInOnADevice();
+
+        if ($response->getStatusCode() !== 202 || ($challenge['resource'] ?? null) !== 'second_factor_challenge') {
+            return [sprintf(
+                'a person with a second factor was answered %d by the password stage rather than 202 with a '.
+                'challenge - the password alone must open nothing',
+                $response->getStatusCode(),
+            )];
+        }
+
+        $problems = [];
+
+        if (isset($challenge['access_token']) || isset($challenge['refresh_token'])) {
+            $problems[] = 'the password stage handed out a credential to a person with a second factor';
+        }
+
+        $complete = fn (string $code): Response => $this->request('POST', '/api/v1/auth/sign-in/second-factor', [
+            'workspace' => $this->signInBody()['workspace'],
+            'challenge' => (string) ($challenge['challenge'] ?? ''),
+            'code' => $code,
+        ], operation: 'completeSignIn');
+
+        $wrong = $complete('000000' === Totp::at($enrolment['secret'], time() + 30) ? '111111' : '000000');
+
+        if ($wrong->getStatusCode() !== 401 || ($this->problem($wrong)['type'] ?? null) !== ProblemType::SignInRefused->uri()) {
+            $problems[] = sprintf('a wrong code was answered %d rather than 401 sign-in-refused', $wrong->getStatusCode());
+        }
+
+        $right = $complete(Totp::at($enrolment['secret'], time() + 30));
+        $session = $this->problem($right);
+
+        if ($right->getStatusCode() !== 201 || ($session['second_factor'] ?? null) !== 'totp') {
+            $problems[] = sprintf(
+                'the right code after a wrong one was answered %d - a mistyped code must not spend the challenge',
+                $right->getStatusCode(),
+            );
+
+            return $problems;
+        }
+
+        // The same challenge again, with a code that is itself valid: one
+        // accepted code opens one session.
+        $again = $complete((string) ($recovery[0] ?? 'none'));
+
+        if ($again->getStatusCode() !== 401) {
+            $problems[] = sprintf('a challenge that already opened a session opened another (%d)', $again->getStatusCode());
+        }
+
+        $this->signOutQuietly($session);
+
+        return $problems;
+    }
+
     private function request(
         string $method,
         string $uri,
@@ -3412,6 +3930,33 @@ final class ApiContractRules
                  */
                 ->orWhere('abilities', '["*"]')
                 ->delete();
+
+            /*
+             | The device sessions this suite opened, and the second factor it
+             | enrolled - PF-260. Before `users`, which they reference.
+             */
+            $suiteUsers = array_values(array_filter([
+                (string) $this->user?->getKey(),
+                (string) $this->stranger?->getKey(),
+            ]));
+
+            foreach (['api_refresh_tokens', 'recovery_codes', 'authenticators'] as $table) {
+                if ($owner->getSchemaBuilder()->hasTable($table)
+                    && $owner->getSchemaBuilder()->hasColumn($table, 'user_id')) {
+                    $owner->table($table)->whereIn('user_id', $suiteUsers)->delete();
+                }
+            }
+
+            // And the sign-in budget the refusal checks spent, so the next
+            // run - or the developer at the same desk - starts with a full one.
+            foreach ([$this->user?->email, $this->stranger?->email, 'nobody-'.$this->entityId.'@peakflow.test'] as $email) {
+                if (\is_string($email)) {
+                    RateLimiter::clear('login:account:'.hash('sha256', Str::lower(trim($email))));
+                }
+            }
+
+            RateLimiter::clear('login:ip:'.hash('sha256', '127.0.0.1'));
+            RateLimiter::clear('api-refresh:'.hash('sha256', '127.0.0.1'));
 
             /*
              | A posted entry is undeletable, by anybody, and that is correct.

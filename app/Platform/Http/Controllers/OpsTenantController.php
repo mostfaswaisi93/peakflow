@@ -36,7 +36,25 @@ final class OpsTenantController
 {
     public function index(Request $request): View
     {
+        /*
+         | What schema every tenant SHOULD be on - PF-246.
+         |
+         | Read once rather than per row: it is the same answer for the whole
+         | list and it comes from the migration files on disk. A per-tenant
+         | lookup would also make the slowest page in the console scale with
+         | the fleet.
+         |
+         | The console needs it because "migrating" is a status a tenant can
+         | be stuck in - `tenants:migrate --unstick` exists for exactly that -
+         | and a list that shows only the word tells an operator a migration
+         | is happening, not whether it is progressing or which tenants it has
+         | reached. The version beside the status is what turns the first into
+         | the second.
+         */
+        $expected = app(TenantProvisioner::class)->currentSchemaVersion();
+
         return view('ops.tenants', [
+            'expectedSchemaVersion' => $expected,
             /*
              | `sort_order`, not `name`.
              |

@@ -79,6 +79,7 @@ final class TenantEnforcementRules
             'row-level security scopes reads to the current entity' => [],
             'row-level security refuses writes into another entity' => [],
             'the seeded baseline is present' => [],
+            'a tenant mid-migration answers 503 with Retry-After' => [],
             'the Eloquent scope refuses an unscoped query' => [],
             'the Eloquent scope fills and freezes entity_id' => [],
             'permissions resolve per entity' => [],
@@ -122,6 +123,7 @@ final class TenantEnforcementRules
                 'row-level security scopes reads to the current entity' => $this->rlsScopesReads(),
                 'row-level security refuses writes into another entity' => $this->rlsRefusesForeignWrites(),
                 'the seeded baseline is present' => $this->baselineIsSeeded(),
+                'a tenant mid-migration answers 503 with Retry-After' => $this->migratingAnswers503($tenant),
                 'the Eloquent scope refuses an unscoped query' => $this->eloquentScopeRefusesUnscoped(),
                 'the Eloquent scope fills and freezes entity_id' => $this->eloquentScopeFillsAndFreezes(),
                 'permissions resolve per entity' => $this->permissionsResolvePerEntity(),
@@ -339,6 +341,84 @@ final class TenantEnforcementRules
         ));
 
         return $violation === null ? [] : [$violation];
+    }
+
+    /**
+     * A maintenance window answers, rather than failing - PF-246.
+     *
+     * ## Why 503 and not whatever happens
+     *
+     * A tenant whose database is mid-migration has a schema the running
+     * code does not match. Left alone, every request becomes its own
+     * failure - a missing column here, a constraint violation there - and
+     * what reaches the operator is a scatter of unrelated-looking errors
+     * during the ten minutes they are least able to read them.
+     *
+     * 503 with `Retry-After` is a documented state instead. A client
+     * library retries it, a load balancer stops sending traffic, and a
+     * person reading the log sees one condition rather than forty symptoms.
+     *
+     * ## The status is put back in a finally
+     *
+     * It lives on the PLATFORM connection, so the tenant transaction this
+     * suite runs inside does not cover it. Every later check here needs the
+     * tenant servable, and one left migrating would fail all of them with a
+     * message about the wrong thing.
+     *
+     * @return list<string>
+     */
+    public function migratingAnswers503(Tenant $tenant): array
+    {
+        $was = $tenant->status;
+        $problems = [];
+
+        $tenant->forceFill(['status' => \App\Platform\Enums\TenantStatus::Migrating])->save();
+
+        try {
+            app(TenantConnectionResolver::class)->resolve((string) $tenant->slug);
+
+            $problems[] = 'a tenant whose status is "migrating" resolved normally. The code then runs '.
+                'against a schema it does not match, and the operator gets a scatter of missing '.
+                'columns and constraint violations instead of one condition';
+        } catch (\App\Platform\Exceptions\TenantNotResolvable $e) {
+            if ($e->retryAfter === null || $e->retryAfter < 1) {
+                $problems[] = sprintf(
+                    'the refusal carries Retry-After %s. Without it a client library has nothing to '.
+                    'wait on and retries immediately, which turns a maintenance window into a '.
+                    'thundering herd against the database doing the migrating',
+                    $e->retryAfter === null ? '(nothing)' : (string) $e->retryAfter,
+                );
+            }
+
+            if ($e->problemType->status() !== 503) {
+                $problems[] = sprintf(
+                    'a migrating tenant answers %d rather than 503. 503 is the one status that says '.
+                    '"this exists and will be back"; every other answer tells a client to stop '.
+                    'trying, or that the workspace is gone',
+                    $e->problemType->status(),
+                );
+            }
+        } catch (\Throwable $e) {
+            $problems[] = sprintf(
+                'a migrating tenant produced %s instead of a documented refusal: %s',
+                class_basename($e),
+                \Illuminate\Support\Str::limit($e->getMessage(), 140),
+            );
+        } finally {
+            /*
+             | The status only. NOT a re-point.
+             |
+             | `resolve()` throws for a migrating tenant BEFORE it points
+             | anything, so the connection never moved - and calling
+             | `point()` here purges it, which rolls back the transaction
+             | this suite is holding and takes the probe entities with it.
+             | The first version did exactly that and every later check
+             | failed on a foreign key to a row that had just vanished.
+             */
+            $tenant->forceFill(['status' => $was])->save();
+        }
+
+        return $problems;
     }
 
     /** @return list<string> */

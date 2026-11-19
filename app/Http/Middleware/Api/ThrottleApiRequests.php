@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace App\Http\Middleware\Api;
 
+use App\Platform\Models\Tenant;
 use App\Support\Http\Problem;
 use App\Support\Http\ProblemType;
 use App\Tenant\Identity\Models\ApiToken;
 use App\Tenant\Identity\Models\User;
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\RateLimiter;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -39,10 +41,11 @@ use Symfony\Component\HttpFoundation\Response;
  */
 final class ThrottleApiRequests
 {
+    /** @param Closure(Request): Response $next */
     public function handle(Request $request, Closure $next): Response
     {
         $write = ! \in_array($request->getMethod(), ['GET', 'HEAD', 'OPTIONS'], true);
-        $limit = max(1, (int) config($write ? 'api.rate_limits.writes_per_minute' : 'api.rate_limits.reads_per_minute', 60));
+        $limit = max(1, Config::integer($write ? 'api.rate_limits.writes_per_minute' : 'api.rate_limits.reads_per_minute', 60));
         $key = $this->bucket($request, $write);
 
         if (RateLimiter::tooManyAttempts($key, $limit)) {
@@ -72,10 +75,11 @@ final class ThrottleApiRequests
         $token = $user instanceof User ? $user->currentAccessToken() : null;
 
         $who = $token instanceof ApiToken
-            ? 'token:'.(string) $token->getKey()
+            ? 'token:'.$token->id
             : 'address:'.hash('sha256', (string) $request->ip());
 
-        $tenant = app()->bound('currentTenant') ? (string) app('currentTenant')->getKey() : 'none';
+        $current = app()->bound('currentTenant') ? app('currentTenant') : null;
+        $tenant = $current instanceof Tenant ? $current->id : 'none';
 
         return sprintf('api-rate:%s:%s:%s', $write ? 'write' : 'read', $tenant, $who);
     }
