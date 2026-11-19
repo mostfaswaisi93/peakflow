@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tenant\Reporting\Overview;
 
+use App\Tenant\Sales\Enums\DocumentType;
 use App\Tenant\Tenancy\Models\Entity;
 use Brick\Math\BigDecimal;
 use Carbon\CarbonImmutable;
@@ -154,7 +155,18 @@ final class OverviewQuery
                 FROM invoices i
                 WHERE i.entity_id = cast(? AS char(26))
                   AND i.status = 'issued'
-                  AND i.document_type IN ('380', '383', '386')
+                  /*
+                   | The receivable types, from the enum - PF-090.
+                   |
+                   | This was `IN ('380', '383', '386')`, written before the
+                   | partial invoice and the corrected invoice existed and never
+                   | told about either. Both are money a customer owes.
+                   | `DocumentType::receivableCodes()` is now the one answer, and
+                   | its `match` has no `default`, so a type added later will not
+                   | compile until somebody decides which side of the question it
+                   | is on.
+                   */
+                  AND i.document_type = ANY(?)
                   AND i.issue_date <= ?::date
             )
             SELECT
@@ -167,7 +179,7 @@ final class OverviewQuery
                 coalesce(sum(balance) FILTER (WHERE currency = ? AND days_past_due > 90), 0)::text AS b_over
             FROM open
         SQL, [
-            $today->toDateString(), $entityId, $today->toDateString(),
+            $today->toDateString(), $entityId, '{'.implode(',', DocumentType::receivableCodes()).'}', $today->toDateString(),
             $currency, $currency, $currency, $currency, $currency, $currency, $currency,
         ]);
 

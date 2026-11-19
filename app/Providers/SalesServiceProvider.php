@@ -27,6 +27,24 @@ final class SalesServiceProvider extends ServiceProvider
 {
     public function boot(): void
     {
+        /*
+         | Which documents a customer can owe, for the modules that may not
+         | ask `DocumentType` - PF-090.
+         |
+         | `Banking`'s matching engine queries the `invoices` table by raw
+         | SQL and has to bound it to the types that can be owed; it may
+         | depend only on Support, Tenancy, Ledger and Parties, deliberately,
+         | so that it cannot learn what an invoice is. The literal it used
+         | instead - `IN ('380', '383', '386')` - was written before the
+         | partial invoice and the corrected invoice existed, so a partial
+         | invoice was never a matching candidate and a payment against one
+         | had nothing to match.
+         */
+        $this->app->bind(
+            \App\Support\Documents\NamesReceivableDocuments::class,
+            \App\Tenant\Sales\Services\ReceivableDocumentTypes::class,
+        );
+
 
         /*
          | The business metrics this module owns - PF-241.

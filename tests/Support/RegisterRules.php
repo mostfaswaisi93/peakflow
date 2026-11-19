@@ -13,6 +13,7 @@ use App\Tenant\Identity\Models\Role;
 use App\Tenant\Identity\Models\User;
 use App\Tenant\Identity\Models\UserEntityRole;
 use App\Tenant\Ledger\Enums\ControlRole;
+use App\Tenant\Sales\Enums\DocumentType;
 use App\Tenant\Ledger\Services\LedgerVerifier;
 use App\Tenant\Ledger\Services\TrialBalance;
 use App\Tenant\Reporting\Drill\Figure;
@@ -157,6 +158,7 @@ final class RegisterRules
                 'a register exports through the one export path, parameters first' => fn (): array => $this->theRegisterExports(),
                 'and a closed period\'s file does not move when a later one does' => fn (): array => $this->theFileIsByteStable(),
                 'receivables and payables are compared to their control accounts' => fn (): array => $this->theSubledgersTie(),
+                'a partial invoice is money owed everywhere that asks' => fn (): array => $this->aPartialInvoiceIsOwed(),
             ]));
         } catch (Throwable $e) {
             return ['the registers could not be checked' => [
@@ -2160,6 +2162,139 @@ final class RegisterRules
                 'updated_at' => now(),
             ]);
         }
+    }
+
+    /**
+     * A partial invoice is a receivable in all three places that ask - PF-090.
+     *
+     * ## Three copies of one stale list
+     *
+     * `OverviewQuery::receivables()`, `ExpectedCreditLoss::openReceivables()`
+     * and `Banking\Matching\OpenDocuments` each carried
+     * `IN ('380', '383', '386')`. All three were written before the partial
+     * invoice and the corrected invoice existed, and none of them learned
+     * about either. Both are money a customer owes.
+     *
+     * The consequences differ, and the third is the worst:
+     *
+     * The Overview tile understated what was owed - on the first screen
+     * anybody opens, by exactly the partial invoices outstanding.
+     *
+     * The IFRS 9 loss allowance carried **none** against them, because they
+     * were not in the provision base. A receivable with no expected credit
+     * loss is not a conservative estimate, it is an omitted one.
+     *
+     * And a partial invoice was not a matching CANDIDATE, so a customer's
+     * payment against one had nothing to match and landed in the
+     * unexplained column of a bank reconciliation - where somebody then
+     * hunted for a document the engine had declined to offer them. That is
+     * a functional bug rather than a reporting one.
+     *
+     * ## Why this check reads all three rather than the enum
+     *
+     * Asserting `DocumentType::receivableCodes()` contains `326` would pass
+     * while all three queries still carried their literals. The question is
+     * whether the three consumers see the document, so the check asks each
+     * of them - and `OpenDocuments` is asked through the container, because
+     * `Banking` reaches the answer through a `Support` contract it does not
+     * implement.
+     *
+     * @return list<string>
+     */
+    private function aPartialInvoiceIsOwed(): array
+    {
+        $partial = $this->issue(DocumentType::PartialInvoice);
+        $id = (string) $partial->getKey();
+        $problems = [];
+
+        /*
+         | The bank matching candidates. `Banking` may not depend on `Sales`,
+         | so the list arrives through `NamesReceivableDocuments` - and this
+         | resolves the service the way production does rather than
+         | constructing it, so a binding that was never registered fails
+         | here instead of in a reconciliation.
+         */
+        $candidates = app(\App\Tenant\Banking\Matching\OpenDocuments::class)->receivables(
+            $this->entityId,
+            'SAR',
+        );
+
+        $offered = false;
+
+        foreach ($candidates as $candidate) {
+            $candidateId = \is_array($candidate)
+                ? (string) ($candidate['id'] ?? '')
+                : (string) ($candidate->id ?? '');
+
+            if ($candidateId === $id) {
+                $offered = true;
+            }
+        }
+
+        if (! $offered) {
+            $problems[] = sprintf(
+                'a partial invoice (%s) is not a bank-matching candidate, so a customer paying it has '.
+                'nothing to match and the receipt lands in the unexplained column of a '.
+                'reconciliation - where somebody hunts for a document the engine declined to offer',
+                (string) $partial->number,
+            );
+        }
+
+        /*
+         | The Overview tile.
+         */
+        $overview = app(\App\Tenant\Reporting\Overview\OverviewQuery::class)->for(
+            $this->entity(),
+            \Carbon\CarbonImmutable::parse($this->date->toDateString()),
+        );
+
+        if ($overview->receivables->documents < 1) {
+            $problems[] = sprintf(
+                'the Overview receivables tile counts %d documents with a partial invoice '.
+                'outstanding. It is the first figure anybody sees, and it understates what is owed '.
+                'by exactly the partial invoices.',
+                $overview->receivables->documents,
+            );
+        }
+
+        /*
+         | And the provision base.
+         */
+        /*
+         | And the provision base.
+         |
+         | Read through the private query by reflection rather than by
+         | running `recompute()`, which needs a provision matrix, a period
+         | label and an actor, and POSTS an entry. What is under test is
+         | which documents the base contains, and the posting is PF-172's
+         | subject with its own checks - driving it here would couple this
+         | check to a matrix fixture for no gain.
+         */
+        $ecl = app(\App\Tenant\Settlement\Services\ExpectedCreditLoss::class);
+        $query = new \ReflectionMethod($ecl, 'openReceivables');
+        $query->setAccessible(true);
+
+        /** @var list<object> $exposed */
+        $exposed = $query->invoke($ecl, $this->entityId, 'SAR', $this->date->copy());
+
+        $provisioned = false;
+
+        foreach ($exposed as $row) {
+            if ((string) ($row->id ?? '') === $id) {
+                $provisioned = true;
+            }
+        }
+
+        if (! $provisioned) {
+            $problems[] = sprintf(
+                'a partial invoice (%s) is not in the IFRS 9 exposure, so it carries no loss '.
+                'allowance at all. A receivable with no expected credit loss is not a conservative '.
+                'estimate, it is an omitted one.',
+                (string) $partial->number,
+            );
+        }
+
+        return $problems;
     }
 
     private function register(string $from, string $until): array

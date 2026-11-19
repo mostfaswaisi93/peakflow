@@ -86,6 +86,75 @@ enum DocumentType: string
         return $this === self::SelfBilledInvoice;
     }
 
+    /**
+     * Does this type leave the customer owing money?
+     *
+     * ## One definition, because there were three copies of a stale list
+     *
+     * `OverviewQuery::receivables()`, `ExpectedCreditLoss::openReceivables()`
+     * and `Banking\Matching\OpenDocuments` each hard-coded
+     * `IN ('380', '383', '386')`. All three were written before PF-090 added
+     * the partial invoice and before the corrected invoice existed, and none
+     * of them learned about either.
+     *
+     * The consequences were not the same in the three places and the third
+     * is the worst. A partial invoice was invisible to the Overview tile, so
+     * the figure on the first screen anybody opens understated what was
+     * owed. It carried no IFRS 9 loss allowance at all, because it was not
+     * in the provision base. And it could not be MATCHED to a bank line,
+     * because it was not a candidate - so a customer's payment against a
+     * partial invoice had nothing to match and landed in the unexplained
+     * column of a reconciliation.
+     *
+     * ## What it excludes, and why each is a decision rather than an omission
+     *
+     * A credit note is excluded because it REDUCES what is owed rather than
+     * creating it, and one that references an invoice is already subtracted
+     * by `peakflow_document_open_balance`. A standalone credit is a credit
+     * balance on the account: `AgingReport` includes it deliberately, as a
+     * negative bucket, which is a different and broader question from this
+     * one.
+     *
+     * A self-billed invoice is excluded because it posts as a purchase.
+     *
+     * A prepayment invoice is INCLUDED. It does not post to revenue - cash
+     * before performance is a liability under IFRS 15 - but the customer
+     * still owes it, and what is owed is what this asks.
+     *
+     * Written as a match over every case with no `default`, so adding a
+     * type to this enum will not compile until somebody has decided which
+     * side of this question it falls on. A `default` is how the three lists
+     * above went stale.
+     */
+    public function createsAReceivable(): bool
+    {
+        return match ($this) {
+            self::Invoice,
+            self::DebitNote,
+            self::CorrectedInvoice,
+            self::PrepaymentInvoice,
+            self::PartialInvoice => true,
+            self::CreditNote,
+            self::SelfBilledInvoice => false,
+        };
+    }
+
+    /**
+     * The codes of every type that leaves the customer owing money.
+     *
+     * For a SQL `IN` list, so the three queries that ask this question share
+     * the one answer rather than each carrying a literal.
+     *
+     * @return list<string>
+     */
+    public static function receivableCodes(): array
+    {
+        return array_values(array_map(
+            static fn (self $type): string => $type->value,
+            array_filter(self::cases(), static fn (self $type): bool => $type->createsAReceivable()),
+        ));
+    }
+
     public function label(?string $locale = null): string
     {
         $arabic = ($locale ?? app()->getLocale()) === 'ar';

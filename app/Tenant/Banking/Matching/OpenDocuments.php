@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tenant\Banking\Matching;
 
 use App\Support\Money\Money;
+use App\Support\Documents\NamesReceivableDocuments;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -74,7 +75,19 @@ final class OpenDocuments
             WHERE i.entity_id = ?
               AND i.currency = ?
               AND i.status = 'issued'
-              AND i.document_type IN ('380', '383', '386')
+              /*
+               | The receivable types, from the enum - PF-090.
+               |
+               | This was `IN ('380', '383', '386')`, written before the
+               | partial invoice and the corrected invoice existed and never
+               | told about either. Both are money a customer owes.
+               | The one answer is `DocumentType::createsAReceivable()`, in
+               | Sales - which this module may not depend on, so it arrives
+               | through `NamesReceivableDocuments`. The enum's `match` has no
+               | `default`, so a type added later will not compile until
+               | somebody decides which side of the question it is on.
+               */
+              AND i.document_type = ANY(?)
               /*
                | Cast, because PostgreSQL cannot infer a bare parameter
                | compared against NULL - it reports "could not determine
@@ -82,7 +95,7 @@ final class OpenDocuments
                */
               AND (?::char(26) IS NULL OR i.party_id = ?::char(26))
             ORDER BY i.issue_date, i.number
-        SQL, [$entityId, $currency, $partyId, $partyId]);
+        SQL, [$entityId, $currency, '{'.implode(',', app(NamesReceivableDocuments::class)->receivableCodes()).'}', $partyId, $partyId]);
 
         return $this->toDocuments($rows, 'invoice', $currency);
     }

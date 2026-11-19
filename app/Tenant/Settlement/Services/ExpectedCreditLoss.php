@@ -9,6 +9,7 @@ use App\Support\Money\Money;
 use App\Tenant\Ledger\Models\JournalEntry;
 use App\Tenant\Ledger\Services\Poster;
 use App\Tenant\Ledger\Services\Reverser;
+use App\Tenant\Sales\Enums\DocumentType;
 use App\Tenant\Settlement\Exceptions\PaymentRefused;
 use App\Tenant\Settlement\Posting\Rules\EclProvisionChargedRule;
 use App\Tenant\Settlement\Posting\Rules\EclProvisionReleasedRule;
@@ -670,9 +671,23 @@ final class ExpectedCreditLoss
             WHERE i.entity_id = ?
               AND i.currency = ?
               AND i.status = 'issued'
-              AND i.document_type IN ('380', '383', '386')
+              /*
+               | The receivable types, from the enum - PF-090.
+               |
+               | This was `IN ('380', '383', '386')`, written before the
+               | partial invoice and the corrected invoice existed and never
+               | told about either. Both are money a customer owes.
+               | `DocumentType::receivableCodes()` is now the one answer, and
+               | its `match` has no `default`, so a type added later will not
+               | compile until somebody decides which side of the question it
+               | is on.
+               */
+              AND i.document_type = ANY(?)
               AND i.issue_date <= ?::date
             ORDER BY i.issue_date, i.number
-        SQL, [$asOf->toDateString(), $entityId, $currency, $asOf->toDateString()]);
+        SQL, [
+            $asOf->toDateString(), $entityId, $currency,
+            '{'.implode(',', DocumentType::receivableCodes()).'}', $asOf->toDateString(),
+        ]);
     }
 }
