@@ -82,6 +82,95 @@ final class ProductionConfiguration
         }
 
         /*
+         | The asset origin - PF-244.
+         |
+         | Every stylesheet link, every brand image and every favicon on every
+         | page is an ABSOLUTE url built from `app.url`. Laravel does not
+         | derive it from the request, deliberately: a queued job rendering a
+         | mail has no request to derive it from.
+         |
+         | So an `app.url` that is not the address a browser actually reaches
+         | breaks every asset at once while the HTML keeps returning 200. The
+         | page renders with no stylesheet, the logo component's four theme
+         | variants all appear because the CSS that hides three of them never
+         | arrived, and the decorative SVG - inline, so it needs no request -
+         | is drawn at its natural size in the middle of the page. It looks
+         | like a broken design rather than a broken URL, which is why this is
+         | worth a named refusal: the symptom points at the wrong thing.
+         |
+         | Loopback is the case that gets shipped. It is the skeleton default,
+         | it works on the machine that set it, and `curl` from the server
+         | confirms the site is up - while every browser that is not on that
+         | machine gets the naked page.
+         */
+        $url = (string) $get('app.url', '');
+        $host = \strtolower((string) \parse_url($url, PHP_URL_HOST));
+
+        if ($url === '' || $host === '') {
+            $problems[] = sprintf(
+                'APP_URL is %s. Every stylesheet link and image url on every page is built from it, so '.
+                'an absent one means every asset resolves against whatever host the request happened to '.
+                'carry. Set APP_URL to the address a browser reaches this deployment at.',
+                $url === '' ? 'empty' : '"'.$url.'", which names no host',
+            );
+        } elseif (\in_array($host, ['localhost', '127.0.0.1', '::1', '0.0.0.0'], true)) {
+            $problems[] = sprintf(
+                'APP_URL is "%s", which is the server\'s own loopback. Every stylesheet, logo and '.
+                'favicon url on every page is built from it, so each one points a visitor\'s browser at '.
+                'its OWN machine: the page returns 200 and arrives with no styling at all. It looks '.
+                'like a broken design rather than a broken url, and curl from the server confirms the '.
+                'site is up. Set APP_URL to the public address.',
+                $url,
+            );
+        } elseif (\str_starts_with($url, 'http://')) {
+            $problems[] = sprintf(
+                'APP_URL is "%s", over plain http. Every asset url on every page is built from it, so a '.
+                'page served over https links its own stylesheet over http - which a browser blocks as '.
+                'mixed content, leaving the same unstyled page. Set APP_URL to the https address.',
+                $url,
+            );
+        }
+
+        /*
+         | A left-behind Vite dev-server pointer - PF-244.
+         |
+         | `public/hot` is written by `npm run dev` and deleted when it stops
+         | cleanly. When it does not stop cleanly - the terminal was closed,
+         | the container was killed - the file stays, and `@vite` then emits
+         | NO stylesheet link at all: it expects the dev server to inject the
+         | css over a websocket.
+         |
+         | Nothing errors. The page is 200, complete, and entirely unstyled,
+         | and the compiled css sitting in `public/build` is never asked for.
+         | It is the same naked page as a wrong APP_URL and it has a different
+         | cause, which is exactly why both are named here rather than left to
+         | be guessed at from the symptom.
+         */
+        /*
+         | The path is read through `$get` so the rule can be DRIVEN.
+         |
+         | Every other rule here is a value a check can override; this one is
+         | a file, and a check that proved it by creating `public/hot` in the
+         | repository would break the styling of whoever ran it if it threw
+         | before cleaning up. `vite.hot_file` defaults to the real path Vite
+         | writes - it is the same value `Vite::useHotFile()` sets - so the
+         | default behaviour is unchanged and the check can point it at a
+         | temporary file instead.
+         */
+        $hot = $get('vite.hot_file');
+
+        if (! \is_string($hot) || $hot === '') {
+            $hot = \function_exists('public_path') ? public_path('hot') : '';
+        }
+
+        if ($hot !== '' && \is_file($hot)) {
+            $problems[] = 'public/hot exists. It is the pointer `npm run dev` leaves behind, and while '.
+                'it is there every page links NO stylesheet at all - the compiled css in public/build '.
+                'is never requested, and the page arrives complete and unstyled. Delete public/hot and '.
+                'run `npm run build`.';
+        }
+
+        /*
          | The session cookie.
          |
          | `SESSION_SECURE_COOKIE` unset resolves to null, which Laravel reads

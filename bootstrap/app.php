@@ -11,6 +11,7 @@ use App\Http\Middleware\EnforceSessionPolicy;
 use App\Http\Middleware\EnsurePlanAllows;
 use App\Http\Middleware\RequireStepUp;
 use App\Http\Middleware\ResolveEntity;
+use App\Http\Middleware\SayWhyThePageIsUnstyled;
 use App\Http\Middleware\ResolveTenantFromHeader;
 use App\Http\Middleware\ResolveTenantFromPath;
 use App\Http\Middleware\ResolveTenantFromSession;
@@ -209,6 +210,23 @@ return Application::configure(basePath: dirname(__DIR__))
         | absolute timeout on a session with no authentication in it.
         */
         $middleware->web(append: [EnforceSessionPolicy::class]);
+
+        /*
+        | And the one that explains a naked page - PF-244.
+        |
+        | Last in the group, because it reads the response rather than the
+        | request: it appends a banner to an html page that was rendered
+        | without a stylesheet, naming which of the three causes applies -
+        | a left-behind `public/hot`, no build, or an APP_URL that is not the
+        | address the browser is at.
+        |
+        | Registered unconditionally and inert in production, where the same
+        | three are refused at boot by `ProductionConfiguration` instead. One
+        | middleware list rather than a list that differs by environment,
+        | which is the kind of difference that makes a production-only bug
+        | impossible to reproduce.
+        */
+        $middleware->web(append: [SayWhyThePageIsUnstyled::class]);
 
         /*
         | The API group: language first, and nothing else globally.

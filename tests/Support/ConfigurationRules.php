@@ -334,6 +334,23 @@ final class ConfigurationRules
      *
      * @return list<string>
      */
+    /**
+     * A file that stands in for `public/hot`, outside the repository.
+     *
+     * Created in the system temporary directory rather than in `public/`,
+     * because a check that wrote the real pointer and then threw would leave
+     * every page of whoever ran it unstyled - which is the defect, not a
+     * side effect of proving it.
+     */
+    private function aTemporaryHotFile(): string
+    {
+        $path = sys_get_temp_dir().'/peakflow-vite-hot-probe';
+
+        file_put_contents($path, 'http://localhost:5173');
+
+        return $path;
+    }
+
     private function theGuardCatchesEachValue(): array
     {
         $problems = [];
@@ -381,6 +398,22 @@ final class ConfigurationRules
             'a log channel with no allowlist tap' => [
                 'logging.default' => 'stderr',
             ],
+            /*
+             | The asset origin and the left-behind dev pointer - PF-244.
+             |
+             | Both produce the SAME symptom, and it is a symptom that points
+             | at the wrong thing: the page returns 200 and arrives with no
+             | styling, so the sign-in card's four theme logo variants all
+             | appear at once and the decorative svg - inline, needing no
+             | request - is drawn at its natural size. It reads as a broken
+             | design. Neither errors, and `curl` from the server confirms
+             | the site is up.
+             */
+            'APP_URL on the loopback' => ['app.url' => 'http://localhost:8000'],
+            'APP_URL with no host at all' => ['app.url' => 'peakflow.test'],
+            'APP_URL over plain http' => ['app.url' => 'http://peakflow.test', 'session.secure' => null],
+            'a left-behind Vite dev-server pointer' => ['vite.hot_file' => $this->aTemporaryHotFile()],
+
             'a log STACK one of whose members has no tap' => [
                 'logging.default' => 'stack',
                 'logging.channels.stack.channels' => ['single', 'stderr'],
