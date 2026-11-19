@@ -151,7 +151,11 @@ The unusual part, and the part that cannot be retrofitted.
 `—` · **5 pts** · depends: PF-023, PF-245 · standards: — · `risk:high`
 
 - [ ] A written playbook: expand-contract in separate releases, no non-nullable column without a default, no blocking lock on a partitioned table, backfills batched and resumable
-- [ ] Every migration declares whether it is safe to run while serving traffic; the pre-flight check from `PF-023` enforces the declaration
+- [x] Every migration declares whether it is safe to run while serving traffic; the pre-flight check from `PF-023` enforces the declaration
+  - The pre-flight was built and the DECLARATION was not. Measured: **64 of 137 migrations carried no marker at all**, and nothing said so, because an inspector only flags the hazards it knows - a migration it does not flag is *unexamined*, not safe, and from outside the two look the same.
+  - All 137 now declare, with three markers and a reason on each: `@online-safe`, `@online-unsafe` and the existing `@unsafe-migration-reviewed`. A bare marker fails the check, because a marker with nothing after it says the same as none except that it silences the question.
+  - Writing the declaration is what made the authors decide, and it turned up nine migrations that add a CHECK constraint to a table that already exists. `ADD CONSTRAINT` without `NOT VALID` scans every row under ACCESS EXCLUSIVE, so on a populated table it blocks reads and writes for a full scan. They are declared `@online-unsafe` rather than rewritten: the marker describes the **statement**, not the install where the table happened to be empty, and a deployment replaying one onto years of rows gets the scan. The pattern to copy is in `a_bill_can_be_cancelled` - NOT VALID, then VALIDATE CONSTRAINT, which takes only SHARE UPDATE EXCLUSIVE.
+  - The inspector does not yet flag that shape itself; teaching it to would fail those nine and is its own task.
 - [ ] **Feature flags on anything that changes existing behaviour**, with a documented default and a removal task so flags do not accumulate
 - [ ] A rollback procedure per release, tested in staging, including the case where the schema moved forward and the code must go back
 - [ ] A tenant mid-migration returns `503` with `Retry-After` rather than failing, and the operator console shows migration progress per tenant

@@ -45,6 +45,12 @@ use Illuminate\Support\Facades\Schema;
  * list is how a page comes to take four seconds.
  *
  * @financial
+  *
+ * @online-safe Creates `bank_accounts`, `bank_statements`, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

@@ -50,6 +50,12 @@ use Illuminate\Support\Facades\Schema;
  * becomes a `matches` row before anything reaches the ledger. They are
  * entity-scoped all the same, because a rule written for one company must
  * not fire in another.
+  *
+ * @online-safe Creates `match_proposals`, `matching_rules`, `party_bank_identifiers`, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

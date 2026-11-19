@@ -49,6 +49,11 @@ use Illuminate\Support\Facades\Schema;
  * when the supplier has been paid twice.
  *
  * @financial
+  *
+ * @online-safe Creates `payment_duplicate_warnings`, with the constraints, indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

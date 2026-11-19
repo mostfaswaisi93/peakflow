@@ -43,6 +43,12 @@ use Illuminate\Support\Facades\Schema;
  *     this system did not supply - ringing the number on an old invoice, not
  *     the one on the email asking for the change
  *   - the SoD pair with `payment.release` can never be overridden
+  *
+ * @online-safe Creates `parties`, `party_addresses`, `party_bank_accounts`, `party_contacts` and others, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

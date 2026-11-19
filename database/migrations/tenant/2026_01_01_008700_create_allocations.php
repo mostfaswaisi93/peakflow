@@ -39,6 +39,11 @@ use Illuminate\Support\Facades\Schema;
  * could never be redone - which is the one moment somebody needs it.
  *
  * @financial
+  *
+ * @online-safe Creates `allocations`, with the constraints, indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

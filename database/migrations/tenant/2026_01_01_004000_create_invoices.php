@@ -49,6 +49,12 @@ use Illuminate\Support\Facades\Schema;
  *
  * The breakdown is stored rather than recomputed for the same reason as the
  * snapshot: PF-082 computes it from rates that change.
+  *
+ * @online-safe Creates `invoice_allowances_charges`, `invoice_lines`, `invoice_references`, `invoice_tax_breakdown` and others, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

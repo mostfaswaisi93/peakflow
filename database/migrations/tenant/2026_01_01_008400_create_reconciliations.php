@@ -40,6 +40,12 @@ use Illuminate\Support\Facades\Schema;
  * what changed", and a table that overwrites cannot answer it.
  *
  * @financial
+  *
+ * @online-safe Creates `reconciliations`, `rule_candidates`, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

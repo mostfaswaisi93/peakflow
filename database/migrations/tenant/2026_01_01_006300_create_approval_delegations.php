@@ -42,6 +42,12 @@ use Illuminate\Support\Facades\Schema;
  * @financial-not-applicable: these carry thresholds and windows, not
  * postings. `entity_id` is declared and RLS applied because a delegation is
  * as entity-scoped as the approval it affects.
+  *
+ * @online-safe Creates `approval_delegations`, `approval_limits`, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

@@ -51,6 +51,11 @@ use Illuminate\Support\Facades\Schema;
  * This row exists so that the database can refuse an over-credit atomically,
  * and a check asserts the two agree. A derived total nobody checks is a
  * second answer to the same question.
+  *
+ * @online-safe Creates `invoice_credit_totals`, with the constraints, indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

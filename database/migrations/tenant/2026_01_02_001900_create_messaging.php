@@ -53,6 +53,12 @@ use Illuminate\Support\Facades\Schema;
  * belongs to is how a reply is read by the wrong account manager.
  *
  * @financial-not-applicable: records consent, delivery attempts and inbound replies. No amount, no balance and no posting - the figures in a message are rendered from a document that has its own entity scope, and these tables carry `entity_id` with RLS all the same because a consent is per entity.
+  *
+ * @online-safe Creates `messaging_attempts`, `messaging_consents`, `messaging_inbound`, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

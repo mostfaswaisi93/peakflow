@@ -41,6 +41,11 @@ use Illuminate\Support\Facades\Schema;
  * So a manual journal naming a control account is refused BY THE DATABASE.
  * This is precisely the rule a backfill script will not respect, and the
  * script is written by someone who is certain their case is the exception.
+  *
+ * @online-safe Creates `account_roles`, `accounts`, with the constraints, indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

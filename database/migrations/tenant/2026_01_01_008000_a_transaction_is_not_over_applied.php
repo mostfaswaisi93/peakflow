@@ -40,6 +40,9 @@ use Illuminate\Support\Facades\DB;
  * @financial-not-applicable: this migration creates no table. It adds a trigger to
  * `matches`, which carries `entity_id` and has row-level security applied where it
  * is created - and applying RLS again from here would be a second policy on one table.
+  *
+ * @online-safe Replaces one function body, which is a catalog-only change. The trigger
+ *              that calls it is unchanged.
  */
 return new class extends Migration
 {

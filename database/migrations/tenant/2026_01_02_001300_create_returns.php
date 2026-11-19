@@ -33,6 +33,12 @@ use Illuminate\Support\Facades\Schema;
  * and gets written off as shrinkage.
  *
  * @financial
+  *
+ * @online-safe Creates `sales_return_lines`, `sales_returns`, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

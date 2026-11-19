@@ -42,6 +42,12 @@ use Illuminate\Support\Facades\Schema;
  * @financial-not-applicable: a proposal is a reading of a document, not a
  * posting. The bill it becomes is created through `Bills::enter()`, which is
  * where the financial row and its entity scope are made.
+  *
+ * @online-safe Creates `extraction_fields`, `extraction_proposals`, `extraction_templates`, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

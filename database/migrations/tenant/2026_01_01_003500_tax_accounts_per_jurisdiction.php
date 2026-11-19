@@ -43,6 +43,17 @@ use Illuminate\Support\Facades\DB;
  * unique index over `(entity_id, role, jurisdiction)` would permit two bank
  * roles with no jurisdiction, and "exactly one account per role" is the
  * property the whole posting layer rests on.
+  *
+ * @online-unsafe Adds CHECK constraints to `account_roles`, which already exists.
+ *                `ADD CONSTRAINT` without `NOT VALID` scans every row under
+ *                ACCESS EXCLUSIVE, so on a populated table it blocks reads and
+ *                writes for the length of a full scan. It is declared rather
+ *                than rewritten because what the marker describes is the
+ *                STATEMENT, not the install where the table happened to be
+ *                empty - a deployment replaying it onto years of rows would
+ *                get the scan. The pattern to copy is
+ *                `2026_01_03_000800_a_bill_can_be_cancelled`: NOT VALID, then
+ *                VALIDATE CONSTRAINT, which takes only SHARE UPDATE EXCLUSIVE.
  */
 return new class extends Migration
 {

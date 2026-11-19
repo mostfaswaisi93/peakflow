@@ -38,6 +38,11 @@ use Illuminate\Support\Facades\Schema;
  * month independently leaves a cent in the deferral that nobody ever
  * releases, and a control account that never quite reaches zero is a control
  * account people stop reconciling.
+  *
+ * @online-safe Creates `revenue_recognition_plan`, with the constraints, indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

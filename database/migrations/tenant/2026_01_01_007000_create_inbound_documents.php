@@ -40,6 +40,12 @@ use Illuminate\Support\Facades\Schema;
  * posting. It becomes a bill through `Bills::enter()`, which is where the
  * financial row and its entity scope are created. The RLS policy below
  * applies because the rows are tenant data.
+  *
+ * @online-safe Creates `inbound_documents`, `inbound_senders`, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

@@ -38,6 +38,12 @@ use Illuminate\Support\Facades\DB;
  *
  * Same reason: a third party's assertion. What we think about a detail -
  * which party, which invoice - belongs with the match, not here.
+  *
+ * @online-safe Creates `bank_transaction_details`, `bank_transaction_details_default`, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

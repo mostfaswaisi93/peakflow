@@ -33,6 +33,8 @@ use Illuminate\Support\Facades\DB;
  * `allocations`, which already carries `entity_id` and has row-level
  * security applied where it is created. No table is created and no
  * financial row is written.
+  *
+ * @online-safe Replaces a function body. No table is touched and no row is rewritten.
  */
 return new class extends Migration
 {

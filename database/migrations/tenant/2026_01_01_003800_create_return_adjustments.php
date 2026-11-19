@@ -33,6 +33,11 @@ use Illuminate\Support\Facades\Schema;
  * The authority's schedule asks "what are you correcting"; the return's own
  * arithmetic asks "what is in this period". A system holding only the second
  * produces a correction nobody can trace to a filing.
+  *
+ * @online-safe Creates `return_adjustments`, with the constraints, indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

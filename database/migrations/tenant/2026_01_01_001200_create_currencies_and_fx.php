@@ -60,6 +60,12 @@ use Illuminate\Support\Facades\Schema;
  *
  * @see docs/architecture/money-and-precision.md
  * @see IAS 21
+  *
+ * @online-safe Creates `entity_currencies`, `fx_providers`, `fx_rate_fetch_runs`, `fx_rate_sets` and others, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

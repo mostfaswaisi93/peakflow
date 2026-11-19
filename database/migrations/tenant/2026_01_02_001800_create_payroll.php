@@ -57,6 +57,12 @@ use Illuminate\Support\Facades\Schema;
  * figure.
  *
  * @financial
+  *
+ * @online-safe Creates `payroll_lines`, `payroll_runs`, `salary_components`, `salary_schedules`, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

@@ -36,6 +36,11 @@ use Illuminate\Support\Facades\Schema;
  * only the columns would leave the dangerous half to be re-detected every
  * time. The dangerous half is the decimal separator: wrong by a factor of a
  * thousand, and every row still looks right.
+  *
+ * @online-safe Creates `csv_import_templates`, with the constraints, indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

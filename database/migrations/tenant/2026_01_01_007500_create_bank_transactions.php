@@ -45,6 +45,12 @@ use Illuminate\Support\Facades\Schema;
  * payment - which is the error this whole area exists to catch.
  *
  * @financial
+  *
+ * @online-safe Creates `bank_transaction_enrichment`, `bank_transactions`, `bank_transactions_`, `bank_transactions_default`, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

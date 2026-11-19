@@ -28,6 +28,11 @@ use Illuminate\Support\Facades\Schema;
  * been replaced reduces a receivable that the replacement already restated,
  * which double-counts the correction - and the two documents would each be
  * defensible on their own.
+  *
+ * @online-safe Creates `invoice_corrections`, with the constraints, indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

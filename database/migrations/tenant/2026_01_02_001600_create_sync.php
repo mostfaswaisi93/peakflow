@@ -50,6 +50,12 @@ use Illuminate\Support\Facades\Schema;
  * there.
  *
  * @financial
+  *
+ * @online-safe Creates `sync_conflicts`, `sync_submissions`, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

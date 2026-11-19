@@ -45,6 +45,7 @@ final class ArchitectureRules
             'no untranslated text in a template' => $this->templatesHaveNoUntranslatedText(),
             'financial tables carry entity_id' => $this->financialTablesCarryEntityId(),
             'no migration is unsafe to run against live traffic' => $this->migrationsAreSafeToRunLive(),
+            'and every migration says whether it is' => $this->everyMigrationDeclaresItsSafety(),
             'the built assets are not stale' => $this->builtAssetsAreNotStale(),
             'translation catalogs agree' => $this->translationCatalogsAgree(),
             'strict types everywhere' => $this->strictTypesDeclared(),
@@ -1263,6 +1264,79 @@ final class ArchitectureRules
             $this->relative($newest),
             $newestAt - $builtAt,
         )];
+    }
+
+    /**
+     * Every migration says whether it may run while serving traffic.
+     *
+     * ## Why a declaration and not only an inspector
+     *
+     * `MigrationSafetyInspector` flags the hazards it knows: a dropped
+     * column, a non-concurrent index, a rewrite. A migration it does not
+     * flag is not thereby safe - it is unexamined, and the two look
+     * identical from the outside. Measured when this was written: 64 of 137
+     * migrations carried no declaration at all, including nine that add a
+     * CHECK constraint to a table that already exists, which scans every row
+     * under ACCESS EXCLUSIVE.
+     *
+     * The declaration is what makes the author decide. Writing
+     * `@online-safe` next to an `ALTER TABLE ... ADD CONSTRAINT` is a claim
+     * somebody can be shown to be wrong about; writing nothing is not.
+     *
+     * ## The three markers
+     *
+     * `@online-safe` with a reason - it may run against live traffic.
+     * `@online-unsafe` with a reason - it may not, and the reason names what
+     * it locks, so a deployment can schedule it.
+     * `@unsafe-migration-reviewed` - a hazard the inspector flagged that is
+     * genuinely fine here, with why.
+     *
+     * Each must carry text after it. A bare marker is the same as none,
+     * except that it silences this.
+     *
+     * @return list<string>
+     */
+    public function everyMigrationDeclaresItsSafety(): array
+    {
+        $files = array_merge(
+            glob($this->basePath.'/database/migrations/*.php') ?: [],
+            glob($this->basePath.'/database/migrations/tenant/*.php') ?: [],
+        );
+
+        if ($files === []) {
+            return ['no migration files were found at all, so this check just asserted something '.
+                'about an empty list'];
+        }
+
+        $problems = [];
+
+        foreach ($files as $file) {
+            $source = (string) file_get_contents((string) $file);
+            $name = basename((string) $file);
+
+            if (preg_match('/@(online-safe|online-unsafe|unsafe-migration-reviewed)\s*:?\s*(\S.*)?$/m', $source, $m) !== 1) {
+                $problems[] = sprintf(
+                    '%s declares nothing about running while traffic is served. The inspector only '.
+                    'flags the hazards it knows, so a migration it does not flag is unexamined '.
+                    'rather than safe - and the two are indistinguishable from outside. Add '.
+                    '@online-safe, @online-unsafe or @unsafe-migration-reviewed with a reason',
+                    $name,
+                );
+
+                continue;
+            }
+
+            if (trim((string) ($m[2] ?? '')) === '') {
+                $problems[] = sprintf(
+                    '%s carries a bare @%s with no reason after it, which says the same as nothing '.
+                    'except that it silences this check',
+                    $name,
+                    $m[1],
+                );
+            }
+        }
+
+        return $problems;
     }
 
     /**

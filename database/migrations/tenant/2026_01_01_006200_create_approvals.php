@@ -42,6 +42,12 @@ use Illuminate\Support\Facades\Schema;
  * @financial-not-applicable: approvals carry a threshold and a converted
  * amount for the limit test, not postings. `entity_id` is declared and RLS
  * applied because an approval is as entity-scoped as the document.
+  *
+ * @online-safe Creates `approval_decisions`, `approval_requests`, `approval_rule_steps`, `approval_rules` and others, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

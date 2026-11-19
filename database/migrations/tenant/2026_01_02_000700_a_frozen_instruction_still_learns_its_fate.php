@@ -37,6 +37,8 @@ use Illuminate\Support\Facades\DB;
  * which side it falls on - which is a question worth being asked.
  *
  * @financial-not-applicable: replaces a trigger function; no amount, balance or entity scope is involved
+  *
+ * @online-safe Replaces a function body, which is a catalog-only change.
  */
 return new class extends Migration
 {

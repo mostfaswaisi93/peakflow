@@ -26,6 +26,11 @@ use Illuminate\Support\Facades\Schema;
  * A journal may be restricted to a set of account paths, so a cash journal
  * cannot post revenue directly. The restriction is by PATH prefix rather than
  * by a list of accounts, because a chart grows and a list does not.
+  *
+ * @online-safe Creates `journals`, `number_series`, with the constraints, indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

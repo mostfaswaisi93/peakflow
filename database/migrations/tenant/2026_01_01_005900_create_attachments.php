@@ -40,6 +40,12 @@ use Illuminate\Support\Facades\Schema;
  * @financial-not-applicable: attachments carry no amounts. `entity_id` is
  * declared and RLS is applied because a document's attachment is as
  * entity-scoped as the document.
+  *
+ * @online-safe Creates `attachment_blobs`, `attachments`, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

@@ -44,6 +44,12 @@ use Illuminate\Support\Facades\Schema;
  * release exactly what covered its own document.
  *
  * @financial
+  *
+ * @online-safe Creates `ecl_matrix`, `ecl_provision_lines`, `ecl_releases`, `ecl_runs`, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

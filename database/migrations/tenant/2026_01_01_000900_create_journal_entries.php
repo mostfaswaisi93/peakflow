@@ -48,6 +48,12 @@ use Illuminate\Support\Facades\Schema;
  *
  * Eight is a limit, and limits in a schema are honest. A ninth axis is a
  * migration someone has to justify, which is the correct cost.
+  *
+ * @online-safe Creates `journal_entries`, `journal_lines`, `journal_lines_`, `journal_lines_default`, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

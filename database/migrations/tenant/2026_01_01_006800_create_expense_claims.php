@@ -42,6 +42,12 @@ use Illuminate\Support\Facades\Schema;
  * dates are frozen onto a bill.
  *
  * @financial
+  *
+ * @online-safe Creates `expense_claim_lines`, `expense_claims`, `expense_policies`, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

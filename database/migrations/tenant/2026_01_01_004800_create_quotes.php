@@ -38,6 +38,11 @@ use Illuminate\Support\Facades\Schema;
  * `accepted_at`, `accepted_by_name` and `accepted_from_ip` are recorded
  * because what matters afterwards is that somebody accepted it, when, and
  * from where - a status column alone leaves a dispute with nothing in it.
+  *
+ * @online-safe Creates `quote_lines`, `quotes`, with the constraints, indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

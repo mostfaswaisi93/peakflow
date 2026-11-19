@@ -18,6 +18,12 @@ use Illuminate\Support\Facades\DB;
  * but only so the error message is useful. An application can be bypassed by a
  * console command, a migration, a REPL session or a bug in an ORM upgrade; a
  * deferred constraint trigger cannot.
+  *
+ * @online-safe Creates functions and the triggers that call them - the balanced-entry
+ *              constraint trigger, the period gate and the posted-mutation refusal.
+ *              `CREATE OR REPLACE FUNCTION` rewrites a catalog row and takes no lock
+ *              on any table's data; the triggers are added to tables this release
+ *              creates.
  */
 return new class extends Migration
 {

@@ -38,6 +38,12 @@ use Illuminate\Support\Facades\Schema;
  * @financial-not-applicable: the archive stores bytes and hashes, not
  * amounts. `entity_id` is declared and RLS applied because an archived
  * document is as entity-scoped as the document it came from.
+  *
+ * @online-safe Creates `archive_manifests`, `archive_restore_drills`, `archived_artefacts`, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

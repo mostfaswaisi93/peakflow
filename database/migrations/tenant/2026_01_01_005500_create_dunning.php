@@ -34,6 +34,12 @@ use Illuminate\Support\Facades\Schema;
  * legitimately have two steps due on one day for different invoices - and
  * because a step that ran yesterday must not be re-sent today, which is what
  * the step half prevents.
+  *
+ * @online-safe Creates `dunning_events`, `dunning_notices`, `dunning_policies`, `dunning_policy_steps` and others, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

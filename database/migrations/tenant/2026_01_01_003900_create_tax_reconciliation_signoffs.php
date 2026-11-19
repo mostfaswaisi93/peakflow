@@ -29,6 +29,11 @@ use Illuminate\Support\Facades\Schema;
  * disabled check. This one covers an amount, and a difference larger than the
  * amount signed off blocks again - so a figure that drifts comes back rather
  * than hiding behind a decision made when it was small.
+  *
+ * @online-safe Creates `tax_reconciliation_signoffs`, with the constraints, indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

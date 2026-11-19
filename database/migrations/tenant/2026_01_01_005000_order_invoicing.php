@@ -28,6 +28,10 @@ use Illuminate\Support\Facades\DB;
  * document in a legal sequence pointing at an agreement the system says
  * never happened, and the two readings of the customer's account disagree
  * by the invoice.
+  *
+ * @online-safe Replaces one function body. `CREATE OR REPLACE FUNCTION` rewrites a
+ *              catalog row: no table is read, no row is rewritten, and the lock is
+ *              held for the catalog update alone.
  */
 return new class extends Migration
 {

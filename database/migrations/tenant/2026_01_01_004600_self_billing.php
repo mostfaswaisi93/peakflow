@@ -30,6 +30,11 @@ use Illuminate\Support\Facades\Schema;
  * tax point. A second issuing path - an import, an API, a correction script -
  * would otherwise be able to issue a document the regime does not recognise,
  * and the party it names would be the one asked to explain it.
+  *
+ * @online-safe Creates `party_self_billing_agreements`, with the constraints, indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {

@@ -38,6 +38,17 @@ use Illuminate\Support\Facades\Schema;
  *
  * Overlapping windows for one registration would make a document fall into
  * two returns, and the second one filed would double-count it.
+  *
+ * @online-unsafe Adds CHECK constraints to `tax_registrations`, which already exists.
+ *                `ADD CONSTRAINT` without `NOT VALID` scans every row under
+ *                ACCESS EXCLUSIVE, so on a populated table it blocks reads and
+ *                writes for the length of a full scan. It is declared rather
+ *                than rewritten because what the marker describes is the
+ *                STATEMENT, not the install where the table happened to be
+ *                empty - a deployment replaying it onto years of rows would
+ *                get the scan. The pattern to copy is
+ *                `2026_01_03_000800_a_bill_can_be_cancelled`: NOT VALID, then
+ *                VALIDATE CONSTRAINT, which takes only SHARE UPDATE EXCLUSIVE.
  */
 return new class extends Migration
 {

@@ -41,6 +41,12 @@ use Illuminate\Support\Facades\Schema;
  * same dates. The COALESCE collapses the optional columns to a sentinel, and
  * the cast to text avoids `char(26)`'s blank padding making the sentinel a
  * different value from itself.
+  *
+ * @online-safe Creates `withholding_certificates`, `withholding_rates`, with the constraints,
+ *              indexes and triggers
+ *              that belong to them. Nothing can be reading a table that did
+ *              not exist until this ran, so no lock it takes is on anything
+ *              serving traffic.
  */
 return new class extends Migration
 {
