@@ -159,26 +159,59 @@ final class HardeningRules
     /**
      * `ledger:verify`, run inside one of the tenant's entities.
      *
+     * ## It used to pick a tenant and hope, and the pick was not even stable
+     *
+     * `orderBy('created_at')->first()` looked deterministic and was not: the
+     * development seeder creates three tenants in one statement, so all
+     * three carry the SAME `created_at` to the second and PostgreSQL is free
+     * to return them in any order. Two of the three hold no entity, so this
+     * check reported "could not run" on about two runs in three - and the
+     * same suite reported different failures on consecutive runs, which
+     * reads as a flaky product rather than a flaky fixture.
+     *
+     * The cluster made it worse: eleven abandoned `probe-*` tenants left
+     * behind by the provisioning, sealing and expiry suites, every one of
+     * them with no entity, all competing for that `first()`.
+     *
+     * So the selection asks for what the check NEEDS - a provisioned tenant
+     * that holds an entity - rather than for an arbitrary one. That is not
+     * narrowing the assertion: the thing being proved is that the ledger's
+     * own invariants hold inside an entity, and which entity was never part
+     * of it. The skip stays, and now means what it says: NO tenant anywhere
+     * holds an entity, which is a cluster nobody has seeded.
+     *
      * @return list<string>
      */
     private function theLedgerProofInAnEntity(): array
     {
-        $tenant = Tenant::query()->with('connection')
+        $tenants = Tenant::query()->with('connection')
             ->whereNotNull('provisioned_at')
             ->orderBy('created_at')
-            ->first();
+            ->orderBy('id')
+            ->get();
 
-        if ($tenant === null) {
+        if ($tenants->isEmpty()) {
             return [];
         }
 
-        app(TenantConnectionResolver::class)->point($tenant);
+        $entity = null;
 
-        $entity = DB::connection('tenant')->table('entities')->orderBy('id')->first();
+        foreach ($tenants as $candidate) {
+            app(TenantConnectionResolver::class)->point($candidate);
+
+            $entity = DB::connection('tenant')->table('entities')->orderBy('id')->first();
+
+            if ($entity !== null) {
+                break;
+            }
+        }
 
         if ($entity === null) {
-            return ['this tenant holds no entity, so the global proof could not be run in one - and a '.
-                'proof that quietly did not run is worse than one that failed'];
+            return [sprintf(
+                'none of the %d provisioned tenants holds an entity, so the global proof could not be '.
+                'run in one - and a proof that quietly did not run is worse than one that failed',
+                $tenants->count(),
+            )];
         }
 
         return app(\App\Tenant\Tenancy\Services\EntityContext::class)->during(
