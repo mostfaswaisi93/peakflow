@@ -12,6 +12,15 @@
         columns     the column declaration - see below. The order here is
                     the column order; `hidden` takes a column out of the
                     render without taking it out of the numbering.
+
+                    `width` is what a column wants; `minWidth` is what it
+                    will not go below. They are different questions and the
+                    second is the one that keeps a table readable: a width
+                    is a preference a table will overrule to fit, and a
+                    long legal name overruling the amount column is how the
+                    figures end up on two lines. A figure column carries a
+                    minimum already - see app.css - so `minWidth` is for
+                    the ones whose content the stylesheet cannot know.
         paginator   a LengthAware, Simple or Cursor paginator. Used for the
                     page links and, when it knows one, the total.
         total       the server's row count, when it does not come from the
@@ -178,6 +187,15 @@
             $refuse(sprintf(
                 'column "%s" has no `label`. The label is the heading AND the accessible name every cell '.
                 'in the column inherits, and a bare "1,234.56" read with no column name is meaningless.',
+                $column['key'],
+            ));
+        }
+
+        if (($column['minWidth'] ?? null) !== null && $length($column['minWidth']) === null) {
+            $refuse(sprintf(
+                'declares a minWidth of "%s" for the column "%s", which is not a CSS length. A minimum '.
+                'the browser cannot parse is a minimum that silently is not there.',
+                (string) $column['minWidth'],
                 $column['key'],
             ));
         }
@@ -510,6 +528,7 @@
                             aria-colindex="{{ $index }}"
                             @if (($column['sortUrl'] ?? null) !== null) aria-sort="{{ $sort }}" @endif
                             @if ($isFigure) data-figure @endif
+                            @if (($column['minWidth'] ?? null) !== null) style="min-inline-size: {{ $column['minWidth'] }}" @endif
                             @class([
                                 'px-(--row-padding-inline) py-(--row-padding-block) font-medium whitespace-nowrap',
                                 'text-start' => ! $isFigure,

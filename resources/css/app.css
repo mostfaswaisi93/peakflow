@@ -1235,6 +1235,23 @@
            right-aligned in Arabic. `end` here would left-align every figure
            in RTL and destroy the thousands-place scan. */
         white-space: nowrap;
+
+        /* A floor, and today it is a belt beside braces - PF-278.
+           
+           `nowrap` above stops the figure wrapping, and the grid's table
+           sits in a horizontal scroller, so the table takes the width its
+           content wants rather than squeezing a column to fit. Removing
+           this changes no rendered width anywhere in the product - which
+           was measured, by removing it.
+           
+           It is kept because both of those are properties of today's
+           markup rather than of the figure: a table told to lay out fixed,
+           or one outside a scroller, squeezes columns, and an amount
+           clipped at the thousands separator is a figure somebody
+           misreads rather than one they cannot read. Wide enough for a
+           currency code, six digits, two separators and a decimal:
+           `ILS 125,868.00`. */
+        min-inline-size: 7rem;
     }
 
     /* Editorial figures (UX-005): a display-sized figure is tightened a
