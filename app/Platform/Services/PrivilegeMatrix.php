@@ -41,6 +41,16 @@ use Illuminate\Database\Connection;
  * | an ordinary table | yes | yes | yes | yes | **no** | **no** | **no** |
  * | `peakflow:no-delete` | yes | yes | yes | **no** | **no** | **no** | **no** |
  * | `peakflow:append-only` | yes | yes | **no** | **no** | **no** | **no** | **no** |
+ * | `peakflow:no-update` | yes | yes | **no** | yes | **no** | **no** | **no** |
+ *
+ * `no-update` is the one that reads oddly, so here is why it exists.
+ * `append-only` means no UPDATE and no DELETE, and the operator's
+ * `activity_logs` needs the first and not the second: `TenantsDiscardAbandoned`
+ * removes the logs of a tenant whose provisioning never finished, which has
+ * no customer, no books and no audit significance. Marking that table
+ * `append-only` would either break the command or need an exception to the
+ * marker - and an exception to a marker is how a marker stops meaning
+ * anything.
  *
  * TRUNCATE is refused because it is a DELETE that no row trigger sees and no
  * row-level security policy filters: `TRUNCATE journal_entries` empties the
@@ -134,6 +144,7 @@ final class PrivilegeMatrix
             $markers = (string) $table->comment.' '.(string) $table->parent_comment;
             $appendOnly = str_contains($markers, 'peakflow:append-only');
             $noDelete = str_contains($markers, 'peakflow:no-delete');
+            $noUpdate = str_contains($markers, 'peakflow:no-update');
 
             foreach (self::NEVER as $privilege) {
                 $column = match ($privilege) {
@@ -161,12 +172,13 @@ final class PrivilegeMatrix
                 }
             }
 
-            if ($appendOnly && (bool) $table->may_update) {
+            if (($appendOnly || $noUpdate) && (bool) $table->may_update) {
                 $drift[] = sprintf(
-                    '%s holds UPDATE on %s, which is marked peakflow:append-only. An audit record that '.
-                    'can be edited is not evidence.',
+                    '%s holds UPDATE on %s, which is marked %s. An audit record that can be edited is '.
+                    'not evidence.',
                     $role,
                     $name,
+                    $appendOnly ? 'peakflow:append-only' : 'peakflow:no-update',
                 );
             }
 
@@ -398,25 +410,41 @@ final class PrivilegeMatrix
      *
      * @return list<string>
      */
-    public function platformDrift(Connection $connection): array
+    public function platformDrift(Connection $connection, ?string $role = null): array
     {
         $drift = [];
-        $role = (string) $connection->selectOne('SELECT current_user AS role')->role;
+        /*
+         | WHOSE privileges, which is not the same as whose connection.
+         |
+         | This asked about `current_user` and reported it under that name,
+         | so it could only ever be used from a connection that was already
+         | the role under test. `tenantDrift()` has taken a role since the
+         | day a probe on the migrator's connection "caught" a planted
+         | TRUNCATE about the migrator - who owns every table and holds
+         | everything - and reported a clean finding about the wrong role.
+         |
+         | This one had the same shape and no parameter, which made the
+         | mistake unavailable rather than impossible: a check wanting to
+         | grant a privilege and read the result back has to be on the
+         | migrator's connection, because the grant is invisible to any
+         | other session until it commits.
+         */
+        $role = $role ?? (string) $connection->selectOne('SELECT current_user AS role')->role;
 
         $tables = $connection->select(<<<'SQL'
             SELECT c.relname,
                    coalesce(obj_description(c.oid, 'pg_class'), '') AS comment,
-                   has_table_privilege(current_user, c.oid, 'UPDATE') AS may_update,
-                   has_table_privilege(current_user, c.oid, 'DELETE') AS may_delete,
-                   has_table_privilege(current_user, c.oid, 'TRUNCATE') AS may_truncate,
-                   has_table_privilege(current_user, c.oid, 'REFERENCES') AS may_reference,
-                   has_table_privilege(current_user, c.oid, 'TRIGGER') AS may_trigger
+                   has_table_privilege(?, c.oid, 'UPDATE') AS may_update,
+                   has_table_privilege(?, c.oid, 'DELETE') AS may_delete,
+                   has_table_privilege(?, c.oid, 'TRUNCATE') AS may_truncate,
+                   has_table_privilege(?, c.oid, 'REFERENCES') AS may_reference,
+                   has_table_privilege(?, c.oid, 'TRIGGER') AS may_trigger
             FROM pg_class c
             JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE n.nspname = 'public'
               AND c.relkind IN ('r', 'p')
             ORDER BY c.relname
-        SQL);
+        SQL, [$role, $role, $role, $role, $role]);
 
         foreach ($tables as $table) {
             $name = (string) $table->relname;
@@ -427,19 +455,34 @@ final class PrivilegeMatrix
                 }
             }
 
-            if (! str_contains((string) $table->comment, 'peakflow:append-only')) {
+            $comment = (string) $table->comment;
+            $appendOnly = str_contains($comment, 'peakflow:append-only');
+            $noUpdate = str_contains($comment, 'peakflow:no-update');
+
+            if (! $appendOnly && ! $noUpdate) {
                 continue;
             }
 
-            foreach (['UPDATE' => 'may_update', 'DELETE' => 'may_delete'] as $privilege => $column) {
+            /*
+             | `no-update` forbids UPDATE and permits DELETE - see the marker
+             | table on this class. `activity_logs` carries it rather than
+             | `append-only` because `TenantsDiscardAbandoned` removes the
+             | logs of a tenant whose provisioning never finished.
+             */
+            $forbidden = $appendOnly
+                ? ['UPDATE' => 'may_update', 'DELETE' => 'may_delete']
+                : ['UPDATE' => 'may_update'];
+
+            foreach ($forbidden as $privilege => $column) {
                 if ((bool) $table->{$column}) {
                     $drift[] = sprintf(
-                        '%s holds %s on %s, which is marked peakflow:append-only. The operator\'s own '.
-                        'activity log is the record of what support did inside a customer\'s workspace, '.
-                        'and a record support can edit answers nothing.',
+                        '%s holds %s on %s, which is marked %s. The operator\'s own activity log is '.
+                        'the record of what support did inside a customer\'s workspace, and a record '.
+                        'support can edit answers nothing.',
                         $role,
                         $privilege,
                         $name,
+                        $appendOnly ? 'peakflow:append-only' : 'peakflow:no-update',
                     );
                 }
             }

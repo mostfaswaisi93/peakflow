@@ -1392,6 +1392,8 @@ final class HardeningRules
             'the matrix bites, proved on every run' => fn (): array => $this->theMatrixBites(),
             'the application role cannot delete a posted entry' => fn (): array => $this->aPostedEntryCannotBeDeleted(),
             'the application role cannot ALTER anything' => fn (): array => $this->theApplicationRoleCannotAlter(),
+            'the operator\'s own activity log cannot be amended' => fn (): array => $this->theActivityLogCannotBeAmended(),
+            'and the matrix notices if UPDATE on it is granted back' => fn (): array => $this->theActivityLogDriftIsReported(),
             'the drift check is a command an operator can run' => fn (): array => $this->theDriftCheckIsWired(),
             'the hardening sees every marked table' => fn (): array => $this->hardeningSeesEveryMarkedTable(),
         ];
@@ -1446,6 +1448,243 @@ final class HardeningRules
             foreach ($matrix->tenantDrift(DB::connection('tenant')) as $drift) {
                 $violations[] = sprintf('[%s] %s', (string) $tenant->slug, $drift);
             }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * The operator's own log cannot be edited - PF-239.
+     *
+     * ## What it was
+     *
+     *     role=peakflow_app  UPDATE=true  DELETE=true
+     *     comment: (none)
+     *
+     * `ActivityLog::update()` throws, so the model refuses. But
+     * `DB::table('activity_logs')->update(...)` does not go through the
+     * model and nor does a raw statement, and the application role held
+     * UPDATE. So the record of what support did inside a customer's
+     * workspace could be edited by the application, and the only thing in
+     * the way was a method on one class.
+     *
+     * The tenant's own `audit_log` has two layers - a trigger and a revoked
+     * privilege. The operator's log, which is the one that says who
+     * impersonated whom, had one, in PHP.
+     *
+     * And `platformDrift()` would have reported it, except that the branch
+     * which does so looks for a marker and the table carried **no comment at
+     * all**. The mechanism built to catch exactly this was waiting on a
+     * marker nobody had applied - which is why this check asserts the marker
+     * is present as well as the privilege being gone. A revoke with no
+     * marker protects this table and nothing afterwards: the next table
+     * somebody adds gets no drift check either.
+     *
+     * ## Three assertions, because each layer fails differently
+     *
+     * The privilege stops the application. The trigger stops a role that was
+     * granted UPDATE anyway, which is what drift looks like. And DELETE must
+     * still be there: `TenantsDiscardAbandoned` removes the logs of a tenant
+     * whose provisioning never finished, which has no customer, no books and
+     * no audit significance. A check that asserted "no writes at all" would
+     * pass a database where that command had been broken.
+     *
+     * @return list<string>
+     */
+    private function theActivityLogCannotBeAmended(): array
+    {
+        $connection = DB::connection('platform');
+        $violations = [];
+
+        $state = $connection->selectOne(<<<'SQL'
+            SELECT has_table_privilege(current_user, 'activity_logs', 'UPDATE') AS may_update,
+                   has_table_privilege(current_user, 'activity_logs', 'DELETE') AS may_delete,
+                   coalesce(obj_description('activity_logs'::regclass, 'pg_class'), '') AS comment,
+                   EXISTS (
+                       SELECT 1 FROM pg_trigger
+                       WHERE tgrelid = 'activity_logs'::regclass
+                         AND NOT tgisinternal
+                         AND tgname = 'activity_logs_no_update'
+                   ) AS has_trigger
+        SQL);
+
+        if ($state === null) {
+            return ['activity_logs does not exist on the platform connection'];
+        }
+
+        if ((bool) $state->may_update) {
+            $violations[] = 'the application role holds UPDATE on activity_logs. `ActivityLog::update()` '.
+                'throws, but a raw statement does not go through the model - so the record of what '.
+                'support did inside a customer workspace can be edited by the application.';
+        }
+
+        if (! str_contains((string) $state->comment, 'peakflow:no-update')) {
+            $violations[] = 'activity_logs carries no `peakflow:no-update` marker, so `platformDrift()` '.
+                'will not notice if UPDATE is granted back. The revoke protects this table; the marker '.
+                'is what protects it tomorrow.';
+        }
+
+        if (! (bool) $state->has_trigger) {
+            $violations[] = 'activity_logs has no `activity_logs_no_update` trigger. The privilege is '.
+                'one layer and it is the one that drift removes: a role granted UPDATE by hand would '.
+                'then meet nothing at all.';
+        }
+
+        /*
+         | And DELETE must still be permitted.
+         |
+         | Asserted in the POSITIVE direction on purpose. "No writes at all"
+         | is the easy thing to check and it would pass a database where
+         | `tenants:discard-abandoned` had been quietly broken - the command
+         | force-deletes the logs of a tenant whose provisioning never
+         | finished, which has no customer and no audit significance.
+         */
+        if (! (bool) $state->may_delete) {
+            $violations[] = 'the application role cannot DELETE from activity_logs, so '.
+                '`tenants:discard-abandoned` cannot clean up a tenant whose provisioning never '.
+                'finished - and the rows it would have removed belong to no customer.';
+        }
+
+        /*
+         | The trigger, behaviourally, as the OWNER.
+         |
+         | The application role cannot reach it: the privilege refuses first,
+         | so a trigger that had been dropped would look identical from
+         | there. Run as the migrator - which owns the table and holds
+         | UPDATE - the privilege is out of the way and the trigger is the
+         | only thing that can answer.
+         */
+        $savepoint = 'actlog_'.bin2hex(random_bytes(4));
+        $migrator = DB::connection('migrator');
+        $row = $migrator->table('activity_logs')->first();
+
+        if ($row === null) {
+            return [...$violations, 'there is no activity_logs row, so the trigger could not be tried '.
+                'and three of the four assertions above read a catalog rather than a behaviour'];
+        }
+
+        $migrator->beginTransaction();
+
+        try {
+            $migrator->statement('SAVEPOINT '.$savepoint);
+
+            try {
+                $migrator->table('activity_logs')->where('id', (string) $row->id)
+                    ->update(['action' => 'tampered']);
+
+                $violations[] = 'the owner amended an activity_logs row. The privilege is revoked for '.
+                    'the application and nothing else stands in the way, so whoever holds UPDATE - a '.
+                    'repair session, a migration, a role granted it by hand - can edit the record of '.
+                    'what support did.';
+            } catch (Throwable $e) {
+                $message = preg_replace('/\s+/', ' ', $e->getMessage()) ?? '';
+
+                if (! str_contains($message, 'cannot be amended')) {
+                    $violations[] = sprintf(
+                        'the amendment was refused by something other than the trigger: "%s". The '.
+                        'trigger is the layer that can explain itself, and this is the message '.
+                        'somebody reads.',
+                        Str::limit($message, 160),
+                    );
+                }
+            }
+
+            $migrator->statement('ROLLBACK TO SAVEPOINT '.$savepoint);
+        } finally {
+            $migrator->rollBack();
+        }
+
+        return $violations;
+    }
+
+    /**
+     * `platformDrift()` reports UPDATE granted back on the activity log.
+     *
+     * ## Why this is a separate check from the one above
+     *
+     * That one asserts the state: UPDATE revoked, marker present, trigger
+     * present, DELETE still there. All four read the catalog or try one
+     * statement, and none of them exercises `platformDrift()` - so the
+     * branch that would catch a future grant could be deleted and every one
+     * of them would stay green.
+     *
+     * Proved by trying it. A deliberate grant was the only thing that found
+     * the defect this marker exists for in the first place: `harden()`
+     * silently skipped `journal_entry_fingerprints` for weeks, and the live
+     * matrix could not see it because nobody had re-granted anything. A
+     * drift check is only worth the name if a drift has been made and
+     * reported.
+     *
+     * Inside the migrator's own transaction and rolled back, like the tenant
+     * sweep beside it - and read on the MIGRATOR's connection, because the
+     * grant is invisible to any other session until it commits. Asking the
+     * application's connection would report the clean state and the check
+     * would pass while proving nothing, which is a mistake that looks
+     * exactly like the matrix finding nothing because nothing was wrong.
+     *
+     * @return list<string>
+     */
+    private function theActivityLogDriftIsReported(): array
+    {
+        $matrix = new PrivilegeMatrix();
+        $migrator = DB::connection('migrator');
+        $role = (string) config('database.connections.platform.username');
+
+        if ($role === '' || preg_match('/^[a-z_][a-z0-9_]*$/', $role) !== 1) {
+            return ['the platform role name is not one this check can safely wrap into a GRANT, so '.
+                'the drift could not be made'];
+        }
+
+        $wrapped = $migrator->getQueryGrammar()->wrap($role);
+        $violations = [];
+
+        $migrator->beginTransaction();
+
+        try {
+            $migrator->statement('GRANT UPDATE ON activity_logs TO '.$wrapped);
+
+            /*
+             | The APPLICATION role, named, on the MIGRATOR's connection.
+             |
+             | The grant is inside this transaction so only this session can
+             | see it, and the migrator owns every table here and holds
+             | everything - so asking about `current_user` would report 48
+             | findings about the migrator and the assertion below would
+             | match one of them whether the grant had been made or not.
+             |
+             | The first draft of this check did exactly that and passed for
+             | the wrong reason. `platformDrift()` took no role parameter,
+             | which made the mistake the only thing available rather than
+             | merely easy; it takes one now, as `tenantDrift()` already did
+             | for the same reason.
+             */
+            $drift = $matrix->platformDrift($migrator, $role);
+            $found = false;
+
+            foreach ($drift as $finding) {
+                if (str_contains($finding, 'activity_logs') && str_contains($finding, 'UPDATE')) {
+                    $found = true;
+
+                    break;
+                }
+            }
+
+            if (! $found) {
+                $violations[] = sprintf(
+                    'UPDATE was granted back on activity_logs and the matrix did not report it. It '.
+                    'found %d other thing(s), so the `peakflow:no-update` branch is one the check does '.
+                    'not look at - and the marker on the table is decoration.',
+                    \count($drift),
+                );
+            }
+        } catch (Throwable $e) {
+            $violations[] = sprintf(
+                'the activity-log drift probe could not be set up: %s: %s',
+                $e::class,
+                Str::limit(preg_replace('/\s+/', ' ', $e->getMessage()) ?? '', 160),
+            );
+        } finally {
+            $migrator->rollBack();
         }
 
         return $violations;
