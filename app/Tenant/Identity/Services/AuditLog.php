@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tenant\Identity\Services;
 
 use App\Support\Audit\AuditTrail;
+use App\Support\Audit\SystemActor;
 
 use App\Support\Hashing\ChainLink;
 use App\Tenant\Identity\Models\User;
@@ -47,6 +48,7 @@ final class AuditLog implements AuditTrail
 
     public function __construct(
         private readonly EntityContext $entities,
+        private readonly SystemActor $system,
     ) {}
 
     /**
@@ -176,7 +178,24 @@ final class AuditLog implements AuditTrail
             'id' => (string) Str::ulid(),
             'entity_id' => $entityId ?? $this->entities->current(),
             'actor_user_id' => $actor?->getKey(),
-            'actor_name' => $actor?->name,
+
+            /*
+             | The name falls back to WHAT acted - PF-248.
+             |
+             | `actor_user_id` stays null, because no user did it, and that
+             | is deliberate: the segregation-of-duties indexes are keyed on
+             | that column, so a system actor appearing there would start
+             | conflicting with real people's duties. A console run is not
+             | somebody's duty.
+             |
+             | `actor_name` is free text and this is what it is for. Before
+             | PF-248 every entry written by a console command carried
+             | neither - the comment above says why that is worse than
+             | wrong, and it was written while the only thing that ran on a
+             | schedule was nothing. PF-243 put ten commands on one, three
+             | of which write here every night.
+             */
+            'actor_name' => $actor?->name ?? $this->system->describe(),
             'impersonated_by' => $this->impersonator(),
             'category' => $category,
             'action' => $action,

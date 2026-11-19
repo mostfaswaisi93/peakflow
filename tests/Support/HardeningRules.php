@@ -1396,6 +1396,7 @@ final class HardeningRules
             'and the matrix notices if UPDATE on it is granted back' => fn (): array => $this->theActivityLogDriftIsReported(),
             'the drift check is a command an operator can run' => fn (): array => $this->theDriftCheckIsWired(),
             'the hardening sees every marked table' => fn (): array => $this->hardeningSeesEveryMarkedTable(),
+            'an audit entry written by a command says which command' => fn (): array => $this->aCommandNamesItselfInTheTrail(),
         ];
 
         $results = [];
@@ -1407,6 +1408,143 @@ final class HardeningRules
         }
 
         return $results;
+    }
+
+    /**
+     * An audit entry written by a command says which command - PF-248.
+     *
+     * ## The sentence that was already in the code
+     *
+     * `AuditLog::record()` carries this, written long before the defect
+     * mattered:
+     *
+     *     Attributing such work to nobody would be worse than wrong - a
+     *     segregation-of-duties rule asks "did THIS person already do
+     *     that", and a duty recorded with no actor is a duty that
+     *     conflicts with nothing and silently weakens every rule that
+     *     would have matched it.
+     *
+     * It then read the actor from `auth()->guard('web')`, which outside a
+     * browser request is null. Measured: `auth()->guard('web')->id()` is
+     * NULL in console context, and the audit log of this very fixture holds
+     * `role.grant.refused` rows with no actor and no name - written by the
+     * checks themselves.
+     *
+     * That was survivable while nothing ran on a schedule. PF-243 put ten
+     * commands on one, and three of them write here every night:
+     * subscriptions moving state, quotes closing, dunning notices going to
+     * customers.
+     *
+     * ## `actor_user_id` must stay null, and is asserted to
+     *
+     * The segregation-of-duties indexes are keyed on that column. A system
+     * actor appearing in it would start conflicting with real people's
+     * duties - a nightly job would "already have done" what a person is
+     * being refused permission to do. A console run is not somebody's duty,
+     * and the fix must not make it look like one.
+     *
+     * ## Driven through a real command
+     *
+     * The listener is the thing under test, so the write happens inside
+     * `CommandStarting` for a command the framework is actually running.
+     * Setting `SystemActor` by hand and then writing would prove that the
+     * fallback reads a value, which was never in doubt.
+     *
+     * @return list<string>
+     */
+    private function aCommandNamesItselfInTheTrail(): array
+    {
+        $system = app(\App\Support\Audit\SystemActor::class);
+
+        if ($system->describe() !== null) {
+            return [sprintf(
+                'something is already named as acting ("%s") before any command ran, so this check '.
+                'would pass on a leftover value rather than on the listener',
+                (string) $system->describe(),
+            )];
+        }
+
+        $written = null;
+        $seen = null;
+
+        /*
+         | Registered after the application's own listener, so by the time
+         | this runs the production one has already set the name. Reading it
+         | here is reading what a service writing to the trail would read.
+         */
+        \Illuminate\Support\Facades\Event::listen(
+            static function (\Illuminate\Console\Events\CommandStarting $event) use (&$written, &$seen, $system): void {
+                if ($event->command !== 'inspire') {
+                    return;
+                }
+
+                $seen = $system->describe();
+
+                $written = app(\App\Support\Audit\AuditTrail::class)->record(
+                    category: 'ledger',
+                    action: 'hardening.actor_probe',
+                    subjectType: 'probe',
+                    subjectId: (string) \Illuminate\Support\Str::ulid(),
+                    subjectLabel: 'who acted when nobody did',
+                );
+            },
+        );
+
+        \Illuminate\Support\Facades\Artisan::call('inspire');
+
+        $problems = [];
+
+        if ($seen === null) {
+            $problems[] = 'nothing was named as acting while a command was running. Every audit entry '.
+                'a scheduled command writes - a subscription expiring, a quote closing, a dunning '.
+                'notice going to a customer - records that something happened and not what did it';
+        } elseif (! str_contains((string) $seen, 'inspire')) {
+            $problems[] = sprintf(
+                'the running command was named "%s" rather than the one that was running. A command '.
+                'invoked from inside another - which is how invariants:watch runs the verifiers - '.
+                'would attribute its writes to whatever scheduled it',
+                (string) $seen,
+            );
+        }
+
+        if ($written === null) {
+            return $problems === [] ? ['the probe wrote no audit entry at all'] : $problems;
+        }
+
+        $row = DB::connection('tenant')->table('audit_log')->where('id', (string) $written)->first();
+
+        if ($row === null) {
+            return [...$problems, 'the audit entry the probe wrote cannot be read back'];
+        }
+
+        if ($row->actor_name === null || ! str_contains((string) $row->actor_name, 'inspire')) {
+            $problems[] = sprintf(
+                'an entry written during a command carries actor_name %s. "Something happened" and '.
+                '"we do not know who did this" look identical in a trail, and only one of them is '.
+                'recoverable',
+                $row->actor_name === null ? 'NULL' : '"'.(string) $row->actor_name.'"',
+            );
+        }
+
+        if ($row->actor_user_id !== null) {
+            $problems[] = sprintf(
+                'a console run was recorded as user %s. The segregation-of-duties indexes are keyed '.
+                'on actor_user_id, so a nightly job in that column would "already have done" what a '.
+                'person is being refused permission to do',
+                (string) $row->actor_user_id,
+            );
+        }
+
+        if ($system->describe() !== null) {
+            $problems[] = sprintf(
+                'the command finished and "%s" is still named as acting. In a long-lived process - '.
+                'queue:work, a test runner - every later write would be attributed to a command that '.
+                'ended',
+                (string) $system->describe(),
+            );
+        }
+
+        return $problems;
     }
 
     /**

@@ -8,6 +8,7 @@ use App\Support\Audit\AuditTrail;
 use App\Support\Money\TranslatesMoney;
 use App\Tenant\Catalog\Services\ExchangeRates;
 use App\Support\Config\ProductionConfiguration;
+use Illuminate\Support\Facades\Event;
 use App\Support\Telemetry\CorrelationId;
 use App\Tenant\Identity\Services\AuditLog;
 use Illuminate\Database\Eloquent\Model;
@@ -22,6 +23,13 @@ final class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        /*
+         | One per process, because what is acting is a property of the
+         | process - PF-248. A console command runs once and writes
+         | throughout; a queued job sets it per job and clears it after.
+         */
+        $this->app->singleton(\App\Support\Audit\SystemActor::class);
+
         /*
          | The virus scanner - PF-073.
          |
@@ -108,7 +116,47 @@ final class AppServiceProvider extends ServiceProvider
         $this->publishTheCspNonceToBlade();
         $this->enforceModelDiscipline();
         $this->guardAgainstFloatMoney();
+        $this->nameWhatIsActingWhenNobodyIs();
         $this->refuseToStartOnUnsafeProductionSettings();
+    }
+
+    /**
+     * Keep `SystemActor` pointed at whatever is running - PF-248.
+     *
+     * `AuditLog` resolves its actor from the web guard, which outside a
+     * browser request is null - so every entry written by a console command
+     * or a queued job recorded no actor at all. Its own comment says why
+     * that is worse than wrong.
+     *
+     * Read from the framework's events rather than from `$_SERVER['argv']`,
+     * which would name the OUTER command the first time one invokes another
+     * through `Artisan::call()` - which is exactly how `invariants:watch`
+     * runs the verifiers. The entry would then be attributed to the thing
+     * that scheduled the work rather than the thing that did it.
+     *
+     * `CommandFinished` clears it, so a long-lived process - `queue:work`,
+     * a test runner - does not go on attributing later writes to a command
+     * that ended.
+     */
+    private function nameWhatIsActingWhenNobodyIs(): void
+    {
+        $actor = $this->app->make(\App\Support\Audit\SystemActor::class);
+
+        Event::listen(static function (\Illuminate\Console\Events\CommandStarting $event) use ($actor): void {
+            $actor->acting($event->command === null ? null : 'console: '.$event->command);
+        });
+
+        Event::listen(static function (\Illuminate\Console\Events\CommandFinished $event) use ($actor): void {
+            $actor->acting(null);
+        });
+
+        Event::listen(static function (\Illuminate\Queue\Events\JobProcessing $event) use ($actor): void {
+            $actor->acting('job: '.$event->job->resolveName());
+        });
+
+        Event::listen(static function (\Illuminate\Queue\Events\JobProcessed $event) use ($actor): void {
+            $actor->acting(null);
+        });
     }
 
     /**
