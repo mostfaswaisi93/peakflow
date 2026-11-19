@@ -144,14 +144,7 @@ final class PartyApiController
          | balance is not zero.
          */
         $body['open_documents'] = array_values(array_map(
-            static fn (object $document): array => [
-                'kind' => Row::text($document, 'kind'),
-                'id' => Row::text($document, 'id'),
-                'reference' => Row::text($document, 'reference'),
-                'document_date' => Wire::accountingDate(Row::nullableText($document, 'document_date')),
-                'gross' => Row::money($document, 'gross_amount', Row::text($document, 'currency')),
-                'open_balance' => Row::money($document, 'open_balance', Row::text($document, 'currency')),
-            ],
+            static fn (mixed $document): array => self::openDocument(\is_object($document) ? $document : new \stdClass()),
             DB::connection('tenant')->select(<<<'SQL'
                 SELECT 'invoice' AS kind,
                        i.id,
@@ -181,6 +174,21 @@ final class PartyApiController
         ));
 
         return new JsonResponse($body);
+    }
+
+    /** @return array<string, mixed> */
+    private static function openDocument(object $document): array
+    {
+        $currency = Row::text($document, 'currency');
+
+        return [
+            'kind' => Row::text($document, 'kind'),
+            'id' => Row::text($document, 'id'),
+            'reference' => Row::text($document, 'reference'),
+            'document_date' => Wire::accountingDate(Row::nullableText($document, 'document_date')),
+            'gross' => Row::money($document, 'gross_amount', $currency),
+            'open_balance' => Row::money($document, 'open_balance', $currency),
+        ];
     }
 
     private function listing(): Builder

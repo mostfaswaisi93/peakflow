@@ -100,6 +100,14 @@ tags:
     description: The tenant's own API tokens.
   - name: Reports
     description: The figures the browser's own pages show, as data, from the same queries.
+  - name: Sales
+    description: Sales invoices, read-only.
+  - name: Purchasing
+    description: Supplier bills, read-only.
+  - name: Parties
+    description: Customers, suppliers and employees, read-only.
+  - name: Banking
+    description: The company's own bank accounts, read-only.
   - name: Sessions
     description: |
       A person signing in on a device - a mobile app, say - and their own
@@ -891,6 +899,407 @@ paths:
         '429': {"$ref": "#/components/responses/RateLimited"}
         '500': {"$ref": "#/components/responses/ServerError"}
 
+  /invoices:
+    get:
+      tags: ["Sales"]
+      operationId: listInvoices
+      summary: Sales invoices
+      description: |
+        Drafts and issued invoices, newest issue date first. Under `report.view`,
+        the permission the invoice screen gates its figures on.
+
+        `open_balance` is the database's own answer - the same function the
+        screen and the ledger use - never a subtraction done here. The customer
+        name is the one frozen on the invoice when it was issued.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+        - {"$ref": "#/components/parameters/Cursor"}
+        - {"$ref": "#/components/parameters/Limit"}
+        - {"$ref": "#/components/parameters/PageNumber"}
+        - name: sort
+          in: query
+          schema: {"type": "string", "enum": ["issue_date", "-issue_date"], "default": "-issue_date"}
+        - name: filter[status]
+          in: query
+          schema: {"type": "string", "enum": ["draft", "issued"]}
+        - name: filter[customer_id]
+          in: query
+          schema: {"$ref": "#/components/schemas/Ulid"}
+      responses:
+        '200':
+          description: A page of invoices
+          headers:
+            Link: {"$ref": "#/components/headers/Link"}
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/InvoicePage"}
+              examples:
+                aPage:
+                  summary: One issued invoice, part paid
+                  value: {"data": [{"resource": "invoice", "id": "01jd3xq7f8k2m9n4p5r6s7t8va", "number": "INV-2026/00028", "status": "issued", "document_type": "380", "issue_date": "2026-11-05", "due_on": "2026-12-05", "customer": {"id": "01jd3xq7f8k2m9n4p5r6s7t8vb", "name": "Gulf Sands Trading"}, "currency": "SAR", "net": {"amount": "4200.0000", "currency": "SAR", "presentation_exponent": 2}, "tax": {"amount": "630.0000", "currency": "SAR", "presentation_exponent": 2}, "gross": {"amount": "4830.0000", "currency": "SAR", "presentation_exponent": 2}, "payable": {"amount": "4830.0000", "currency": "SAR", "presentation_exponent": 2}, "open_balance": {"amount": "1830.0000", "currency": "SAR", "presentation_exponent": 2}, "issued_at": "2026-11-05T09:14:02Z"}], "meta": {"limit": 25, "has_more": false, "pagination": "cursor"}, "links": {"self": "https://example.peakflow.app/api/v1/invoices"}}
+        '400': {"$ref": "#/components/responses/BadRequest"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /invoices/{id}:
+    get:
+      tags: ["Sales"]
+      operationId: getInvoice
+      summary: One invoice, with its lines, tax and payments
+      description: |
+        Quantities and unit prices are decimal strings at eight places: they
+        are factors, not money, and Money's four would round them. Every
+        amount is Money. An id from another company is a `404`.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+        - {"$ref": "#/components/parameters/ResourceId"}
+      responses:
+        '200':
+          description: The invoice
+          headers:
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/InvoiceDetail"}
+              examples:
+                partPaid:
+                  summary: An issued invoice with one payment applied
+                  value: {"resource": "invoice", "id": "01jd3xq7f8k2m9n4p5r6s7t8va", "number": "INV-2026/00028", "status": "issued", "document_type": "380", "issue_date": "2026-11-05", "due_on": "2026-12-05", "customer": {"id": "01jd3xq7f8k2m9n4p5r6s7t8vb", "name": "Gulf Sands Trading"}, "currency": "SAR", "net": {"amount": "4200.0000", "currency": "SAR", "presentation_exponent": 2}, "tax": {"amount": "630.0000", "currency": "SAR", "presentation_exponent": 2}, "gross": {"amount": "4830.0000", "currency": "SAR", "presentation_exponent": 2}, "payable": {"amount": "4830.0000", "currency": "SAR", "presentation_exponent": 2}, "open_balance": {"amount": "1830.0000", "currency": "SAR", "presentation_exponent": 2}, "issued_at": "2026-11-05T09:14:02Z", "delivery_date": "2026-11-05", "prepaid": {"amount": "0.0000", "currency": "SAR", "presentation_exponent": 2}, "lines": [{"line_no": 1, "item_code": "SRV-01", "description": "Monthly support", "quantity": "1.00000000", "unit_code": "C62", "unit_price": "4200.00000000", "net": {"amount": "4200.0000", "currency": "SAR", "presentation_exponent": 2}, "tax_category": "S", "tax_rate": "15.000000"}], "tax_breakdown": [{"category": "S", "rate": "15.000000", "taxable": {"amount": "4200.0000", "currency": "SAR", "presentation_exponent": 2}, "tax": {"amount": "630.0000", "currency": "SAR", "presentation_exponent": 2}, "exemption_reason_code": null, "exemption_reason": null}], "payments": [{"payment_number": "RCPT-2026/00011", "value_date": "2026-11-12", "allocated_on": "2026-11-12", "amount": {"amount": "3000.0000", "currency": "SAR", "presentation_exponent": 2}, "reversed_at": null}]}
+        '400': {"$ref": "#/components/responses/BadRequest"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '404': {"$ref": "#/components/responses/NotFound"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /bills:
+    get:
+      tags: ["Purchasing"]
+      operationId: listBills
+      summary: Supplier bills
+      description: |
+        Every bill, newest posting date first, under `report.view`. A bill has
+        no due-date column: `due_on` is the latest date in its payment terms,
+        falling back to the supplier's document date - the screen's own rule.
+        `open_balance` is the database's answer.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+        - {"$ref": "#/components/parameters/Cursor"}
+        - {"$ref": "#/components/parameters/Limit"}
+        - {"$ref": "#/components/parameters/PageNumber"}
+        - name: sort
+          in: query
+          schema: {"type": "string", "enum": ["posting_date", "-posting_date", "supplier_document_date", "-supplier_document_date"], "default": "-posting_date"}
+        - name: filter[status]
+          in: query
+          schema: {"type": "string", "enum": ["draft", "awaiting_approval", "approved", "posted", "cancelled"]}
+        - name: filter[supplier_id]
+          in: query
+          schema: {"$ref": "#/components/schemas/Ulid"}
+      responses:
+        '200':
+          description: A page of bills
+          headers:
+            Link: {"$ref": "#/components/headers/Link"}
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/BillPage"}
+              examples:
+                aPage:
+                  summary: One posted bill, unpaid
+                  value: {"data": [{"resource": "bill", "id": "01jd3xq7f8k2m9n4p5r6s7t8vc", "status": "posted", "document_type": "380", "supplier_document_number": "SUP-26-023", "supplier_document_date": "2026-11-12", "posting_date": "2026-11-12", "due_on": "2026-12-13", "supplier": {"id": "01jd3xq7f8k2m9n4p5r6s7t8vd", "name": "Sahaba Technology"}, "currency": "SAR", "net": {"amount": "4320.0000", "currency": "SAR", "presentation_exponent": 2}, "tax": {"amount": "648.0000", "currency": "SAR", "presentation_exponent": 2}, "gross": {"amount": "4968.0000", "currency": "SAR", "presentation_exponent": 2}, "payable": {"amount": "4968.0000", "currency": "SAR", "presentation_exponent": 2}, "open_balance": {"amount": "4968.0000", "currency": "SAR", "presentation_exponent": 2}, "approved_at": "2026-11-12T10:02:00Z", "posted_at": "2026-11-12T10:02:01Z"}], "meta": {"limit": 25, "has_more": false, "pagination": "cursor"}, "links": {"self": "https://example.peakflow.app/api/v1/bills"}}
+        '400': {"$ref": "#/components/responses/BadRequest"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /bills/{id}:
+    get:
+      tags: ["Purchasing"]
+      operationId: getBill
+      summary: One bill, with its lines and tax
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+        - {"$ref": "#/components/parameters/ResourceId"}
+      responses:
+        '200':
+          description: The bill
+          headers:
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/BillDetail"}
+              examples:
+                posted:
+                  summary: A posted bill with full input tax recovery
+                  value: {"resource": "bill", "id": "01jd3xq7f8k2m9n4p5r6s7t8vc", "status": "posted", "document_type": "380", "supplier_document_number": "SUP-26-023", "supplier_document_date": "2026-11-12", "posting_date": "2026-11-12", "due_on": "2026-12-13", "supplier": {"id": "01jd3xq7f8k2m9n4p5r6s7t8vd", "name": "Sahaba Technology"}, "currency": "SAR", "net": {"amount": "4320.0000", "currency": "SAR", "presentation_exponent": 2}, "tax": {"amount": "648.0000", "currency": "SAR", "presentation_exponent": 2}, "gross": {"amount": "4968.0000", "currency": "SAR", "presentation_exponent": 2}, "payable": {"amount": "4968.0000", "currency": "SAR", "presentation_exponent": 2}, "open_balance": {"amount": "4968.0000", "currency": "SAR", "presentation_exponent": 2}, "approved_at": "2026-11-12T10:02:00Z", "posted_at": "2026-11-12T10:02:01Z", "tax_point": "2026-11-12", "recoverable_tax": {"amount": "648.0000", "currency": "SAR", "presentation_exponent": 2}, "non_recoverable_tax": {"amount": "0.0000", "currency": "SAR", "presentation_exponent": 2}, "lines": [{"line_no": 1, "item_code": null, "description": "Cloud hosting, November", "quantity": "1.00000000", "unit_code": "C62", "unit_price": "4320.00000000", "net": {"amount": "4320.0000", "currency": "SAR", "presentation_exponent": 2}, "tax_category": "S", "tax_rate": "15.000000", "tax": {"amount": "648.0000", "currency": "SAR", "presentation_exponent": 2}, "recoverable_percent": "100.00", "reverse_charge": false}], "tax_breakdown": [{"category": "S", "rate": "15.000000", "taxable": {"amount": "4320.0000", "currency": "SAR", "presentation_exponent": 2}, "tax": {"amount": "648.0000", "currency": "SAR", "presentation_exponent": 2}, "recoverable": {"amount": "648.0000", "currency": "SAR", "presentation_exponent": 2}, "reverse_charge": false}]}
+        '400': {"$ref": "#/components/responses/BadRequest"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '404': {"$ref": "#/components/responses/NotFound"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /parties:
+    get:
+      tags: ["Parties"]
+      operationId: listParties
+      summary: Customers, suppliers and employees
+      description: |
+        Shared by every company in the workspace, so not limited to
+        `X-Entity`. Under `party.manage`, the permission the screen requires.
+        `q` searches the code and both names; `%` and `_` in it are looked
+        for, not obeyed.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+        - {"$ref": "#/components/parameters/Cursor"}
+        - {"$ref": "#/components/parameters/Limit"}
+        - {"$ref": "#/components/parameters/PageNumber"}
+        - name: q
+          in: query
+          schema: {"type": "string", "maxLength": 100}
+        - name: sort
+          in: query
+          schema: {"type": "string", "enum": ["legal_name", "-legal_name"], "default": "legal_name"}
+        - name: filter[role]
+          in: query
+          schema: {"type": "string", "enum": ["customer", "supplier", "employee"]}
+        - name: filter[active]
+          in: query
+          schema: {"type": "string", "enum": ["true", "false"]}
+      responses:
+        '200':
+          description: A page of parties
+          headers:
+            Link: {"$ref": "#/components/headers/Link"}
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/PartyPage"}
+              examples:
+                aPage:
+                  summary: One customer
+                  value: {"data": [{"resource": "party", "id": "01jd3xq7f8k2m9n4p5r6s7t8vb", "code": "C-0004", "legal_name": "Gulf Sands Trading", "trading_name": null, "is_customer": true, "is_supplier": false, "is_employee": false, "country": "SA", "default_currency": "SAR", "active": true}], "meta": {"limit": 25, "has_more": false, "pagination": "cursor"}, "links": {"self": "https://example.peakflow.app/api/v1/parties"}}
+        '400': {"$ref": "#/components/responses/BadRequest"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /parties/{id}:
+    get:
+      tags: ["Parties"]
+      operationId: getParty
+      summary: One party, with its credit position and open documents here
+      description: |
+        The credit limit, the hold and the open documents are THIS company's
+        (`X-Entity`). Bank accounts carry the last four digits only - reading
+        a full account number is an audited act with a stated reason, and it
+        is not offered here.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+        - {"$ref": "#/components/parameters/ResourceId"}
+      responses:
+        '200':
+          description: The party
+          headers:
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/PartyDetail"}
+              examples:
+                customer:
+                  summary: A customer with one invoice open
+                  value: {"resource": "party", "id": "01jd3xq7f8k2m9n4p5r6s7t8vb", "code": "C-0004", "legal_name": "Gulf Sands Trading", "trading_name": null, "is_customer": true, "is_supplier": false, "is_employee": false, "country": "SA", "default_currency": "SAR", "active": true, "credit": {"limit": {"amount": "50000.0000", "currency": "SAR", "presentation_exponent": 2}, "on_hold": false, "hold_reason": null, "held_at": null}, "bank_accounts": [{"id": "01jd3xq7f8k2m9n4p5r6s7t8ve", "label": "Main account", "bank_name": "Al Rajhi Bank", "country": "SA", "currency": "SAR", "masked": "•••• 4821", "active": true, "requires_reverification": false, "verified_at": "2026-09-01T08:00:00Z"}], "open_documents": [{"kind": "invoice", "id": "01jd3xq7f8k2m9n4p5r6s7t8va", "reference": "INV-2026/00028", "document_date": "2026-11-05", "gross": {"amount": "4830.0000", "currency": "SAR", "presentation_exponent": 2}, "open_balance": {"amount": "1830.0000", "currency": "SAR", "presentation_exponent": 2}}]}
+        '400': {"$ref": "#/components/responses/BadRequest"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '404': {"$ref": "#/components/responses/NotFound"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /bank-accounts:
+    get:
+      tags: ["Banking"]
+      operationId: listBankAccounts
+      summary: The company's bank accounts and where each stands
+      description: |
+        Three balances, because they answer three questions: `ledger` is what
+        the books say, `statement` what the bank last said, and `available`
+        the statement less what has left the books and not reached the bank.
+        The identifier is masked. Under `bank.manage`; not paginated - a
+        company has a handful of accounts.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+      responses:
+        '200':
+          description: The accounts
+          headers:
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/BankAccountList"}
+              examples:
+                reconciled:
+                  summary: One account that agrees with its statement
+                  value: {"data": [{"resource": "bank_account", "id": "01jd3xq7f8k2m9n4p5r6s7t8vf", "label": "Main current account", "status": "active", "institution_name": "Al Rajhi Bank", "institution_country": "SA", "currency": "SAR", "masked": "···· 7519", "as_of": "2026-11-19", "ledger": {"amount": "232522.0000", "currency": "SAR", "presentation_exponent": 2}, "statement": {"amount": "232522.0000", "currency": "SAR", "presentation_exponent": 2}, "available": {"amount": "232522.0000", "currency": "SAR", "presentation_exponent": 2}, "reconciliation": {"agrees": true, "difference": {"amount": "0.0000", "currency": "SAR", "presentation_exponent": 2}, "why": null}}]}
+        '400': {"$ref": "#/components/responses/BadRequest"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /periods:
+    get:
+      tags: ["Reports"]
+      operationId: listPeriods
+      summary: The periods a report may be asked for
+      description: |
+        Non-adjusting periods, newest first, each saying whether anything is
+        posted in it - what a period picker needs to offer the right default.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+      responses:
+        '200':
+          description: The periods
+          headers:
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/PeriodList"}
+              examples:
+                twoMonths:
+                  summary: The current month and the one before
+                  value: {"data": [{"resource": "period", "id": "01jd3xq7f8k2m9n4p5r6s7t8vg", "label": "2026-11", "starts_on": "2026-11-01", "ends_on": "2026-11-30", "state": "open", "has_postings": true}, {"resource": "period", "id": "01jd3xq7f8k2m9n4p5r6s7t8vh", "label": "2026-10", "starts_on": "2026-10-01", "ends_on": "2026-10-31", "state": "soft_closed", "has_postings": true}]}
+        '400': {"$ref": "#/components/responses/BadRequest"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /reports/trial-balance:
+    get:
+      tags: ["Reports"]
+      operationId: getTrialBalance
+      summary: The trial balance for a period
+      description: |
+        The service the trial balance page calls, with every amount as Money.
+        Without `period`, the latest period that has anything posted in it.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+        - {"$ref": "#/components/parameters/ReportPeriod"}
+      responses:
+        '200':
+          description: The trial balance
+          headers:
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/ReportResponse"}
+              examples:
+                balanced:
+                  summary: A balanced month, one account shown
+                  value: {"resource": "trial_balance", "entity_id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "currency": "SAR", "period": {"id": "01jd3xq7f8k2m9n4p5r6s7t8vg", "label": "2026-11", "starts_on": "2026-11-01", "ends_on": "2026-11-30"}, "comparative_period": null, "report": {"from": "2026-11-01", "until": "2026-11-30", "currency": "SAR", "total_debit": {"amount": "512340.0000", "currency": "SAR", "presentation_exponent": 2}, "total_credit": {"amount": "512340.0000", "currency": "SAR", "presentation_exponent": 2}, "balances": true, "rows": [{"code": "1.1.1.1", "name_ar": "النقدية", "name_en": "Cash on hand", "type": "asset", "opening": {"amount": "199172.0000", "currency": "SAR", "presentation_exponent": 2}, "movement": {"amount": "33350.0000", "currency": "SAR", "presentation_exponent": 2}, "closing": {"amount": "232522.0000", "currency": "SAR", "presentation_exponent": 2}}]}}
+        '400': {"$ref": "#/components/responses/BadRequest"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '404': {"$ref": "#/components/responses/NotFound"}
+        '422': {"$ref": "#/components/responses/ValidationFailed"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /reports/profit-or-loss:
+    get:
+      tags: ["Reports"]
+      operationId: getProfitOrLoss
+      summary: The statement of profit or loss
+      description: |
+        Analysed by function and by nature, as the page shows it. The
+        comparative defaults to the same period a year earlier, and to none
+        when there is no such period; `comparative=none` asks for none.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+        - {"$ref": "#/components/parameters/ReportPeriod"}
+        - {"$ref": "#/components/parameters/ReportComparative"}
+      responses:
+        '200':
+          description: The statement
+          headers:
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/ReportResponse"}
+              examples:
+                aMonth:
+                  summary: One band shown
+                  value: {"resource": "profit_or_loss", "entity_id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "currency": "SAR", "period": {"id": "01jd3xq7f8k2m9n4p5r6s7t8vg", "label": "2026-11", "starts_on": "2026-11-01", "ends_on": "2026-11-30"}, "comparative_period": null, "report": {"from": "2026-11-01", "until": "2026-11-30", "currency": "SAR", "by_function": {"bands": [{"band": "gross", "subtotal": "gross_profit", "amount": {"amount": "42400.0000", "currency": "SAR", "presentation_exponent": 2}, "comparative": null}], "profit_for_the_period": {"amount": "18250.0000", "currency": "SAR", "presentation_exponent": 2}}}}
+        '400': {"$ref": "#/components/responses/BadRequest"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '404': {"$ref": "#/components/responses/NotFound"}
+        '422': {"$ref": "#/components/responses/ValidationFailed"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /reports/financial-position:
+    get:
+      tags: ["Reports"]
+      operationId: getFinancialPosition
+      summary: The statement of financial position
+      description: |
+        As at the end of the period, by section and maturity, as the page
+        shows it. The comparative defaults to the same period a year earlier.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+        - {"$ref": "#/components/parameters/ReportPeriod"}
+        - {"$ref": "#/components/parameters/ReportComparative"}
+      responses:
+        '200':
+          description: The statement
+          headers:
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/ReportResponse"}
+              examples:
+                atMonthEnd:
+                  summary: The totals only
+                  value: {"resource": "financial_position", "entity_id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "currency": "SAR", "period": {"id": "01jd3xq7f8k2m9n4p5r6s7t8vg", "label": "2026-11", "starts_on": "2026-11-01", "ends_on": "2026-11-30"}, "comparative_period": null, "report": {"as_at": "2026-11-30", "currency": "SAR", "totals": {"assets": {"amount": "402400.0000", "currency": "SAR", "presentation_exponent": 2}, "liabilities": {"amount": "62790.0000", "currency": "SAR", "presentation_exponent": 2}, "equity": {"amount": "339610.0000", "currency": "SAR", "presentation_exponent": 2}, "liabilities_and_equity": {"amount": "402400.0000", "currency": "SAR", "presentation_exponent": 2}, "difference": {"amount": "0.0000", "currency": "SAR", "presentation_exponent": 2}}}}
+        '400': {"$ref": "#/components/responses/BadRequest"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '404': {"$ref": "#/components/responses/NotFound"}
+        '422': {"$ref": "#/components/responses/ValidationFailed"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
 components:
 
   securitySchemes:
@@ -1012,6 +1421,25 @@ components:
         what was asked - the client believes it has every row and iterates no
         further. Anything else is a `400` naming the four sizes that work.
       schema: {"type": "integer", "enum": [10, 25, 50, 100], "default": 25}
+
+    ReportPeriod:
+      name: period
+      in: query
+      required: false
+      description: |
+        A period id from `GET /periods`. Without one, the latest period that
+        has anything posted in it - an empty current month would otherwise be
+        the default, and a report of nothing answers nobody's question.
+      schema: {"$ref": "#/components/schemas/Ulid"}
+
+    ReportComparative:
+      name: comparative
+      in: query
+      required: false
+      description: |
+        An earlier period's id, or `none`. Without it, the same period a year
+        earlier, and none when there is no such period.
+      schema: {"type": "string"}
 
     PageNumber:
       name: page
@@ -2001,3 +2429,342 @@ components:
               action: {"type": "string"}
               subject: {"type": ["string", "null"]}
               at: {"$ref": "#/components/schemas/Timestamp"}
+
+    DecimalString:
+      type: string
+      pattern: '^-?\d+(\.\d+)?$'
+      description: |
+        An exact decimal that is not money - a quantity, a unit price at eight
+        places, a tax rate. A string for the reason money is one.
+      examples: ["1.00000000", "15.000000"]
+
+    NullableMoney:
+      oneOf: [{"$ref": "#/components/schemas/Money"}, {"type": "null"}]
+
+    Counterparty:
+      type: object
+      required: ["id", "name"]
+      additionalProperties: false
+      properties:
+        id: {"$ref": "#/components/schemas/Ulid"}
+        name:
+          type: string
+          description: As frozen on the document when it was issued - renaming the party does not rewrite it.
+
+    TaxBreakdownRow:
+      type: object
+      required: ["category", "rate", "taxable", "tax"]
+      properties:
+        category: {"type": "string"}
+        rate: {"$ref": "#/components/schemas/DecimalString"}
+        taxable: {"$ref": "#/components/schemas/NullableMoney"}
+        tax: {"$ref": "#/components/schemas/NullableMoney"}
+        recoverable: {"$ref": "#/components/schemas/NullableMoney"}
+        reverse_charge: {"type": "boolean"}
+        exemption_reason_code: {"type": ["string", "null"]}
+        exemption_reason: {"type": ["string", "null"]}
+
+    DocumentLine:
+      type: object
+      required: ["line_no", "description", "quantity", "unit_price", "net"]
+      properties:
+        line_no: {"type": "integer"}
+        item_code: {"type": ["string", "null"]}
+        description: {"type": "string"}
+        quantity: {"$ref": "#/components/schemas/DecimalString"}
+        unit_code: {"type": ["string", "null"]}
+        unit_price: {"$ref": "#/components/schemas/DecimalString"}
+        net: {"$ref": "#/components/schemas/NullableMoney"}
+        tax_category: {"type": ["string", "null"]}
+        tax_rate:
+          oneOf: [{"$ref": "#/components/schemas/DecimalString"}, {"type": "null"}]
+        tax: {"$ref": "#/components/schemas/NullableMoney"}
+        recoverable_percent: {"type": ["string", "null"]}
+        reverse_charge: {"type": "boolean"}
+
+    InvoiceSummary:
+      type: object
+      required: ["resource", "id", "number", "status", "document_type", "issue_date", "due_on", "customer", "currency", "net", "tax", "gross", "payable", "open_balance", "issued_at"]
+      properties:
+        resource: {"type": "string", "const": "invoice"}
+        id: {"$ref": "#/components/schemas/Ulid"}
+        number:
+          type: ["string", "null"]
+          description: Null on a draft - a number is assigned when the invoice is issued, never before.
+        status: {"type": "string", "enum": ["draft", "issued"]}
+        document_type:
+          type: string
+          description: UNTDID 1001 - 380 invoice, 381 credit note, 383 debit note, and so on.
+        issue_date: {"$ref": "#/components/schemas/AccountingDate"}
+        due_on:
+          oneOf: [{"$ref": "#/components/schemas/AccountingDate"}, {"type": "null"}]
+          description: The latest due date in the payment terms frozen on the invoice.
+        customer: {"$ref": "#/components/schemas/Counterparty"}
+        currency: {"$ref": "#/components/schemas/CurrencyCode"}
+        net: {"$ref": "#/components/schemas/NullableMoney"}
+        tax: {"$ref": "#/components/schemas/NullableMoney"}
+        gross: {"$ref": "#/components/schemas/NullableMoney"}
+        payable: {"$ref": "#/components/schemas/NullableMoney"}
+        open_balance:
+          allOf: [{"$ref": "#/components/schemas/NullableMoney"}]
+          description: The database's own answer to "what is still owed", never computed by the client.
+        issued_at:
+          oneOf: [{"$ref": "#/components/schemas/Timestamp"}, {"type": "null"}]
+
+    InvoiceDetail:
+      allOf:
+        - {"$ref": "#/components/schemas/InvoiceSummary"}
+        - type: object
+          required: ["delivery_date", "prepaid", "lines", "tax_breakdown", "payments"]
+          properties:
+            delivery_date:
+              oneOf: [{"$ref": "#/components/schemas/AccountingDate"}, {"type": "null"}]
+            prepaid: {"$ref": "#/components/schemas/NullableMoney"}
+            lines:
+              type: array
+              items: {"$ref": "#/components/schemas/DocumentLine"}
+            tax_breakdown:
+              type: array
+              items: {"$ref": "#/components/schemas/TaxBreakdownRow"}
+            payments:
+              type: array
+              description: The payments applied to this invoice, oldest first. A reversed one keeps its row and gains `reversed_at`.
+              items:
+                type: object
+                required: ["payment_number", "value_date", "allocated_on", "amount", "reversed_at"]
+                properties:
+                  payment_number: {"type": ["string", "null"]}
+                  value_date:
+                    oneOf: [{"$ref": "#/components/schemas/AccountingDate"}, {"type": "null"}]
+                  allocated_on:
+                    oneOf: [{"$ref": "#/components/schemas/AccountingDate"}, {"type": "null"}]
+                  amount: {"$ref": "#/components/schemas/NullableMoney"}
+                  reversed_at:
+                    oneOf: [{"$ref": "#/components/schemas/Timestamp"}, {"type": "null"}]
+
+    InvoicePage:
+      type: object
+      required: ["data", "meta", "links"]
+      properties:
+        data:
+          type: array
+          items: {"$ref": "#/components/schemas/InvoiceSummary"}
+        meta: {"$ref": "#/components/schemas/PageMeta"}
+        links: {"$ref": "#/components/schemas/PageLinks"}
+
+    BillSummary:
+      type: object
+      required: ["resource", "id", "status", "document_type", "supplier_document_number", "supplier_document_date", "posting_date", "due_on", "supplier", "currency", "net", "tax", "gross", "payable", "open_balance", "approved_at", "posted_at"]
+      properties:
+        resource: {"type": "string", "const": "bill"}
+        id: {"$ref": "#/components/schemas/Ulid"}
+        status: {"type": "string", "enum": ["draft", "awaiting_approval", "approved", "posted", "cancelled"]}
+        document_type: {"type": "string"}
+        supplier_document_number: {"type": "string"}
+        supplier_document_date: {"$ref": "#/components/schemas/AccountingDate"}
+        posting_date: {"$ref": "#/components/schemas/AccountingDate"}
+        due_on:
+          oneOf: [{"$ref": "#/components/schemas/AccountingDate"}, {"type": "null"}]
+          description: The latest due date in the payment terms, or the supplier's document date when there are none.
+        supplier: {"$ref": "#/components/schemas/Counterparty"}
+        currency: {"$ref": "#/components/schemas/CurrencyCode"}
+        net: {"$ref": "#/components/schemas/NullableMoney"}
+        tax: {"$ref": "#/components/schemas/NullableMoney"}
+        gross: {"$ref": "#/components/schemas/NullableMoney"}
+        payable: {"$ref": "#/components/schemas/NullableMoney"}
+        open_balance: {"$ref": "#/components/schemas/NullableMoney"}
+        approved_at:
+          oneOf: [{"$ref": "#/components/schemas/Timestamp"}, {"type": "null"}]
+        posted_at:
+          oneOf: [{"$ref": "#/components/schemas/Timestamp"}, {"type": "null"}]
+
+    BillDetail:
+      allOf:
+        - {"$ref": "#/components/schemas/BillSummary"}
+        - type: object
+          required: ["tax_point", "recoverable_tax", "non_recoverable_tax", "lines", "tax_breakdown"]
+          properties:
+            tax_point:
+              oneOf: [{"$ref": "#/components/schemas/AccountingDate"}, {"type": "null"}]
+            recoverable_tax: {"$ref": "#/components/schemas/NullableMoney"}
+            non_recoverable_tax: {"$ref": "#/components/schemas/NullableMoney"}
+            lines:
+              type: array
+              items: {"$ref": "#/components/schemas/DocumentLine"}
+            tax_breakdown:
+              type: array
+              items: {"$ref": "#/components/schemas/TaxBreakdownRow"}
+
+    BillPage:
+      type: object
+      required: ["data", "meta", "links"]
+      properties:
+        data:
+          type: array
+          items: {"$ref": "#/components/schemas/BillSummary"}
+        meta: {"$ref": "#/components/schemas/PageMeta"}
+        links: {"$ref": "#/components/schemas/PageLinks"}
+
+    Party:
+      type: object
+      required: ["resource", "id", "code", "legal_name", "trading_name", "is_customer", "is_supplier", "is_employee", "country", "default_currency", "active"]
+      properties:
+        resource: {"type": "string", "const": "party"}
+        id: {"$ref": "#/components/schemas/Ulid"}
+        code: {"type": ["string", "null"]}
+        legal_name: {"type": "string"}
+        trading_name: {"type": ["string", "null"]}
+        is_customer: {"type": "boolean"}
+        is_supplier: {"type": "boolean"}
+        is_employee: {"type": "boolean"}
+        country: {"type": ["string", "null"]}
+        default_currency: {"type": ["string", "null"]}
+        active: {"type": "boolean"}
+
+    PartyDetail:
+      allOf:
+        - {"$ref": "#/components/schemas/Party"}
+        - type: object
+          required: ["credit", "bank_accounts", "open_documents"]
+          properties:
+            credit:
+              type: object
+              required: ["limit", "on_hold", "hold_reason", "held_at"]
+              additionalProperties: false
+              description: This company's credit position with the party.
+              properties:
+                limit: {"$ref": "#/components/schemas/NullableMoney"}
+                on_hold: {"type": "boolean"}
+                hold_reason: {"type": ["string", "null"]}
+                held_at:
+                  oneOf: [{"$ref": "#/components/schemas/Timestamp"}, {"type": "null"}]
+            bank_accounts:
+              type: array
+              items:
+                type: object
+                required: ["id", "masked", "active", "requires_reverification"]
+                additionalProperties: false
+                description: The last four digits only - never the account number.
+                properties:
+                  id: {"$ref": "#/components/schemas/Ulid"}
+                  label: {"type": ["string", "null"]}
+                  bank_name: {"type": ["string", "null"]}
+                  country: {"type": ["string", "null"]}
+                  currency: {"type": ["string", "null"]}
+                  masked: {"type": "string"}
+                  active: {"type": "boolean"}
+                  requires_reverification: {"type": "boolean"}
+                  verified_at:
+                    oneOf: [{"$ref": "#/components/schemas/Timestamp"}, {"type": "null"}]
+            open_documents:
+              type: array
+              description: Issued invoices and approved bills with this party that are not settled, in this company.
+              items:
+                type: object
+                required: ["kind", "id", "reference", "document_date", "gross", "open_balance"]
+                additionalProperties: false
+                properties:
+                  kind: {"type": "string", "enum": ["invoice", "bill"]}
+                  id: {"$ref": "#/components/schemas/Ulid"}
+                  reference: {"type": "string"}
+                  document_date:
+                    oneOf: [{"$ref": "#/components/schemas/AccountingDate"}, {"type": "null"}]
+                  gross: {"$ref": "#/components/schemas/NullableMoney"}
+                  open_balance: {"$ref": "#/components/schemas/NullableMoney"}
+
+    PartyPage:
+      type: object
+      required: ["data", "meta", "links"]
+      properties:
+        data:
+          type: array
+          items: {"$ref": "#/components/schemas/Party"}
+        meta: {"$ref": "#/components/schemas/PageMeta"}
+        links: {"$ref": "#/components/schemas/PageLinks"}
+
+    BankAccountList:
+      type: object
+      required: ["data"]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            required: ["resource", "id", "label", "status", "currency", "masked", "as_of", "ledger", "statement", "available", "reconciliation"]
+            additionalProperties: false
+            properties:
+              resource: {"type": "string", "const": "bank_account"}
+              id: {"$ref": "#/components/schemas/Ulid"}
+              label: {"type": "string"}
+              status: {"type": "string", "enum": ["active", "dormant", "closed"]}
+              institution_name: {"type": ["string", "null"]}
+              institution_country: {"type": ["string", "null"]}
+              currency: {"$ref": "#/components/schemas/CurrencyCode"}
+              masked: {"type": ["string", "null"]}
+              as_of:
+                oneOf: [{"$ref": "#/components/schemas/AccountingDate"}, {"type": "null"}]
+              ledger: {"$ref": "#/components/schemas/NullableMoney"}
+              statement: {"$ref": "#/components/schemas/NullableMoney"}
+              available: {"$ref": "#/components/schemas/NullableMoney"}
+              reconciliation:
+                type: object
+                required: ["agrees", "difference", "why"]
+                additionalProperties: false
+                properties:
+                  agrees: {"type": "boolean"}
+                  difference: {"$ref": "#/components/schemas/NullableMoney"}
+                  why: {"type": ["string", "null"]}
+
+    ReportPeriodRef:
+      type: object
+      required: ["id", "label", "starts_on", "ends_on"]
+      additionalProperties: false
+      properties:
+        id: {"$ref": "#/components/schemas/Ulid"}
+        label: {"type": "string"}
+        starts_on: {"$ref": "#/components/schemas/AccountingDate"}
+        ends_on: {"$ref": "#/components/schemas/AccountingDate"}
+
+    PeriodList:
+      type: object
+      required: ["data"]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            required: ["resource", "id", "label", "starts_on", "ends_on", "state", "has_postings"]
+            additionalProperties: false
+            properties:
+              resource: {"type": "string", "const": "period"}
+              id: {"$ref": "#/components/schemas/Ulid"}
+              label: {"type": "string"}
+              starts_on: {"$ref": "#/components/schemas/AccountingDate"}
+              ends_on: {"$ref": "#/components/schemas/AccountingDate"}
+              state: {"type": "string"}
+              has_postings: {"type": "boolean"}
+
+    ReportResponse:
+      type: object
+      required: ["resource", "entity_id", "currency", "period", "comparative_period", "report"]
+      additionalProperties: false
+      description: |
+        A financial statement. `report` is the statement exactly as the
+        browser's page receives it from the reporting service - its rows,
+        bands or sections - with **every amount converted to Money**: the
+        members `opening`, `movement`, `closing`, `amount`, `comparative`,
+        `subtotal`, `total` and the statement totals. Labels come in both
+        languages (`label_ar`, `label_en`), and `declaration` carries the
+        statement's own verdict on itself in both.
+      properties:
+        resource: {"type": "string", "enum": ["trial_balance", "profit_or_loss", "financial_position"]}
+        entity_id: {"$ref": "#/components/schemas/Ulid"}
+        currency: {"$ref": "#/components/schemas/CurrencyCode"}
+        period: {"$ref": "#/components/schemas/ReportPeriodRef"}
+        comparative_period:
+          oneOf: [{"$ref": "#/components/schemas/ReportPeriodRef"}, {"type": "null"}]
+        report:
+          type: object
+          description: The statement - see above.
