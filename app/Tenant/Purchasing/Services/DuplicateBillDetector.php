@@ -265,6 +265,31 @@ final class DuplicateBillDetector
     /**
      * The warnings on a bill that nobody has answered.
      *
+     * ## A warning naming a cancelled bill is answered - PF-245
+     *
+     * `Bills::post()` refuses a bill carrying any of these, which is right.
+     * What it produced before a bill could be cancelled was this: a bill is
+     * keyed twice, somebody notices, and the CORRECT bill cannot be posted
+     * until a human acknowledges a suspicion about a mistake everybody
+     * already agrees was a mistake.
+     *
+     * The suspicion was "this looks like bill X". Once X is cancelled, X is
+     * not a bill, and the suspicion is answered.
+     *
+     * ## Why this and not a flag written onto the warning
+     *
+     * Because `acknowledged_at` means something specific: a person looked at
+     * a suspected duplicate and is going ahead anyway. Writing it here would
+     * put that statement in the record about a decision nobody made, and any
+     * later count of "duplicates overridden by a human" would include every
+     * cancellation.
+     *
+     * The warning row is left exactly as it was - it is still readable, and
+     * it is still true that the two looked alike - and it stops GATING,
+     * which is the only thing that was wrong. Doing it in the read also
+     * makes it retroactive: a warning raised months ago stops blocking the
+     * moment the bill it names is cancelled, with nothing to backfill.
+     *
      * @return \Illuminate\Support\Collection<int, BillDuplicateWarning>
      */
     public function unacknowledged(Bill $bill): \Illuminate\Support\Collection
@@ -272,6 +297,16 @@ final class DuplicateBillDetector
         return BillDuplicateWarning::query()
             ->where('bill_id', (string) $bill->getKey())
             ->whereNull('acknowledged_at')
+            /*
+             | `whereDoesntHave` rather than a join, because
+             | `suspected_bill_id` is nullable: a warning whose suspected bill
+             | row is gone has no related bill at all, and an inner join would
+             | silently drop it - turning a warning nobody has answered into
+             | one that does not exist.
+             */
+            ->whereDoesntHave('suspected', static function ($query): void {
+                $query->where('status', 'cancelled');
+            })
             ->get();
     }
 

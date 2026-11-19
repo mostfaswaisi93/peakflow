@@ -261,7 +261,28 @@ final class Bills
     }
 
     /**
-     * Post an approved bill.
+     * Post a bill to the ledger.
+     *
+     * ## It does not say "an approved bill", and it used to - PF-245
+     *
+     * Nothing approves a bill. `bills_status_is_known` permits
+     * `awaiting_approval` and `approved`, and this service writes `draft`,
+     * `posted` and now `cancelled`: the two approval states exist in the
+     * constraint and in no row. `ApprovalEngine` routes requisitions and
+     * expense claims; it has never been asked about a bill.
+     *
+     * So the gates here are the real ones - a credit note goes through its
+     * own rule, an unacknowledged duplicate refuses, the three-way match
+     * runs twice - and approval is not among them. The docblock said
+     * otherwise, which is the worse kind of wrong: a reader checking whether
+     * payables approval is enforced finds a sentence saying it is.
+     *
+     * Five read sites filter `status IN ('approved', 'posted')` - the AP
+     * ageing in three places, bank matching and the overview - and the
+     * `'approved'` half of each matches nothing. Whether an approved but
+     * unposted bill BELONGS in an ageing that reconciles to the ledger is a
+     * product decision, not a defect to quietly resolve, and it is recorded
+     * as one in the roadmap register.
      *
      * @throws BillRefused
      */
@@ -397,6 +418,122 @@ final class Bills
                     'recoverable_tax' => (string) $bill->recoverable_tax_amount,
                     'non_recoverable_tax' => (string) $bill->non_recoverable_tax_amount,
                 ],
+                entityId: (string) $bill->entity_id,
+                partyId: (string) $bill->party_id,
+            );
+
+            return $bill->refresh();
+        });
+    }
+
+    /**
+     * Say that a bill is not a bill - PF-245.
+     *
+     * ## The third exit, which did not exist
+     *
+     * `bills_status_is_known` has permitted `cancelled` since the table was
+     * created. Nothing wrote it: this service writes `draft` on entry and
+     * `posted` on posting, and had no other public method that changes a
+     * status. So a bill keyed twice, or keyed against the wrong supplier,
+     * stayed a draft for ever.
+     *
+     * Untidy, and that is not the cost. The erroneous bill goes on acting as
+     * a bill: {@see DuplicateBillDetector::examine()} searches candidates in
+     * `('draft', 'awaiting_approval', 'approved', 'posted')` and
+     * {@see self::post()} refuses a bill carrying any unacknowledged
+     * warning. So the CORRECT bill could not be posted until somebody
+     * acknowledged a suspicion about a mistake everybody agreed was a
+     * mistake - and acknowledging records, in the audit trail, that a
+     * duplicate was reviewed and accepted. The only available answer was the
+     * wrong one.
+     *
+     * ## A posted bill is not cancelled
+     *
+     * It is reversed, and the difference is the ledger. Cancelling a posted
+     * bill would leave its journal entry standing with no document behind
+     * it: the payable control account would carry a balance the payables
+     * subledger cannot explain, which
+     * {@see \App\Tenant\Reporting\Verification\SubledgersTieToTheirControls}
+     * reports as a mismatch - correctly, and with no way to tell from the
+     * bills table what caused it.
+     *
+     * `bills_cancelled_holds_no_entry` is the same rule in the database, so
+     * a path that did not come through here cannot do it either.
+     *
+     * ## And the warnings that named it stop gating, without being rewritten
+     *
+     * The warning said "this looks like bill X". Once X is cancelled the
+     * suspicion is answered - not accepted, answered - and
+     * {@see DuplicateBillDetector::unacknowledged()} stops returning it.
+     *
+     * Nothing is written onto the warning row, deliberately. Marking it
+     * acknowledged would say in the record that a person reviewed a
+     * suspected duplicate and went ahead anyway, which nobody did. The row
+     * stays exactly as it was, still readable and still true.
+     *
+     * @throws BillRefused
+     */
+    public function cancel(Bill $bill, string $reason, ?string $userId = null): Bill
+    {
+        $bill = $bill->refresh();
+
+        if ($bill->isCancelled()) {
+            return $bill;
+        }
+
+        if ($bill->isPosted()) {
+            throw BillRefused::because(sprintf(
+                'Bill %s is posted and cannot be cancelled. It has a journal entry, and cancelling it '.
+                'would leave that entry standing with no document behind it - the payable control '.
+                'account would carry a balance the payables subledger cannot explain. Reverse it, or '.
+                'record the credit note the supplier issued.',
+                (string) $bill->supplier_document_number,
+            ));
+        }
+
+        $reason = trim($reason);
+
+        /*
+         | A reason, and a real one.
+         |
+         | The question asked about a cancelled bill is never "when". It is
+         | "why is there a gap in this supplier's document numbers", six
+         | months later, by somebody reconciling a statement - and the answer
+         | has to be on the row, because the person who knew is not in the
+         | conversation.
+         |
+         | Ten characters is not a quality bar and is not meant to be. It
+         | refuses the empty string and the single keystroke, which is all a
+         | length can honestly refuse.
+         */
+        if (mb_strlen($reason) < 10) {
+            throw BillRefused::because(
+                'Cancelling a bill needs a reason of at least ten characters. The question asked about '.
+                'a cancelled bill is not when it was cancelled but why there is a gap in that '.
+                "supplier's document numbers, and it is asked months later by somebody who was not ".
+                'there.',
+            );
+        }
+
+        return DB::connection('tenant')->transaction(function () use ($bill, $reason, $userId): Bill {
+            $was = (string) $bill->status;
+
+            $bill->update([
+                'status' => 'cancelled',
+                'cancelled_at' => now(),
+                'cancelled_by' => $userId,
+                'cancellation_reason' => $reason,
+            ]);
+
+            $this->audit->record(
+                category: 'purchasing',
+                action: 'bill.cancelled',
+                subjectType: 'bill',
+                subjectId: (string) $bill->getKey(),
+                subjectLabel: (string) $bill->supplier_document_number,
+                before: ['status' => $was],
+                after: ['status' => 'cancelled'],
+                reason: $reason,
                 entityId: (string) $bill->entity_id,
                 partyId: (string) $bill->party_id,
             );

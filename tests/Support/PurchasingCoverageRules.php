@@ -110,6 +110,9 @@ final class PurchasingCoverageRules
                 'a reverse charge owes the whole tax and claims only what is recoverable' => fn (): array => $this->partialReverseCharge(),
                 'and a residual too large to be rounding is refused, not plugged' => fn (): array => $this->theRoundingPlugHasACeiling(),
                 'a bill\'s tax belongs to the jurisdiction the document decided, not to Saudi Arabia' => fn (): array => $this->theJurisdictionIsNotHardcoded(),
+                'a bill entered in error can be withdrawn, and stops blocking the right one' => fn (): array => $this->aMistakenBillCanBeWithdrawn(),
+                'a posted bill is reversed rather than cancelled, in the service and in the database' => fn (): array => $this->aPostedBillIsNotCancelled(),
+                'a cancellation says why, because the gap is asked about months later' => fn (): array => $this->aCancellationCarriesItsReason(),
                 'and the ledger still proves its own invariants' => fn (): array => [],
             ]), $this->entityId);
         } finally {
@@ -630,6 +633,240 @@ final class PurchasingCoverageRules
             'not derived from any rate, and because every line would be wrong by the same factor the '.
             'entry balances and nothing downstream notices',
         ];
+    }
+
+    /**
+     * A bill entered in error can be withdrawn, and stops blocking - PF-245.
+     *
+     * ## What this is really about
+     *
+     * Not tidiness. `Bills::post()` refuses a bill carrying any
+     * unacknowledged duplicate warning, and `DuplicateBillDetector` searched
+     * candidates in `('draft', 'awaiting_approval', 'approved', 'posted')` -
+     * written to exclude a cancelled bill, for a state nothing could write.
+     *
+     * So: a bill is keyed twice, somebody notices, and the CORRECT bill
+     * cannot be posted until a human acknowledges a suspicion about a
+     * mistake everybody already agrees was a mistake. Acknowledging records,
+     * in the audit trail, that a duplicate was reviewed and accepted - so
+     * the only available answer was the wrong one.
+     *
+     * This drives exactly that sequence: two near-identical bills, the
+     * second blocked, the first cancelled, the second posts. And it asserts
+     * the block EXISTS first, because a check that only watched the posting
+     * succeed after a cancellation would pass just as well against a
+     * duplicate detector that had stopped working.
+     *
+     * @return list<string>
+     */
+    private function aMistakenBillCanBeWithdrawn(): array
+    {
+        $problems = [];
+        $number = 'DUP-'.Str::upper(Str::random(6));
+
+        $mistake = $this->enterBill(number: $number.'-A');
+
+        /*
+         | The same supplier, the same day, the same gross.
+         |
+         | `DuplicateBillDetector` raises on the near-match rather than on an
+         | identical document number - that one is refused by a unique index
+         | before any of this - so the second bill differs in its reference
+         | and in nothing else.
+         */
+        $second = $this->enterBill(number: $number.'-B');
+
+        $detector = app(\App\Tenant\Purchasing\Services\DuplicateBillDetector::class);
+
+        $detector->examine($second);
+
+        $blocking = $detector->unacknowledged($second);
+
+        if ($blocking->isEmpty()) {
+            return ['two bills from one supplier on one day for the same gross raised no duplicate '.
+                'warning, so the rest of this check would pass against a detector that had stopped '.
+                'working. The cancellation it is about only matters because the warning blocks'];
+        }
+
+        $refusedBefore = $this->refusalOf(fn (): Bill => $this->post($second));
+
+        if ($refusedBefore === null) {
+            $problems[] = 'a bill with an unacknowledged duplicate warning posted. The warning is the '.
+                'control, and a control that does not stop anything is a row in a table';
+        }
+
+        $bills = app(Bills::class);
+
+        $cancelled = $bills->cancel(
+            $mistake,
+            'Keyed twice from the same supplier PDF; this is the copy.',
+            $this->actorId(),
+        );
+
+        if (! $cancelled->isCancelled()) {
+            return ['cancel() returned a bill whose status is "'.(string) $cancelled->status.'"'];
+        }
+
+        if ($cancelled->cancelled_at === null || (string) $cancelled->cancelled_by === '') {
+            $problems[] = 'the cancelled bill carries no cancelled_at or no cancelled_by, so there is '.
+                'no answer to who withdrew it - and bills_cancelled_is_attributable should have '.
+                'refused the row';
+        }
+
+        if (! str_contains((string) $cancelled->cancellation_reason, 'Keyed twice')) {
+            $problems[] = 'the reason given was not stored. The question asked about a cancelled bill '.
+                "months later is why there is a gap in that supplier's document numbers, and the ".
+                'answer has to be on the row';
+        }
+
+        /*
+         | And now the warning stops gating, WITHOUT having been rewritten.
+         |
+         | Both halves matter. If it still gated, the correct bill is still
+         | stuck. If it had been marked acknowledged, the record would say a
+         | person reviewed a suspected duplicate and went ahead anyway -
+         | which nobody did, and which any later count of human overrides
+         | would include.
+         */
+        $still = $detector->unacknowledged($second->refresh());
+
+        if ($still->isNotEmpty()) {
+            $problems[] = 'the duplicate warning still blocks after the bill it names was cancelled, '.
+                'so the correct bill is held behind a suspicion about a document that is no longer a '.
+                'bill - and the only way out is to acknowledge it, which records a review nobody did';
+        }
+
+        foreach ($blocking as $warning) {
+            if ($warning->refresh()->acknowledged_at !== null) {
+                $problems[] = 'cancelling the suspected bill marked the warning acknowledged. That '.
+                    'says in the record that somebody reviewed a suspected duplicate and proceeded '.
+                    'anyway, which nobody did';
+
+                break;
+            }
+        }
+
+        if ($this->refusalOf(fn (): Bill => $this->post($second->refresh())) !== null) {
+            $problems[] = 'the correct bill still would not post after its duplicate was cancelled';
+        }
+
+        return $problems;
+    }
+
+    /**
+     * A posted bill is reversed, not cancelled, and both layers say so.
+     *
+     * Cancelling a posted bill would leave its journal entry standing with
+     * no document behind it: the payable control account would carry a
+     * balance the payables subledger cannot explain, which
+     * `SubledgersTieToTheirControls` reports as a mismatch - correctly, and
+     * with nothing in the bills table to explain it.
+     *
+     * Two assertions, because they are two different guarantees. The service
+     * refuses with a sentence that says what to do instead; the CHECK
+     * constraint refuses a row that did not come through the service at all.
+     * A check that only drove the service would pass against a database that
+     * would accept the write from anywhere else.
+     *
+     * @return list<string>
+     */
+    private function aPostedBillIsNotCancelled(): array
+    {
+        $problems = [];
+        $posted = $this->post($this->enterBill(number: 'PST-'.Str::upper(Str::random(6))));
+
+        $refusal = $this->refusalOf(fn (): Bill => app(Bills::class)->cancel(
+            $posted,
+            'Changed our mind about this purchase entirely.',
+            $this->actorId(),
+        ));
+
+        if ($refusal === null) {
+            $problems[] = 'a posted bill was cancelled. Its journal entry is still standing, so the '.
+                'payable control account now carries a balance the payables subledger cannot explain';
+        } elseif (! str_contains($refusal, 'Reverse it')) {
+            $problems[] = sprintf(
+                'the refusal does not say what to do instead: "%s". Somebody holding a bill they need '.
+                'to undo is going to do something, and the sentence is where they find out what',
+                \Illuminate\Support\Str::limit($refusal, 160),
+            );
+        }
+
+        /*
+         | And the database, asked directly.
+         |
+         | Inside a savepoint, because the statement is expected to fail and
+         | an aborted statement poisons the surrounding transaction.
+         */
+        DB::connection('tenant')->statement('SAVEPOINT cancel_posted_probe');
+
+        try {
+            DB::connection('tenant')
+                ->table('bills')
+                ->where('id', (string) $posted->getKey())
+                ->update(['status' => 'cancelled']);
+
+            $problems[] = 'the database accepted a cancelled bill that still holds a journal entry. '.
+                'bills_cancelled_holds_no_entry is what stops a path that did not come through the '.
+                'service, and an import, a console one-liner and a repair script are all such paths';
+
+            DB::connection('tenant')->statement('ROLLBACK TO SAVEPOINT cancel_posted_probe');
+        } catch (\Throwable $e) {
+            DB::connection('tenant')->statement('ROLLBACK TO SAVEPOINT cancel_posted_probe');
+
+            if (! str_contains($e->getMessage(), 'bills_cancelled_holds_no_entry')) {
+                $problems[] = sprintf(
+                    'the write was refused by something other than bills_cancelled_holds_no_entry: %s',
+                    \Illuminate\Support\Str::limit(preg_replace('/\s+/', ' ', $e->getMessage()) ?? '', 160),
+                );
+            }
+        }
+
+        return $problems;
+    }
+
+    /**
+     * A cancellation needs a reason, and the empty string is not one.
+     *
+     * The length is not a quality bar. It refuses the empty string and the
+     * single keystroke, which is all a length can honestly refuse - and the
+     * reason it is refused at all is that the question asked about a
+     * cancelled bill months later is not when, but why there is a gap in
+     * that supplier's document numbers.
+     *
+     * @return list<string>
+     */
+    private function aCancellationCarriesItsReason(): array
+    {
+        $bill = $this->enterBill(number: 'WHY-'.Str::upper(Str::random(6)));
+
+        $refusal = $this->refusalOf(fn (): Bill => app(Bills::class)->cancel($bill, '  ', $this->actorId()));
+
+        if ($refusal === null) {
+            return ['a bill was cancelled with a blank reason. Six months later the only thing on the '.
+                "row is that somebody withdrew it, and the question being asked is why there is a gap ".
+                "in that supplier's document numbers"];
+        }
+
+        return [];
+    }
+
+    /** The message of a refusal, or null if the call succeeded. */
+    private function refusalOf(callable $call): ?string
+    {
+        DB::connection('tenant')->statement('SAVEPOINT refusal_probe');
+
+        try {
+            $call();
+
+            DB::connection('tenant')->statement('RELEASE SAVEPOINT refusal_probe');
+
+            return null;
+        } catch (\Throwable $e) {
+            DB::connection('tenant')->statement('ROLLBACK TO SAVEPOINT refusal_probe');
+
+            return $e->getMessage();
+        }
     }
 
     // ---- Fixture -----------------------------------------------------------

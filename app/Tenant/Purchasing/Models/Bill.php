@@ -53,6 +53,7 @@ final class Bill extends TenantModel
         'payment_term_id', 'terms_snapshot', 'supplier_snapshot', 'tax_decision_snapshot',
         'profile', 'note', 'created_by', 'approved_at', 'approved_by',
         'posted_at', 'journal_entry_id', 'source',
+        'cancelled_at', 'cancelled_by', 'cancellation_reason',
         'match_status', 'matched_at',
         'credits_bill_id', 'credit_reference', 'credit_disposition',
     ];
@@ -64,6 +65,7 @@ final class Bill extends TenantModel
         'fx_rate_date' => 'immutable_date',
         'approved_at' => 'immutable_datetime',
         'posted_at' => 'immutable_datetime',
+        'cancelled_at' => 'immutable_datetime',
         'matched_at' => 'immutable_datetime',
         'terms_snapshot' => 'array',
         'supplier_snapshot' => 'array',
@@ -120,6 +122,18 @@ final class Bill extends TenantModel
     public function isPosted(): bool
     {
         return $this->status === 'posted';
+    }
+
+    /**
+     * Withdrawn, and therefore not a bill - PF-245.
+     *
+     * Terminal, like `posted` and unlike it: a posted bill has a journal
+     * entry and a cancelled one is forbidden from having had one. The two
+     * are the only exits, and what separates them is the ledger.
+     */
+    public function isCancelled(): bool
+    {
+        return $this->status === 'cancelled';
     }
 
     public function isCreditNote(): bool
