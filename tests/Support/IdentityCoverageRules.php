@@ -134,6 +134,8 @@ final class IdentityCoverageRules
                     => $this->aUserCanEnrolAndThenHoldTheRole(),
                 'the access review names who holds what, and what has gone unused'
                     => $this->theAccessReviewNamesThem(),
+                'the evidence pack is the same pack twice, and stops at its date'
+                    => $this->thePackIsReproducibleAndBounded(),
             ];
         } finally {
             $this->connection->rollBack();
@@ -1086,6 +1088,159 @@ final class IdentityCoverageRules
 
         return $problems;
     }
+
+    /**
+     * The pack is the same pack twice, and it stops at its date - PF-238.
+     *
+     * ## Why reproducibility is the thing asserted
+     *
+     * An auditor asks for a point in time, and the next thing that happens
+     * to a pack is that somebody diffs it against last quarter's. A pack
+     * whose bytes move on their own makes every section look changed, and a
+     * diff where everything changed is a diff nobody reads.
+     *
+     * `generated_at` is in the file and out of the digest, deliberately: a
+     * reader has to know when it was produced, and hashing it would mean two
+     * packs for the same date never match - the opposite of what the digest
+     * is for.
+     *
+     * ## And the date has to bound what is in it
+     *
+     * An event-derived section that ignored `as_at` would answer "what
+     * happened up to March" with everything up to today. The check asks for
+     * a pack as at a date before this fixture's events and asserts the
+     * sections are empty - and then that today's pack is not, so an empty
+     * answer is not what this always returns.
+     *
+     * @return list<string>
+     */
+    private function thePackIsReproducibleAndBounded(): array
+    {
+        $pack = app(\App\Tenant\Identity\Services\CompliancePack::class);
+        $today = Carbon::now();
+
+        $first = $pack->for($today);
+        $second = $pack->for($today);
+
+        $problems = [];
+
+        $strip = static function (array $p): array {
+            unset($p['generated_at']);
+
+            return $p;
+        };
+
+        if ($strip($first) !== $strip($second)) {
+            $problems[] = 'two packs for the same date differ once generated_at is set aside. The '.
+                'next thing that happens to a pack is a diff against last quarter, and one whose '.
+                'bytes move on their own makes every section look changed';
+        }
+
+        if (! isset($first['generated_at'])) {
+            $problems[] = 'the pack does not say when it was produced, so a reader cannot place it';
+        }
+
+        /*
+         | A date before anything in this fixture happened.
+         |
+         | The audit log's own first record bounds it: nothing can have
+         | happened before the first thing that was recorded.
+         */
+        $earliest = DB::connection('tenant')->table('audit_log')->min('created_at');
+
+        if ($earliest === null) {
+            return [...$problems, 'the audit log is empty, so nothing here is bounded by anything'];
+        }
+
+        $before = $pack->for(Carbon::parse((string) $earliest)->subDay());
+
+        $empty = $before['periods']['transitions'] === []
+            && $before['periods']['reopenings'] === []
+            && $before['sod_overrides']['in_force'] === [];
+
+        if (! $empty) {
+            $problems[] = sprintf(
+                'a pack asked for a date before the first audit record still carries %d transition(s), '.
+                '%d reopening(s) and %d override(s). An event-derived section that ignores as_at '.
+                'answers "what happened up to March" with everything up to today',
+                \count($before['periods']['transitions']),
+                \count($before['periods']['reopenings']),
+                \count($before['sod_overrides']['in_force']),
+            );
+        }
+
+        /*
+         | A real event, so the bound has something to exclude.
+         |
+         | The first version of this asserted only that a pack dated before
+         | the first audit record was empty - and it passed with the filter
+         | removed, because this fixture holds no period transition at all.
+         | An empty list excluded from an empty list proves nothing.
+         |
+         | Written through the trail rather than at the table: the audit log
+         | is hash-chained and this check verifies the chain two sections
+         | later, so a row inserted behind the service would make the pack
+         | report a divergence this check had caused.
+         */
+        app(\App\Support\Audit\AuditTrail::class)->record(
+            category: 'ledger',
+            action: 'period.close',
+            subjectType: 'period',
+            subjectId: (string) Str::ulid(),
+            subjectLabel: 'pack-bound probe',
+        );
+
+        $withEvent = $pack->for($today);
+
+        if ($withEvent['periods']['transitions'] === []) {
+            $problems[] = 'a period transition recorded a moment ago is not in a pack dated today, '.
+                'so the section reports nothing whatever happened';
+        }
+
+        $yesterday = $pack->for($today->copy()->subDay());
+
+        $names = array_column($yesterday['periods']['transitions'], 'subject');
+
+        if (\in_array('pack-bound probe', $names, true)) {
+            $problems[] = 'an event recorded today appears in a pack dated yesterday. An '.
+                'event-derived section that ignores as_at answers "what happened up to March" with '.
+                'everything up to today, and the pack is handed over as evidence of a point in time';
+        }
+
+        /*
+         | And every event in today's pack is at or before today.
+         |
+         | Asserted rather than assumed, because the bound above would also
+         | be satisfied by a section that always returns nothing.
+         */
+        foreach (['transitions', 'reopenings'] as $section) {
+            foreach ($first['periods'][$section] as $event) {
+                if (Carbon::parse((string) $event['at'])->greaterThan($today->copy()->endOfDay())) {
+                    $problems[] = sprintf(
+                        'the %s section carries an event dated %s, after the pack\'s own date',
+                        $section,
+                        (string) $event['at'],
+                    );
+
+                    break 2;
+                }
+            }
+        }
+
+        foreach (['access', 'sod_overrides', 'periods', 'chain'] as $section) {
+            if (! isset($first[$section]['basis'])) {
+                $problems[] = sprintf(
+                    'the "%s" section does not say whether it is as_at or as_now. A pack that mixed '.
+                    'them silently would answer "who could release payments in March" with today\'s '.
+                    'list - and the one person the question is about is the one who left in April',
+                    $section,
+                );
+            }
+        }
+
+        return $problems;
+    }
+
 
     /** A confirmed TOTP factor, written directly - the ceremony is proved elsewhere. */
     private function giveAConfirmedFactor(User $user): void
