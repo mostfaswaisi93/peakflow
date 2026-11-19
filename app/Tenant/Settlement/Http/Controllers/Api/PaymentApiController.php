@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace App\Tenant\Settlement\Http\Controllers\Api;
 
+use Illuminate\Contracts\Auth\Authenticatable;
 use App\Support\Http\Api\DatabaseRefusal;
 use App\Support\Http\Api\Wire;
 use App\Support\Http\Problem;
 use App\Support\Http\ProblemType;
 use App\Support\Money\Money;
-use App\Tenant\Identity\Models\User;
 use App\Tenant\Settlement\Enums\PaymentDirection;
 use App\Tenant\Settlement\Enums\PaymentMethod;
 use App\Tenant\Settlement\Exceptions\PaymentRefused;
@@ -102,7 +102,7 @@ final class PaymentApiController
 
         $user = $request->user();
 
-        if (! $user instanceof User) {
+        if (! $user instanceof Authenticatable) {
             abort(401);
         }
 
@@ -133,7 +133,7 @@ final class PaymentApiController
                     method: PaymentMethod::from($request->string('method')->value()),
                     amount: Money::of($request->string('amount')->value(), $currency),
                     valueDate: Carbon::createFromFormat('Y-m-d', $request->string('value_date')->value())?->startOfDay() ?? now()->startOfDay(),
-                    userId: $user->id,
+                    userId: $user->getAuthIdentifier(),
                     bankAccountId: self::optional($request, 'bank_account_id'),
                     cashAccountId: self::optional($request, 'cash_account_id'),
                     partyId: self::optional($request, 'party_id'),
@@ -150,7 +150,7 @@ final class PaymentApiController
                         documentType: (string) $line['document_type'],
                         documentId: (string) $line['document_id'],
                         amount: Money::of((string) $line['amount'], $currency),
-                        userId: $user->id,
+                        userId: $user->getAuthIdentifier(),
                     );
 
                     $applied[] = [

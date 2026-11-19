@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tenant\Purchasing\Http\Controllers\Api;
 
+use Illuminate\Contracts\Auth\Authenticatable;
 use App\Support\Http\Api\DatabaseRefusal;
 use App\Support\Http\Api\Page;
 use App\Support\Http\Api\Row;
@@ -11,7 +12,6 @@ use App\Support\Http\Api\SortOrder;
 use App\Support\Http\Api\Wire;
 use App\Support\Http\Problem;
 use App\Support\Http\ProblemType;
-use App\Tenant\Identity\Models\User;
 use App\Tenant\Purchasing\Exceptions\BillRefused;
 use App\Tenant\Purchasing\Models\ApprovalRequest;
 use App\Tenant\Purchasing\Models\Bill;
@@ -161,7 +161,7 @@ final class BillApiController
 
         [$bill, $entity, $user] = $this->subject($request, $id);
 
-        $this->approvals->submit($bill, $entity, $user->id);
+        $this->approvals->submit($bill, $entity, $user->getAuthIdentifier());
 
         return $this->show($id);
     }
@@ -198,7 +198,7 @@ final class BillApiController
             $this->approvals->decide(
                 $bill,
                 $entity,
-                $user->id,
+                $user->getAuthIdentifier(),
                 $decision,
                 $request->filled('comment') ? $request->string('comment')->trim()->value() : null,
             );
@@ -217,7 +217,7 @@ final class BillApiController
         return $this->show($id);
     }
 
-    /** @return array{0: Bill, 1: Entity, 2: User} */
+    /** @return array{0: Bill, 1: Entity, 2: Authenticatable} */
     private function subject(Request $request, string $id): array
     {
         /** @var Bill $bill */
@@ -229,7 +229,7 @@ final class BillApiController
             throw EntityNotInScope::forQueryOn(Bill::class);
         }
 
-        if (! $user instanceof User) {
+        if (! $user instanceof Authenticatable) {
             throw new AuthenticationException();
         }
 
