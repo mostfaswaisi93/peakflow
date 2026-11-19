@@ -198,6 +198,12 @@ final class ObservabilityRules
                     => fn (): array => $this->alertsCarryNoSecrets(),
                 'the alert sink is a driver whose committed default needs no paging provider'
                     => fn (): array => $this->theAlertSinkIsADriver(),
+
+                // ---- PF-243 · the recurring work --------------------------
+                'every command is either scheduled or says why it is not'
+                    => fn (): array => $this->everyCommandHasACadenceDecision(),
+                'every scheduled job names a real command, refuses overlap, and alerts on failure'
+                    => fn (): array => $this->everyScheduledJobIsOperable(),
             ]), $this->entityId);
         } catch (Throwable $e) {
             return $untransacted + ['observability could not be checked' => [
@@ -1986,12 +1992,18 @@ final class ObservabilityRules
             }
 
             /*
-             | `watch_failed` is raised by the registry itself and by the
-             | schedule's onFailure, not by a registered watcher - so it is
-             | legitimately absent from the watched list and is proved by its
-             | own check below.
+             | Two keys are raised by the SCHEDULE rather than by a registered
+             | watcher, and are legitimately absent from the watched list.
+             |
+             | This is an exemption from the watcher registry, not from being
+             | proved. `watch_failed` is raised by `InvariantWatch` itself and
+             | by the watch's onFailure; `scheduled_job_failed` by the ten
+             | recurring jobs' onFailure. Both are proved by RUNNING those
+             | callbacks against a collecting sink - `theWatchIsScheduled()`
+             | and `everyScheduledJobIsOperable()` - so a key listed here that
+             | nothing actually raises fails there instead of passing here.
              */
-            if ($key === 'watch_failed') {
+            if (in_array($key, ['watch_failed', 'scheduled_job_failed'], true)) {
                 continue;
             }
 
@@ -3037,6 +3049,345 @@ final class ObservabilityRules
         }
 
         return $violations;
+    }
+
+    // =========================================================================
+    //  PF-243 · the recurring work
+    // =========================================================================
+
+    /**
+     * Every command is scheduled, or says in writing why it is not.
+     *
+     * ## The state this makes impossible to return to
+     *
+     * PF-242 scheduled the invariant watch and `metrics:report`. Measured
+     * immediately before this check existed, `schedule:list` printed those
+     * two and nothing else - while `app/Console/Commands` held twenty-six
+     * classes, ten of which do work defined by the passage of time. Several
+     * say so in their own docblocks: "cron fires it hourly", "cron fires it
+     * daily", "so it can be scheduled and alerted on". The sentence
+     * describing the cadence was the only thing implementing it.
+     *
+     * The reason nothing caught that is the thing worth naming: an
+     * unscheduled command is indistinguishable from a command nobody has got
+     * round to writing a schedule for, and both look like ordinary progress.
+     * There is no error, no failing check and no missing feature - the
+     * command exists, it works when typed, and its tests pass.
+     *
+     * ## Why the whole inventory rather than the ten
+     *
+     * Checking only the ten would be checking the answer I already knew. The
+     * partition is complete instead: every command class is either named in
+     * the schedule or named in `config/schedule.php`'s `not_scheduled` list
+     * with a reason - so the NEXT command to be written cannot be quietly
+     * added with no cadence decision, which is how these ten arrived.
+     *
+     * The list is held to account in both directions. A key that is not a
+     * real command is a violation, so renaming a command does not carry its
+     * exemption across to nothing; and a command that is both scheduled and
+     * listed is a violation rather than resolved by precedence, because the
+     * two statements contradict each other and somebody should read that.
+     *
+     * @return list<string>
+     */
+    private function everyCommandHasACadenceDecision(): array
+    {
+        $violations = [];
+
+        $commands = $this->commandNames();
+
+        if ($commands === []) {
+            return ['no command class could be read out of app/Console/Commands, so this check '.
+                'proves nothing. It asserts that every command has a cadence decision, and it just '.
+                'asserted that about an empty list'];
+        }
+
+        $scheduled = $this->scheduledCommandNames();
+        $excused = (array) config('schedule.not_scheduled', []);
+
+        foreach ($commands as $command => $file) {
+            if (in_array($command, $scheduled, true)) {
+                if (array_key_exists($command, $excused)) {
+                    $violations[] = sprintf(
+                        '`%s` is scheduled AND listed in schedule.not_scheduled. The two statements '.
+                        'contradict each other: one says it runs at a cadence, the other gives the '.
+                        'reason it does not. Delete whichever is wrong rather than leaving a reader '.
+                        'to work out which one the code follows',
+                        $command,
+                    );
+                }
+
+                continue;
+            }
+
+            if (! array_key_exists($command, $excused)) {
+                $violations[] = sprintf(
+                    '`%s` (%s) is in no schedule and gives no reason. If its work is defined by the '.
+                    'passage of time, add it to config/schedule.php with an expression; if it is '.
+                    'something an operator runs, add it to not_scheduled with the reason. Before '.
+                    'PF-243 ten commands were in exactly this state - including the one that turns a '.
+                    'recurring schedule into an invoice - and nothing said so, because a command that '.
+                    'runs when typed and is never typed looks like a command that works',
+                    $command,
+                    $file,
+                );
+
+                continue;
+            }
+
+            if (trim((string) $excused[$command]) === '') {
+                $violations[] = sprintf(
+                    '`%s` is listed in schedule.not_scheduled with an empty reason, which is the same '.
+                    'as not being listed at all - except that it silences this check',
+                    $command,
+                );
+            }
+        }
+
+        foreach (array_keys($excused) as $key) {
+            if (! array_key_exists((string) $key, $commands)) {
+                $violations[] = sprintf(
+                    'schedule.not_scheduled names `%s` and no command class defines it. Either it was '.
+                    'renamed - in which case the real command now has no cadence decision and this '.
+                    'entry is excusing nothing - or it never existed',
+                    (string) $key,
+                );
+            }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * Each scheduled job runs a real command, refuses overlap, and alerts.
+     *
+     * ## Why "a real command" is the first assertion
+     *
+     * `Schedule::command('quotes:expire --all')` takes a string. A typo in it
+     * is not a syntax error, not a failing test and not visible in
+     * `schedule:list`, which prints the string back. It is visible at 01:05,
+     * in the output of a process nobody is attached to, as "command not
+     * found" - and the only symptom anybody sees is that lapsed quotes are
+     * still open, which reads as the job not having been written.
+     *
+     * ## And why every job, not the two the last task wrote
+     *
+     * `theWatchIsScheduled()` asserts all of this about `invariants:watch`,
+     * which is how PF-242 left it: the one job that existed was the one
+     * checked. Ten more arrived in PF-243, and a per-job check would have
+     * meant ten copies of the same four assertions - with the eleventh job
+     * getting none of them.
+     *
+     * The failure path is proved by RUNNING it against a collecting sink, per
+     * job. A hook that printed to the console would satisfy "has a failure
+     * callback" and tell nobody anything, because a scheduled run has no
+     * console attached. And the sentence it raises has to differ per job:
+     * `scheduled_job_failed` with one shared message would be an alert that
+     * says a job failed and nothing about which, at 03:00.
+     *
+     * @return list<string>
+     */
+    private function everyScheduledJobIsOperable(): array
+    {
+        $violations = [];
+        $known = array_keys(\Illuminate\Support\Facades\Artisan::all());
+        $events = app(\Illuminate\Console\Scheduling\Schedule::class)->events();
+
+        if ($events === []) {
+            return ['the schedule is empty'];
+        }
+
+        $sentences = [];
+
+        foreach ($events as $event) {
+            $command = $this->artisanNameIn((string) $event->command);
+
+            if ($command === null) {
+                $violations[] = sprintf(
+                    'a scheduled event runs "%s", which names no artisan command',
+                    Str::limit((string) $event->command, 120),
+                );
+
+                continue;
+            }
+
+            if (! in_array($command, $known, true)) {
+                $violations[] = sprintf(
+                    'the schedule runs `%s` at "%s" and no such command is registered. The scheduler '.
+                    'will report "command not found" into the output of a process nobody is attached '.
+                    'to, and the only symptom is that the work silently never happens',
+                    $command,
+                    (string) $event->expression,
+                );
+
+                continue;
+            }
+
+            /*
+             | Fleet-wide passes must refuse overlap.
+             |
+             | Every one of these resolves a connection per tenant and walks
+             | it. A second pass starting before the first has finished is two
+             | of them competing for one pool - and on a fleet that has grown,
+             | the third starting before the second finishes is how a nightly
+             | check becomes an outage.
+             */
+            if ($this->propertyOf($event, 'withoutOverlapping') !== true) {
+                $violations[] = sprintf('`%s` may overlap itself', $command);
+            }
+
+            if (trim((string) $this->propertyOf($event, 'description')) === '') {
+                $violations[] = sprintf(
+                    '`%s` is scheduled with no description, so `schedule:list` prints an expression '.
+                    'and a command name to somebody who is trying to find out what it is for',
+                    $command,
+                );
+            }
+
+            $after = $this->propertyOf($event, 'afterCallbacks');
+
+            if (! is_array($after) || $after === []) {
+                $violations[] = sprintf(
+                    '`%s` registers no failure callback, so a run that exited non-zero is recorded by '.
+                    'the scheduler and said out loud by nobody',
+                    $command,
+                );
+
+                continue;
+            }
+
+            $sink = new CollectingAlertSink();
+            app()->instance(\App\Support\Telemetry\Contracts\AlertSink::class, $sink);
+
+            try {
+                foreach ($after as $callback) {
+                    if (is_callable($callback)) {
+                        app()->call($callback);
+                    }
+                }
+            } catch (Throwable $e) {
+                $violations[] = sprintf(
+                    '`%s`\'s failure callback threw: %s',
+                    $command,
+                    Str::limit($e->getMessage(), 160),
+                );
+            } finally {
+                app()->forgetInstance(\App\Support\Telemetry\Contracts\AlertSink::class);
+            }
+
+            $raised = $sink->raised();
+
+            if ($raised === []) {
+                $violations[] = sprintf(
+                    '`%s`\'s failure callback raised no alert through the sink. A hook that only '.
+                    'printed to a console satisfies "has a failure callback" and tells nobody '.
+                    'anything, because a scheduled run has no console attached',
+                    $command,
+                );
+
+                continue;
+            }
+
+            foreach ($raised as $alert) {
+                if (! in_array($alert->key, Alert::declaredKeys(), true)) {
+                    $violations[] = sprintf(
+                        '`%s` raises "%s", which config/telemetry.php does not declare - so it has no '.
+                        'runbook entry and nothing holds it to one',
+                        $command,
+                        $alert->key,
+                    );
+                }
+
+                $sentence = $alert->messageEn;
+
+                if (! str_contains($sentence, $command) && ! str_contains($alert->firstDivergence, $command)) {
+                    $violations[] = sprintf(
+                        '`%s`\'s alert names neither the command nor the job: "%s". Ten jobs share one '.
+                        'alert key, so the sentence is the only thing that says which one failed',
+                        $command,
+                        Str::limit($sentence, 120),
+                    );
+                }
+
+                if (isset($sentences[$sentence])) {
+                    $violations[] = sprintf(
+                        '`%s` and `%s` raise the SAME sentence. What each failure costs is different - '.
+                        'a customer not invoiced, a stale rate, a retention promise broken, a hash '.
+                        'chain not walked - and one shared message is an alert that says a job failed '.
+                        'and nothing about which',
+                        $sentences[$sentence],
+                        $command,
+                    );
+                }
+
+                $sentences[$sentence] = $command;
+            }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * The artisan command name inside a scheduled event's command line.
+     *
+     * The event stores a full command line - the quoted php binary, `artisan`,
+     * the command, its arguments - so the name is read back out rather than
+     * guessed at by `str_contains`, which would match `fx:revalue` inside
+     * nothing and `audit:verify` inside `audit:verify-chain` if such a thing
+     * were ever added.
+     */
+    private function artisanNameIn(string $line): ?string
+    {
+        if (preg_match('/artisan[\'"]?\s+([a-z][a-z0-9:_-]*)/i', $line, $m) !== 1) {
+            return null;
+        }
+
+        return $m[1];
+    }
+
+    /**
+     * Every command class's name, mapped to the file that defines it.
+     *
+     * Read out of the `$signature` property rather than by instantiating the
+     * class, because a command whose constructor needs a tenant connection
+     * would make this check depend on a fixture to find out what it is
+     * called.
+     *
+     * @return array<string, string>
+     */
+    private function commandNames(): array
+    {
+        $names = [];
+
+        foreach ((array) glob(base_path('app/Console/Commands/*.php')) as $file) {
+            $source = (string) file_get_contents((string) $file);
+
+            if (preg_match('/\$signature\s*=\s*[\'"]\s*([a-z][a-z0-9:_-]*)/i', $source, $m) === 1) {
+                $names[$m[1]] = 'app/Console/Commands/'.basename((string) $file);
+            }
+        }
+
+        return $names;
+    }
+
+    /**
+     * The artisan command names the schedule runs.
+     *
+     * @return list<string>
+     */
+    private function scheduledCommandNames(): array
+    {
+        $names = [];
+
+        foreach (app(\Illuminate\Console\Scheduling\Schedule::class)->events() as $event) {
+            $name = $this->artisanNameIn((string) $event->command);
+
+            if ($name !== null) {
+                $names[] = $name;
+            }
+        }
+
+        return array_values(array_unique($names));
     }
 
     /** Read a scheduled event's property, public or not. */

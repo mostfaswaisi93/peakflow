@@ -258,6 +258,23 @@ return [
          | rather than letting it stop the remaining ones.
          */
         'watch_failed',
+
+        /*
+         | And any other scheduled job - PF-243.
+         |
+         | One key for the ten recurring jobs rather than ten keys, because
+         | what an operator does about any of them is the same: read the run,
+         | fix the cause, run it by hand. What is NOT the same is what each
+         | failure costs, so the SENTENCE is per job - a customer not
+         | invoiced, a stale rate, a retention promise broken, a hash chain
+         | not walked - and `routes/console.php` carries one for each.
+         |
+         | Raised by the schedule's `onFailure`, like `watch_failed`, so no
+         | watcher raises it and `everyDeclaredAlertIsWatched` exempts it on
+         | that ground - having first proved that the schedule really does
+         | raise it, by running the callbacks.
+         */
+        'scheduled_job_failed',
     ],
 
     /*

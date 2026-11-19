@@ -269,6 +269,46 @@ is worse than an absent one.
 
 ---
 
+## scheduled-job-failed
+
+`scheduled_job_failed` · raised by the schedule's own `onFailure` in
+`routes/console.php`
+
+**Fires when** any of the ten recurring jobs exits non-zero: the recurring
+invoice run, dunning, quote expiry, subscription expiry, the rate fetch, the
+idempotency prune, either hash-chain walk, the attachment digest pass or the
+numbering gap report.
+
+**Why it matters** depends on which one, and the alert says so in its own
+sentence rather than making you look it up. The three worth knowing by heart:
+the recurring invoice run is what turns a schedule into an invoice, so a failed
+run is a customer who is not invoiced and nothing else will notice; the
+idempotency prune is the only thing that keeps the published 24-hour retention
+promise, so a failed run means stored response bodies — amounts, party names —
+are kept past what the contract says; and a dunning notice that was not sent
+leaves no trace at all, so this alert is the only record that today's chasing
+did not happen.
+
+**First response (non-destructive):** `php artisan schedule:list`
+
+It prints every registered job with its expression and when it is next due,
+which answers the first two questions: is the job still registered at all, and
+is its cron expression the one you think it is. An entry missing from that list
+means `config/schedule.php` has an empty expression for it — which is how a
+deployment disables one — and not that the job is broken.
+
+Then run the named command by hand with its `--all`, and read the output: every
+one of them reports per tenant and per entity rather than a total, so the line
+before the failure names where it stopped.
+
+**Do not** empty the expression in `config/schedule.php` to stop a repeating
+alert. That is the supported way to disable a job and it is silent by design:
+nothing then reports that the work is not happening, which for the invoice run
+means billing stops with no alert attached to it. Fix the cause, or say out
+loud that the job is off.
+
+---
+
 ## watch-failed
 
 `watch_failed` · raised by `App\Support\Telemetry\Alerts\InvariantWatch` and by
