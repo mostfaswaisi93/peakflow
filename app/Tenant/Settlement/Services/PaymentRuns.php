@@ -507,6 +507,26 @@ final class PaymentRuns
             ->distinct()
             ->pluck('party_id');
 
+        /*
+         | The releaser is NAMED, not read from the session - PF-249.
+         |
+         | `release()` takes the user id as an argument and the duty engine
+         | resolved its own actor from `auth()->guard('web')`. On a browser
+         | request the two agree, so nothing looked wrong; on the console and
+         | queue paths this method's own comment says it is reached from,
+         | there is no session at all - so the engine found no actor and
+         | returned, and the two rules below, the ones the seeder marks
+         | "overridable = false" because "nothing in the application can
+         | grant an exception", were not evaluated.
+         |
+         | Passing the id this method was given makes the assertion about the
+         | person actually releasing, on every path. An ID rather than a
+         | model, because `Settlement` may not import an `Identity` type -
+         | the layer rule caught the first attempt at this - and the engine
+         | resolves it. Where it names no user the engine refuses, which is
+         | the right answer: a payment released by an id that resolves to
+         | nobody is not something to wave through.
+         */
         foreach ($beneficiaries as $partyId) {
             $this->sod->assert(
                 duty: 'payment.release',
@@ -514,6 +534,7 @@ final class PaymentRuns
                 subjectId: $runId,
                 partyId: (string) $partyId,
                 subjectLabel: (string) $run->number,
+                userId: $userId,
             );
         }
 

@@ -122,6 +122,39 @@ final class SegregationOfDutiesConflict extends DomainException
         );
     }
 
+    /**
+     * The duty was performed with no identifiable actor - PF-249.
+     *
+     * A segregation rule asks "did the SAME person already do the other
+     * half". With nobody named, the question has no answer - and answering
+     * "no conflict" is granting the exception the rule exists to forbid.
+     *
+     * Only raised for a rule whose `overridable` is false. Where every rule
+     * on the duty can be overridden, a business may legitimately decide one
+     * person does both, and refusing an automated run outright would be
+     * stricter than a human could ever be asked to be.
+     */
+    public static function withNoActor(SodRule $rule, string $duty): self
+    {
+        return new self(
+            sprintf(
+                '"%s" was attempted with no identifiable user, and the rule "%s" cannot be '.
+                'overridden. A segregation rule asks whether the same person already performed the '.
+                'other half of a pair, and with nobody named there is no answer - so treating it as '.
+                '"no conflict" would grant exactly the exception this rule exists to forbid. %s',
+                $duty,
+                $rule->key,
+                $rule->rationale() !== ''
+                    ? $rule->rationale()
+                    : 'It requires a second person, and no configuration makes one appear.',
+            ),
+            $rule->key,
+            'sod.override.request',
+            $rule->duty_a,
+            false,
+        );
+    }
+
     public function render(Request $request): Response
     {
         return Problem::of(ProblemType::SegregationOfDutiesConflict)

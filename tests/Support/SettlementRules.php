@@ -181,6 +181,7 @@ final class SettlementRules
                 'a supplier with nowhere to pay is reported, not dropped' => fn (): array => $this->noVerifiedAccountIsReported(),
                 'details changed and never re-verified take them out' => fn (): array => $this->unverifiedDetailsTakeThemOut(),
                 'whoever prepared a run does not release it' => fn (): array => $this->preparerDoesNotRelease(),
+                'a release by nobody is refused, not waved through' => fn (): array => $this->aReleaseByNobodyIsRefused(),
                 'a run with nothing to pay is not prepared' => fn (): array => $this->emptyRunIsRefused(),
                 'the stored totals are the ones the instructions carry' => fn (): array => $this->totalsTie(),
                 'what was prepared is what is released' => fn (): array => $this->preparationIsFrozen(),
@@ -4513,6 +4514,72 @@ final class SettlementRules
         }
 
         return $failures;
+    }
+
+    /**
+     * A release whose user cannot be named is refused - PF-249.
+     *
+     * ## What the engine used to do
+     *
+     *     if ($user === null) {
+     *         // No actor: a console command or a system job. There is no
+     *         // person whose duties could conflict, so there is nothing
+     *         // to assert.
+     *         return;
+     *     }
+     *
+     * `release()` takes the releasing user's id as an ARGUMENT and the
+     * engine resolved its own actor from `auth()->guard('web')`. On a
+     * browser request the two agree, so nothing looked wrong. This method's
+     * own comment says it "is reached from a console command, a queued job
+     * and an API endpoint" - and on two of those three there is no session,
+     * so the engine found no actor and returned.
+     *
+     * `beneficiary_then_release` and `prepare_then_release` are the two
+     * rules the seeder marks `overridable = false`, because "nothing in the
+     * application can grant an exception". Returning early IS granting it,
+     * silently, on the paths nobody is watching.
+     *
+     * ## Driven with an id that names nobody
+     *
+     * Which is the same thing from the engine's side: it cannot say who
+     * acted. A ULID that resolves to no user is also what a deleted
+     * account, a bad import or a mistyped job argument produces.
+     *
+     * @return list<string>
+     */
+    private function aReleaseByNobodyIsRefused(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $this->anApprovedBill($supplier, '4400.0000', '2026-05-18');
+
+        $run = app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse('2026-05-19'),
+            userId: $this->actorId(),
+        );
+
+        $nobody = (string) \Illuminate\Support\Str::ulid();
+
+        $refusal = $this->refusal(fn () => app(PaymentRuns::class)->release($run['id'], $nobody));
+
+        if ($refusal === null) {
+            return ['a payment run was released by an id that names no user. The two rules on '.
+                'payment.release are the ones marked overridable = false because nothing in the '.
+                'application can grant an exception - and an unnameable actor granted it to both'];
+        }
+
+        if (! str_contains($refusal, 'no identifiable user')) {
+            return [sprintf(
+                'the release was refused for a different reason: "%s". The one under test is that '.
+                'the actor could not be named, and a check that accepted any refusal would pass '.
+                'against a run that was simply stale',
+                \Illuminate\Support\Str::limit($refusal, 160),
+            )];
+        }
+
+        return [];
     }
 
     /**

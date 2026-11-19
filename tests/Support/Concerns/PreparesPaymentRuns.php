@@ -22,6 +22,8 @@ trait PreparesPaymentRuns
 {
     private int $ibanCounter = 0;
 
+    private ?\App\Tenant\Identity\Models\User $bankDetailsClerk = null;
+
     /**
      * A supplier the run can pay: verified details, and its preferences.
      *
@@ -45,11 +47,44 @@ trait PreparesPaymentRuns
         ]);
 
         if ($withAnAccount) {
-            $account = app(BankDetailRegistry::class)->record(
-                $party,
-                iban: $this->anUnusedIban(),
-                bic: 'RIBLSARI',
-            );
+            /*
+             | Entered by a REAL person, signed in - PF-249.
+             |
+             | `record()` asserts `supplier.bank_details.update`, which is
+             | one half of the pair that "can never be overridden". The
+             | fixture used to call it with nobody on the guard, and the
+             | engine returned early for want of an actor - so nothing was
+             | written to the trail under that duty, `whoLastChanged()`
+             | found nobody, and the whole beneficiary pair was inert in
+             | every check built on this supplier.
+             |
+             | It passed, because the only check that drove the pair signed
+             | a user in itself. Which is the shape worth remembering: a
+             | control proved by one check and bypassed by the fixture of
+             | thirty-nine others.
+             |
+             | The clerk is not the second actor: `verify()` below is done
+             | by somebody else, because the registry refuses a verifier who
+             | entered the details, and a fixture that worked round that
+             | would be standing on a state the system refuses.
+             */
+            $previous = auth()->guard('web')->user();
+
+            auth()->guard('web')->setUser($this->aBankDetailsClerk());
+
+            try {
+                $account = app(BankDetailRegistry::class)->record(
+                    $party,
+                    iban: $this->anUnusedIban(),
+                    bic: 'RIBLSARI',
+                );
+            } finally {
+                if ($previous === null) {
+                    auth()->guard('web')->logout();
+                } else {
+                    auth()->guard('web')->setUser($previous);
+                }
+            }
 
             app(BankDetailRegistry::class)->verify(
                 $account->fresh(),
@@ -72,6 +107,28 @@ trait PreparesPaymentRuns
         ]);
 
         return $party;
+    }
+
+    /**
+     * The person who enters supplier bank details in this fixture.
+     *
+     * One per run, reused: the duty is party-scoped, so the same clerk
+     * entering details for twenty suppliers conflicts with nothing, and a
+     * new user per supplier would only make the fixture slower.
+     *
+     * Deliberately NOT the user any check releases a payment as. The whole
+     * point of the pair is that those two are different people, and a
+     * fixture that made them the same would turn every release in the suite
+     * into a refusal.
+     */
+    protected function aBankDetailsClerk(): \App\Tenant\Identity\Models\User
+    {
+        return $this->bankDetailsClerk ??= \App\Tenant\Identity\Models\User::create([
+            'name' => 'Bank details clerk',
+            'email' => 'bank-details-'.bin2hex(random_bytes(5)).'@probe.test',
+            'password' => Str::password(32),
+            'active' => true,
+        ]);
     }
 
     /**

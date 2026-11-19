@@ -74,15 +74,31 @@ final class SodEngine implements SegregatesDuties
         ?string $partyId = null,
         ?string $periodId = null,
         ?string $subjectLabel = null,
+        ?string $userId = null,
         ?User $user = null,
     ): void {
+        /*
+         | An id names the actor without naming the type - PF-249.
+         |
+         | `SegregatesDuties` lives in Support and may not mention `User`, so
+         | a domain module that knows who is acting - `PaymentRuns::release()`
+         | is handed the id - can say so with a string. Resolved here, where
+         | the model belongs.
+         |
+         | An id that resolves to nobody stays null on purpose, and falls
+         | through to the no-actor path below. That is the honest reading: a
+         | payment released by an id naming no user is not something to wave
+         | through because an id was supplied.
+         */
+        if ($user === null && $userId !== null) {
+            $user = User::query()->whereKey($userId)->first();
+        }
+
         $user ??= $this->currentUser();
 
         if ($user === null) {
-            // No actor: a console command or a system job. There is no person
-            // whose duties could conflict, so there is nothing to assert. The
-            // audit record will say the actor was the system, which is the
-            // honest description.
+            $this->withNoActor($duty, $subjectType, $subjectId, $partyId, $subjectLabel);
+
             return;
         }
 
@@ -449,6 +465,111 @@ final class SodEngine implements SegregatesDuties
 
         return $this->rules->filter(
             fn (SodRule $rule): bool => $rule->duty_a === $duty || $rule->duty_b === $duty,
+        );
+    }
+
+    /**
+     * A duty performed with nobody named - PF-249.
+     *
+     * ## What this used to do
+     *
+     *     // No actor: a console command or a system job. There is no
+     *     // person whose duties could conflict, so there is nothing to
+     *     // assert. The audit record will say the actor was the system,
+     *     // which is the honest description.
+     *     return;
+     *
+     * Two things were wrong with it. The audit record said nothing at all
+     * until PF-248 - `AuditLog` resolved its actor from the web guard too,
+     * so an entry written without a session carried neither an id nor a
+     * name. And the reasoning fails precisely where the stakes are highest.
+     *
+     * `PaymentRuns::release()` says in its own comment that it "is reached
+     * from a console command, a queued job and an API endpoint". On the API
+     * path `EstablishApiActor` puts the token's user on the guard, so the
+     * rules run. On the console and queue paths there is no user, so this
+     * returned - and `beneficiary_then_release` and `prepare_then_release`,
+     * the two rules the seeder marks `overridable = false` because
+     * "nothing in the application can grant an exception", were not
+     * evaluated at all.
+     *
+     * Returning early IS granting that exception. Silently, to every rule,
+     * on the one path nobody is watching.
+     *
+     * ## Refused only where the rule says it cannot be overridden
+     *
+     * A rule a business may override is one where a business has decided
+     * one person may do both halves. Refusing an automated run against a
+     * rule a human could be excused from would be stricter than anyone
+     * could reasonably be asked to be, and it would break every scheduled
+     * job that touches an overridable duty.
+     *
+     * A rule marked non-overridable says the opposite in as many words. So
+     * that one refuses, and every other duty with rules on it is RECORDED
+     * as unasserted - which puts it in the segregation exceptions report
+     * rather than nowhere.
+     */
+    private function withNoActor(
+        string $duty,
+        ?string $subjectType,
+        ?string $subjectId,
+        ?string $partyId,
+        ?string $subjectLabel,
+    ): void {
+        $rules = $this->rulesFor($duty);
+
+        if ($rules->isEmpty()) {
+            /*
+             | No rule touches this duty, so there is genuinely nothing to
+             | assert and nothing to say about it. Recording here would put
+             | a line in the exceptions report for every duty an automated
+             | run performs, and a report that lists everything is one
+             | nobody reads to the end.
+             */
+            return;
+        }
+
+        $entityId = $this->entities->current();
+
+        $unbreakable = $rules->first(static fn (SodRule $rule): bool => ! $rule->overridable);
+
+        if ($unbreakable instanceof SodRule) {
+            $this->audit->refusal(
+                category: 'identity',
+                action: 'sod.refused',
+                subjectType: $subjectType,
+                subjectId: $subjectId,
+                subjectLabel: $subjectLabel,
+                after: ['duty' => $duty, 'rule' => $unbreakable->key],
+                reason: 'the duty was performed with no identifiable user and the rule cannot be overridden',
+                entityId: $entityId,
+                partyId: $partyId,
+            );
+
+            throw SegregationOfDutiesConflict::withNoActor($unbreakable, $duty);
+        }
+
+        /*
+         | Recorded rather than refused, and recorded rather than silent.
+         |
+         | The segregation exceptions report (PF-034) is built from these
+         | rows. A duty performed by an automated run against overridable
+         | rules is a thing somebody should be able to see happened; what it
+         | must not be is invisible, which is what returning early made it.
+         */
+        $this->audit->record(
+            category: 'identity',
+            action: 'sod.not_asserted',
+            subjectType: $subjectType,
+            subjectId: $subjectId,
+            subjectLabel: $subjectLabel,
+            after: [
+                'duty' => $duty,
+                'rules' => $rules->pluck('key')->all(),
+            ],
+            reason: 'no user was identified, so no duty conflict could be evaluated',
+            entityId: $entityId,
+            partyId: $partyId,
         );
     }
 

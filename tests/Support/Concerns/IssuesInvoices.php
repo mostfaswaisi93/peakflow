@@ -75,10 +75,53 @@ trait IssuesInvoices
         'rate' => '15.000000',
     ];
 
-    /** The id an audit record is attributed to when there is no session. */
+    /**
+     * The fixture's author, as a REAL user row - PF-249.
+     *
+     * The id is unchanged - twenty-six zeros, as it has always been - and
+     * what changed is that a `users` row now exists with it.
+     *
+     * It has to. `SodEngine::assert()` refuses a duty whose rule cannot be
+     * overridden when it cannot name the actor, and "the id resolves to no
+     * user" is exactly that case: a payment released by an id naming nobody
+     * is not something to wave through. A fixture whose author did not
+     * exist was asserting duties as nobody, and every rule on them was
+     * skipped - which is how a control can be proved by one check and
+     * bypassed by the fixture of thirty-nine others.
+     *
+     * `firstOrCreate` on a fixed id, so the row is the same one across
+     * suites and across runs, and every stored `*_by_user_id` that already
+     * holds these zeros now points at something.
+     */
     protected function actorId(): string
     {
-        return str_repeat('0', 26);
+        return $this->fixtureUser(str_repeat('0', 26), 'Fixture author');
+    }
+
+    /**
+     * A user row for a fixed fixture id, created once.
+     *
+     * Written straight through the model rather than a factory: these are
+     * the two ids every suite already uses, and the point is only that they
+     * resolve.
+     */
+    private function fixtureUser(string $id, string $name): string
+    {
+        $exists = \App\Tenant\Identity\Models\User::query()->whereKey($id)->exists();
+
+        if (! $exists) {
+            $user = new \App\Tenant\Identity\Models\User([
+                'name' => $name,
+                'email' => strtolower(str_replace(' ', '-', $name)).'@fixture.test',
+                'password' => \Illuminate\Support\Str::password(32),
+                'active' => true,
+            ]);
+
+            $user->setAttribute('id', $id);
+            $user->save();
+        }
+
+        return $id;
     }
 
     /**
@@ -92,7 +135,7 @@ trait IssuesInvoices
      */
     protected function secondActorId(): string
     {
-        return str_repeat('1', 26);
+        return $this->fixtureUser(str_repeat('1', 26), 'Fixture second person');
     }
 
     protected function entity(): Entity

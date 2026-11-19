@@ -28,10 +28,16 @@ namespace App\Support\Authorization;
  * `Identity` model, and taking one here would make `Support` depend on
  * `Identity` - the exact thing being avoided, moved one level down.
  *
- * Nothing in a domain module needs it: the actor is the authenticated user.
- * The one caller that passes a user explicitly - the SoD console report,
- * which asks "would this be refused for that person" - is inside `Identity`
- * and uses the class directly.
+ * What a domain module CAN name is a user ID, which is a string and not a
+ * model - added for PF-249. `PaymentRuns::release()` is handed the id of
+ * whoever is releasing and the engine was resolving its own actor from the
+ * web guard instead, so on the console and queue paths this method's own
+ * comment says it is reached from, there was no actor at all and the two
+ * non-overridable rules on `payment.release` were skipped.
+ *
+ * So the id is passed, the implementation resolves it, and `Settlement`
+ * still imports no `Identity` type - which is the wall that caught the
+ * first attempt at this fix.
  */
 interface SegregatesDuties
 {
@@ -56,6 +62,7 @@ interface SegregatesDuties
         ?string $partyId = null,
         ?string $periodId = null,
         ?string $subjectLabel = null,
+        ?string $userId = null,
     ): void;
 
     /**
