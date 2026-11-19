@@ -45,15 +45,22 @@
         product is broken rather than that a calendar ran out.
     --}}
     <span role="alert"
-          class="inline-flex items-center gap-1.5 rounded-(--radius-field) bg-warning-subtle px-2.5 py-1 text-caption text-on-warning-subtle">
+          class="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-button bg-warning-subtle px-3 text-caption font-medium text-on-warning-subtle">
+        <span aria-hidden="true" class="size-2 shrink-0 rounded-full bg-warning"></span>
         {{ __('لا توجد فترة محاسبية لتاريخ اليوم') }}
     </span>
 @elseif ($period !== null)
     @php($accepts = $period->state->acceptsPostings())
 
+    {{--
+        The dot is decoration: the words beside it already say the state, so
+        it is hidden from a screen reader and means nothing on its own. It is
+        there for the glance - green, posting goes through; amber, it will
+        not - the same two roles the rest of the product uses for that.
+    --}}
     <span @class([
-            'inline-flex items-center gap-1.5 rounded-(--radius-field) px-2.5 py-1 text-caption',
-            $accepts ? 'bg-surface-sunken text-on-surface-muted' : 'bg-warning-subtle text-on-warning-subtle',
+            'inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-button border px-3 text-caption',
+            $accepts ? 'border-outline-subtle bg-surface-sunken text-on-surface-muted' : 'border-transparent bg-warning-subtle text-on-warning-subtle',
         ])
         {{--
             `title` carries the dates, the visible text carries the state.
@@ -64,7 +71,8 @@
             check which one they are looking at.
         --}}
         title="{{ $period->starts_on->toDateString() }} – {{ $period->ends_on->toDateString() }}">
-        <span class="font-medium">{{ $period->label }}</span>
+        <span aria-hidden="true" @class(['size-2 shrink-0 rounded-full', $accepts ? 'bg-success' : 'bg-warning'])></span>
+        <span @class(['font-medium', 'text-on-surface' => $accepts])>{{ $period->label }}</span>
         <span>·</span>
         <span>{{ __(match ($period->state) {
             \App\Tenant\Ledger\Enums\PeriodState::Future => 'فترة مستقبلية',
