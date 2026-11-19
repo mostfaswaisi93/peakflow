@@ -29,6 +29,8 @@ The distinguishing idea is **alerting on invariants**. A dashboard of CPU and p9
 `—` · **5 pts** · depends: PF-124, PF-061 · standards: OWASP ASVS 5.0 · `risk:high` `type:security`
 
 - [ ] Signing keys and transport credentials in a KMS; the application holds a **reference, not a key**
+  - **Nothing to attach it to yet, measured rather than assumed.** `openssl_sign` appears nowhere in the product, there is no private-key handling anywhere, and `Exchange` holds no transport credential - the e-invoicing signature is Phase 06 work that has not been done. A KMS abstraction for keys that do not exist would be a driver nobody calls and a reference to nothing.
+  - What IS in place is the half that makes the eventual KMS meaningful: `Exchange` cannot read a credential from configuration at all, enforced by a check. The plane that will hold the reference already cannot hold the key.
 - [x] Nothing secret is readable from config at runtime by the `Exchange` plane
   - Measured first: two `config()` calls in the whole module, both reading `jurisdictions.enabled`, which is a map of booleans. The criterion was already met and **nothing held it there** - and the next person needing a transport credential would reach for `config()`, because that is what the rest of the product does.
   - The rule is narrower than "do not put secrets in config": this module must not be able to **read** one, whatever is in the file. `Exchange` signs documents and authenticates a whole tenant to a tax authority, so a leak there is not one customer's data - it is the ability to issue documents in their name. A key it cannot read is a key it cannot log, cannot put in a span attribute, and cannot hand to a serializer.
@@ -149,7 +151,11 @@ The unusual part, and the part that cannot be retrofitted.
 ### PF-243 · Performance
 `—` · **5 pts** · depends: PF-058, PF-205 · standards: Core Web Vitals
 
-- [ ] **Query budgets per page**, asserted: a page costs the same number of queries at 5 rows as at 500. An N+1 is invisible to every other kind of test
+- [x] **Query budgets per page**, asserted: a page costs the same number of queries at 5 rows as at 500. An N+1 is invisible to every other kind of test
+  - Every parameterless page the menu offers is rendered at 3 documents and again at 12, and the query count has to be flat. Measured today: overview 12, trial balance 13, financial position 11, profit or loss 11, security 7, invoices 6, currencies 6, accounts 5, parties 5, and 4 for the rest - **flat across both runs, every one of them**. Nothing to fix; what was missing was the thing that keeps it that way.
+  - **Count rather than time.** A time budget fails on a loaded laptop, a cold cache and a slow afternoon, and passes on a fixture with two rows in it. The count is what is actually constant, and it is constant for a reason somebody can act on: either the page loads its relations in one go or it does not.
+  - **Twelve rows rather than five hundred.** An N+1 multiplies with the rows, so it shows between 3 and 12 as surely as between 500 and 5,000 - and a check seeding ten thousand rows takes minutes and gets switched off.
+  - Two queries of headroom, not zero: a page that discovers a second page of results runs one more, and a lookup it had not needed before is one more. Nine extra rows producing nine extra queries is not headroom. Bitten with a real N+1 in the invoice list - 9 queries at 3 documents, 18 at 12.
 - [ ] `EXPLAIN` assertions on the critical queries - trial balance, aging, GL detail, the grid - proving index and partition use rather than hoping for it
 - [ ] A seeded 10-million-line dataset as the performance fixture, with time budgets on the statements
 - [ ] A k6 profile for realistic concurrency: month-end close with twenty accountants in one tenant

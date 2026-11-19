@@ -111,6 +111,7 @@ final class ShellRules
                 'the active company and the period state are on every page' => fn (): array => $this->contextIsAlwaysVisible(),
                 'the shell is written in logical properties only' => fn (): array => $this->noPhysicalDirections(),
                 'every page the menu offers actually renders' => fn (): array => $this->everyPageRenders(),
+                'and costs the same number of queries whatever the row count' => fn (): array => $this->queriesDoNotGrowWithRows(),
                 'and opens for exactly the permission it is offered under' => fn (): array => $this->theMenuNeverOffersARefusal(),
                 'and is offered to everybody who can open it' => fn (): array => $this->theMenuHidesNothingReadable(),
                 'every page has one top-level heading, from the one component' => fn (): array => $this->oneHeadingPerPage(),
@@ -665,6 +666,152 @@ final class ShellRules
 
         return $problems;
     }
+
+    /**
+     * A page costs the same number of queries at 3 rows as at 12 - PF-243.
+     *
+     * ## Why this and not a timing budget
+     *
+     * An N+1 is invisible to every other kind of test. The page renders,
+     * the figures are right, and the suite is green - on a fixture with two
+     * invoices in it. It becomes a production incident on the tenant with
+     * four thousand, and the first symptom is a page that times out for one
+     * customer and nobody else.
+     *
+     * A time budget would catch it eventually and would also fail on a
+     * loaded laptop, a cold cache and a slow afternoon. The query COUNT is
+     * the thing that is actually constant, and it is constant for a reason
+     * somebody can act on: either the page loads its relations in one go or
+     * it does not.
+     *
+     * ## Multiplying the data rather than seeding a large fixture
+     *
+     * Four more invoices is enough. An N+1 multiplies with the rows, so it
+     * shows up between 3 and 12 as surely as between 500 and 5,000 - and
+     * a check that seeded ten thousand rows would take minutes and be
+     * switched off.
+     *
+     * The count is allowed to grow by a small constant, not by zero: a page
+     * that pages its results runs one more query when a second page exists,
+     * and a page that looks up a currency it had not seen before is doing
+     * the right thing. Growth proportional to the ROWS is what this is
+     * about, and four extra rows producing four extra queries is not a
+     * constant.
+     *
+     * @return list<string>
+     */
+    private function queriesDoNotGrowWithRows(): array
+    {
+        $this->signIn(['owner']);
+
+        $this->issue();
+        $this->issue();
+        $this->issue();
+
+        $before = $this->queryCountsPerPage();
+
+        if ($before === []) {
+            return ['no page could be rendered at all, so no budget was measured'];
+        }
+
+        $this->issue();
+        $this->issue();
+        $this->issue();
+        $this->issue();
+        $this->issue();
+        $this->issue();
+        $this->issue();
+        $this->issue();
+        $this->issue();
+
+        $after = $this->queryCountsPerPage();
+
+        $problems = [];
+
+        foreach ($before as $route => $first) {
+            $second = $after[$route] ?? null;
+
+            if ($second === null) {
+                continue;
+            }
+
+            /*
+             | Two extra queries of headroom.
+             |
+             | One for a page that discovers a second page of results, one
+             | for a lookup it had not needed before. Nine more invoices
+             | producing three or more extra queries is not headroom, it is
+             | a loop.
+             */
+            if ($second > $first + 2) {
+                $problems[] = sprintf(
+                    '%s ran %d queries with 3 documents and %d with 12. The count has to be flat in '.
+                    'the row count: an N+1 is invisible to every other kind of test - the page '.
+                    'renders, the figures are right, the suite is green - and it becomes an incident '.
+                    'on the tenant with four thousand rows, for that customer and nobody else',
+                    $route,
+                    $first,
+                    $second,
+                );
+            }
+        }
+
+        return $problems;
+    }
+
+    /**
+     * Queries run rendering each parameterless page the menu offers.
+     *
+     * @return array<string, int>
+     */
+    private function queryCountsPerPage(): array
+    {
+        $counts = [];
+        $original = app('request');
+        $connection = DB::connection('tenant');
+
+        foreach (Navigation::sections() as $section) {
+            foreach ($section['items'] as $item) {
+                if ($item['route'] === null || ! Route::has($item['route'])) {
+                    continue;
+                }
+
+                $route = Route::getRoutes()->getByName($item['route']);
+
+                if ($route === null || $route->parameterNames() !== []) {
+                    continue;
+                }
+
+                $request = \Illuminate\Http\Request::create('/'.ltrim($route->uri(), '/'), 'GET');
+
+                app()->instance('request', $request);
+                $connection->flushQueryLog();
+                $connection->enableQueryLog();
+
+                try {
+                    $rendered = app()->call($route->getController(), ['request' => $request]);
+
+                    if ($rendered instanceof \Illuminate\Contracts\Support\Renderable) {
+                        $rendered->render();
+                    }
+
+                    $counts[(string) $item['route']] = \count($connection->getQueryLog());
+                } catch (Throwable) {
+                    /*
+                     | A page that cannot render is `everyPageRenders()`'s
+                     | finding, not this one. Reporting it twice would make
+                     | one broken template look like two faults.
+                     */
+                } finally {
+                    $connection->disableQueryLog();
+                    app()->instance('request', $original);
+                }
+            }
+        }
+
+        return $counts;
+    }
+
 
     /**
      * Every page the menu links to, rendered.
