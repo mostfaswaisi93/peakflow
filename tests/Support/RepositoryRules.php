@@ -162,6 +162,116 @@ final class RepositoryRules
     }
 
     /**
+     * A seeder invents its people; it never copies one - PF-239.
+     *
+     * ## Pseudonymised by the process that creates it
+     *
+     * Not by a cleanup afterwards, and the difference is the whole
+     * criterion. A copy-then-anonymise pipeline has a window - between the
+     * restore and the scrub - in which a developer's laptop holds a customer
+     * list, and the window is exactly as long as whatever goes wrong that
+     * morning. A seeder that invents its data has no window, because the
+     * data was never real.
+     *
+     * ## Asserted on the addresses, because they are the identifying half
+     *
+     * A made-up name is a made-up name; an email address is routable. RFC
+     * 2606 reserves `.test`, `.example` and `.invalid` so that they can
+     * never be delegated, which makes an address under one provably nobody's
+     * - and a seeder writing `@gmail.com` is writing an address that could
+     * belong to a person, whether or not it does today.
+     *
+     * That is also why this is a source scan rather than a database one. By
+     * the time a real address is in a table, the thing to assert about it is
+     * no longer where it came from.
+     *
+     * ## And there is no scrub to depend on
+     *
+     * A script named for anonymising a restored database would mean the
+     * product had chosen copy-then-clean after all, and this check would be
+     * asserting the second half of a design the first half contradicts.
+     *
+     * @return list<string>
+     */
+    public function seedersInventTheirPeople(): array
+    {
+        $files = array_merge(
+            glob($this->base().'/database/seeders/*.php') ?: [],
+            glob($this->base().'/database/seeders/*/*.php') ?: [],
+        );
+
+        if ($files === []) {
+            return ['no seeder was found, so this asserted nothing about an empty set'];
+        }
+
+        $reserved = ['.test', '.example', '.invalid', '.localhost'];
+        $problems = [];
+        $seen = 0;
+
+        foreach ($files as $file) {
+            $source = (string) file_get_contents($file);
+            $name = 'database/seeders/'.ltrim(str_replace($this->base().'/database/seeders', '', $file), '/');
+
+            if (preg_match_all('/[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}/', $source, $matches) === 0) {
+                continue;
+            }
+
+            foreach (array_unique($matches[0]) as $address) {
+                $seen++;
+
+                $domain = substr((string) $address, (int) strrpos((string) $address, '@'));
+
+                foreach ($reserved as $suffix) {
+                    if (str_ends_with($domain, $suffix)) {
+                        continue 2;
+                    }
+                }
+
+                $problems[] = sprintf(
+                    '%s writes "%s", whose domain is not one RFC 2606 reserves. A reserved domain can '.
+                    'never be delegated, so an address under one is provably nobody\'s - and this is '.
+                    'an address that could belong to a person, whether or not it does today',
+                    $name,
+                    (string) $address,
+                );
+            }
+        }
+
+        if ($seen === 0) {
+            $problems[] = 'no seeder writes an email address at all, so this check asserted nothing - '.
+                'which is how a rule about seeded data comes to pass against a seeder that stopped '.
+                'seeding people';
+        }
+
+        /*
+         | And nothing anonymises a restored database.
+         |
+         | Such a script would mean the product had chosen copy-then-clean
+         | after all, and this check would be asserting the second half of a
+         | design its first half contradicts.
+         */
+        foreach (array_merge(glob($this->base().'/bin/*') ?: [], glob($this->base().'/database/*.php') ?: []) as $script) {
+            if (! is_file($script)) {
+                continue;
+            }
+
+            $contents = (string) file_get_contents($script);
+
+            if (preg_match('/\b(anonymi[sz]e|scrub|obfuscate)[-_ ]?(production|prod|restore|dump|customers?)\b/i', $contents) === 1) {
+                $problems[] = sprintf(
+                    '%s looks like a scrub of restored production data. Copy-then-anonymise has a '.
+                    'window between the restore and the scrub in which a laptop holds a customer '.
+                    'list, and the window is as long as whatever goes wrong that morning',
+                    basename((string) $script),
+                );
+            }
+        }
+
+        return $problems;
+    }
+
+
+    /**
      * Nothing in the repository looks like a secret - PF-234.
      *
      * ## Why the repository and not only the logs
@@ -467,6 +577,7 @@ final class RepositoryRules
                 'the backlog progress table agrees with the phase files' => $this->theProgressTableIsHonest(),
                 'every task is in exactly one of the two files' => $this->noTaskIsFiledTwice(),
                 'nothing in the repository looks like a committed secret' => $this->nothingLooksLikeACommittedSecret(),
+                'a seeder invents its people rather than copying them' => $this->seedersInventTheirPeople(),
             ];
         } finally {
             foreach (glob($this->temporary.'/*') ?: [] as $file) {

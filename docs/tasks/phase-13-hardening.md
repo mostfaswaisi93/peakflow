@@ -119,7 +119,11 @@ The distinguishing idea is **alerting on invariants**. A dashboard of CPU and p9
   - The dates come from `archived_artefacts.retain_until`, written when the artefact was archived from the profile's declared period **at that moment**. A constant in the service would be a second opinion about the law, and the first thing to drift would be the one not beside the document it governs. Where a party has documents and none is archived, there is no date and the assessment says so rather than inventing one.
   - Refusing what the law does **not** require is the other half, and it is asserted: a party with no documents can have its identity, addresses and banking removed. A product that refuses everything is as useless to a request as one that pretends.
   - The audit trail is the row that is never erasable, asserted in **both** states. The chain is hash-linked whether or not that party ever traded. Bitten twice - identity made unconditionally erasable, and the audit trail made erasable.
-- [ ] Personal data in non-production environments is pseudonymized by the process that creates them, not by a cleanup afterwards
+- [x] Personal data in non-production environments is pseudonymized by the process that creates them, not by a cleanup afterwards
+  - The seeders invent their people, and a check holds them to it. **The difference the criterion is about**: copy-then-anonymise has a window between the restore and the scrub in which a developer's laptop holds a customer list, and the window is as long as whatever goes wrong that morning. A seeder that invents its data has no window, because the data was never real.
+  - Asserted on the **addresses**, because they are the identifying half - a made-up name is a made-up name, an email address is routable. RFC 2606 reserves `.test`, `.example` and `.invalid` so they can never be delegated, which makes an address under one provably nobody's. A seeder writing `@gmail.com` is writing an address that could belong to a person, whether or not it does today.
+  - A **source** scan rather than a database one: by the time a real address is in a table, the thing to assert about it is no longer where it came from.
+  - The check also refuses a script that looks like a scrub of restored production data. One would mean the product had chosen copy-then-clean after all, and the check would be asserting the second half of a design its first half contradicts. Bitten both ways.
 - [ ] Data residency recorded per tenant, and a tenant's data provably does not leave its declared region
 
 ### PF-241 · Business metrics
