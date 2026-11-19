@@ -132,6 +132,8 @@ final class IdentityCoverageRules
                 'the challenge form asks for a code, and does not ask for the account again' => $this->challengeFormAsksForACode(),
                 'a user with no factor can enrol one, and only then holds the role that needs it'
                     => $this->aUserCanEnrolAndThenHoldTheRole(),
+                'the access review names who holds what, and what has gone unused'
+                    => $this->theAccessReviewNamesThem(),
             ];
         } finally {
             $this->connection->rollBack();
@@ -938,6 +940,168 @@ final class IdentityCoverageRules
 
         return $problems;
     }
+
+    /**
+     * The review finds the grant that should not exist - PF-238.
+     *
+     * ## What it is for
+     *
+     * Not "is the permission model correct" - the SoD engine answers that.
+     * This answers the question only a person can: **should this one still
+     * have this?** Somebody moved teams in March, somebody left in June, an
+     * integration was switched off and its token was not. None of that is a
+     * bug, and the only way it comes back is that somebody reads a list.
+     *
+     * ## The row it must never miss
+     *
+     * A money-moving permission held by somebody with no confirmed second
+     * factor. `RoleGrantService` refuses to create that, so a review that
+     * only reported what the code permits would never find one - and the
+     * ones that exist got there another way: an import, a direct write, or a
+     * grant made before the rule existed. Measured on the development
+     * fixture the moment this first ran: the seeded owner is exactly that
+     * row, because `DevelopmentSeeder` writes `user_entity_roles` straight
+     * at the table.
+     *
+     * So the grant here is written the same way, deliberately. Going through
+     * the service is impossible - it refuses - and a check that could only
+     * build states the service permits could not test this at all.
+     *
+     * @return list<string>
+     */
+    private function theAccessReviewNamesThem(): array
+    {
+        $role = Role::query()
+            ->whereHas('permissions', static fn ($query) => $query->where('requires_mfa', true))
+            ->orderBy('key')
+            ->first();
+
+        $entityId = (string) DB::connection('tenant')->table('entities')->orderBy('code')->value('id');
+
+        if ($role === null || $entityId === '') {
+            return ['no role carries a permission requiring a factor, or the tenant holds no entity'];
+        }
+
+        [$user] = $this->probeUser();
+
+        DB::connection('tenant')->table('user_entity_roles')->insert([
+            'id' => (string) Str::ulid(),
+            'user_id' => (string) $user->getKey(),
+            'entity_id' => $entityId,
+            'role_id' => (string) $role->getKey(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $review = app(\App\Tenant\Identity\Services\AccessReview::class);
+        $problems = [];
+
+        $mine = array_values(array_filter(
+            $review->grants(),
+            static fn (array $row): bool => $row['user_id'] === (string) $user->getKey(),
+        ));
+
+        if ($mine === []) {
+            return ['the review does not list a user who holds a role in an entity. It is the '.
+                'worksheet somebody marks up, and a grant missing from it is access nobody reviews'];
+        }
+
+        $row = $mine[0];
+
+        if ($row['needs_attention'] !== true) {
+            $problems[] = 'a money-moving permission held by somebody with no confirmed second factor '.
+                'is not flagged. RoleGrantService refuses to create that grant, so the ones that '.
+                'exist arrived by an import, a direct write, or before the rule did - which is '.
+                'exactly what a review is for';
+        }
+
+        if (! \in_array((string) $role->key, $row['roles'], true)) {
+            $problems[] = sprintf(
+                'the row names roles [%s] and not "%s", so a reader cannot tell what to revoke',
+                implode(', ', $row['roles']),
+                (string) $role->key,
+            );
+        }
+
+        /*
+         | And the flag clears when the factor arrives.
+         |
+         | Without this the check passes against a review that flags
+         | everything, which is the same as flagging nothing: a worksheet
+         | where every row is marked is a worksheet nobody works through.
+         */
+        $this->giveAConfirmedFactor($user);
+
+        $after = array_values(array_filter(
+            $review->grants(),
+            static fn (array $r): bool => $r['user_id'] === (string) $user->getKey(),
+        ));
+
+        if (($after[0]['needs_attention'] ?? null) !== false) {
+            $problems[] = 'the grant is still flagged after the user enrolled a factor, so the review '.
+                'marks every money-moving grant - and a worksheet where every row is marked is one '.
+                'nobody works through';
+        }
+
+        /*
+         | Dormancy, on a token rather than a user.
+         |
+         | A user's last activity is derived from the audit trail, and this
+         | suite writes to it constantly - so a probe user is never dormant
+         | here, and a check asserting otherwise would be asserting something
+         | about the fixture. A token carries its own `last_used_at`, written
+         | by one middleware, and a token that has never been used is the
+         | most reviewable row there is.
+         */
+        $token = new \App\Tenant\Identity\Models\ApiToken([
+            'plane' => 'tenant',
+            'name' => 'Access review probe '.Str::random(6),
+            'token' => hash('sha256', Str::random(40)),
+            'abilities' => ['report.view'],
+            'entity_ids' => [$entityId],
+            'created_by_user_id' => (string) $user->getKey(),
+        ]);
+
+        $token->forceFill([
+            'tokenable_type' => User::class,
+            'tokenable_id' => (string) $user->getKey(),
+        ])->save();
+
+        $named = array_column($review->dormant(Carbon::now()->subDay())['tokens'], 'token_id');
+
+        if (! \in_array((string) $token->getKey(), $named, true)) {
+            $problems[] = 'a token that has never been used is not reported as unused. An '.
+                'integration that was switched off and whose credential was not is the quietest '.
+                'standing grant there is';
+        }
+
+        $token->forceFill(['last_used_at' => now()])->save();
+
+        $still = array_column($review->dormant(Carbon::now()->subDay())['tokens'], 'token_id');
+
+        if (\in_array((string) $token->getKey(), $still, true)) {
+            $problems[] = 'a token used a moment ago is still reported as unused, so the window is '.
+                'not being applied and every live integration appears on the list';
+        }
+
+        return $problems;
+    }
+
+    /** A confirmed TOTP factor, written directly - the ceremony is proved elsewhere. */
+    private function giveAConfirmedFactor(User $user): void
+    {
+        $authenticator = new Authenticator([
+            'user_id' => $user->getKey(),
+            'type' => Authenticator::TYPE_TOTP,
+            'name' => 'access review probe',
+            'confirmed_at' => now(),
+            'sign_count' => 0,
+        ]);
+
+        $authenticator->setSecret(Totp::generateSecret());
+        $authenticator->save();
+    }
+
 
     /**
      * A request from a signed-in user, with this suite's session attached.

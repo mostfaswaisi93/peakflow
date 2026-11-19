@@ -64,10 +64,16 @@ The distinguishing idea is **alerting on invariants**. A dashboard of CPU and p9
 ### PF-238 · Access review and the evidence pack
 `—` · **5 pts** · depends: PF-034, PF-035 · standards: SOC 2, ISO/IEC 27001 Annex A · `type:security` `type:compliance`
 
-- [ ] A periodic access review: who holds which permission in which entity, who holds a money-moving permission, and their MFA status
+- [x] A periodic access review: who holds which permission in which entity, who holds a money-moving permission, and their MFA status
+  - `access:review {tenant}`, over `AccessReview`. One row per user per **entity**, not per permission: a review with a line per permission runs to thousands and is read by nobody, and the decision being made is "should this person have this role here" - the permissions are what makes that decision informed.
+  - It exits non-zero on exactly one thing: a money-moving permission held by somebody with no confirmed second factor. Everything else it reports is a fact about an organisation rather than a fault in the system, and a scheduler paging somebody at 03:00 about a role that outlived its reason is a page nobody reads twice. That one row is different because `RoleGrantService` **refuses** to create it - so one that exists arrived by an import, a direct write, or before the rule did.
+  - It found one immediately: the development fixture's own seeded owner, because `DevelopmentSeeder` writes `user_entity_roles` straight at the table. A review that only reported what the code permits would never have found it.
 - [ ] `compliance:report {tenant}` produces the evidence pack: access review, SoD overrides in force, period state changes and reopenings, chain verification results, close-checklist overrides, failed scheduled runs, privilege drift
 - [ ] The pack is a reproducible artefact for a given date, because an auditor asks for a point in time
-- [ ] Dormant accounts and unused tokens surfaced for removal
+- [x] Dormant accounts and unused tokens surfaced for removal
+  - Dormancy for a **user** is derived from the audit trail, not from a `last_login_at` column. A column has to be written by every path that signs somebody in, and the day one of them forgets, the review reports an active account as dormant - or worse, the other way. The trail already records `session.started` because it is evidence, and a review is made of evidence.
+  - A **token** is different: `last_used_at` is written by the one middleware that authenticates it, so there is a single writer and nothing to drift. A token that has never been used at all is reported with a null rather than left out - an integration that was switched off and whose credential was not is the quietest standing grant there is.
+  - The window is a date the caller passes, not a constant. Ninety days is the usual answer and it is not the service's to assume: a seasonal business has staff who sign in twice a year, and a review that called them dormant would be training its reader to ignore it.
 
 ### PF-239 · Data protection
 `—` · **5 pts** · depends: PF-129 · standards: GDPR and local equivalents · `risk:high` `type:compliance`
