@@ -118,6 +118,8 @@ final class EInvoicingCoverageRules
                     'a standard-rated base that disagrees with its lines is refused' => fn (): array => $this->brS08(),
                     'a standard-rated tax that is not the base times the rate is refused' => fn (): array => $this->brS09(),
                     'a standard-rated line at a zero rate is refused' => fn (): array => $this->brS05(),
+                    'a breakdown with no rate at all is refused' => fn (): array => $this->br48(),
+                    'and a supply outside VAT may omit it, which is the rule\'s own exception' => fn (): array => $this->br48Exception(),
                     'a zero-rated category that states VAT is refused' => fn (): array => $this->brZ09(),
                     'an out-of-scope line that states a rate is refused' => fn (): array => $this->brO05(),
                     'the per-category rules are reported at stage 3' => fn (): array => $this->atStageThree(),
@@ -456,6 +458,78 @@ final class EInvoicingCoverageRules
             // 900.00 of VAT on a base of 1,000.00 at 15%.
             $model->root->children(BG::VatBreakdown)[0]->set(BT::VatCategoryTaxAmount, '900.00');
         }, ['BR-CO-14', 'BR-CO-17']);
+    }
+
+    /**
+     * `BR-48`: a VAT breakdown that states no rate.
+     *
+     * Named by `CalculationRules::vatPerGroup()` and by
+     * `CategoryRules::taxAmount()` as the rule that should have refused
+     * this, and implemented by neither until 2026-11-19 - so a breakdown
+     * with no rate was refused by nothing. Found by the backward
+     * completeness check against the vendored rule set, which is the whole
+     * argument for asking that question in both directions.
+     *
+     * `BR-CO-17` and the category's own `-09` are allowed alongside, and
+     * their presence is the reason this mattered: both of them skip a group
+     * with no rate, so the two arithmetic checks that would have caught a
+     * wrong tax amount stood down together, and the figure that ties them
+     * to each other was the missing one.
+     *
+     * @return list<string>
+     */
+    private function br48(): array
+    {
+        return $this->expect('BR-48', static function (SemanticInvoice $model): void {
+            $model->root->children(BG::VatBreakdown)[0]->set(BT::VatCategoryRate, null);
+        }, ['BR-CO-17', 'BR-S-09']);
+    }
+
+    /**
+     * `BR-48`'s exception: a supply not subject to VAT states no rate.
+     *
+     * > …except if the Invoice is not subject to VAT.
+     *
+     * The negative half, and it is here because the positive half alone did
+     * not need it: removing the exception from the implementation changed
+     * nothing and no check failed, because no fixture in this repository
+     * produces an out-of-scope breakdown. An exception nothing exercises is
+     * a clause that can be deleted without anybody noticing - and deleting
+     * this one would refuse every out-of-scope document the product ever
+     * issues.
+     *
+     * The document is expected to carry OTHER violations: the fixture's
+     * figures are standard-rated at 15%, so moving the category to `O`
+     * leaves a tax amount the `O` family forbids. That is not what this
+     * asks. It asks only that `BR-48` is not among them, which is the
+     * narrow claim the exception makes.
+     *
+     * @return list<string>
+     */
+    private function br48Exception(): array
+    {
+        $model = app(SemanticInvoiceBuilder::class)->build($this->issue());
+
+        $breakdown = $model->root->children(BG::VatBreakdown)[0];
+        $breakdown->set(BT::VatCategoryCode, 'O');
+        $breakdown->set(BT::VatCategoryRate, null);
+
+        $reported = array_map(
+            static fn (object $violation): string => (string) $violation->rule,
+            app(ValidationPipeline::class)->run($model, app(GenericProfile::class))->all(),
+        );
+
+        if (! \in_array('BR-48', $reported, true)) {
+            return [];
+        }
+
+        return [sprintf(
+            'an out-of-scope breakdown stating no rate was refused under BR-48. The rule\'s own '.
+            'sentence excepts a supply that is not subject to VAT, and "%s" is that category - so '.
+            'this refuses every out-of-scope document the product can issue. Reported: %s',
+            'Not subject to VAT',
+            implode(', ', $reported),
+        )];
     }
 
     /** @return list<string> */

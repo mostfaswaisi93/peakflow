@@ -350,12 +350,76 @@ final class CategoryRules
 
             $violations = [
                 ...$violations,
+                ...$this->breakdownStatesARate($group, $family, $path),
                 ...$this->taxableAmount($root, $group, $family, $code, $rate, $path),
                 ...$this->taxAmount($group, $family, $path),
             ];
         }
 
         return $violations;
+    }
+
+    /**
+     * `BR-48`: a breakdown states a rate, unless the supply is outside VAT.
+     *
+     * > [BR-48]-Each VAT breakdown (BG-23) shall have a VAT category rate
+     * > (BT-119), except if the Invoice is not subject to VAT.
+     *
+     * ## It was named by two rule sets and implemented by neither
+     *
+     * `CalculationRules::vatPerGroup()` skipped a group with no rate -
+     * "nothing to recompute, and BR-48 is the rule about a missing rate" -
+     * and `CategoryRules::taxAmount()` skipped one too - "BR-48 again:
+     * there is nothing to multiply by". Both were right to skip, and both
+     * pointed at a rule that did not exist, so a VAT breakdown with no rate
+     * was refused by nothing at all. The backward completeness check
+     * against the vendored rule set is what found it.
+     *
+     * The gap it leaves is not cosmetic. BT-119 is what the recipient
+     * multiplies the taxable amount by to re-derive the tax, and
+     * `BR-CO-17` is the rule that compares the two - which also skips a
+     * group with no rate. So a breakdown stating a taxable amount and a tax
+     * amount and no rate had **both** of its arithmetic checks stand down,
+     * and the one figure that ties them together was the missing one.
+     *
+     * ## The exception is the `O` family and nothing else
+     *
+     * "Not subject to VAT" is the standard's own clause, and this class
+     * already carries it: the families table declares `rate => 'absent'`
+     * for `O` ("Not subject to VAT") and a rate for every other family.
+     * So the exception is read from the same declaration that the `-05`
+     * rules read, rather than written again here as a literal `'O'` - two
+     * spellings of one exception is how they come apart.
+     *
+     * Reported under `BR-48` rather than a family identifier, because this
+     * is the baseline rule and the recipient's validator will quote that
+     * number back.
+     *
+     * @param  array<string, mixed>  $family
+     * @return list<SemanticViolation>
+     */
+    private function breakdownStatesARate(SemanticNode $group, array $family, string $path): array
+    {
+        if ($family['rate'] === 'absent') {
+            return [];
+        }
+
+        if ($group->has(BT::VatCategoryRate)) {
+            return [];
+        }
+
+        return [SemanticViolation::internal(
+            'BR-48',
+            term: BT::VatCategoryRate,
+            value: null,
+            detail: sprintf(
+                'The "%s" breakdown states no VAT rate. Only a supply outside VAT altogether may omit '.
+                'it, and this category is not one: the rate is what the recipient multiplies the '.
+                'taxable amount by to re-derive the tax, so without it BR-CO-17 and this category\'s '.
+                'own tax rule both stand down and the summary is arithmetic nobody can check.',
+                (string) $family['name'],
+            ),
+        )->withPath($path)];
     }
 
     /**

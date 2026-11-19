@@ -173,6 +173,13 @@ return [
             'en' => 'Every VAT breakdown must state the category code (BT-118).',
             'ar' => 'يجب أن يذكر كل تفصيل ضريبي رمز الفئة (BT-118).',
         ],
+        'BR-48' => [
+            'en' => 'Every VAT breakdown must state the category rate (BT-119), unless the supply is '.
+                'not subject to VAT at all. The rate is what the recipient multiplies the taxable '.
+                'amount by to re-derive the tax.',
+            'ar' => 'يجب أن يذكر كل تفصيل ضريبي نسبة الفئة (BT-119)، إلا إذا كان التوريد خارج نطاق '.
+                'الضريبة أصلًا. النسبة هي ما يضرب فيه المستلم الوعاء الضريبي ليعيد استخراج الضريبة.',
+        ],
         'BR-49' => [
             'en' => 'Payment instructions must state the payment means (BT-81).',
             'ar' => 'يجب أن تذكر تعليمات الدفع وسيلة الدفع (BT-81).',
@@ -764,14 +771,6 @@ return [
         '`BR-27` and `BR-28`: the item net price and the item gross price shall not be '.
             'negative.' => [
             'BR-27', 'BR-28',
-        ],
-
-        '`BR-48`: each VAT breakdown shall state a VAT category rate unless the invoice '.
-            'is not subject to VAT. Both `CalculationRules` and `CategoryRules` skip a '.
-            'breakdown group with no rate and name this rule as the one that should have '.
-            'refused it - and it is not implemented, so a breakdown with no rate is at '.
-            'present refused by nothing. The most useful line in this register.' => [
-            'BR-48',
         ],
 
         '`BR-61`: a payment means that is a credit transfer requires the payment account '.
