@@ -35,7 +35,8 @@ use Illuminate\Support\Carbon;
 final class AccessReviewCommand extends Command
 {
     protected $signature = 'access:review
-        {tenant : A tenant slug or id}
+        {tenant? : A tenant slug or id}
+        {--all : Every provisioned tenant}
         {--dormant-days=90 : Treat an account or token unused for this long as dormant}
         {--grants : Print the full grant list as well as what needs attention}';
 
@@ -43,19 +44,68 @@ final class AccessReviewCommand extends Command
 
     public function handle(TenantConnectionResolver $resolver): int
     {
-        $tenant = Tenant::query()
-            ->with('connection')
-            ->whereHas('connection')
-            ->where(fn ($q) => $q->where('slug', $this->argument('tenant'))->orWhere('id', $this->argument('tenant')))
-            ->first();
+        /*
+         | `--all`, so the review can be PERIODIC - PF-238.
+         |
+         | The criterion asks for a periodic access review, and a command
+         | that takes a required tenant cannot be scheduled fleet-wide: it
+         | would need one schedule entry per tenant, written by hand, and a
+         | tenant provisioned afterwards would be reviewed by nothing. The
+         | cadence check in `ObservabilityRules` is what said so - this
+         | command and `compliance:report` were both in no schedule and
+         | giving no reason the moment they were written.
+         */
+        $tenants = $this->targets();
 
-        if ($tenant === null) {
-            $this->components->error('No such tenant.');
+        if ($tenants === []) {
+            $this->components->error('Name a tenant, or pass --all.');
 
             return self::FAILURE;
         }
 
-        $resolver->point($tenant);
+        $worst = self::SUCCESS;
+
+        foreach ($tenants as $tenant) {
+            $resolver->point($tenant);
+
+            if ($this->reviewOne($tenant) !== self::SUCCESS) {
+                $worst = self::FAILURE;
+            }
+        }
+
+        return $worst;
+    }
+
+    /** @return list<Tenant> */
+    private function targets(): array
+    {
+        if ((bool) $this->option('all')) {
+            return Tenant::query()
+                ->with('connection')
+                ->whereHas('connection')
+                ->whereNotNull('provisioned_at')
+                ->orderBy('slug')
+                ->get()
+                ->all();
+        }
+
+        $named = (string) ($this->argument('tenant') ?? '');
+
+        if ($named === '') {
+            return [];
+        }
+
+        $tenant = Tenant::query()
+            ->with('connection')
+            ->whereHas('connection')
+            ->where(fn ($q) => $q->where('slug', $named)->orWhere('id', $named))
+            ->first();
+
+        return $tenant === null ? [] : [$tenant];
+    }
+
+    private function reviewOne(Tenant $tenant): int
+    {
 
         $review = app(AccessReview::class);
         $grants = $review->grants();

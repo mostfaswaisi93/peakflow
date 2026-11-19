@@ -260,6 +260,18 @@ $recurring = [
             'auditor, and a digest nothing compares against proves nothing.',
     ],
     [
+        'at' => 'access_review',
+        'run' => 'access:review --all',
+        'does' => 'Review who holds what, and what has gone unused',
+        'ar' => 'مراجعة الوصول خرجت بحالة غير صفرية: شخصٌ يحمل صلاحية تُحرّك المال بلا عامل '.
+            'ثانٍ مؤكَّد. `RoleGrantService` يرفض إنشاء هذا المنح، فوجودُه يعني أنه وصل من '.
+            'استيراد أو كتابةٍ مباشرة أو قبل وجود القاعدة — أي أن ضابطًا لا يمسك.',
+        'en' => 'The access review exited non-zero: somebody holds a money-moving permission with '.
+            'no confirmed second factor. `RoleGrantService` refuses to create that grant, so one '.
+            'that exists arrived by an import, a direct write, or before the rule did - which '.
+            'means a control is not holding.',
+    ],
+    [
         'at' => 'numbering_gaps',
         'run' => 'numbering:gaps --all',
         'does' => 'Check every numbering series for gaps, and report its headroom',

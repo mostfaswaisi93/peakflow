@@ -269,6 +269,53 @@ is worse than an absent one.
 
 ---
 
+## a secret reached the repository
+
+Raised by `bin/verify repo`, which scans every tracked file for the shapes
+that are unambiguous - a PEM private key header, a registered provider prefix
+(`AKIA`, `ghp_`, `xox…`, `sk_live_`), or a long literal assigned to a name
+that says it is a credential.
+
+**Why it is not "delete the commit".** A log rotates and a git history does
+not. The moment it was pushed it was in every clone, every fork, every CI
+cache and every mirror, and rewriting the history changes none of those - it
+only makes the exposure harder to find afterwards. **Rotate first. Rewriting,
+if it happens at all, happens last and changes nothing about the risk.**
+
+**First response (non-destructive):** `bin/verify repo`
+
+It names the file and the line and deliberately **not** the value: a check
+that printed the secret would put it in CI output, a terminal scrollback and
+whatever ships the run's log, which is three more places to rotate it out of.
+
+Then, in this order:
+
+1. **Rotate the credential at its source.** The provider, not the config
+   file. Until the old value is dead, nothing else matters.
+2. **Work out what it could reach.** A key's blast radius is what it was
+   scoped to, not where it was found. A tenant database credential is a
+   tenant; a KMS key is everything signed with it.
+3. **Read the access logs for the window** between the commit that introduced
+   it and the rotation. "It was probably never used" is a hypothesis, and the
+   logs are the only thing that settles it.
+4. **Record it in the audit trail of the affected tenants**, if any of their
+   data was reachable. A customer learning about an exposure from somewhere
+   other than us is a second incident.
+5. **Only then** consider the history. If the repository is private and the
+   clone set is known, a rewrite is optional tidying. If it is public, it is
+   pointless.
+
+**Do not** add the file to `.gitignore` and commit that. The value stays in
+the history, the scan stops reporting it, and the next person to look
+concludes it was handled.
+
+**If it is genuinely not a secret** - a documented example, a test fixture
+with an obviously fake value - annotate the line with
+`@secret-scan-allow: why`. The annotation is per line, so excusing one does
+not excuse the next one the file grows.
+
+---
+
 ## scheduled-job-failed
 
 `scheduled_job_failed` · raised by the schedule's own `onFailure` in

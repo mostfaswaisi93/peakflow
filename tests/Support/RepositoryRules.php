@@ -162,6 +162,168 @@ final class RepositoryRules
     }
 
     /**
+     * Nothing in the repository looks like a secret - PF-234.
+     *
+     * ## Why the repository and not only the logs
+     *
+     * `LoggingRules` proves a secret does not survive into a log line, and
+     * `ObservabilityRules` proves it does not reach a span attribute. Both
+     * are about a value passing THROUGH the application. This is about one
+     * that was committed - which is a different failure with a worse
+     * property: a log rotates, and a git history does not. A key pushed once
+     * is a key in every clone, every fork and every CI cache, and rotating
+     * it is the only remedy because deleting the commit is not one.
+     *
+     * ## Shapes, not entropy
+     *
+     * An entropy threshold over every string in a codebase produces a list
+     * of hashes, ULIDs, base64 fixtures and minified assets, and a check
+     * whose output is mostly noise is a check somebody switches off. What is
+     * here instead is the handful of shapes that are unambiguous: a PEM
+     * private key header, the provider prefixes that are registered formats
+     * (`AKIA`, `ghp_`, `xox...`), and an assignment of a long literal to a
+     * name that says it is a credential.
+     *
+     * The cost of that choice is honest: a secret with no recognisable shape
+     * - a bare password, a hex string - passes. This catches the ones that
+     * announce themselves, which is most of them, and it never cries wolf.
+     *
+     * ## `.env.example` is scanned too
+     *
+     * It is the most likely file to acquire a real value, because it is the
+     * one somebody edits while making their own `.env` work. Its placeholder
+     * values are short and obviously placeholders, so they do not trip the
+     * length rule.
+     *
+     * @return list<string>
+     */
+    private function nothingLooksLikeACommittedSecret(): array
+    {
+        $shapes = [
+            'a PEM private key' => '/-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/',
+            'an AWS access key id' => '/\bAKIA[0-9A-Z]{16}\b/',
+            'a GitHub token' => '/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\b/',
+            'a GitHub fine-grained token' => '/\bgithub_pat_[A-Za-z0-9_]{50,}\b/',
+            'a Slack token' => '/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/',
+            'a Stripe secret key' => '/\bsk_(?:live|test)_[A-Za-z0-9]{20,}\b/',
+            'a Google API key' => '/\bAIza[0-9A-Za-z_-]{35}\b/',
+
+            /*
+             | A credential-shaped NAME with a long literal after it.
+             |
+             | Twenty characters, because every placeholder in this
+             | repository is shorter and every real key is longer. The name
+             | list is what keeps it from matching an ordinary long string:
+             | a path, a class name or a hash assigned to `$expected` is not
+             | a credential however long it is.
+             */
+            'a long literal assigned to a credential-shaped name' =>
+                '/\b(?:secret|password|passwd|api_?key|apikey|private_?key|access_?token|auth_?token|client_?secret)\b'.
+                '\s*(?:=>|=|:)\s*[\'"][A-Za-z0-9+\/=_-]{20,}[\'"]/i',
+        ];
+
+        $files = $this->trackedFiles();
+
+        if ($files === []) {
+            return ['no tracked files could be listed, so this scan asserted nothing about an empty '.
+                'set - which is exactly how a scan comes to pass for ever'];
+        }
+
+        $problems = [];
+
+        foreach ($files as $file) {
+            $path = $this->base().'/'.$file;
+
+            if (! is_file($path) || filesize($path) > 2_000_000) {
+                continue;
+            }
+
+            $source = (string) file_get_contents($path);
+
+            if ($source === '' || ! mb_check_encoding($source, 'UTF-8')) {
+                continue;
+            }
+
+            foreach ($shapes as $name => $pattern) {
+                if (preg_match_all($pattern, $source, $matches, PREG_OFFSET_CAPTURE) === 0) {
+                    continue;
+                }
+
+                foreach ($matches[0] as [$matched, $offset]) {
+                    $line = substr_count($source, "\n", 0, (int) $offset) + 1;
+
+                    if ($this->allowedOnItsLine($source, (int) $offset)) {
+                        continue;
+                    }
+
+                    /*
+                     | The finding names the FILE and the LINE and not the
+                     | value. A check that printed the secret would put it in
+                     | CI output, a terminal scrollback and whatever ships
+                     | the run's log - which is three more places to rotate
+                     | it out of.
+                     */
+                    $problems[] = sprintf(
+                        '%s:%d looks like %s. A log rotates and a git history does not: a key pushed '.
+                        'once is in every clone, every fork and every CI cache, and rotating it is '.
+                        'the only remedy because deleting the commit is not one. '.
+                        'docs/operations/runbooks.md has the procedure. If it is genuinely not a '.
+                        'secret, annotate the line with @secret-scan-allow: why',
+                        $file,
+                        $line,
+                        $name,
+                    );
+                }
+            }
+        }
+
+        return $problems;
+    }
+
+    /**
+     * The files git is tracking, which is the set that can be pushed.
+     *
+     * Asked of git rather than walked from disk: what matters is what is in
+     * the repository, and a scan over the working directory reports on
+     * `vendor/`, `node_modules/` and whatever somebody left in `storage/` -
+     * none of which is committed and all of which is noise.
+     *
+     * @return list<string>
+     */
+    private function trackedFiles(): array
+    {
+        $command = sprintf('git -C %s ls-files 2>/dev/null', escapeshellarg($this->base()));
+        $output = @shell_exec($command);
+
+        if (! is_string($output) || trim($output) === '') {
+            return [];
+        }
+
+        return array_values(array_filter(
+            array_map('trim', explode("\n", $output)),
+            static fn (string $file): bool => $file !== ''
+                && ! str_starts_with($file, 'public/build/')
+                && ! str_ends_with($file, '.lock'),
+        ));
+    }
+
+    /** Is the match excused on its own line? */
+    private function allowedOnItsLine(string $source, int $offset): bool
+    {
+        $start = strrpos(substr($source, 0, $offset), "\n");
+        $end = strpos($source, "\n", $offset);
+
+        $line = substr(
+            $source,
+            $start === false ? 0 : $start + 1,
+            ($end === false ? strlen($source) : $end) - ($start === false ? 0 : $start + 1),
+        );
+
+        return str_contains($line, '@secret-scan-allow');
+    }
+
+
+    /**
      * @return array{tasks: int, complete: int, met: int, open: int}
      */
     /**
@@ -304,6 +466,7 @@ final class RepositoryRules
                 'static analysis has no baseline, and the rule is written down' => $this->staticAnalysisHasNoBaseline(),
                 'the backlog progress table agrees with the phase files' => $this->theProgressTableIsHonest(),
                 'every task is in exactly one of the two files' => $this->noTaskIsFiledTwice(),
+                'nothing in the repository looks like a committed secret' => $this->nothingLooksLikeACommittedSecret(),
             ];
         } finally {
             foreach (glob($this->temporary.'/*') ?: [] as $file) {

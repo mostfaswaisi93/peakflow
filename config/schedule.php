@@ -139,6 +139,25 @@ return [
 
     /*
     |---------------------------------------------------------------------------
+    | The access review
+    |---------------------------------------------------------------------------
+    |
+    | Monthly, on the first, because the criterion asks for a PERIODIC review
+    | and a review nobody is reminded of is a review that happens the week
+    | before an audit.
+    |
+    | Monthly rather than quarterly for one reason: it exits non-zero on a
+    | money-moving permission held by somebody with no second factor, and
+    | that is a control that is not holding. Waiting a quarter to find out is
+    | three months of it not holding. Everything else it reports is a fact
+    | about an organisation and keeps perfectly well for a month.
+    |
+    */
+
+    'access_review' => (string) env('SCHEDULE_ACCESS_REVIEW', '15 5 1 * *'),
+
+    /*
+    |---------------------------------------------------------------------------
     | And the commands that are deliberately not scheduled
     |---------------------------------------------------------------------------
     |
@@ -208,6 +227,10 @@ return [
             'compliance evidence pack rather than a condition anybody is paged for.',
 
         'tenants:provision' => 'creates a tenant. An operator does this.',
+
+        'compliance:report' => 'produced on request, for a date somebody names. An auditor asks for '.
+            'a point in time and the pack is built for that point; a monthly one nobody asked for '.
+            'is a file nobody opens, dated a day nobody cares about.',
 
         'tenants:migrate' => 'runs migrations across the fleet, which happens on deployment and '.
             'under supervision. A schedule that migrated tenants would apply a half-reviewed '.

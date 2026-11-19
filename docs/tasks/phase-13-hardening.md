@@ -32,7 +32,12 @@ The distinguishing idea is **alerting on invariants**. A dashboard of CPU and p9
 - [ ] Nothing secret is readable from config at runtime by the `Exchange` plane
 - [ ] Key rotation procedures for each key type, exercised rather than documented
 - [ ] A log audit asserting no secret, token, IBAN or personal datum reaches a log line, an error report or a trace attribute - tested with a payload containing all of them
-- [ ] Secret scanning on the repository, with a documented response procedure for an exposure
+- [x] Secret scanning on the repository, with a documented response procedure for an exposure
+  - `bin/verify repo` scans every **tracked** file - asked of git rather than walked from disk, because what matters is what can be pushed, and a walk reports on `vendor/`, `node_modules/` and whatever is in `storage/`.
+  - **Shapes, not entropy.** An entropy threshold over a codebase produces a list of hashes, ULIDs, base64 fixtures and minified assets, and a check whose output is mostly noise is one somebody switches off. What is scanned for is the handful that are unambiguous: a PEM private key header, the registered provider prefixes, and a long literal assigned to a credential-shaped name. The cost is honest - a bare password with no recognisable shape passes - and it never cries wolf.
+  - The finding names the file and the line and **not the value**. A check that printed the secret would put it in CI output, a terminal scrollback and whatever ships the run's log: three more places to rotate it out of.
+  - The runbook's procedure leads with rotation, not with rewriting history. A log rotates and a git history does not: the moment it was pushed it was in every clone, fork, CI cache and mirror, and a rewrite changes none of those - it only makes the exposure harder to find afterwards. It also names the thing not to do: adding the file to `.gitignore` and committing that, which leaves the value in the history, silences the scan, and tells the next person it was handled.
+  - Bitten three ways: an AWS key id, a PEM header, and the same key id with `@secret-scan-allow` on its line.
 
 ### PF-236 · Upload hardening
 `—` · **3 pts** · depends: PF-073 · standards: OWASP · `type:security`
@@ -66,6 +71,7 @@ The distinguishing idea is **alerting on invariants**. A dashboard of CPU and p9
 
 - [x] A periodic access review: who holds which permission in which entity, who holds a money-moving permission, and their MFA status
   - `access:review {tenant}`, over `AccessReview`. One row per user per **entity**, not per permission: a review with a line per permission runs to thousands and is read by nobody, and the decision being made is "should this person have this role here" - the permissions are what makes that decision informed.
+  - **Monthly, on the first**, with . The criterion asks for a *periodic* review, and a command taking a required tenant cannot be scheduled fleet-wide - it would need one entry per tenant, written by hand, and a tenant provisioned afterwards would be reviewed by nothing. The cadence check caught both this and  the moment they were written: in no schedule, giving no reason.
   - It exits non-zero on exactly one thing: a money-moving permission held by somebody with no confirmed second factor. Everything else it reports is a fact about an organisation rather than a fault in the system, and a scheduler paging somebody at 03:00 about a role that outlived its reason is a page nobody reads twice. That one row is different because `RoleGrantService` **refuses** to create it - so one that exists arrived by an import, a direct write, or before the rule did.
   - It found one immediately: the development fixture's own seeded owner, because `DevelopmentSeeder` writes `user_entity_roles` straight at the table. A review that only reported what the code permits would never have found it.
 - [x] `compliance:report {tenant}` produces the evidence pack: access review, SoD overrides in force, period state changes and reopenings, chain verification results, close-checklist overrides, failed scheduled runs, privilege drift
