@@ -1,8 +1,20 @@
 <!DOCTYPE html>
 @php($theme = \App\Support\Ui\ThemePreference::forUser(request(), auth()->user()))
+@php($density = \App\Support\Ui\DensityPreference::forUser(request(), auth()->user()))
+{{--
+    The density is on <html> as the SERVER writes it - PF-203.
+
+    Not applied by a script on load: the density decides the row height, the
+    cell padding and the body font step, so a page that is painted at one
+    density and corrected at another is a table that resizes while somebody is
+    already reading down a column. The attribute is in the element the
+    stylesheet is matched against before the first paint, and nothing has to
+    run for that to be true.
+--}}
 <html lang="{{ str_replace('_', '-', app()->getLocale()) }}"
       dir="{{ in_array(app()->getLocale(), ['ar', 'he', 'fa', 'ur'], true) ? 'rtl' : 'ltr' }}"
-      class="{{ $theme->htmlClass() }}"@if ($theme->dataTheme() !== null) data-theme="{{ $theme->dataTheme() }}"@endif>
+      class="{{ $theme->htmlClass() }}"
+      data-density="{{ $density->value }}"@if ($theme->dataTheme() !== null) data-theme="{{ $theme->dataTheme() }}"@endif>
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -57,6 +69,7 @@
             @include('partials.period-state')
 
             <div class="ms-auto flex items-center gap-4">
+                @include('partials.density-switcher')
                 @include('partials.theme-switcher')
                 <span class="text-sm text-on-surface-muted">{{ auth()->user()?->name }}</span>
                 <form method="POST" action="{{ route('logout') }}">
@@ -86,6 +99,9 @@
         @endif
         @if (session('theme_switched'))
             {{ __('تم تغيير المظهر إلى :theme', ['theme' => session('theme_switched')]) }}
+        @endif
+        @if (session('density_switched'))
+            {{ __('تم تغيير الكثافة إلى :density', ['density' => session('density_switched')]) }}
         @endif
     </div>
 

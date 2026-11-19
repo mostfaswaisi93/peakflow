@@ -547,6 +547,44 @@ final class SettingsRegistry
                 allowed: ['ar', 'en'],
             ),
 
+            /*
+             | Which digits a figure is DISPLAYED in - PF-202.
+             |
+             | `latn` by default, and the default is the interesting part:
+             | Arabic's own numbering system in CLDR is `arab`, and financial
+             | documents across the region conventionally use Western digits
+             | even in Arabic text. So this is a deliberate departure from
+             | CLDR, recorded in config/money.php as well, and the setting
+             | exists because institutional convention differs - some banks
+             | and ministries do write Arabic-Indic digits.
+             |
+             | Scoped to the TENANT rather than the entity: it is a house
+             | style, and two companies in one organisation writing their
+             | numbers differently is a difference nobody chose.
+             |
+             | Exactly two values. `arabext` - the Persian and Urdu form - is
+             | the third numbering system ICU knows and is routinely treated
+             | as the same thing as `arab`: a Saudi statement rendered in it
+             | is wrong in a way that reads as a font problem, so nobody files
+             | it as a data bug and it is never fixed.
+             |
+             | Applied through ICU and never by string replacement, in the one
+             | place that knows about `-u-nu-`
+             | ({@see \App\Support\Lang\NumberingSystem}), and DISPLAY ONLY:
+             | the shape is applied by a middleware in the web group, so a
+             | stored value, an export, an XML payload and an API response
+             | are Western digits whatever a tenant chose.
+             */
+            new SettingDefinition(
+                key: 'display.digits',
+                type: 'string',
+                scope: 'tenant',
+                default: 'latn',
+                descriptionAr: 'شكل الأرقام في العرض: غربية (latn) أو عربية-هندية (arab). لا يؤثر على المخزَّن ولا على المُصدَّر.',
+                descriptionEn: 'The digit shape figures are DISPLAYED in: Western (latn) or Arabic-Indic (arab). Stored values, exports and API responses are unaffected.',
+                allowed: ['latn', 'arab'],
+            ),
+
             new SettingDefinition(
                 key: 'documents.delivery_channel',
                 type: 'string',

@@ -342,10 +342,10 @@
                                 @foreach (array_keys($columns) as $column)
                                     @php($figures = $split((string) $row[$column], $currency))
 
-                                    <td data-figure class="border-s border-outline-subtle px-4 py-2.5 text-on-surface">
+                                    <td data-figure class="border-s border-outline-subtle px-4 py-2.5 text-debit">
                                         {{ $figures['debit'] ?? '—' }}
                                     </td>
-                                    <td data-figure class="px-4 py-2.5 text-on-surface">
+                                    <td data-figure class="px-4 py-2.5 text-credit">
                                         {{ $figures['credit'] ?? '—' }}
                                     </td>
                                 @endforeach
@@ -364,8 +364,8 @@
                             <tr>
                                 <th scope="row" colspan="2" class="px-4 py-3 text-start">{{ __('الإجمالي') }}</th>
                                 @foreach (array_keys($columns) as $column)
-                                    <td data-figure class="border-s border-outline-subtle px-4 py-3">{{ $totals[$column]['debit'] }}</td>
-                                    <td data-figure class="px-4 py-3">{{ $totals[$column]['credit'] }}</td>
+                                    <td data-figure class="border-s border-outline-subtle px-4 py-3 text-debit">{{ $totals[$column]['debit'] }}</td>
+                                    <td data-figure class="px-4 py-3 text-credit">{{ $totals[$column]['credit'] }}</td>
                                 @endforeach
                             </tr>
                         </tfoot>

@@ -14,6 +14,7 @@ use App\Http\Middleware\ResolveEntity;
 use App\Http\Middleware\ResolveTenantFromHeader;
 use App\Http\Middleware\ResolveTenantFromPath;
 use App\Http\Middleware\ResolveTenantFromSession;
+use App\Http\Middleware\ApplyDisplayDigits;
 use App\Http\Middleware\AssignCorrelationId;
 use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\SetLocale;
@@ -96,6 +97,20 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->web(append: [
             SetLocale::class,
+            /*
+             | The tenant's digit shape - PF-202, and the WEB group is the
+             | whole point of where this line is.
+             |
+             | It pushes the tenant's `display.digits` setting into the one
+             | place that knows how to ask ICU for a numbering system, and the
+             | group it is registered in is what keeps the shaping to display:
+             | the api group never runs it, a queued job never runs it, so a
+             | serializer, an export and an API response stay Western whatever
+             | a tenant chose. Registering it globally would undo that in one
+             | line and the symptom would be an XML payload a government
+             | endpoint rejects.
+             */
+            ApplyDisplayDigits::class,
         ]);
 
         /*

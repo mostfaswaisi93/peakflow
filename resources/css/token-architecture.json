@@ -1,0 +1,100 @@
+{
+    "$comment": [
+        "The token architecture of resources/css/app.css - PF-199.",
+        "Read by tests/Support/DesignFoundationRules.php (php bin/verify design-system).",
+        "Three things are declared here that a stylesheet cannot say about itself:",
+        "  1. which prefix is which LAYER, and what a layer is allowed to read - the whole architecture is the rule that a component never reads a primitive, and a rule needs the layers to be tellable apart by name;",
+        "  2. the ROLE every token family stands for, because 'a token may only be added with a stated role' is a review rule and a review rule with nowhere to write the role is a review rule nobody applies;",
+        "  3. the tokens that deliberately do NOT invert, with the reason, so nobody 'fixes' one later by giving it a dark value.",
+        "Both directions are checked: a family here that app.css does not define is as much a failure as a token in app.css that belongs to no family."
+    ],
+
+    "layers": {
+        "primitive": {
+            "prefix": "--p-",
+            "role": "A raw OKLCH ramp step. No meaning, no role, and an L% C H triple rather than a colour function, so the same step can be reused at another alpha.",
+            "may_read": []
+        },
+        "semantic": {
+            "prefix": "--c-",
+            "role": "A role a theme answers for. Redefined by every theme and mapped once into @theme, so `text-primary` follows the theme with no `dark:` at the call site.",
+            "may_read": ["--p-", "--c-"]
+        },
+        "component": {
+            "prefix": "--k-",
+            "role": "A token a component owns, derived from a role or a literal measurement. Never a primitive: a component that reaches past the roles cannot be re-themed, and the theme it breaks is whichever one nobody opened.",
+            "may_read": ["--c-", "--color-", "--k-"]
+        }
+    },
+
+    "components": {
+        "scrollbar": {
+            "owner": "The scrollbars of the page shell, the sidebar and the data grid - app.css @layer base, both the standard and the -webkit- syntax.",
+            "tokens": [
+                "--k-scrollbar-size",
+                "--k-scrollbar-inset",
+                "--k-scrollbar-track",
+                "--k-scrollbar-thumb",
+                "--k-scrollbar-thumb-hover"
+            ]
+        }
+    },
+
+    "role_families": {
+        "background": "The page itself, behind every surface.",
+        "on-background": "Text on the page background.",
+        "surface": "A card, a panel, a table - the plane content sits on. The -raised, -sunken, -hover and -selected variants are the same plane in another state.",
+        "surface-container": "A tone-based container (Material 3): a contained area one step away from what contains it, rather than lifted by a shadow. -lowest through -highest are those steps.",
+        "on-surface": "Text on a surface. -muted is secondary text, -subtle is the quietest text that is still text.",
+        "outline": "A decorative line - a card edge, a table rule. -subtle and -strong are the same line with less and more weight. WCAG sets no contrast for these, which is exactly why outline-control is a separate role.",
+        "outline-control": "The boundary of something you OPERATE - an input, a select, a checkbox. WCAG 1.4.11 requires 3:1 for it, and a rule refuses a form control whose border is one of the decorative roles.",
+        "primary": "The primary action, and the brand's 60% colour. -hover is its hover state, -subtle a tinted container of it.",
+        "on-primary": "Text and icons on the primary fill. -subtle is text on the tinted container.",
+        "link": "A link in running text, which has to be distinguishable from the text around it without relying on the underline alone.",
+        "accent": "The brand teal as a GRAPHIC: an indicator, a sparkline, a chart series. Never text and never a fill under text - white on it is 3.40:1.",
+        "tertiary": "A third action weight, below primary: a link-coloured button, the quieter half of a pair. -subtle is its tinted container.",
+        "on-tertiary": "Text on the tertiary fill. -subtle is text on the tinted container.",
+        "insight": "What the machine proposed - a suggested match, an extracted value, a prediction. Kept apart from every other status so that 'a computer thinks this' never reads as 'this is confirmed'. -subtle is its container.",
+        "on-insight": "Text on the insight fill. -subtle is text on its container.",
+        "danger": "An error, a refusal, a destructive action. -subtle is its container.",
+        "on-danger": "Text on the danger fill. -subtle is text on its container.",
+        "warning": "Needs a human: a draft, an exception, an unreviewed import. -subtle is its container.",
+        "on-warning": "Text on the warning fill. -subtle is text on its container.",
+        "success": "Matched, posted, reconciled - a state that is complete. -subtle is its container.",
+        "on-success": "Text on the success fill. -subtle is text on its container.",
+        "focus-ring": "The outer colour of the focus indicator, drawn as an outline with a 2px offset.",
+        "focus-halo": "The inner colour of the focus indicator, filling the offset gap. Two colours rather than one because no single colour clears 3:1 against every fill a focused control can have - in the high-contrast themes the two constraints have an empty intersection.",
+        "brand-cta": "The sign-in action's gradient, which is a brand moment rather than a button: -start and -end are measured separately because text sits over both.",
+        "on-brand-cta": "Text on the brand gradient, measured against both ends of it.",
+        "figure": "A number. NEUTRAL on purpose - the ink, not a 'good news' green: money is not good news by default. -muted is a figure that is context rather than the answer; -negative is the accounting negative, which also carries parentheses and a sign, because WCAG 1.4.1 means the hue cannot be the only carrier.",
+        "debit": "A debit amount in a journal view. The same ink as a figure, declared separately so that a tenant convention wanting them distinguished has a role to change rather than a stylesheet to edit.",
+        "credit": "A credit amount in a journal view, for the same reason as debit.",
+        "draft-stripe": "The hatch on a draft document. Decoration beside the literal word 'draft', which is what carries the meaning.",
+        "suspense": "A figure parked in suspense: real money in the wrong place, which is a warning rather than an error.",
+        "sidebar": "The navigation column, which is Midnight Navy in every theme but the high-contrast pair. -raised is a hovered row, -selected the row you are on, -accent the mark on it.",
+        "on-sidebar": "Text in the navigation column. -muted is a section heading or a secondary line in it.",
+        "info": "DEPRECATED - `info` became `insight` (UX-002). The aliases resolve through the insight roles and are removed after one release.",
+        "on-info": "DEPRECATED - the text half of the `info` aliases."
+    },
+
+    "non_inverting": {
+        "outline-control": "A single mid tone (neutral-500) in the light and the dark themes alike, because it is the one line whose contrast is REQUIRED - 3:1, WCAG 1.4.11 - and a mid tone is what clears 3:1 against a near-white surface and a near-black one at the same time. Giving it a dark-theme value would mean choosing between the two ends, and the high-contrast themes do move it because they can afford to. Not an oversight: it was undocumented until PF-199 measured it.",
+        "sidebar": "The navigation column is Midnight Navy in every theme but high contrast - the brand's 60% colour, and the one surface that identifies the product. It carries light text in the light themes too, which is why its own on- roles exist.",
+        "sidebar-raised": "The hover state of a row in that column, so it follows the column rather than the page.",
+        "sidebar-selected": "The row you are on in that column, so it follows the column rather than the page.",
+        "on-sidebar": "Text in a column that is dark in the light themes, so it cannot be the page's own ink.",
+        "on-sidebar-muted": "The quieter text in that column, for the same reason.",
+        "sidebar-accent": "Glacier Teal marks where you are, in every theme including the high-contrast pair: it is the one piece of brand that survives the contrast themes, and it is a graphic rather than text."
+    },
+
+    "colour_words": [
+        "red", "green", "blue", "teal", "navy", "amber", "mist", "glacier", "violet",
+        "orange", "yellow", "purple", "cyan", "pink", "grey", "gray", "white", "black",
+        "silver", "gold", "crimson", "azure", "indigo", "magenta", "olive", "beige"
+    ],
+
+    "literal_colour_exceptions": {
+        "select:not([multiple]):not([size])": "The native select arrow is an inline SVG in a data: URL, and a data: URL cannot read a custom property - so the stroke is a baked hex, once per lightness, and the forced-colours block gives way to the native arrow where even that is wrong. A real defect of its own kind, recorded rather than hidden: the arrow is the one mark in the interface that does not follow the theme, and fixing it properly means a mask-image whose colour is a token.",
+        ".dark select:not([multiple]):not([size])": "The dark half of the same baked arrow."
+    }
+}

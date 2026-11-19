@@ -28,6 +28,10 @@
         ["on-surface-muted", "background"],
         ["on-surface-muted", "surface"],
         ["on-surface-muted", "surface-container"],
+        ["on-surface-muted", "surface-container-low"],
+        ["on-surface-muted", "surface-container-high"],
+        ["on-surface-muted", "surface-raised"],
+        ["on-surface-muted", "surface-sunken"],
         ["on-surface-subtle", "surface"],
         ["link", "surface"],
         ["link", "background"],
@@ -64,6 +68,7 @@
         ["outline-control", "background"],
         ["focus-ring", "surface"],
         ["focus-ring", "background"],
+        ["focus-ring", "focus-halo"],
         ["primary", "surface"],
         ["accent", "surface"],
         ["accent", "background"],
@@ -76,6 +81,7 @@
         ["success", "surface"]
     ],
     "unpaired": {
+        "focus-halo": "The SECOND colour of the focus indicator - PF-200. It is measured against the ring it sits beside (the pair above) and, by DesignFoundationRules, against every fill a focused control can have, where the rule is that at least ONE of the ring and the halo clears the target. It is deliberately close to the page in the light themes, which is what lets it contrast with a dark fill, so measuring it against a surface would be measuring the wrong thing.",
         "outline": "A decorative divider - a card edge or a table rule identifies nothing operable, so WCAG 1.4.11 sets no contrast for it. Form controls use outline-control, and a rule refuses one that does not.",
         "outline-subtle": "A decorative divider, as outline.",
         "outline-strong": "A decorative divider with more weight, as outline. It never marks the boundary of a control.",

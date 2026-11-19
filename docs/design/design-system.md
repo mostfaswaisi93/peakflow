@@ -9,12 +9,22 @@ Distinctiveness comes from restraint executed precisely — tabular figures that
 Three layers. **A component never references a primitive.**
 
 ```
-primitive   --oklch-blue-500: 54.1% 0.192 258.3     ← raw ramps, no meaning
+primitive   --p-navy-500: 62.5% 0.12 263            ← raw ramps, no meaning
      ↓
-semantic    --c-primary: var(--oklch-blue-500)        ← a role
+semantic    --c-primary: var(--p-brand-navy)          ← a role
      ↓
-component   --c-button-primary-bg: var(--c-primary)   ← what a component owns
+component   --k-scrollbar-thumb: var(--color-outline-strong)   ← what a component owns
 ```
+
+**The component layer is `--k-`, not `--c-`** — PF-199. Every `--c-*` is read as a
+semantic role by `php bin/verify design`, which requires each one to be redefined
+by all five themes and to appear in `contrast-pairs.json`; a component token has
+neither property, because it is derived from a role and measured through it. The
+third layer therefore needs a name of its own, and having one is what turns "a
+component never references a primitive" into something a check can decide rather
+than a convention a reviewer has to remember. The layers, what each may read, the
+role each token family stands for and every token that deliberately does not
+invert are declared in [`resources/css/token-architecture.json`](../../resources/css/token-architecture.json).
 
 In CSS, the two-layer mapping that makes the theme work with no `dark:` at the call site:
 
@@ -36,6 +46,14 @@ A token may only be added **with a stated role**. A token named after a colour r
 ### Tokens that deliberately do not invert
 
 Some surfaces are always dark and always carry light text — the sidebar, a primary container. These are documented as fixed with the reason, so nobody "fixes" them later.
+
+"Does not invert" is **measured**, not asserted: the light theme's resolved colour against Graphite's, for every role, on every run. Seven roles are fixed — the six sidebar roles and `outline-control`, which is a single mid tone in both themes because it is the one line whose contrast is *required* (3:1, 1.4.11) and a mid tone is what clears 3:1 against a near-white surface and a near-black one at once. `outline-control` had been fixed in both themes and said nothing about it until PF-199 measured it, which is exactly the shape of the thing this section exists to prevent.
+
+### The focus indicator is two colours
+
+A ring and a halo, `--c-focus-ring` and `--c-focus-halo`, with the halo filling the 2px `outline-offset` gap. Not a flourish: a single-colour ring **cannot** satisfy 1.4.11 here. Measured, Graphite's ring and a primary button are both Glacier Teal — a 1.00:1 indicator on the main action — and in the high-contrast themes the constraints "4.5:1 from a near-white surface" and "4.5:1 from a Glacier Teal fill" have an empty intersection, so no single colour exists. The rule the matrix holds is that for every fill a focused control can have, at least one of the two clears the target, and the two clear it against each other.
+
+The halo is drawn with `box-shadow` from an **unlayered** rule, so it beats a `shadow-*` utility on the one focusable element that carries its own elevation (the sign-in CTA). A focused control trades its drop shadow for two rings while it is focused, which is the right trade.
 
 ## Colour
 
@@ -131,6 +149,7 @@ Target sizes stay within the **24×24 minimum (WCAG 2.5.8) in every mode, includ
 | **Approval trail** | Who, when, what state they approved, and what invalidated a prior approval |
 | **Period indicator** | The active entity and period state on every screen — a user posting into the wrong company or a closed period is what it prevents |
 | **Table footer** | Page-size selector (allowlisted 10/50/100) that re-emits active filters, plus a themed paginator built from the paginator's own methods so it matches the design system in both themes and under RTL |
+| **Scrollbar** | Furniture, in the design system's own colours rather than the operating system's. One `--k-scrollbar-*` component token read by BOTH syntaxes — `scrollbar-color`/`scrollbar-width` for Firefox, `::-webkit-scrollbar` for Chrome and Safari — so the two cannot drift into two products. The sidebar swaps one declaration, not a second set of rules. Measured against every surface it sits on in all five themes (3:1, 4.5:1 in high contrast): **a scrollbar styled into invisibility is a worse product, not a cleaner one**. `scrollbar-gutter: stable` on every scroller, which puts the gutter on the left in Arabic without naming a side |
 
 ## Print
 

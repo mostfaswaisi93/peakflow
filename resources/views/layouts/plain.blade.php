@@ -1,8 +1,13 @@
 <!DOCTYPE html>
 @php($theme = \App\Support\Ui\ThemePreference::forGuest(request()))
+{{-- The density from the cookie only, for the same reason as the theme: this
+     layout must not touch the user, and a page explaining that a workspace
+     cannot be reached still opens at the density this browser was last at. --}}
+@php($density = \App\Support\Ui\DensityPreference::forGuest(request()))
 <html lang="{{ str_replace('_', '-', app()->getLocale()) }}"
       dir="{{ in_array(app()->getLocale(), ['ar', 'he', 'fa', 'ur'], true) ? 'rtl' : 'ltr' }}"
-      class="{{ $theme->htmlClass() }}"@if ($theme->dataTheme() !== null) data-theme="{{ $theme->dataTheme() }}"@endif>
+      class="{{ $theme->htmlClass() }}"
+      data-density="{{ $density->value }}"@if ($theme->dataTheme() !== null) data-theme="{{ $theme->dataTheme() }}"@endif>
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">

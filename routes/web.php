@@ -7,6 +7,7 @@ use App\Platform\Http\Controllers\OpsSettingsController;
 use App\Platform\Http\Controllers\OpsTenantController;
 use App\Tenant\Banking\Http\Controllers\StatementImportController;
 use App\Tenant\Identity\Http\Controllers\EntitySwitchController;
+use App\Tenant\Identity\Http\Controllers\DensityPreferenceController;
 use App\Tenant\Identity\Http\Controllers\ThemePreferenceController;
 use App\Tenant\Banking\Http\Controllers\BankAccountListController;
 use App\Tenant\Catalog\Http\Controllers\CurrencyListController;
@@ -184,6 +185,10 @@ Route::middleware(['tenant.session', 'auth'])->group(static function (): void {
     // Outside `entity.scope` too: a person choosing an entity may need the
     // high-contrast theme to read the chooser at all - UX-004.
     Route::post('/preferences/theme', ThemePreferenceController::class)->name('preferences.theme');
+
+    // And the density, for the same reason: a person who works at `dense`
+    // should not have to establish an entity before they can say so - PF-203.
+    Route::post('/preferences/density', DensityPreferenceController::class)->name('preferences.density');
 });
 
 Route::middleware(['tenant.session', 'auth', 'entity.scope'])->group(static function (): void {

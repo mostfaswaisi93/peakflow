@@ -284,6 +284,14 @@
      *  something you OPERATE - an input, a select, a checkbox - and 1.4.11
      *  requires 3:1 for it. `bin/verify design` refuses a form control
      *  whose border is not this role.
+     *
+     *  `outline-control` is also one of the tokens that deliberately does
+     *  NOT invert: neutral-500 in the light and the dark themes alike,
+     *  because a mid tone is what clears 3:1 against a near-white surface
+     *  and a near-black one at the same time. The reason is recorded in
+     *  `token-architecture.json`, which is where every non-inverting token
+     *  has to say why - this one was identical in both themes and said
+     *  nothing until PF-199 measured it.
      * ------------------------------------------------------------------- */
     --c-outline:                 var(--p-neutral-200);
     --c-outline-subtle:          var(--p-neutral-150);
@@ -326,7 +334,25 @@
     --c-success-subtle:          var(--p-success-50);
     --c-on-success-subtle:       var(--p-success-800);
 
+    /* ----------------------------------------------------------------------
+     *  The focus indicator is TWO colours, and that is a requirement rather
+     *  than a decoration - PF-200.
+     *
+     *  A single-colour ring cannot clear 3:1 against everything it can land
+     *  on. Measured: in Graphite the ring and a primary button are both
+     *  Glacier Teal, so a focused primary button carried a 1.00:1 indicator;
+     *  and in the high-contrast themes no single colour exists that clears
+     *  4.5:1 against both a near-white surface and a Glacier Teal fill - the
+     *  two constraints have an empty intersection, which is the proof.
+     *
+     *  So the ring is drawn with a 2px gap and a 2px halo fills the gap. For
+     *  every fill a focused control can have, at least ONE of the two clears
+     *  the target, and the two clear it against each other, so the indicator
+     *  is identifiable whatever is underneath. `php bin/verify design-system`
+     *  measures all of that in all five themes.
+     * ------------------------------------------------------------------- */
     --c-focus-ring:              var(--p-flow-600);
+    --c-focus-halo:              var(--p-neutral-0);
 
     /* The sign-in action (UX-031): navy into a deep brand teal. Text on it
        is measured against BOTH ends. */
@@ -430,6 +456,9 @@
     --c-on-success-subtle:       var(--p-success-100);
 
     --c-focus-ring:              var(--p-brand-glacier);
+    /* The halo goes the other way on a dark theme: the ring is light, so the
+       second colour has to be darker than anything it can sit on. */
+    --c-focus-halo:              var(--p-neutral-1000);
 
     --c-brand-cta-start:         var(--p-brand-glacier);
     --c-brand-cta-end:           var(--p-flow-400);
@@ -515,6 +544,7 @@
     --c-on-success-subtle:       var(--p-success-100);
 
     --c-focus-ring:              var(--p-brand-glacier);
+    --c-focus-halo:              var(--p-midnight-1000);
 
     --c-brand-cta-start:         var(--p-brand-glacier);
     --c-brand-cta-end:           var(--p-flow-400);
@@ -602,6 +632,7 @@
     --c-on-success-subtle:       var(--p-success-950);
 
     --c-focus-ring:              var(--p-flow-800);
+    --c-focus-halo:              var(--p-neutral-0);
 
     --c-brand-cta-start:         var(--p-brand-navy);
     --c-brand-cta-end:           var(--p-brand-navy);
@@ -685,6 +716,7 @@
        Glacier Teal button, and a focus ring is exactly the kind of small
        highlight the kit keeps amber for. */
     --c-focus-ring:              var(--p-brand-amber);
+    --c-focus-halo:              var(--p-neutral-1000);
 
     --c-brand-cta-start:         var(--p-brand-glacier);
     --c-brand-cta-end:           var(--p-brand-glacier);
@@ -861,10 +893,19 @@
     --color-on-info-subtle:    oklch(var(--c-on-info-subtle));
 
     --color-focus-ring:        oklch(var(--c-focus-ring));
+    --color-focus-halo:        oklch(var(--c-focus-halo));
 
     --color-figure:            oklch(var(--c-figure));
     --color-figure-negative:   oklch(var(--c-figure-negative));
     --color-figure-muted:      oklch(var(--c-figure-muted));
+    /* Mapped, because they were not: --c-debit and --c-credit were defined
+       by all five themes, measured against the surface on every run, and
+       read by nothing at all - there was no utility to read them WITH. The
+       trial balance's two columns use them now, which is where the product
+       distinguishes a debit from a credit and the only place a tenant
+       convention that wants them coloured differently would land. */
+    --color-debit:             oklch(var(--c-debit));
+    --color-credit:            oklch(var(--c-credit));
     --color-draft-stripe:      oklch(var(--c-draft-stripe));
     --color-suspense:          oklch(var(--c-suspense));
 
@@ -971,6 +1012,61 @@
     :root {
         --ease-tactile: cubic-bezier(0.34, 1.3, 0.64, 1);
     }
+}
+
+/* ===========================================================================
+ *  LAYER 3 - COMPONENT TOKENS (`--k-*`) - PF-199
+ * ---------------------------------------------------------------------------
+ *  A token a component owns. The rule the architecture rests on is that a
+ *  COMPONENT NEVER REFERENCES A PRIMITIVE: every value here is either a
+ *  literal measurement or a semantic role, so re-theming happens in layer 2
+ *  and nothing in layer 3 has to be revisited.
+ *
+ *  ## Why `--k-` and not `--c-`
+ *
+ *  `docs/design/design-system.md` writes the example component token as
+ *  `--c-button-primary-bg`, and that name cannot work here: every `--c-*` is
+ *  read as a SEMANTIC ROLE by `bin/verify design`, which requires each one to
+ *  be redefined by all five themes and to appear in `contrast-pairs.json`.
+ *  A component token has neither property - it is derived from a role and
+ *  measured through it - so it would fail for reasons that have nothing to do
+ *  with it. The third layer therefore needs a name of its own, and having one
+ *  is what makes "a component never references a primitive" checkable rather
+ *  than a convention.
+ *
+ *  ## The scrollbar is the first citizen
+ *
+ *  Because it is the one piece of furniture with TWO syntaxes - the standard
+ *  `scrollbar-color`/`scrollbar-width` that Firefox reads, and the
+ *  `::-webkit-scrollbar` pseudo-elements that Chrome and Safari read. Written
+ *  as two sets of colour declarations they drift, and the product looks like
+ *  two products. Written as one token that both syntaxes read, they cannot:
+ *  the sidebar swaps ONE declaration and both follow it.
+ * ======================================================================== */
+:root {
+    /*
+     | 10px of track, 6px of thumb, 2px of inset either side.
+     |
+     | `scrollbar-width` takes a keyword and not a length, so the two syntaxes
+     | can only agree approximately: `thin` is about 11px where it is honoured,
+     | and 10px is the nearest the pseudo-element can be set to. The COLOURS,
+     | which is what the eye reads as "the same product", are the same token.
+     */
+    --k-scrollbar-size: 10px;
+    --k-scrollbar-inset: 2px;
+
+    /*
+     | Furniture, deliberately: findable and never competing with a figure.
+     |
+     | The outline role mixed toward transparent rather than a lighter token,
+     | so the bar sits ON whatever it is over. Measured against every surface
+     | a scroller can have, in all five themes, by `bin/verify design-system`
+     | - because a scrollbar styled into invisibility is a worse product, not
+     | a cleaner one.
+     */
+    --k-scrollbar-track: transparent;
+    --k-scrollbar-thumb: color-mix(in oklab, var(--color-outline-strong) 70%, transparent);
+    --k-scrollbar-thumb-hover: color-mix(in oklab, var(--color-outline-strong) 85%, transparent);
 }
 
 /* ===========================================================================
@@ -1095,7 +1191,7 @@
     }
 
     /* ----------------------------------------------------------------------
-     *  SCROLLBARS - PF-203.
+     *  SCROLLBARS - PF-199 and PF-203, in the component layer.
      *
      *  The browser's default bar is drawn by the operating system in its own
      *  grey, which is the one element on the page that ignores the theme the
@@ -1103,63 +1199,83 @@
      *  channel down the edge of a dark panel, and the shell has TWO of them
      *  side by side at the sidebar's inner edge.
      *
-     *  Thin, with a transparent track, so the bar is the thumb and nothing
-     *  else. The thumb is the outline colour mixed toward transparent rather
-     *  than a lighter token, because a scrollbar is furniture: it has to be
-     *  findable and must never compete with a figure for attention.
+     *  Thin, with a transparent track, so the bar IS the thumb.
      *
-     *  Both syntaxes, deliberately. `scrollbar-width`/`scrollbar-color` is
-     *  the standard and is what Firefox reads; `::-webkit-scrollbar` is what
-     *  Chrome and Safari read, and in those a `::-webkit-scrollbar` rule
-     *  turns OFF the overlay behaviour, so the width below is reserved
-     *  space rather than an overlay.
+     *  ## Both syntaxes, reading one token
+     *
+     *  `scrollbar-width`/`scrollbar-color` is the standard and is what
+     *  Firefox reads; `::-webkit-scrollbar` is what Chrome and Safari read,
+     *  and in those a `::-webkit-scrollbar` rule turns OFF the overlay
+     *  behaviour, so the size below is reserved space rather than an overlay.
+     *
+     *  Every colour in both syntaxes comes from the same `--k-scrollbar-*`
+     *  component token, so the two cannot disagree: a webkit thumb painted
+     *  from one colour and a Firefox thumb from another is how a product
+     *  comes to look like two products, and it is invisible to whoever is
+     *  looking at only one of them. `bin/verify design-system` asserts that
+     *  each syntax reads the same token as the other.
+     *
+     *  ## Physical sides are the browser's business, not ours
+     *
+     *  Nothing here names a side. `scrollbar-gutter: stable` reserves the
+     *  gutter on the inline-end edge, which the browser places on the left
+     *  in an RTL document and on the right in an LTR one - so the Arabic
+     *  interface gets its gutter on the correct side with no rule of its own,
+     *  and a `left`/`right` override here would be the bug.
      * ------------------------------------------------------------------- */
     /*
-     * `scrollbar-gutter: stable` on the two elements that scroll.
+     * `scrollbar-gutter: stable` on every element that scrolls - and the
+     * grid's scroller is one of them.
      *
-     * Without it the bar appears when the content grows past the viewport
-     * and every centred thing on the page shifts sideways by its width.
-     * It is the jump that happens when a filter returns one row fewer, and
-     * it reads as the layout being unstable rather than as a scrollbar
-     * arriving.
+     * Without it the bar appears when the content grows past the box and
+     * everything inside shifts sideways by its width. It is the jump that
+     * happens when a filter returns one row fewer, and it reads as the
+     * layout being unstable rather than as a scrollbar arriving. In the grid
+     * it is worse than cosmetic: the column a figure sits under moves while
+     * somebody is reading down it.
+     *
+     * The grid is addressed by the hook its own script already reads,
+     * `[data-pf-grid-scroller]`, rather than by a class added for styling -
+     * one name for the scroller, used by the behaviour and by the furniture.
      */
     html,
-    .scrollbar-on-sidebar {
+    .scrollbar-on-sidebar,
+    [data-pf-grid-scroller] {
         scrollbar-gutter: stable;
     }
 
     * {
         scrollbar-width: thin;
-        scrollbar-color: color-mix(in oklab, var(--color-outline-strong) 70%, transparent) transparent;
+        scrollbar-color: var(--k-scrollbar-thumb) var(--k-scrollbar-track);
     }
 
     ::-webkit-scrollbar {
-        width: 10px;
-        height: 10px;
+        width: var(--k-scrollbar-size);
+        height: var(--k-scrollbar-size);
     }
 
     ::-webkit-scrollbar-track {
-        background: transparent;
+        background: var(--k-scrollbar-track);
     }
 
     ::-webkit-scrollbar-thumb {
-        background: color-mix(in oklab, var(--color-outline-strong) 70%, transparent);
+        background: var(--k-scrollbar-thumb);
         border-radius: 999px;
         /* The border is what makes a 10px track hold a 6px thumb: a
            transparent border painted over the element's own background,
            which is the only way to inset a webkit thumb. */
-        border: 2px solid transparent;
+        border: var(--k-scrollbar-inset) solid transparent;
         background-clip: padding-box;
     }
 
     ::-webkit-scrollbar-thumb:hover {
-        background: color-mix(in oklab, var(--color-outline-strong) 85%, transparent);
+        background: var(--k-scrollbar-thumb-hover);
         background-clip: padding-box;
     }
 
     /* The corner where two bars meet, which otherwise stays OS grey. */
     ::-webkit-scrollbar-corner {
-        background: transparent;
+        background: var(--k-scrollbar-track);
     }
 
     /*
@@ -1168,19 +1284,16 @@
      * `--color-outline-strong` is tuned against the page surface and
      * disappears against navy. The sidebar is dark in EVERY theme, including
      * the two light ones, so this cannot be left to the theme.
+     *
+     * One token, redefined for the subtree: a custom property cascades into
+     * the webkit pseudo-elements too, so the standard syntax and both webkit
+     * rules above follow this without being repeated. That is the point of
+     * the component layer - the variant is a value, not a second set of
+     * rules to keep in step.
      */
     .scrollbar-on-sidebar {
-        scrollbar-color: color-mix(in oklab, var(--color-on-sidebar-muted) 70%, transparent) transparent;
-    }
-
-    .scrollbar-on-sidebar::-webkit-scrollbar-thumb {
-        background: color-mix(in oklab, var(--color-on-sidebar-muted) 70%, transparent);
-        background-clip: padding-box;
-    }
-
-    .scrollbar-on-sidebar::-webkit-scrollbar-thumb:hover {
-        background: color-mix(in oklab, var(--color-on-sidebar-muted) 85%, transparent);
-        background-clip: padding-box;
+        --k-scrollbar-thumb: color-mix(in oklab, var(--color-on-sidebar-muted) 70%, transparent);
+        --k-scrollbar-thumb-hover: color-mix(in oklab, var(--color-on-sidebar-muted) 85%, transparent);
     }
 
 }
@@ -1340,6 +1453,31 @@ select:not([multiple]):not([size]) {
 }
 
 /* ===========================================================================
+ *  THE FOCUS HALO - the second colour of the focus indicator (PF-200)
+ * ---------------------------------------------------------------------------
+ *  The ring itself is in `@layer base` with the rest of the base styles, so a
+ *  template can still move it (`focus-visible:-outline-offset-2` insets it
+ *  where an outside ring would be clipped). The halo is UNLAYERED, which is
+ *  the one thing it has to be: it is drawn with `box-shadow`, and a layered
+ *  rule loses to any `shadow-*` utility - so on the one focusable element
+ *  that carries its own elevation, the sign-in CTA, the indicator would have
+ *  silently gone back to one colour. That is exactly the kind of regression
+ *  this exists to prevent, so the halo wins outright.
+ *
+ *  A focused element therefore trades its own drop shadow for two rings for
+ *  as long as it is focused, which is the right trade: the shadow is
+ *  decoration and the indicator is how somebody knows where they are.
+ *
+ *  Geometry: 2px halo against the element's own edge, then the 2px ring from
+ *  `outline-offset`. Whatever is under the control, one of the two colours
+ *  clears 3:1 against it (4.5:1 in the high-contrast themes), and the two
+ *  clear it against each other.
+ * ======================================================================== */
+:focus-visible {
+    box-shadow: 0 0 0 2px var(--color-focus-halo);
+}
+
+/* ===========================================================================
  *  FORCED COLOURS - Windows high contrast and its kin (UX-004)
  * ---------------------------------------------------------------------------
  *  In forced-colours mode the browser replaces every colour with the person's
@@ -1395,13 +1533,17 @@ select:not([multiple]):not([size]) {
      * high-contrast scheme did not choose, which is the whole thing this
      * mode exists to prevent. `ButtonBorder` is the system colour for
      * exactly this kind of furniture.
+     *
+     * One selector for every scroller, the sidebar's included: the sidebar
+     * variant is a token now, so there is no second rule to repeat here -
+     * and a rule naming `.scrollbar-on-sidebar::-webkit-scrollbar-thumb`
+     * would be a reference to a rule that no longer exists.
      */
     * {
         scrollbar-color: auto;
     }
 
-    ::-webkit-scrollbar-thumb,
-    .scrollbar-on-sidebar::-webkit-scrollbar-thumb {
+    ::-webkit-scrollbar-thumb {
         forced-color-adjust: none;
         background: ButtonBorder;
     }
