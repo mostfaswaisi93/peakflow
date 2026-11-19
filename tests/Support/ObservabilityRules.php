@@ -2409,25 +2409,40 @@ final class ObservabilityRules
 
             try {
                 /*
-                 | The alert must NOT be firing before the injection.
+                 | What this condition was ALREADY reporting, before anything
+                 | was injected.
                  |
-                 | Without this the sweep proves nothing for any condition the
-                 | fixture already breaches: the alert fires, the check is
-                 | green, and the injection could have been a no-op. It is
-                 | the same hollowness as a bite that was never applied.
+                 | The property being protected is that the injection is what
+                 | caused the alert. Without it the sweep proves nothing for
+                 | any condition the fixture already breaches: the alert
+                 | fires, the check is green, and the injection could have
+                 | been a no-op - the same hollowness as a bite that was
+                 | never applied.
+                 |
+                 | This used to refuse outright when the condition was
+                 | already firing, and that lost the condition entirely
+                 | rather than testing it. `subledgers` arrived on
+                 | 2026-11-19 and is breached by this very fixture: the
+                 | shared payment-run trait writes an APPROVED, never-posted
+                 | bill straight onto the table and then releases a payment
+                 | against it, so the payables ageing counts 2,500 nobody
+                 | posted and the control account carries a 2,500 debit
+                 | nothing credited. Both are unreachable in production -
+                 | nothing in the application sets `approved` - but the
+                 | fixture stands on them, deliberately, because what a
+                 | payment run needs is narrower than a posted bill.
+                 |
+                 | So the requirement is stated the stronger way: the
+                 | injection must ADD a divergence this condition was not
+                 | already reporting. A pre-existing breach can no longer
+                 | mask the injection, and it can no longer skip it either.
                  */
                 $already = $this->firedFor($watch, $condition, null);
+                $alreadyDiverged = array_map(
+                    static fn (object $alert): string => (string) $alert->firstDivergence,
+                    $already,
+                );
 
-                if ($already !== []) {
-                    $violations[] = sprintf(
-                        'the "%s" alert was already firing before anything was injected, so this '.
-                        'condition was not exercised: %s',
-                        $condition,
-                        $already[0]->firstDivergence,
-                    );
-
-                    continue;
-                }
 
                 $result = $injection->inject($condition, $this->entityId);
                 $rollback = $result['rollback'];
@@ -2463,7 +2478,37 @@ final class ObservabilityRules
                     continue;
                 }
 
-                $alert = $fired[0];
+                /*
+                 | The alert the INJECTION caused, not whichever fired first.
+                 |
+                 | With a pre-existing breach of the same condition, `$fired[0]`
+                 | could be the one that was already there - and every
+                 | assertion below would then be made about a divergence
+                 | nothing in this sweep produced.
+                 */
+                $caused = array_values(array_filter(
+                    $fired,
+                    static fn (object $a): bool => ! \in_array(
+                        (string) $a->firstDivergence,
+                        $alreadyDiverged,
+                        true,
+                    ),
+                ));
+
+                if ($alreadyDiverged !== [] && $caused === []) {
+                    $violations[] = sprintf(
+                        'the "%s" condition was already being reported (%s) and the injection added no '.
+                        'divergence of its own, so it could have been a no-op. An injection that '.
+                        'changes nothing and an alert that cannot fire are indistinguishable from '.
+                        'here, which is the whole point of this sweep',
+                        $condition,
+                        $alreadyDiverged[0],
+                    );
+
+                    continue;
+                }
+
+                $alert = $caused[0] ?? $fired[0];
 
                 if ($alert->entityId !== $this->entityId && $alert->entityId !== Alert::NO_ENTITY) {
                     $violations[] = sprintf(

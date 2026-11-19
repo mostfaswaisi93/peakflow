@@ -13,6 +13,7 @@ use App\Tenant\Identity\Models\Role;
 use App\Tenant\Identity\Models\User;
 use App\Tenant\Identity\Models\UserEntityRole;
 use App\Tenant\Ledger\Enums\ControlRole;
+use App\Tenant\Ledger\Services\LedgerVerifier;
 use App\Tenant\Ledger\Services\TrialBalance;
 use App\Tenant\Reporting\Drill\Figure;
 use App\Tenant\Reporting\Overview\Ageing;
@@ -155,6 +156,7 @@ final class RegisterRules
                 'the default buckets are the ones the Overview tile uses' => fn (): array => $this->theDefaultsMatchTheTile(),
                 'a register exports through the one export path, parameters first' => fn (): array => $this->theRegisterExports(),
                 'and a closed period\'s file does not move when a later one does' => fn (): array => $this->theFileIsByteStable(),
+                'receivables and payables are compared to their control accounts' => fn (): array => $this->theSubledgersTie(),
             ]));
         } catch (Throwable $e) {
             return ['the registers could not be checked' => [
@@ -1964,6 +1966,200 @@ final class RegisterRules
         }
 
         return $problems;
+    }
+
+    /**
+     * `ledger:verify` compares the subledgers to their control accounts.
+     *
+     * ## The gap, and why nothing noticed it
+     *
+     * The verifier composed ten checks and registered three more - suspense,
+     * in-transit money, inventory. **Receivables and payables were compared
+     * by nothing**, which is the first reconciliation an auditor performs.
+     *
+     * Three things made that read as covered. `LedgerVerifier` carried a
+     * docblock claiming *"Each subledger control account equals the sum of
+     * its own lines"*, which described a method two hundred lines below that
+     * `verify()` does not call. `controlAccountsPostedManually()` reports a
+     * manual posting whose stated consequence is *"The subledger and the
+     * control account now disagree"* - and fires only when
+     * `posting_rule IS NULL`. And `SuspenseIsTraceable`, arguing its own
+     * finding is critical, borrows for authority *"the same class of fault
+     * as a receivables control that does not agree with the customer
+     * ledger"* - the very comparison nothing made.
+     *
+     * ## The injection, and why it is this one
+     *
+     * A balanced pair of lines on a posted entry: one on the receivables
+     * control account, one on an expense account, with the entry's
+     * `posting_rule` left intact.
+     *
+     * Every existing check survives it. The entry balances, so
+     * `unbalancedEntries()` is silent. A rule is recorded, so
+     * `controlAccountsPostedManually()` is silent. The lines belong to an
+     * entry in an open period at the entry's own date, so the period and
+     * orphan checks are silent. The trial balance ties. Only the control
+     * account has moved away from the customer ledger.
+     *
+     * ## It stands in for the real mechanism, and is not it
+     *
+     * Worth being exact about, because the difference matters to whoever
+     * reads this next. The condition under test - the control account no
+     * longer equal to the customer ledger - is real and this produces it.
+     * The *route* is not: writing lines onto a posted entry is a tamper,
+     * and the ledger has three checks aimed at tampers.
+     *
+     * The way this arises in production is a posting rule that moves a
+     * control account by the wrong figure. The sales foreign-currency
+     * defect fixed on 2026-11-18 did exactly that: a 1,000 EUR invoice
+     * credited 1,000 of the entity's own currency to receivables, so the
+     * control account disagreed with the customer ledger by the whole
+     * translation. That version is *more* invisible than this one, not
+     * less - the entry is correctly fingerprinted over its own wrong
+     * figures, so every tamper check is satisfied as well.
+     *
+     * It is not injectable from here, because producing it means breaking
+     * a posting rule, and a rule broken inside a check is a bite rather
+     * than a fixture. The sweep for `fix(sales)` is where that was proved;
+     * this is the check that would have caught it.
+     *
+     * A subledger tie is the one check that is not internal: it asks
+     * whether the ledger agrees with the documents, which is the only
+     * question a balanced wrong answer cannot survive.
+     *
+     * @return list<string>
+     */
+    private function theSubledgersTie(): array
+    {
+        $this->issue();
+
+        $problems = [];
+
+        $before = app(LedgerVerifier::class)->verify($this->entityId);
+
+        if ($this->findingsAbout($before, 'receivables') !== []) {
+            return ['the fixture already does not tie, so this check cannot tell its own injection '.
+                'from the state it started in: '.implode(' | ', $this->findingsAbout($before, 'receivables'))];
+        }
+
+        $this->moveTheControlAccount($this->codeForRole(ControlRole::AccountsReceivable), '2500.0000');
+
+        $after = app(LedgerVerifier::class)->verify($this->entityId);
+        $named = $this->findingsAbout($after, 'receivables');
+
+        if ($named === []) {
+            /*
+             | The list of what DID fire is in the message on purpose.
+             |
+             | "Nothing was reported" sends the next reader to look for a
+             | check that does not exist. Naming the ten that ran and stayed
+             | silent says which question was never asked.
+             */
+            $problems[] = sprintf(
+                'the receivables control account was moved 2,500 away from the customer ledger and '.
+                '`ledger:verify` reported nothing about receivables. The entry balances, a posting '.
+                'rule is recorded and the trial balance ties, so every check that asks whether the '.
+                'books are internally CONSISTENT is satisfied - and no check asks whether the ledger '.
+                'agrees with the documents, which is the only question a balanced wrong answer '.
+                'cannot survive. What did fire: %s',
+                $after->isEmpty() ? '(nothing at all)' : $after->pluck('kind')->implode(', '),
+            );
+
+            return $problems;
+        }
+
+        $detail = implode(' ', $named);
+
+        /*
+         | The figures have to be in the sentence.
+         |
+         | A critical finding that says "receivables does not tie" at 03:00
+         | is a finding somebody has to go and reproduce before they can act.
+         | One that says which two figures and by how much is one they can
+         | start from.
+         */
+        foreach (['2500', 'control account'] as $expected) {
+            if (! str_contains($detail, $expected)) {
+                $problems[] = sprintf(
+                    'the finding does not mention %s: "%s". The difference and both sides of it are '.
+                    'what makes this actionable rather than a prompt to go and look.',
+                    $expected,
+                    $detail,
+                );
+            }
+        }
+
+        return $problems;
+    }
+
+    /**
+     * The findings whose kind names a side, as sentences.
+     *
+     * @param  \Illuminate\Support\Collection<int, \App\Tenant\Ledger\LedgerFinding>  $findings
+     * @return list<string>
+     */
+    private function findingsAbout(\Illuminate\Support\Collection $findings, string $side): array
+    {
+        return $findings
+            ->filter(static fn (object $f): bool => str_contains((string) $f->kind, $side))
+            ->map(static fn (object $f): string => (string) $f->detail)
+            ->values()
+            ->all();
+    }
+
+    /**
+     * A balanced pair of lines that moves one control account and nothing else.
+     *
+     * Written onto an existing POSTED entry rather than through a service,
+     * because no service will do this - which is the point. The state exists
+     * in the wild: a posting rule that credits a control account with the
+     * wrong figure produces it, and that is a defect this repository has
+     * actually had.
+     *
+     * `accounting_date` and `period_id` are supplied although a trigger
+     * overwrites them: `journal_lines` is RANGE-partitioned on the date and
+     * PostgreSQL routes the row before the trigger runs, so a row left to
+     * the trigger lands in the default partition and cannot then be moved.
+     */
+    private function moveTheControlAccount(string $controlCode, string $amount): void
+    {
+        $entry = $this->connection->table('journal_entries')
+            ->where('entity_id', $this->entityId)
+            ->where('status', 'posted')
+            ->whereNotNull('posting_rule')
+            ->orderByDesc('accounting_date')
+            ->first();
+
+        if ($entry === null) {
+            return;
+        }
+
+        $accountId = fn (string $code): string => (string) $this->connection->table('accounts')
+            ->where('entity_id', $this->entityId)
+            ->where('code', $code)
+            ->value('id');
+
+        $pairs = [
+            [$accountId($controlCode), $amount],
+            [$accountId($this->revenueCode()), '-'.$amount],
+        ];
+
+        foreach ($pairs as [$id, $signed]) {
+            $this->connection->table('journal_lines')->insert([
+                'id' => (string) Str::ulid(),
+                'journal_entry_id' => (string) $entry->id,
+                'entity_id' => $this->entityId,
+                'accounting_date' => (string) $entry->accounting_date,
+                'period_id' => (string) $entry->period_id,
+                'account_id' => $id,
+                'amount' => $signed,
+                'currency' => 'SAR',
+                'functional_amount' => $signed,
+                'narration' => 'A movement no document accounts for',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
     }
 
     private function register(string $from, string $until): array

@@ -414,17 +414,6 @@ final class LedgerVerifier
     }
 
     /**
-     * Each subledger control account equals the sum of its own lines.
-     *
-     * Checked per role so that a discrepancy names which one. Until the
-     * subledgers exist (PF-05x onwards) this compares the control account to
-     * itself and is therefore trivially true - it is here now because
-     * `ledger:verify` is wired into every posting test from the start, and a
-     * check added later is a check nobody runs against the history.
-     *
-     * @return Collection<int, array{role: string, total: string}>
-     */
-    /**
      * Entries whose substance no longer matches their fingerprint - PF-054.
      *
      * ## The one check the immutability triggers cannot make
@@ -568,6 +557,32 @@ final class LedgerVerifier
         )];
     }
 
+    /**
+     * What each control account holds, per role - `ledger:verify --totals`.
+     *
+     * ## It is not a check, and a docblock two hundred lines away said it was
+     *
+     * This method sums each control account's own lines and prints them. It
+     * compares nothing, so it can fail at nothing, and it is not in
+     * {@see self::verify()} - it is reachable only from `ledger:verify
+     * --totals`, as a figure for a person to read.
+     *
+     * Its docblock used to sit beside `orphanedLines()`, where it read as
+     * documentation of a check `verify()` performs: *"Each subledger control
+     * account equals the sum of its own lines. Checked per role so that a
+     * discrepancy names which one."* It also carried a note deferring the
+     * real comparison "until the subledgers exist (PF-05x onwards)", which
+     * they have since 2026 - so the one sentence in this class that promised
+     * a subledger tie described a method that makes none, under a deferral
+     * whose condition had been met.
+     *
+     * The comparison it described is now a real check, in
+     * {@see \App\Tenant\Reporting\Verification\SubledgersTieToTheirControls},
+     * registered through the `LedgerChecks` registry so that this class
+     * still does not learn what an invoice is.
+     *
+     * @return Collection<int, array{role: string, total: string}>
+     */
     public function controlTotals(string $entityId): Collection
     {
         $rows = DB::connection('tenant')->select(<<<'SQL'

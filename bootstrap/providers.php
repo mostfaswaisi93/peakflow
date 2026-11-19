@@ -9,6 +9,7 @@ use App\Providers\MessagingServiceProvider;
 use App\Providers\PayrollServiceProvider;
 use App\Providers\PurchasingServiceProvider;
 use App\Providers\QueueTenancyServiceProvider;
+use App\Providers\ReportingServiceProvider;
 use App\Providers\SalesServiceProvider;
 use App\Providers\SettlementServiceProvider;
 use App\Providers\TaxServiceProvider;
@@ -40,4 +41,11 @@ return [
     SettlementServiceProvider::class,
     PayrollServiceProvider::class,
     MessagingServiceProvider::class,
+
+    /*
+     | Last, because the subledger tie it registers reaches the modules
+     | above - and because a check that compares the documents to the
+     | ledger is the last thing anybody should be able to say is missing.
+     */
+    ReportingServiceProvider::class,
 ];
