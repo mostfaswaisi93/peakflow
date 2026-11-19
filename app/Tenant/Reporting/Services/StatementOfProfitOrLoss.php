@@ -467,8 +467,8 @@ final class StatementOfProfitOrLoss
                     'The two analyses disagree: by function the result is %s and by nature it is %s. '.
                     'They are two groupings of the same rows, so an account is classified on one axis '.
                     'and not the other.',
-                    $functional->toPresentation(),
-                    $natural->toPresentation(),
+                    $functional->format('en', false),
+                    $natural->format('en', false),
                 ),
                 'ar' => 'التحليلان لا يتفقان على النتيجة. وهما تجميعان لنفس الصفوف، فحسابٌ مصنَّف على '.
                     'محور دون الآخر.',
@@ -479,7 +479,7 @@ final class StatementOfProfitOrLoss
             'severity' => 'ok',
             'en' => sprintf(
                 'The result for the period is %s, and the analyses by function and by nature agree.',
-                $functional->toPresentation(),
+                $functional->format('en', false),
             ),
             'ar' => 'التحليل بحسب الوظيفة والتحليل بحسب الطبيعة يتفقان على نتيجة الفترة.',
         ];

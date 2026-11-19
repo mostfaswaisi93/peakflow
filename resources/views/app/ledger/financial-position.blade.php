@@ -16,8 +16,8 @@
 
     Every amount, every section total, the unclosed result and the totals
     block all arrive from {@see \App\Tenant\Reporting\Services\StatementOfFinancialPosition}
-    as decimal strings and are rendered through `Money::toPresentation()` at
-    the currency's own exponent. A total re-summed here would be a second
+    as decimal strings and are rendered through `Money::format()` - grouped,
+    at the currency's own exponent. A total re-summed here would be a second
     answer to a question the statement already answers, and it would agree
     with the first until the day a rounding rule changed - at which point the
     page and the service would both be defensible and only one of them right.
@@ -223,7 +223,7 @@
                     $money = \App\Support\Money\Money::of($amount, $currency);
 
                     return [
-                        'text' => (string) $money->toPresentation(),
+                        'text' => ($money->isNegative() ? '-' : '').$money->abs()->format(withSymbol: false),
                         'negative' => $money->isNegative(),
                     ];
                 };

@@ -85,6 +85,7 @@
              to the block's end, so a block here swallows the theme and density
              lines at the top - and it does so before comments are removed, so
              not even a comment may spell the directives out. --}}
+        @php($activeEntity = app()->bound('currentEntity') ? app('currentEntity') : null)
         @php($userName = (string) (auth()->user()?->name ?? ''))
         @php($userEmail = (string) (auth()->user()?->email ?? ''))
         @php($initials = collect(preg_split('/\s+/u', trim($userName)) ?: [])->filter()->take(2)->map(static fn (string $word): string => mb_strtoupper(mb_substr($word, 0, 1)))->implode(''))
@@ -113,12 +114,17 @@
                 </a>
             </div>
 
-            <div class="-mx-4 flex min-w-0 items-center gap-2 overflow-x-auto border-t border-outline-subtle px-4 py-2 [grid-area:context]
-                        sm:-mx-6 sm:px-6
-                        md:mx-0 md:overflow-visible md:border-0 md:px-0 md:py-0">
-                @include('partials.entity-switcher')
-                @include('partials.period-state')
-            </div>
+            {{-- Only where there is a company. A page that belongs to the
+                 person - their security settings - has none, and an empty
+                 context row is a bordered strip of nothing under the bar. --}}
+            @if ($activeEntity !== null)
+                <div class="-mx-4 flex min-w-0 items-center gap-2 overflow-x-auto border-t border-outline-subtle px-4 py-2 [grid-area:context]
+                            sm:-mx-6 sm:px-6
+                            md:mx-0 md:overflow-visible md:border-0 md:px-0 md:py-0">
+                    @include('partials.entity-switcher')
+                    @include('partials.period-state')
+                </div>
+            @endif
 
             <div class="flex h-16 items-center gap-1 [grid-area:end] sm:gap-2">
                 @include('partials.density-switcher')
@@ -238,10 +244,9 @@
         settings - is served with no entity in the container, and an unguarded
         `app('currentEntity')` there is a 500 instead of a page.
     --}}
-    @php($printedEntity = app()->bound('currentEntity') ? app('currentEntity') : null)
-    @if ($printedEntity !== null)
+    @if ($activeEntity !== null)
         <footer class="hidden print:fixed print:inset-x-0 print:bottom-0 print:block print:border-t print:border-outline print:px-6 print:py-2 print:text-xs">
-            {{ $printedEntity->legal_name }} · {{ $printedEntity->code }}
+            {{ $activeEntity->legal_name }} · {{ $activeEntity->code }}
         </footer>
     @endif
 

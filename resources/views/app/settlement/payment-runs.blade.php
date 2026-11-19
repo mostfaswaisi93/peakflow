@@ -30,8 +30,8 @@
          | the ACCOUNTING negative - parentheses, never a bare minus.
          */
         $figure = static fn (\App\Support\Money\Money $money): string => $money->isNegative()
-            ? '('.$money->abs()->toPresentation().')'
-            : (string) $money->toPresentation();
+            ? '('.$money->abs()->format(withSymbol: false).')'
+            : $money->format(withSymbol: false);
 
         /*
          | Three states, because the table permits exactly three.

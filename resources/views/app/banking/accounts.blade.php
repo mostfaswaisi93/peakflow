@@ -28,8 +28,8 @@
          | column it is in is the difference between owing and being owed.
          */
         $figure = static fn (\App\Support\Money\Money $money): string => $money->isNegative()
-            ? '('.$money->abs()->toPresentation().')'
-            : (string) $money->toPresentation();
+            ? '('.$money->abs()->format(withSymbol: false).')'
+            : $money->format(withSymbol: false);
 
         /*
          | Five weeks, because that is one missed monthly cycle.

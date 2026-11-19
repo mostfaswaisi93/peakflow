@@ -169,7 +169,7 @@
                                 </span>
                             </th>
 
-                            <td class="px-4 py-3 text-on-surface">
+                            <td class="whitespace-nowrap px-4 py-3 text-on-surface">
                                 {{ $bill->supplierName() ?? __('غير مذكور') }}
                             </td>
 

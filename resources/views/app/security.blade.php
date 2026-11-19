@@ -55,14 +55,14 @@
          progress. --}}
     @if ($status)
         <p role="status"
-           class="mt-6 rounded-sheet border border-success bg-success-subtle px-4 py-3 text-on-success-subtle">
+           class="mt-6 rounded-card border border-success bg-success-subtle px-4 py-3 text-on-success-subtle">
             {{ $status }}
         </p>
     @endif
 
     @if ($factorError)
         <p role="alert"
-           class="mt-6 rounded-sheet border border-danger bg-danger-subtle px-4 py-3 text-on-danger-subtle">
+           class="mt-6 rounded-card border border-danger bg-danger-subtle px-4 py-3 text-on-danger-subtle">
             {{ $factorError }}
         </p>
     @endif
@@ -71,22 +71,22 @@
          "Two-factor authentication is recommended" is a sentence people
          close. "You hold payment.release, and it needs a factor" is one
          that gets acted on. --}}
-    <section class="mt-8 rounded-sheet border border-outline bg-surface p-5">
-        <h2 class="text-title-s">{{ __('لماذا يَلزمك عامل ثانٍ') }}</h2>
+    <section class="mt-8 rounded-card border border-outline bg-surface p-5">
+        <h2 class="text-title font-semibold text-on-surface">{{ __('لماذا يَلزمك عامل ثانٍ') }}</h2>
 
         @if ($moneyMoving->isNotEmpty())
-            <p class="mt-2 text-body-m text-on-surface-muted">
+            <p class="mt-2 text-body text-on-surface-muted">
                 {{ __('تحمل صلاحيات تُحرّك المال، وكل واحدة منها تشترط عاملًا ثانيًا مؤكَّدًا:') }}
             </p>
             <ul class="mt-3 flex flex-wrap gap-2">
                 @foreach ($moneyMoving as $permission)
-                    <li class="rounded-chip border border-outline px-3 py-1 font-mono text-label-s" dir="ltr">
+                    <li class="rounded-full border border-outline-subtle bg-surface-sunken px-3 py-1 font-mono text-caption text-on-surface" dir="ltr">
                         {{ $permission }}
                     </li>
                 @endforeach
             </ul>
         @else
-            <p class="mt-2 text-body-m text-on-surface-muted">
+            <p class="mt-2 text-body text-on-surface-muted">
                 {{ __('لا تحمل حاليًا صلاحية تشترط عاملًا ثانيًا. سجّل عاملًا الآن على أي حال: منح أي دور يُحرّك المال مرفوضٌ قبل أن يكون لديك واحد، فالتسجيل مسبقًا يوفّر دورة كاملة من الطلب والانتظار.') }}
             </p>
         @endif
@@ -95,29 +95,29 @@
     {{-- An enrolment in progress. It is first on the page because it is the
          one thing on it that expires with the response. --}}
     @if ($started)
-        <section class="mt-8 rounded-sheet border-2 border-primary bg-surface p-5">
-            <h2 class="text-title-s">{{ __('أكمل التسجيل الآن') }}</h2>
-            <p class="mt-2 text-body-m text-on-surface-muted">
+        <section class="mt-8 rounded-card border-2 border-primary bg-surface p-5">
+            <h2 class="text-title font-semibold text-on-surface">{{ __('أكمل التسجيل الآن') }}</h2>
+            <p class="mt-2 text-body text-on-surface-muted">
                 {{ __('هذا السرّ يُعرض مرّة واحدة فقط ولا يمكن إظهاره ثانيةً. إن غادرت هذه الصفحة قبل التأكيد، ابدأ التسجيل من جديد.') }}
             </p>
 
             <div class="mt-4 grid gap-4 sm:grid-cols-2">
                 <div>
-                    <h3 class="text-label-m">{{ __('على الهاتف') }}</h3>
-                    <p class="mt-1 text-body-s text-on-surface-muted">
+                    <h3 class="text-label font-medium text-on-surface">{{ __('على الهاتف') }}</h3>
+                    <p class="mt-1 text-label text-on-surface-muted">
                         {{ __('افتح هذا الرابط من الهاتف نفسه، فيفتح تطبيق المصادقة مباشرةً.') }}
                     </p>
                     <a href="{{ $started['uri'] }}"
-                       class="mt-2 inline-block break-all rounded-field border border-outline px-3 py-2 font-mono text-label-s text-primary underline"
+                       class="mt-2 inline-block break-all rounded-field border border-outline px-3 py-2 font-mono text-caption text-link underline"
                        dir="ltr">{{ \Illuminate\Support\Str::limit($started['uri'], 72) }}</a>
                 </div>
 
                 <div>
-                    <h3 class="text-label-m">{{ __('أو بالإدخال اليدوي') }}</h3>
-                    <p class="mt-1 text-body-s text-on-surface-muted">
+                    <h3 class="text-label font-medium text-on-surface">{{ __('أو بالإدخال اليدوي') }}</h3>
+                    <p class="mt-1 text-label text-on-surface-muted">
                         {{ __('أضف حسابًا جديدًا في التطبيق واكتب هذا السرّ.') }}
                     </p>
-                    <p class="mt-2 select-all rounded-field border border-outline bg-surface-variant px-3 py-2 font-mono text-label-m tracking-widest"
+                    <p class="mt-2 select-all rounded-field border border-outline bg-surface-sunken px-3 py-2 font-mono text-label font-medium tracking-widest text-on-surface"
                        dir="ltr">{{ $grouped($started['secret']) }}</p>
                 </div>
             </div>
@@ -132,31 +132,31 @@
                 <input type="hidden" name="uri" value="{{ $started['uri'] }}">
 
                 <div>
-                    <label for="code" class="block text-label-m">{{ __('الرمز المعروض في التطبيق') }}</label>
+                    <label for="code" class="block text-label font-medium text-on-surface">{{ __('الرمز المعروض في التطبيق') }}</label>
                     <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code"
                            maxlength="9" required dir="ltr"
-                           class="mt-1 w-40 rounded-field border border-outline bg-surface px-3 py-2 font-mono text-label-l tracking-widest">
+                           class="mt-1.5 block w-40 rounded-field border border-outline-control bg-surface-sunken px-3 py-2 font-mono text-body tracking-widest text-on-surface focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                 </div>
 
                 <x-button type="submit">{{ __('تأكيد') }}</x-button>
             </form>
 
             @if ($codeError)
-                <p role="alert" class="mt-3 text-body-s text-on-danger-subtle">{{ $codeError }}</p>
+                <p role="alert" class="mt-3 text-label text-danger">{{ $codeError }}</p>
             @endif
         </section>
     @endif
 
     {{-- Recovery codes, shown once, right after they are issued. --}}
     @if ($recoveryCodes)
-        <section class="mt-8 rounded-sheet border-2 border-warning bg-surface p-5">
-            <h2 class="text-title-s">{{ __('رموز الاسترداد') }}</h2>
-            <p class="mt-2 text-body-m text-on-surface-muted">
+        <section class="mt-8 rounded-card border-2 border-warning bg-surface p-5">
+            <h2 class="text-title font-semibold text-on-surface">{{ __('رموز الاسترداد') }}</h2>
+            <p class="mt-2 text-body text-on-surface-muted">
                 {{ __('تُعرض مرّة واحدة. احفظها في مكان آمن خارج هاتفك — فهي ما يُدخلك حين يُفقد الهاتف. كل رمز يُستخدم مرّة واحدة.') }}
             </p>
             <ul class="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3" dir="ltr">
                 @foreach ($recoveryCodes as $code)
-                    <li class="select-all rounded-field border border-outline bg-surface-variant px-3 py-2 text-center font-mono text-label-m">
+                    <li class="select-all rounded-field border border-outline bg-surface-sunken px-3 py-2 text-center font-mono text-label font-medium text-on-surface">
                         {{ $code }}
                     </li>
                 @endforeach
@@ -165,19 +165,19 @@
     @endif
 
     <section class="mt-8">
-        <h2 class="text-title-s">{{ __('عواملك') }}</h2>
+        <h2 class="text-title font-semibold text-on-surface">{{ __('عواملك') }}</h2>
 
         @if ($factors->isEmpty())
-            <p class="mt-2 text-body-m text-on-surface-muted">
+            <p class="mt-2 text-body text-on-surface-muted">
                 {{ __('لا يوجد عامل مسجَّل بعد.') }}
             </p>
         @else
             <ul class="mt-4 space-y-3">
                 @foreach ($factors as $factor)
-                    <li class="flex flex-wrap items-center justify-between gap-3 rounded-sheet border border-outline bg-surface px-4 py-3">
+                    <li class="flex flex-wrap items-center justify-between gap-3 rounded-card border border-outline bg-surface px-4 py-3">
                         <div>
-                            <p class="text-label-l">{{ $factor->name }}</p>
-                            <p class="text-body-s text-on-surface-muted">
+                            <p class="text-body font-medium text-on-surface">{{ $factor->name }}</p>
+                            <p class="text-label text-on-surface-muted">
                                 @if ($factor->isConfirmed())
                                     {{ __('مؤكَّد') }}
                                     @if ($factor->last_used_at)
@@ -206,18 +206,18 @@
         <form method="POST" action="{{ route('security.factors.begin') }}" class="mt-5 flex flex-wrap items-end gap-3">
             @csrf
             <div>
-                <label for="name" class="block text-label-m">{{ __('اسم الجهاز') }}</label>
+                <label for="name" class="block text-label font-medium text-on-surface">{{ __('اسم الجهاز') }}</label>
                 <input id="name" name="name" maxlength="60" placeholder="{{ __('هاتف العمل') }}"
-                       class="mt-1 w-56 rounded-field border border-outline bg-surface px-3 py-2">
+                       class="mt-1.5 block w-56 max-w-full rounded-field border border-outline-control bg-surface-sunken px-3 py-2 text-body text-on-surface focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
             </div>
             <x-button type="submit" variant="tonal">{{ __('تسجيل تطبيق مصادقة') }}</x-button>
         </form>
     </section>
 
-    <section class="mt-8 rounded-sheet border border-outline bg-surface p-5">
-        <h2 class="text-title-s">{{ __('رموز الاسترداد') }}</h2>
+    <section class="mt-8 rounded-card border border-outline bg-surface p-5">
+        <h2 class="text-title font-semibold text-on-surface">{{ __('رموز الاسترداد') }}</h2>
 
-        <p class="mt-2 text-body-m text-on-surface-muted">
+        <p class="mt-2 text-body text-on-surface-muted">
             @if ($recoveryCodesLeft > 0)
                 {{ __('لديك :count رمزًا لم يُستخدم.', ['count' => $recoveryCodesLeft]) }}
             @else
@@ -225,7 +225,7 @@
             @endif
         </p>
 
-        <p class="mt-2 text-body-s text-on-surface-muted">
+        <p class="mt-2 text-label text-on-surface-muted">
             {{ __('الرموز مُخزَّنة مُجزّأة، فلا يمكن إظهارها مرّة أخرى — وإصدار مجموعة جديدة يُبطل أي مجموعة سابقة فورًا، بما فيها المطبوعة.') }}
         </p>
 

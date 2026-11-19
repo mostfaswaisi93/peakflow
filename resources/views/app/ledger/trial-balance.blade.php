@@ -25,7 +25,8 @@
     ## Every figure arrives as a string and stays exact
 
     The amounts come from the report as decimal strings and are rendered
-    through `Money::toPresentation()`, at the currency's own exponent. A
+    through `Money::format()` - grouped by ICU, at the currency's own
+    exponent, which it rounds to as `toPresentation()` does. A
     trial balance read through a float is out by a fraction that grows with
     the row count, still prints as balanced, and reconciles to nothing.
 --}}
@@ -44,7 +45,7 @@
          */
         $split = static function (string $amount, string $currency): array {
             $money = \App\Support\Money\Money::of($amount, $currency);
-            $figure = (string) $money->abs()->toPresentation();
+            $figure = $money->abs()->format(withSymbol: false);
 
             return [
                 'debit' => $money->isPositive() ? $figure : null,
@@ -201,8 +202,8 @@
                     }
 
                     $totals[$column] = [
-                        'debit' => (string) $debit->toPresentation(),
-                        'credit' => (string) $credit->toPresentation(),
+                        'debit' => $debit->format(withSymbol: false),
+                        'credit' => $credit->format(withSymbol: false),
                     ];
                 }
 

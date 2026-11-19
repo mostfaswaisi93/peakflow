@@ -115,7 +115,7 @@
                             <span dir="ltr" class="figure text-on-surface-muted">{{ $party->code ?? '—' }}</span>
                         </td>
 
-                        <td class="px-4 py-3">
+                        <td class="whitespace-nowrap px-4 py-3">
                             @if ($detailUrl)
                                 <a href="{{ $detailUrl }}"
                                    @class([
@@ -129,7 +129,7 @@
                             @endif
                         </td>
 
-                        <td class="px-4 py-3 text-on-surface-muted">{{ $party->trading_name ?? '—' }}</td>
+                        <td class="whitespace-nowrap px-4 py-3 text-on-surface-muted">{{ $party->trading_name ?? '—' }}</td>
 
                         <td class="px-4 py-3">
                             @if ($roles === [])
@@ -174,7 +174,7 @@
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="7" class="px-4 py-8 text-center text-on-surface-muted">
+                        <td colspan="7" class="px-4 py-8 text-start text-on-surface-muted">
                             @if ($term === '')
                                 {{ __('لا توجد أطراف بعد.') }}
                             @else

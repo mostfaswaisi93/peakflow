@@ -34,8 +34,8 @@
          | size is a pixel wide.
          */
         $figure = static fn (\App\Support\Money\Money $money): string => $money->isNegative()
-            ? '('.$money->abs()->toPresentation().')'
-            : (string) $money->toPresentation();
+            ? '('.$money->abs()->format(withSymbol: false).')'
+            : $money->format(withSymbol: false);
 
         $sideNames = [
             'customer' => __('كشف عميل'),
@@ -128,8 +128,8 @@
                                     <th scope="row" class="py-2 pe-4 text-start font-medium text-on-surface">
                                         <span dir="ltr" class="figure">{{ $candidateCode }}</span>
                                     </th>
-                                    <td class="py-2 pe-4 text-on-surface">{{ $candidateName }}</td>
-                                    <td class="py-2">
+                                    <td class="whitespace-nowrap py-2 pe-4 text-on-surface">{{ $candidateName }}</td>
+                                    <td class="whitespace-nowrap py-2">
                                         <span class="flex flex-wrap gap-x-4 gap-y-1">
                                             @if ($candidate->is_customer)
                                                 <a href="{{ $customerUrl }}"

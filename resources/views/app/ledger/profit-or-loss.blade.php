@@ -23,7 +23,7 @@
     Every line, every band subtotal, profit for the period and total
     comprehensive income arrive from
     {@see \App\Tenant\Reporting\Services\StatementOfProfitOrLoss} as decimal
-    strings and are rendered through `Money::toPresentation()` at the
+    strings and are rendered through `Money::format()` - grouped, at the
     currency's own exponent. A subtotal re-summed here would be a second
     definition of the statement's shape, and the first line put on the wrong
     side of it would print a subtotal that is wrong under a total that is
@@ -263,8 +263,8 @@
 
                     return [
                         'text' => $negative
-                            ? '('.(string) $money->abs()->toPresentation().')'
-                            : (string) $money->toPresentation(),
+                            ? '('.$money->abs()->format(withSymbol: false).')'
+                            : $money->format(withSymbol: false),
                         'negative' => $negative,
                     ];
                 };

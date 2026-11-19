@@ -213,7 +213,7 @@
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="9" class="px-4 py-8 text-center text-on-surface-muted">
+                        <td colspan="9" class="px-4 py-8 text-start text-on-surface-muted">
                             @if ($term === '')
                                 {{ __('لا توجد أصناف بعد.') }}
                             @else

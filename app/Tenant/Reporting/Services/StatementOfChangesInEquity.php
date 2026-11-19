@@ -311,8 +311,8 @@ final class StatementOfChangesInEquity
                 'en' => sprintf(
                     'Equity opens at %s and closes at %s, and every movement between them is accounted '.
                     'for.',
-                    Money::of($totals['opening_balance'], $currency)->toPresentation(),
-                    Money::of($totals['closing_balance'], $currency)->toPresentation(),
+                    Money::of($totals['opening_balance'], $currency)->format('en', false),
+                    Money::of($totals['closing_balance'], $currency)->format('en', false),
                 ),
                 'ar' => 'الرصيد الافتتاحي لحقوق الملكية وكل حركة عليه حتى الرصيد الختامي مُفسَّرة.',
             ];
@@ -324,7 +324,7 @@ final class StatementOfChangesInEquity
                 'The opening balance and the movements do not reach the closing balance: %s is '.
                 'unexplained. A movement has fallen into none of the kinds this statement presents, so '.
                 'it is on the balance sheet and is not on this page.',
-                $unexplained->abs()->toPresentation(),
+                $unexplained->abs()->format('en', false),
             ),
             'ar' => 'الرصيد الافتتاحي مع الحركات لا يبلغ الرصيد الختامي: هناك فرق غير مُفسَّر. حركةٌ لم '.
                 'تدخل في أيٍّ من أنواع الحركات المعروضة، فهي في الميزانية وليست في هذه القائمة.',
