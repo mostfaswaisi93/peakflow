@@ -23,6 +23,7 @@ declare(strict_types=1);
  |   php bin/verify tenant     what the tenant database actually enforces
  |   php bin/verify rollback   provisioning rollback, by injecting a failure at each step (slow)
  |   php bin/verify dump      a tenant dump, restored into a fresh database and compared (slow, writes)
+ |   php bin/verify viewport  the real pages at 320/768/1024/1440, in a browser (slow, signs in)
  |   php bin/verify concurrency  gapless numbering under 20 parallel issuers (slow, writes data)
  |   php bin/verify public     the customer-facing quote link, over real HTTP (writes data)
  |   php bin/verify api        the REST contract, over real HTTP (writes data, spawns workers)
@@ -144,6 +145,11 @@ if ($only === 'all' || $only === 'wiring') {
  | transaction a suite would hold and takes its fixture with it. So this one
  | commits its fixture and tears it down afterwards.
  */
+if ($only === 'viewport') {
+    // Starts a server and a browser, so it is slow and it signs in.
+    $suites['Measured in a browser'] = $suite(static fn (): array => (new Tests\Support\ViewportRules())->all());
+}
+
 if ($only === 'public') {
     $suites['The public quote link'] = $suite(static fn (): array => (new Tests\Support\PublicQuoteRules())->all());
 }
@@ -421,7 +427,7 @@ if ($only === 'all' || $only === 'examples') {
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | design | design-system | grid | shell | identity | sales-currency | reporting | errors | hardening | observability | repo | ops | tax | charts | sales | exchange | attachments | archive | inbound | purchasing | banking | settlement | stock | sync | payroll | messaging | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public | api\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | design | design-system | grid | shell | identity | sales-currency | reporting | errors | hardening | observability | repo | ops | tax | charts | sales | exchange | attachments | archive | inbound | purchasing | banking | settlement | stock | sync | payroll | messaging | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public | api | viewport\n");
     exit(2);
 }
 

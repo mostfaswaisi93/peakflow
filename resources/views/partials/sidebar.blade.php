@@ -75,7 +75,7 @@
         lines are the one icon everybody reads without a word under it.
     --}}
     <details name="pf-header" class="group lg:hidden">
-        <summary class="-ms-2 flex size-10 list-none items-center justify-center rounded-button text-on-surface-muted
+        <summary class="-ms-2 flex size-11 list-none items-center justify-center rounded-button text-on-surface-muted
                         transition-colors duration-(--duration-fast) ease-(--ease-standard)
                         hover:bg-surface-hover hover:text-on-surface group-open:bg-surface-selected group-open:text-on-surface
                         focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring

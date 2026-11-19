@@ -513,6 +513,11 @@ final class DesignFoundationRules
      * designed in the abstract and then imposed generates a hundred
      * exceptions on its first run, and a hundred exceptions is no scale.
      */
+    public static function spacingSteps(): array
+    {
+        return self::SPACING_STEPS;
+    }
+
     private const SPACING_STEPS = [
         '0', '0.5', '1', '1.5', '2', '2.5', '3', '4', '5', '6', '8', '10', '12',
     ];

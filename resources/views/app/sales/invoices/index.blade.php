@@ -235,12 +235,12 @@
 
                 <div class="flex items-center gap-2">
                     @if ($invoices->onFirstPage())
-                        <span class="rounded-button border border-outline px-3 py-1.5 text-label text-on-surface-subtle">
+                        <span class="inline-flex min-h-11 items-center rounded-button border border-outline px-3 py-1.5 text-label text-on-surface-subtle">
                             {{ __('السابق') }}
                         </span>
                     @else
                         <a href="{{ $invoices->previousPageUrl() }}" rel="prev"
-                           class="rounded-button border border-outline-strong px-3 py-1.5 text-label font-medium text-on-surface
+                           class="inline-flex min-h-11 items-center rounded-button border border-outline-strong px-3 py-1.5 text-label font-medium text-on-surface
                                   hover:bg-surface-hover
                                   focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                             {{ __('السابق') }}
@@ -249,13 +249,13 @@
 
                     @if ($invoices->hasMorePages())
                         <a href="{{ $invoices->nextPageUrl() }}" rel="next"
-                           class="rounded-button border border-outline-strong px-3 py-1.5 text-label font-medium text-on-surface
+                           class="inline-flex min-h-11 items-center rounded-button border border-outline-strong px-3 py-1.5 text-label font-medium text-on-surface
                                   hover:bg-surface-hover
                                   focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                             {{ __('التالي') }}
                         </a>
                     @else
-                        <span class="rounded-button border border-outline px-3 py-1.5 text-label text-on-surface-subtle">
+                        <span class="inline-flex min-h-11 items-center rounded-button border border-outline px-3 py-1.5 text-label text-on-surface-subtle">
                             {{ __('التالي') }}
                         </span>
                     @endif

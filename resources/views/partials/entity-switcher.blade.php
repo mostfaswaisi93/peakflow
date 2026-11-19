@@ -19,7 +19,7 @@
             a second line.
         --}}
         <span title="{{ $currentName }}"
-              class="inline-flex h-9 min-w-0 max-w-64 shrink items-center gap-2 rounded-button border border-outline-subtle bg-surface-sunken px-3 text-label font-medium text-on-surface">
+              class="inline-flex h-11 min-w-0 max-w-64 shrink items-center gap-2 rounded-button border border-outline-subtle bg-surface-sunken px-3 text-label font-medium text-on-surface">
             <x-icon name="building" class="size-4 text-on-surface-muted"/>
             {{-- `dir="auto"`: a Latin legal name in an Arabic page otherwise
                  truncates from its first letters ("...mo Trading Co"). --}}
@@ -46,7 +46,7 @@
                 and choosing a company did nothing at all.
             --}}
             <select id="entity-switcher" name="entity" data-submit-on-change
-                    class="h-9 min-w-0 max-w-64 rounded-button border border-outline-control bg-surface-sunken px-3 text-label font-medium text-on-surface
+                    class="h-11 min-w-0 max-w-64 rounded-button border border-outline-control bg-surface-sunken px-3 text-label font-medium text-on-surface
                            focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
                 @foreach ($available as $entity)
                     <option value="{{ $entity->id }}" @selected($entity->id === $current->id)>
@@ -58,7 +58,7 @@
             {{-- The fallback for a browser with scripting off. --}}
             <noscript>
                 <button type="submit"
-                        class="h-9 rounded-button bg-primary px-3 text-label text-on-primary">{{ __('تبديل') }}</button>
+                        class="h-11 rounded-button bg-primary px-3 text-label text-on-primary">{{ __('تبديل') }}</button>
             </noscript>
         </form>
     @endif

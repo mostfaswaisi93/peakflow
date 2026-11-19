@@ -22,7 +22,7 @@
 @php($densitySummary = __('الكثافة').': '.__($density->label()))
 <details name="pf-header" class="group relative">
     <summary title="{{ $densitySummary }}"
-             class="flex h-10 min-w-10 list-none items-center justify-center gap-2 rounded-button px-2.5 text-label text-on-surface-muted
+             class="flex h-11 min-w-11 list-none items-center justify-center gap-2 rounded-button px-2.5 text-label text-on-surface-muted
                     transition-colors duration-(--duration-fast) ease-(--ease-standard)
                     hover:bg-surface-hover hover:text-on-surface group-open:bg-surface-selected group-open:text-on-surface
                     focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring

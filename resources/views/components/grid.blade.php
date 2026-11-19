@@ -305,7 +305,7 @@
             nothing here needs a script to open.
         --}}
         <details class="rounded-card border border-outline bg-surface">
-            <summary class="cursor-pointer px-3 py-2 text-label font-medium text-on-surface
+            <summary class="flex min-h-11 cursor-pointer items-center px-3 py-2 text-label font-medium text-on-surface
                             focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                 {{ __('العروض المحفوظة') }}
             </summary>
@@ -350,7 +350,7 @@
         5 of 7 rather than 1, 2 and 3 of 3.
     --}}
     <details class="rounded-card border border-outline bg-surface">
-        <summary class="cursor-pointer px-3 py-2 text-label font-medium text-on-surface
+        <summary class="flex min-h-11 cursor-pointer items-center px-3 py-2 text-label font-medium text-on-surface
                         focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
             {{ __('الأعمدة الظاهرة') }}
         </summary>
@@ -423,7 +423,7 @@
                 way to press it.
             --}}
             <button type="button" data-pf-grid-copy
-                    class="rounded-button border border-outline-strong px-3 py-1.5 text-label text-on-surface
+                    class="inline-flex min-h-11 items-center rounded-button border border-outline-strong px-3 py-1.5 text-label text-on-surface
                            hover:bg-surface-hover
                            focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                 {{ __('انسخ المحدَّد') }}
@@ -648,12 +648,12 @@
         --}}
         <nav aria-label="{{ $caption }}" class="flex flex-wrap items-center justify-end gap-2">
             @if ($paginator->previousPageUrl() === null)
-                <span class="rounded-button border border-outline px-3 py-1.5 text-label text-on-surface-subtle">
+                <span class="inline-flex min-h-11 items-center rounded-button border border-outline px-3 py-1.5 text-label text-on-surface-subtle">
                     {{ __('السابق') }}
                 </span>
             @else
                 <a href="{{ $paginator->previousPageUrl() }}" rel="prev"
-                   class="rounded-button border border-outline-strong px-3 py-1.5 text-label font-medium text-on-surface
+                   class="inline-flex min-h-11 items-center rounded-button border border-outline-strong px-3 py-1.5 text-label font-medium text-on-surface
                           hover:bg-surface-hover
                           focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                     {{ __('السابق') }}
@@ -661,12 +661,12 @@
             @endif
 
             @if ($paginator->nextPageUrl() === null)
-                <span class="rounded-button border border-outline px-3 py-1.5 text-label text-on-surface-subtle">
+                <span class="inline-flex min-h-11 items-center rounded-button border border-outline px-3 py-1.5 text-label text-on-surface-subtle">
                     {{ __('التالي') }}
                 </span>
             @else
                 <a href="{{ $paginator->nextPageUrl() }}" rel="next"
-                   class="rounded-button border border-outline-strong px-3 py-1.5 text-label font-medium text-on-surface
+                   class="inline-flex min-h-11 items-center rounded-button border border-outline-strong px-3 py-1.5 text-label font-medium text-on-surface
                           hover:bg-surface-hover
                           focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                     {{ __('التالي') }}

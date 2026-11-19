@@ -108,7 +108,7 @@
                      the company shares the one row, and the 140 px the
                      monogram saves are what keep its name whole. --}}
                 <a href="{{ route('overview') }}"
-                   class="flex items-center rounded-button p-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
+                   class="flex min-h-11 min-w-11 items-center justify-center rounded-button p-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring">
                     <span class="sm:hidden md:block lg:hidden"><x-brand.logo size="monogram" class="h-8"/></span>
                     <span class="hidden sm:block md:hidden lg:block"><x-brand.logo size="small" class="h-8"/></span>
                 </a>
@@ -142,7 +142,7 @@
                 --}}
                 <details name="pf-header" class="group relative">
                     <summary title="{{ $userName }}"
-                             class="flex h-10 list-none items-center gap-2 rounded-full p-1 text-on-surface
+                             class="flex h-11 min-w-11 list-none items-center justify-center gap-2 rounded-full p-1 text-on-surface
                                     transition-colors duration-(--duration-fast) ease-(--ease-standard)
                                     hover:bg-surface-hover group-open:bg-surface-selected
                                     focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring
@@ -157,7 +157,7 @@
                     <div class="absolute end-0 z-(--z-popover) mt-2 w-72 rounded-card border border-outline bg-surface-container-high p-2 shadow-e3">
                         <div class="flex items-center gap-3 px-3 py-2">
                             <span aria-hidden="true"
-                                  class="grid size-10 shrink-0 place-items-center rounded-full bg-primary text-label font-semibold text-on-primary">{{ $initials }}</span>
+                                  class="grid size-11 shrink-0 place-items-center rounded-full bg-primary text-label font-semibold text-on-primary">{{ $initials }}</span>
                             <div class="min-w-0">
                                 <p class="truncate text-body font-medium text-on-surface">{{ $userName }}</p>
                                 @if ($userEmail !== '')

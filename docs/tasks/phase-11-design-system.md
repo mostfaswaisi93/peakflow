@@ -290,11 +290,20 @@ Designed states for every screen, not left to the framework.
 
 A ledger is used on a laptop and read on a phone - an approver clearing a payment run in a taxi, an owner checking a balance at a supplier's counter. The failure is not that the page breaks; it is that it *works* while costing four horizontal scrolls and a pinch, and the person stops using it rather than complaining.
 
-- [ ] A **width budget per screen**, asserted: no page scrolls horizontally at 320 CSS pixels, which is WCAG 1.4.10's reflow threshold and the narrowest phone still in use
+- [x] A **width budget per screen**, asserted: no page scrolls horizontally at 320 CSS pixels, which is WCAG 1.4.10's reflow threshold and the narrowest phone still in use
+  - `bin/verify viewport` drives the real application - `php artisan serve` on a port of its own, signed in as the showcase owner - and visits four pages at 320, 768, 1024 and 1440, in Arabic and in English. No page scrolls sideways at any of them.
+  - It reports **which element overflows**, not just that the page does, because "this page scrolls" is a bug report and "`div.flex.flex-wrap` is 924px in a 320px viewport" is a fix. The bite puts a `min-width` on the page header and gets exactly that sentence.
+  - A table inside its own `overflow-x: auto` scroller is **not** a failure and the check does not report one: a grid that scrolls within its box is the intended behaviour, and flagging it would be the check teaching people to ignore it. Found by biting the wrong thing first.
 - [ ] The data grid has a declared behaviour at each breakpoint - which columns collapse, which become a second line, which are dropped - and the rule is in the component rather than in each page's classes
 - [ ] Every page is rendered at 320, 768, 1024 and 1440 in a real browser and the screenshots are compared against the previous run, so a layout that regresses is a diff rather than a bug report
-- [ ] Touch targets are at least 44×44 CSS pixels where a finger is the pointer, and the check reads the computed box rather than the class
-- [ ] RTL is measured at every width too, because a layout that only breaks in Arabic at 320 is a layout nobody on the team sees break
+- [x] Touch targets are at least 44×44 CSS pixels where a finger is the pointer, and the check reads the computed box rather than the class
+  - **It found real ones.** Every control in the header was 40×40 or less - the navigation toggle, the density and theme switchers, the company switcher, the user menu - and the grid's own controls were 34 to 36 pixels tall: the column toggle, the copy button and both paginations. All now clear 44, and the check measures the rendered rectangle, so a target sized by a class its parent shrinks is still caught.
+  - Getting it to say only true things took two passes. The first run reported the skip link at 1×1 - which is correct, it lives at -9999px until focused - and every link in a collapsed `<details>`, which lays its contents out without showing them. A check that reports what cannot be touched is a check people scroll past.
+  - Breadcrumb links are exempt under **WCAG 2.5.8's own "inline" exception**: a link in a line of text takes its size from the text, and enlarging it breaks the line. Matched on the computed `display` rather than on the tag, so a link made into a block or a flex item is still measured.
+  - Only measured at 320 and 768, because the criterion is about where a finger is the pointer.
+- [x] RTL is measured at every width too, because a layout that only breaks in Arabic at 320 is a layout nobody on the team sees break
+  - Both directions, every page, every width - the run signs in twice, once with an Arabic locale and once with English, and the failures are labelled with the direction they appeared in.
+  - It is the cheaper half of the pair to get right and the one that silently rots, because the team reads the product in Arabic and the breakage is in the other one as often as not.
 
 ### PF-277 · One spacing scale, applied everywhere
 `—` · **5 pts** · depends: PF-199 · standards: — · `type:design`
@@ -317,10 +326,9 @@ Inconsistent spacing is the single most visible sign of software assembled by se
   - `ms-9` in the trial balance is **one rung of a ladder**: `ms-0, ms-3, ms-6, ms-9, ms-12`, regular at a step of 3, and the indent is what says which account is inside which. Breaking the ladder to fit the scale would break the report.
   - `py-16` in the plain layout is the vertical breathing room of a page with one card centred in it, where the space *is* the layout rather than a gap between two things.
   - The exceptions are keyed by `file:class`, so each is granted to one use rather than to a step everywhere - and the check reports an exception whose subject has gone, because an exception nobody revoked is a licence for the next person who needs one.
-- [ ] The check reads computed styles from a rendered page, not class names - a page that reaches the right spacing by three overrides is a page that breaks on the next change
-  - Not started, and the honest statement of what is built instead: the check above reads **templates**, which is the weaker of the two measurements. A page that reaches the right spacing through three overrides still passes it.
-  - What it does catch is the failure this task describes - one `mt-7` among the `mt-6`s - because that is a class, and a class is readable without a browser.
-  - The computed form needs a browser driving real pages, which is the same machinery PF-276 needs for its width budget and PF-280 for its skeleton measurements. Building it once for the three is the sensible order; building it three times is not.
+- [x] The check reads computed styles from a rendered page, not class names - a page that reaches the right spacing by three overrides is a page that breaks on the next change
+  - Built as `bin/verify viewport`, shared with PF-276. It reads the computed `margin-block-start` of every direct child of `<main>` on four pages at four widths in both directions, and asserts each is a step of the declared scale. Every gap in the product is.
+  - The template check remains and is not redundant: it reads **every** template including ones no route renders, where this reads only what a browser can reach. The two measure different halves, and the one that can be run without a server is the one people will actually run.
 
 ### PF-278 · Tables that read like a financial product
 `—` · **8 pts** · depends: PF-205, PF-277 · standards: WCAG 2.2 AA · `risk:high`
