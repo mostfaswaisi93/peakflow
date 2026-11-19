@@ -117,6 +117,16 @@ final class MigrationSafetyInspector
             'instead' => 'alter each partition individually where the operation allows it, or schedule the parent '.
                 'alteration in a maintenance window and say so in the annotation',
         ],
+        /*
+         | Found by writing PF-246's declarations: nine migrations add a
+         | CHECK constraint to a table that already exists, and nothing
+         | flagged any of them.
+         |
+         | Detected procedurally rather than by this pattern alone - the
+         | constraints come comma-separated inside one ALTER TABLE, so a
+         | regex looking for `NOT VALID` anywhere before the semicolon is
+         | satisfied by a sibling constraint that has one.
+         */
         'unbounded UPDATE' => [
             'pattern' => '/->(?:update|delete)\(\s*\[/',
             'does' => 'writes every row in one transaction, holding row locks and generating WAL proportional to '.
@@ -127,6 +137,34 @@ final class MigrationSafetyInspector
     ];
 
     private const REVIEWED = '@unsafe-migration-reviewed';
+
+    /**
+     * A migration that declares it is not for live traffic - PF-246.
+     *
+     * Different from {@see self::REVIEWED}, and the difference is worth
+     * keeping. `@unsafe-migration-reviewed` says "this hazard is fine HERE,
+     * even online". `@online-unsafe` says "this must not run while traffic
+     * is served", which is a schedule rather than an exoneration.
+     */
+    private const OFFLINE = '@online-unsafe';
+
+    /**
+     * The hazards an `@online-unsafe` declaration actually answers.
+     *
+     * Narrow on purpose. A declaration that excused every hazard would make
+     * one annotation silence the whole inspector for a file, which is the
+     * failure mode `@unsafe-migration-reviewed` already has to be careful
+     * about - it is at least named for reviewing a specific thing.
+     *
+     * What belongs here is a hazard whose entire cost is "it blocks while
+     * it runs". Saying the migration does not run against traffic answers
+     * that completely. It does NOT answer a hazard that breaks the running
+     * code afterwards - a rename, a dropped column - because that outlives
+     * the window.
+     */
+    private const ANSWERED_BY_BEING_OFFLINE = [
+        'CHECK constraint without NOT VALID',
+    ];
 
     /**
      * Inspect migration files and return what would be unsafe.
@@ -146,7 +184,31 @@ final class MigrationSafetyInspector
             }
 
             $reviewed = $this->reviewNote($source);
+            $offline = str_contains($source, self::OFFLINE);
             $created = $this->createBlocks($source);
+
+            foreach ($this->checkConstraintsThatScan($source) as [$statement, $offset]) {
+                if ($this->lineIsExcused($source, $offset) || $this->fallsInside($offset, $created)) {
+                    continue;
+                }
+
+                if ($offline) {
+                    continue;
+                }
+
+                $hazards[] = new MigrationHazard(
+                    file: basename($file),
+                    line: substr_count($source, "\n", 0, $offset) + 1,
+                    name: 'CHECK constraint without NOT VALID',
+                    statement: $statement,
+                    does: 'scans every row of an existing table under ACCESS EXCLUSIVE, so reads and '.
+                        'writes both wait for the length of a full scan',
+                    instead: 'ADD CONSTRAINT ... NOT VALID, then VALIDATE CONSTRAINT in a second '.
+                        'statement - the validation takes only SHARE UPDATE EXCLUSIVE and blocks '.
+                        'neither. Or declare @online-unsafe and schedule it',
+                    reviewedBecause: $reviewed,
+                );
+            }
 
             foreach (self::HAZARDS as $name => $hazard) {
                 if (preg_match_all($hazard['pattern'], $source, $matches, PREG_OFFSET_CAPTURE) === 0) {
@@ -265,6 +327,95 @@ final class MigrationSafetyInspector
     }
 
     /** The file-wide review note, if the migration carries one. */
+    /**
+     * Each `ADD CONSTRAINT ... CHECK` that will scan, with its offset.
+     *
+     * Procedural, because the constraints arrive comma-separated inside one
+     * `ALTER TABLE` and a regex asking whether `NOT VALID` appears before
+     * the semicolon is satisfied by a SIBLING constraint that has one. Each
+     * clause is cut at the next `ADD CONSTRAINT` or the end of the
+     * statement and asked on its own.
+     *
+     * @return list<array{string, int}>
+     */
+    private function checkConstraintsThatScan(string $source): array
+    {
+        if (preg_match_all('/ADD\s+CONSTRAINT\s+\w+/i', $source, $matches, PREG_OFFSET_CAPTURE) === 0) {
+            return [];
+        }
+
+        /*
+         | A constraint on a table this migration created is not a hazard.
+         |
+         | Nothing can be reading a table that did not exist a moment ago, so
+         | the scan finds no rows and the lock contends with nobody. The first
+         | version of this flagged create_fiscal_calendar and
+         | create_chart_of_accounts - every table-creating migration in the
+         | product - because fallsInside() knows the Schema closure and these
+         | constraints arrive in a raw ALTER TABLE after it.
+         */
+        $createdHere = $this->tablesCreatedIn($source);
+
+        $found = [];
+        $starts = array_map(static fn (array $m): int => (int) $m[1], $matches[0]);
+
+        foreach ($matches[0] as $index => [$matched, $offset]) {
+            $offset = (int) $offset;
+            $semicolon = strpos($source, ';', $offset);
+            $next = $starts[$index + 1] ?? PHP_INT_MAX;
+            $end = min($next, $semicolon === false ? PHP_INT_MAX : $semicolon, strlen($source));
+
+            $clause = substr($source, $offset, $end - $offset);
+
+            if (preg_match('/\bCHECK\s*\(/i', $clause) !== 1) {
+                continue;
+            }
+
+            if (preg_match('/\bNOT\s+VALID\b/i', $clause) === 1) {
+                continue;
+            }
+
+            if (\in_array($this->alterTargetBefore($source, $offset), $createdHere, true)) {
+                continue;
+            }
+
+            $found[] = [trim((string) $matched), $offset];
+        }
+
+        return $found;
+    }
+
+    /**
+     * The tables this migration creates, however it spells it.
+     *
+     * @return list<string>
+     */
+    private function tablesCreatedIn(string $source): array
+    {
+        preg_match_all('/Schema::create\(\s*[\x27"](\w+)[\x27"]/', $source, $schema);
+        preg_match_all('/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)/i', $source, $raw);
+
+        return array_values(array_unique([...$schema[1], ...$raw[1]]));
+    }
+
+    /**
+     * Which table the `ALTER TABLE` above this offset is about.
+     *
+     * The nearest one preceding it, because the clauses of one statement
+     * share a target and PostgreSQL has no way to spell two in one.
+     */
+    private function alterTargetBefore(string $source, int $offset): ?string
+    {
+        if (preg_match_all('/ALTER\s+TABLE\s+(?:ONLY\s+)?(\w+)/i', substr($source, 0, $offset), $m, PREG_OFFSET_CAPTURE) === 0) {
+            return null;
+        }
+
+        $last = end($m[1]);
+
+        return $last === false ? null : (string) $last[0];
+    }
+
+
     private function reviewNote(string $source): ?string
     {
         if (preg_match('/'.preg_quote(self::REVIEWED, '/').':\s*(.+)/', $source, $m) !== 1) {
