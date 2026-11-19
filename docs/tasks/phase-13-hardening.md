@@ -20,9 +20,15 @@ The distinguishing idea is **alerting on invariants**. A dashboard of CPU and p9
 ### PF-232 · Threat model and abuse cases
 `—` · **5 pts** · depends: PF-231 · standards: OWASP · `type:security`
 
-- [ ] A written threat model per trust boundary: browser to app, app to tenant database, app to platform database, app to Exchange, Exchange to partner, operator to tenant
-- [ ] **Abuse cases, not only misuse cases**: beneficiary substitution, self-approval through a delegate, period reopening to hide a posting, credit note to erase a receivable, export as data exfiltration, impersonation without consent
-- [ ] Each abuse case names the control that stops it and the test that proves the control
+- [x] A written threat model per trust boundary: browser to app, app to tenant database, app to platform database, app to Exchange, Exchange to partner, operator to tenant
+  - `docs/security/threat-model.md`. Six boundaries, each with what crosses it, the controls, and the checks that prove them - and the boundary headings are asserted, because a model missing one is missing the only description of what crosses it.
+  - The sixth is the one worth naming: **operator to tenant, where the insider is us**. An operator who can read a tenant's books unattributably is the worst case in the product, and the control is that reading requires impersonation, which requires consent and writes an event in both planes.
+- [x] **Abuse cases, not only misuse cases**: beneficiary substitution, self-approval through a delegate, period reopening to hide a posting, credit note to erase a receivable, export as data exfiltration
+  - Six, and **each is a sequence of authorised acts**. That is what makes them abuse cases rather than misuse cases, and it is why none of them is stopped by authentication: the attackers in an accounting product are ordinary - somebody who can already sign in, somebody who was given a permission and keeps it. The interesting failures are legitimate actions in the wrong order.
+  - A sixth was added beyond the five the criterion names: **a token outliving its purpose**. An integration is switched off and its credential is not, and it keeps working for as long as nobody looks., impersonation without consent
+- [x] Each abuse case names the control that stops it and the test that proves the control
+  - And the check names are **read out of the document and looked for among the suites**. A threat model whose controls are described in prose decays the first time one is refactored and nobody finds out, because the thing it describes still *sounds* true - and the reader's conclusion, "that is handled", is the one a stale security document must not produce.
+  - It asserts the names **exist**, not that they pass: whether they pass is what `bin/verify` is for, and a check that ran other checks would be slower than the suite and would report their failures twice. What this adds is the thing nothing else covers - that the document and the suite are talking about the same controls. Bitten by renaming a cited check and by renaming a boundary.
 - [ ] A review checklist derived from the model, applied to any pull request touching money, auth or SoD
 
 ### PF-234 · Secret management

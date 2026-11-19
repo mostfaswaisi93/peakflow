@@ -49,6 +49,7 @@ final class ArchitectureRules
             'and the playbook names every hazard the inspector knows' => $this->everyHazardIsInThePlaybook(),
             'the Exchange plane reads no secret from configuration' => $this->theExchangePlaneReadsNoSecret(),
             'every table holding personal data is in the register' => $this->everyPersonalTableIsRegistered(),
+            'every control the threat model cites is a check that exists' => $this->everyAbuseCaseNamesALiveCheck(),
             'the built assets are not stale' => $this->builtAssetsAreNotStale(),
             'translation catalogs agree' => $this->translationCatalogsAgree(),
             'strict types everywhere' => $this->strictTypesDeclared(),
@@ -1268,6 +1269,168 @@ final class ArchitectureRules
             $newestAt - $builtAt,
         )];
     }
+
+    /**
+     * Every control the threat model cites is a check that exists - PF-232.
+     *
+     * ## Why the model is held to the suite
+     *
+     * A threat model whose controls are described in prose decays the first
+     * time one is refactored, and nobody finds out - because the thing it
+     * describes still SOUNDS true. The reader's conclusion is "that is
+     * handled", which is the one conclusion a stale security document must
+     * not produce.
+     *
+     * So each boundary and each abuse case names the checks that prove its
+     * control, in backticks, and those names are read out of the document
+     * and looked for among the suites' registrations. A renamed check fails
+     * this; a deleted one fails it louder.
+     *
+     * ## It asserts the names exist, not that they pass
+     *
+     * Deliberately. Whether they pass is what `bin/verify` is for, and a
+     * check that ran other checks would be slower than the suite and would
+     * report their failures twice. What this adds is the thing nothing else
+     * covers: that the document and the suite are talking about the same
+     * controls.
+     *
+     * @return list<string>
+     */
+    public function everyAbuseCaseNamesALiveCheck(): array
+    {
+        $path = $this->basePath.'/docs/security/threat-model.md';
+
+        if (! is_file($path)) {
+            return ['docs/security/threat-model.md does not exist. The abuse cases in this product '.
+                'are sequences of AUTHORISED acts - a bank account changed and then paid, a period '.
+                'reopened and reclosed - and none of them is stopped by authentication, so none of '.
+                'them is obvious from the code'];
+        }
+
+        $model = (string) file_get_contents($path);
+
+        /*
+         | The cited names, read from the lines that cite them.
+         |
+         | Scoped to `Proved by:` lines rather than every backticked span in
+         | the file, because the prose also quotes rule keys, column names
+         | and config paths - and a check that demanded those be check names
+         | would be one somebody silences by removing the backticks.
+         */
+        $cited = [];
+
+        foreach (explode("\n", $model) as $line) {
+            if (! str_contains($line, 'Proved by:') && ! str_starts_with(trim($line), '**Proved by:**')) {
+                continue;
+            }
+
+            preg_match_all('/`([^`]+)`/', $line, $matches);
+
+            foreach ($matches[1] as $name) {
+                $cited[trim((string) $name)] = true;
+            }
+        }
+
+        /*
+         | A multi-line `Proved by:` continues on the next lines, which the
+         | loop above misses. Rather than parse markdown, the whole block is
+         | taken: from each marker to the next blank line.
+         */
+        if (preg_match_all('/\*\*Proved by:\*\*(.+?)(?:\n\n|\z)/s', $model, $blocks) > 0) {
+            foreach ($blocks[1] as $block) {
+                preg_match_all('/`([^`]+)`/', (string) $block, $matches);
+
+                foreach ($matches[1] as $name) {
+                    $cited[trim((string) $name)] = true;
+                }
+            }
+        }
+
+        if ($cited === []) {
+            return ['the threat model cites no check at all. Each abuse case has to name the control '.
+                'that stops it AND the check that proves the control - without the second, the model '.
+                'is a document about threats rather than a model of them'];
+        }
+
+        $live = $this->registeredCheckNames();
+
+        if ($live === []) {
+            return ['no check name could be read out of tests/Support, so this compared the model '.
+                'against nothing'];
+        }
+
+        $problems = [];
+
+        foreach (array_keys($cited) as $name) {
+            if (! \in_array($name, $live, true)) {
+                $problems[] = sprintf(
+                    'the threat model cites "%s" and no suite registers a check by that name. A model '.
+                    'whose control was renamed still READS as though the control is there, and the '.
+                    'conclusion it produces - "that is handled" - is the one a stale security '.
+                    'document must not produce',
+                    $name,
+                );
+            }
+        }
+
+        /*
+         | And the boundaries are all there.
+         |
+         | Six, because that is the shape of the product: a browser, two
+         | databases, the exchange plane, the partner beyond it, and us. A
+         | model missing one is missing the only description of what crosses
+         | it.
+         */
+        foreach ([
+            'Browser → application',
+            'Application → tenant database',
+            'Application → platform database',
+            'Application → Exchange',
+            'Exchange → partner',
+            'Operator → tenant',
+        ] as $boundary) {
+            if (! str_contains($model, $boundary)) {
+                $problems[] = sprintf(
+                    'the threat model has no section for the boundary "%s". It is the only place that '.
+                    'says what crosses it and what stops at it',
+                    $boundary,
+                );
+            }
+        }
+
+        return $problems;
+    }
+
+    /**
+     * Every check name the suites register.
+     *
+     * Read from the registration arrays by shape rather than by running
+     * anything: a check that booted every suite to list their names would
+     * need every fixture in the product.
+     *
+     * @return list<string>
+     */
+    private function registeredCheckNames(): array
+    {
+        $names = [];
+
+        foreach (glob($this->basePath.'/tests/Support/*.php') ?: [] as $file) {
+            $source = (string) file_get_contents($file);
+
+            preg_match_all(
+                "/'((?:[^'\\\\]|\\\\.){15,120})'\\s*=>\\s*(?:\\\$this->|fn \\(\\): array|static fn|\\[\\])/",
+                $source,
+                $matches,
+            );
+
+            foreach ($matches[1] as $name) {
+                $names[str_replace(["\\'", '\\\\'], ["'", '\\'], (string) $name)] = true;
+            }
+        }
+
+        return array_keys($names);
+    }
+
 
     /**
      * Every table holding a personal-data shape is in the register - PF-239.
