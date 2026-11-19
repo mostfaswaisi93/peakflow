@@ -64,23 +64,6 @@ statement with an empty expense side; and a manual entry to a control
 account is refused, because a control account's balance is the total of a
 subledger and a manual posting makes the two disagree.
 
-### PF-188 · General ledger detail and registers
-`Reporting` · **3 pts** · depends: PF-183 · standards: —
-
-- [x] GL detail by account and period with running balances
-  - Opening, movement and closing are **one arithmetic**, and the opening balance is the trial balance's own figure rather than a second computation. A bite that negated the opening balance left the report internally consistent - opening plus movement still equalled closing - and only the cross-check against the trial balance caught it, which is why that check exists at all.
-  - The running balance moves within an account and never across two: a static carry between accounts is caught by its own check, because it is the mistake a single accumulator makes and the figures it produces are all plausible.
-- [x] Account activity for a date range, filterable by dimension, party and journal
-  - A filter is **stated on the output and applied to the rows**, and both directions are bitten: stated and not applied, and applied and not stated. The second is the one that produces a report somebody reads as covering everything.
-  - A filter naming something that does not exist is **refused**, not silently empty. An unknown party id returns an empty register, which reads as "this customer has no activity" rather than "you asked about nobody".
-- [x] Journal register listing every entry in a period, which is what an auditor samples from
-  - Drafts included, and totalled separately - an auditor sampling a period needs to see the entry somebody has open, and a total that included it would not reconcile to anything.
-  - This check was hollow on its first bite: its fixture entered a **bill**, which posts nothing, so the period held no draft at all and filtering drafts out changed nothing. It now puts a draft journal entry in the window. Worth recording that nothing in the application creates a draft `journal_entries` row - the status is modelled, the API controller filters on it, the register needs it, and it is unreachable through any service.
-- [ ] Each report is exportable and reproducible, and each states its parameters on the output
-  - **Two of three.** Each report states its parameters, and the same question digests the same while a changed filter changes the digest - which is what makes a printed report answerable six months later.
-  - That check was hollow on its first bite too, and the way it was hollow is worth keeping: putting the run clock into the digest did not break it, because two calls a millisecond apart share a timestamp to the second. It now builds two parameter sets six weeks apart and asserts one digest, which is the case the guarantee was written for.
-  - **Exportable is not done, and `CsvExport` is why.** It exists, it is correct, it has a suite of its own - and it has no production caller anywhere. These reports return rows with declared columns that it could consume, and nothing wires them together. That is the same shape as the three worst defects found in this repository on 2026-11-18, so it is left open rather than ticked on the strength of a class that is never reached.
-
 ### PF-189 · Universal drill-down
 `Reporting` · **5 pts** · depends: PF-188 · standards: — · `risk:high` `type:a11y`
 
@@ -222,7 +205,10 @@ reconciling two systems that disagree about a name.
 
 > **Still open, and why.** XLSX with live formulas and PDF/A both need an
 > engine this repository does not vendor, and the PDF driver is still a stub
-> (`bin/verify wiring` asserts it). JSON through the API waits on PF-217.
+> (`bin/verify wiring` asserts it). JSON through the API no longer waits on
+> PF-217 - the API landed on 2026-11-18 - it waits on these reports having
+> endpoints of their own, which is its own task: the nine operations that
+> shipped are accounts, journal entries and tokens.
 > Queued delivery waits on the export being large enough to need it — there
 > is no report yet that cannot be rendered in a request, and queueing one
 > that can is machinery with no failure to prevent.
@@ -232,7 +218,11 @@ reconciling two systems that disagree about a name.
 
 - [x] Every report takes an explicit as-of basis, and the same parameters return the same numbers
 - [x] The parameters - entity, period, basis, currency, adjusting-entry treatment, as-of timestamp - are **printed on the output**
-- [ ] A report run against a closed period is byte-stable, and a test asserts it by running one twice across a data change in a later period
+- [x] A report run against a closed period is byte-stable, and a test asserts it by running one twice across a data change in a later period
+  - It needed the run clock to become a **parameter** rather than a reading of the wall, because the clock is printed in the parameter block and is by definition different on the second run. Dropping it from the file was the wrong answer - "when was this taken" is the first thing asked of a printout - so `activity()` and `forPeriod()` take an instant, and a caller who wants a reproducible artefact names it.
+  - The check does both halves. With the instant named, a May register is byte-identical across a June posting. With it left out, the **only** line that differs is the one that prints it - and that second half is what makes the first a guarantee about the report rather than about calling a function twice with the same arguments.
+  - The later change is posted through the real service, not written onto the table, because the question is whether the window bounds the population and only a posting the ledger accepted could leak into it. June has to be opened first, and the period state machine's refusal of a future period is what caught this check's first draft - where the later change had silently become no change at all.
+  - Also closed on the way: there were **two** digests. `ReportBasis` hashed `Carbon::now()` by default, so two runs of one question never matched; `ReportParameters` kept the clock out of its own and carried a note saying it would compose the basis once the basis grew a channel for filters. It does now. One definition of what a report was run with, and one of how it is fingerprinted.
 - [ ] A saved report definition can be re-run by anyone with permission and produce the same artefact
 
 `App\Tenant\Reporting\Export\ReportBasis` · `bin/verify reporting`
@@ -253,6 +243,10 @@ while the period is closed, which is the only guarantee that is true. A hash
 of the figures would say two reports agree without saying they are
 comparable.
 
-> **Still open:** byte-stability across a later-period data change needs the
-> export artefact itself, which waits on the XLSX and PDF halves of PF-197;
+> **Still open:** a saved report definition needs somewhere to save it.
+> Byte-stability is now closed: it did not in fact need the XLSX or PDF
+> halves of PF-197, because a CSV is an export artefact and bytes are bytes.
+> What it needed was the run clock to stop being a reading of the wall -
+> and the note that used to stand here deferred it to the wrong dependency,
+> which is how a criterion waits on something that was never in its way;
 > and a saved report definition needs somewhere to save it.

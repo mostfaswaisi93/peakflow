@@ -252,3 +252,20 @@ fixture's own opening entry, which credits equity and is a financing flow.
   - Declares it either way - agreement is a statement, not a silence - and shouts when it does not agree, which is bitten by leaving a real difference out of the declaration.
   - `PayablesAging::controlAccountBalance()` counted **draft** entries, so somebody's unfinished journal became a reconciliation difference and the report then accused the ledger: it offered three causes, none of which was "somebody has a journal open". Naming a culprit that did not do it is worse than a wrong figure, because somebody acts on it. Fixed, with a check that writes a draft straight onto the control account - no service will, which is the point: the row exists in the wild and the report has to ignore it.
 
+### PF-188 · General ledger detail and registers
+`Reporting` · **3 pts** · depends: PF-183 · standards: —
+
+- [x] GL detail by account and period with running balances
+  - Opening, movement and closing are **one arithmetic**, and the opening balance is the trial balance's own figure rather than a second computation. A bite that negated the opening balance left the report internally consistent - opening plus movement still equalled closing - and only the cross-check against the trial balance caught it, which is why that check exists at all.
+  - The running balance moves within an account and never across two: a static carry between accounts is caught by its own check, because it is the mistake a single accumulator makes and the figures it produces are all plausible.
+- [x] Account activity for a date range, filterable by dimension, party and journal
+  - A filter is **stated on the output and applied to the rows**, and both directions are bitten: stated and not applied, and applied and not stated. The second is the one that produces a report somebody reads as covering everything.
+  - A filter naming something that does not exist is **refused**, not silently empty. An unknown party id returns an empty register, which reads as "this customer has no activity" rather than "you asked about nobody".
+- [x] Journal register listing every entry in a period, which is what an auditor samples from
+  - Drafts included, and totalled separately - an auditor sampling a period needs to see the entry somebody has open, and a total that included it would not reconcile to anything.
+  - This check was hollow on its first bite: its fixture entered a **bill**, which posts nothing, so the period held no draft at all and filtering drafts out changed nothing. It now puts a draft journal entry in the window. Worth recording that nothing in the application creates a draft `journal_entries` row - the status is modelled, the API controller filters on it, the register needs it, and it is unreachable through any service.
+- [x] Each report is exportable and reproducible, and each states its parameters on the output
+  - Each report states its parameters, the same question digests the same, and a changed filter changes the digest - which is what makes a printed report answerable six months later.
+  - That check was hollow on its first bite, and the way it was hollow is worth keeping: putting the run clock into the digest did not break it, because two calls a millisecond apart share a timestamp to the second. It now builds two parameter sets six weeks apart and asserts one digest, which is the case the guarantee was written for.
+  - **Exportable was the gap, and `CsvExport` was why: it existed, was correct, had a suite of its own, and had no production caller anywhere.** So did `ReportBasis`. The same shape as the three worst defects found on 2026-11-18 - each built, ticked, never reached, and invisible because the checks called them directly. `ReportExport` is now the one caller, both registers expose a CSV entry point that calls their own report method rather than accepting an array, and a check asks the REGISTER for a file and reads the bytes.
+
