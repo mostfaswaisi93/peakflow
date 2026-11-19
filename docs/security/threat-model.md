@@ -186,22 +186,48 @@ name, and runs monthly.
 
 ## The review checklist
 
-Applied to any pull request touching money, authorisation or segregation of
-duties. Each line is a question with a wrong answer, not a reminder.
+`CONTRIBUTING.md` requires this of any pull request touching money,
+authorisation or segregation of duties. Each line is a question with a wrong
+answer, not a reminder.
 
-1. **Does this add a way to perform a duty?** If so, does it `assert()` the
-   duty, and does it pass the actor's id rather than relying on a session?
+**Each is marked with what enforces it.** A line marked `[check]` names the
+check that already refuses the mistake, so a reviewer does not have to look
+for it; a line marked `[human]` is one no check can make, and it is the
+reviewer's actual job. Saying which is which is the point: a checklist whose
+items are all already automated wastes the reviewer's attention, and one that
+pretends a machine is watching something it is not spends it in the wrong
+place.
+
+1. **Does this add a way to perform a duty?** Then it must `assert()` the
+   duty, and pass the actor's id rather than relying on a session.
+   `[check]` `a release by nobody is refused, not waved through` -
+   `every duty pair is refused in both directions`
 2. **Does it read an actor from `auth()`?** Then it does not work from a
    console command or a queued job, and the control it carries is skipped
-   there rather than failing.
+   there rather than failing. `[human]` - the read is legitimate in a
+   controller and wrong in a service, and nothing can tell them apart from
+   the call site alone.
 3. **Does it write a `*_by_user_id`?** Then what happens when there is no
-   user - does it refuse, or does it write null and look like it worked?
+   user - does it refuse, or write null and look like it worked?
+   `[human]` - which of those is right depends on whether the column records
+   a human decision or a machine posting, and only the author knows.
 4. **Does it add a table with `entity_id`?** Then it needs forced RLS, or a
    `peakflow:tenant-scoped` comment saying why not.
+   `[check]` `every entity-scoped table has a forced RLS policy`
 5. **Does it add a column holding a personal-data shape?** Then it belongs in
    the data-protection register before it is merged.
+   `[check]` `every table holding personal data is in the register`
 6. **Does it widen what a permission can reach?** Then the SoD rules that
    mention that permission have been re-read, not assumed.
+   `[human]` - "what this permission can now reach" is a question about
+   intent, and a rule that still passes is not evidence that it still means
+   what it meant.
 7. **Does it log anything?** Then the payload has been checked against the
    allowlist - and the check is "what does the line contain", not "what did I
    intend to put in it".
+   `[check]` `a payload of secrets produces a line containing none of them` -
+   `an error report carries the diagnosis and none of the payload`
+8. **Does it add a command?** Then it is scheduled, or it says why not.
+   `[check]` `every command is either scheduled or says why it is not`
+9. **Does it add a migration?** Then it declares whether it may run live.
+   `[check]` `and every migration says whether it is`

@@ -33,6 +33,7 @@ A pull request is expected to carry all of the following. The template asks for 
 - **For a compliance change:** the clause being implemented, quoted, and the golden-file fixtures that prove it.
 - **For a decision that was not obvious:** an ADR in [`docs/architecture/decisions/`](docs/architecture/decisions/), including the alternatives and why they lost. An ADR is cheap now and irreplaceable in two years.
 - **For new interactive UI:** a note confirming you operated it once with the keyboard alone, and what happened.
+- **For anything touching money, authorisation or segregation of duties:** the review checklist in [`docs/security/threat-model.md`](docs/security/threat-model.md), answered. Each item says whether a check already refuses the mistake or whether the judgement is yours - which is what the checklist is for. A list whose items are all automated wastes your attention; one that pretends a machine is watching something it is not spends your attention in the wrong place.
 
 ## What the pipeline will refuse
 

@@ -1318,6 +1318,7 @@ final class ArchitectureRules
          | would be one somebody silences by removing the backticks.
          */
         $cited = [];
+        $problems = [];
 
         foreach (explode("\n", $model) as $line) {
             if (! str_contains($line, 'Proved by:') && ! str_starts_with(trim($line), '**Proved by:**')) {
@@ -1346,6 +1347,54 @@ final class ArchitectureRules
             }
         }
 
+        /*
+         | The review checklist cites checks too, and is held to the same
+         | rule - PF-232.
+         |
+         | Each numbered item is marked `[check]` with the check that
+         | already refuses the mistake, or `[human]` where no check can make
+         | the judgement. Saying which is which is the point: a checklist
+         | whose items are all automated wastes the reviewer's attention,
+         | and one that pretends a machine is watching something it is not
+         | spends that attention in the wrong place.
+         */
+        if (preg_match_all('/`\[check\]`(.+?)(?:\n\d+\.|\n##|\z)/s', $model, $items) > 0) {
+            foreach ($items[1] as $item) {
+                preg_match_all('/`([^`\[\]]+)`/', (string) $item, $matches);
+
+                foreach ($matches[1] as $name) {
+                    $cited[trim((string) $name)] = true;
+                }
+            }
+        }
+
+        /*
+         | Counted PER ITEM, not over the file.
+         |
+         | The first version counted the markers in the whole document and
+         | compared the total with the number of items - and the paragraph
+         | that EXPLAINS the two markers contains one of each, so the count
+         | was two too high and an unmarked item still passed. The bite is
+         | what said so: removing a marker changed nothing.
+         */
+        if (preg_match_all('/^(\d+)\. \*\*(.+?)(?=^\d+\. \*\*|^##|\z)/ms', $model, $items, PREG_SET_ORDER) > 0) {
+            foreach ($items as $item) {
+                $body = (string) $item[2];
+
+                if (str_contains($body, '`[check]`') || str_contains($body, '`[human]`')) {
+                    continue;
+                }
+
+                $problems[] = sprintf(
+                    'review checklist item %s does not say what enforces it. An unmarked item leaves '.
+                    'a reviewer guessing whether a machine is already watching it - and the two wrong '.
+                    'guesses cost different things: attention spent on what is automated, or '.
+                    'attention not spent on what is not',
+                    (string) $item[1],
+                );
+            }
+        }
+
         if ($cited === []) {
             return ['the threat model cites no check at all. Each abuse case has to name the control '.
                 'that stops it AND the check that proves the control - without the second, the model '.
@@ -1358,8 +1407,6 @@ final class ArchitectureRules
             return ['no check name could be read out of tests/Support, so this compared the model '.
                 'against nothing'];
         }
-
-        $problems = [];
 
         foreach (array_keys($cited) as $name) {
             if (! \in_array($name, $live, true)) {

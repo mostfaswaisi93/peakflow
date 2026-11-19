@@ -29,7 +29,10 @@ The distinguishing idea is **alerting on invariants**. A dashboard of CPU and p9
 - [x] Each abuse case names the control that stops it and the test that proves the control
   - And the check names are **read out of the document and looked for among the suites**. A threat model whose controls are described in prose decays the first time one is refactored and nobody finds out, because the thing it describes still *sounds* true - and the reader's conclusion, "that is handled", is the one a stale security document must not produce.
   - It asserts the names **exist**, not that they pass: whether they pass is what `bin/verify` is for, and a check that ran other checks would be slower than the suite and would report their failures twice. What this adds is the thing nothing else covers - that the document and the suite are talking about the same controls. Bitten by renaming a cited check and by renaming a boundary.
-- [ ] A review checklist derived from the model, applied to any pull request touching money, auth or SoD
+- [x] A review checklist derived from the model, applied to any pull request touching money, auth or SoD
+  - Nine items, required by `CONTRIBUTING.md` of any pull request touching money, authorisation or segregation of duties, and **each marked with what enforces it**: `[check]` naming the check that already refuses the mistake, or `[human]` where no check can make the judgement.
+  - Saying which is which is the point. A checklist whose items are all already automated **wastes the reviewer's attention**; one that pretends a machine is watching something it is not **spends that attention in the wrong place**. An unmarked item fails the check, because it leaves a reviewer guessing between those two.
+  - The `[check]` citations are held to the same rule as the abuse cases', and that caught a real mistake on the first run: item 1 cited a commit subject rather than a registered check name. Bitten by unmarking an item.
 
 ### PF-234 · Secret management
 `—` · **5 pts** · depends: PF-124, PF-061 · standards: OWASP ASVS 5.0 · `risk:high` `type:security`
