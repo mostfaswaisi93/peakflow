@@ -946,6 +946,140 @@ paths:
         '429': {"$ref": "#/components/responses/RateLimited"}
         '500': {"$ref": "#/components/responses/ServerError"}
 
+    post:
+      tags: ["Sales"]
+      operationId: draftInvoice
+      summary: Draft an invoice from lines
+      description: |
+        A customer and some lines - quantity, unit price, tax code and revenue
+        account each. **Every figure is computed here and none is accepted**:
+        each line's net is rounded to the currency's minor unit (EN 16931
+        BT-131), and the tax and totals come from the entity's tax calculator
+        under its rounding policy. The options for the form are at
+        `GET /invoice-options`.
+
+        A draft books nothing, so there is no `Idempotency-Key`: a retried
+        draft is a second draft that the list shows and a person deletes.
+        Needs `invoice.draft`.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"$ref": "#/components/schemas/InvoiceDraftRequest"}
+            examples:
+              twoLines:
+                summary: Two lines, one revenue account for both
+                value: {"customer_id": "01jd3xq7f8k2m9n4p5r6s7t8vb", "revenue_account_code": "4.1", "lines": [{"description": "Consulting, November", "quantity": "2", "unit_price": "1250.50", "tax_code": "SA-S-15"}, {"description": "Setup fee", "quantity": "1", "unit_price": "300", "tax_code": "SA-S-15"}]}
+      responses:
+        '201':
+          description: The draft, with the figures as computed
+          headers:
+            Location: {"$ref": "#/components/headers/Location"}
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/InvoiceDetail"}
+              examples:
+                drafted:
+                  summary: Net 2801.00, tax 420.15
+                  value: {"resource": "invoice", "id": "01jd3xq7f8k2m9n4p5r6s7t8vr", "number": null, "status": "draft", "document_type": "380", "issue_date": "2026-11-19", "due_on": null, "customer": {"id": "01jd3xq7f8k2m9n4p5r6s7t8vb", "name": "Gulf Sands Trading"}, "currency": "SAR", "net": {"amount": "2801.0000", "currency": "SAR", "presentation_exponent": 2}, "tax": {"amount": "420.1500", "currency": "SAR", "presentation_exponent": 2}, "gross": {"amount": "3221.1500", "currency": "SAR", "presentation_exponent": 2}, "payable": {"amount": "3221.1500", "currency": "SAR", "presentation_exponent": 2}, "open_balance": {"amount": "3221.1500", "currency": "SAR", "presentation_exponent": 2}, "issued_at": null, "delivery_date": null, "prepaid": null, "lines": [{"line_no": 1, "item_code": null, "description": "Consulting, November", "quantity": "2.00000000", "unit_code": "C62", "unit_price": "1250.50000000", "net": {"amount": "2501.0000", "currency": "SAR", "presentation_exponent": 2}, "tax_category": "S", "tax_rate": "15.000000"}, {"line_no": 2, "item_code": null, "description": "Setup fee", "quantity": "1.00000000", "unit_code": "C62", "unit_price": "300.00000000", "net": {"amount": "300.0000", "currency": "SAR", "presentation_exponent": 2}, "tax_category": "S", "tax_rate": "15.000000"}], "tax_breakdown": [{"category": "S", "rate": "15.000000", "taxable": {"amount": "2801.0000", "currency": "SAR", "presentation_exponent": 2}, "tax": {"amount": "420.1500", "currency": "SAR", "presentation_exponent": 2}, "exemption_reason_code": null, "exemption_reason": null}], "payments": []}
+        '400': {"$ref": "#/components/responses/BadRequest"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '422': {"$ref": "#/components/responses/ValidationFailed"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /invoice-options:
+    get:
+      tags: ["Sales"]
+      operationId: getInvoiceOptions
+      summary: What a draft can be made of here
+      description: |
+        The postable revenue accounts, the tax codes in force today with their
+        rates, and the active payment terms - everything an invoice form needs,
+        without the chart of accounts, which `account.manage` guards and a
+        sales clerk does not hold. Needs `invoice.draft`.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+      responses:
+        '200':
+          description: The options
+          headers:
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/InvoiceOptions"}
+              examples:
+                saudi:
+                  summary: One standard rate, two revenue accounts
+                  value: {"revenue_accounts": [{"code": "4.1", "name": {"ar": "إيرادات المبيعات", "en": "Sales revenue"}}, {"code": "4.2", "name": {"ar": "إيرادات أخرى", "en": "Other income"}}], "tax_codes": [{"code": "SA-S-15", "category": "S", "rate": "15.000000", "label": {"ar": "قياسية 15%", "en": "Standard 15%"}}], "payment_terms": [{"code": "NET30", "name": {"ar": "صافي 30 يوماً", "en": "Net 30 days"}}]}
+        '400': {"$ref": "#/components/responses/BadRequest"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /invoices/{id}/issue:
+    post:
+      tags: ["Sales"]
+      operationId: issueInvoice
+      summary: Issue a draft - validated, numbered, posted, frozen
+      description: |
+        Through the issuer the product already uses, unchanged: segregation
+        of duties, the document validator (EN 16931 business rules, an open
+        period, an enabled currency), the number from the series, the posting
+        to the ledger, the customer and terms snapshots and the hash chain.
+        A draft the validator refuses is a 422 `document-validation-failed`
+        and nothing is numbered or posted. An invoice already issued is a 409:
+        it is corrected by a credit note, never by issuing it again.
+
+        It posts to the ledger, so `Idempotency-Key` is required. Needs
+        `invoice.issue`.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+        - {"$ref": "#/components/parameters/IdempotencyKey"}
+        - {"$ref": "#/components/parameters/ResourceId"}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {"$ref": "#/components/schemas/IssueRequest"}
+            examples:
+              net30:
+                summary: Issued on thirty days
+                value: {"payment_term": "NET30"}
+      responses:
+        '200':
+          description: The issued invoice
+          headers:
+            Idempotent-Replay: {"$ref": "#/components/headers/IdempotentReplay"}
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/InvoiceDetail"}
+              examples:
+                issued:
+                  summary: Numbered and posted
+                  value: {"resource": "invoice", "id": "01jd3xq7f8k2m9n4p5r6s7t8vr", "number": "INV-2026/00031", "status": "issued", "document_type": "380", "issue_date": "2026-11-19", "due_on": "2026-12-19", "customer": {"id": "01jd3xq7f8k2m9n4p5r6s7t8vb", "name": "Gulf Sands Trading"}, "currency": "SAR", "net": {"amount": "2801.0000", "currency": "SAR", "presentation_exponent": 2}, "tax": {"amount": "420.1500", "currency": "SAR", "presentation_exponent": 2}, "gross": {"amount": "3221.1500", "currency": "SAR", "presentation_exponent": 2}, "payable": {"amount": "3221.1500", "currency": "SAR", "presentation_exponent": 2}, "open_balance": {"amount": "3221.1500", "currency": "SAR", "presentation_exponent": 2}, "issued_at": "2026-11-19T12:04:11Z", "delivery_date": null, "prepaid": null, "lines": [], "tax_breakdown": [], "payments": []}
+        '400': {"$ref": "#/components/responses/BadRequest"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '404': {"$ref": "#/components/responses/NotFound"}
+        '409': {"$ref": "#/components/responses/Conflict"}
+        '422': {"$ref": "#/components/responses/ValidationFailed"}
+        '423': {"$ref": "#/components/responses/PeriodClosed"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
   /invoices/{id}:
     get:
       tags: ["Sales"]
@@ -2767,6 +2901,89 @@ components:
                   amount: {"$ref": "#/components/schemas/NullableMoney"}
                   reversed_at:
                     oneOf: [{"$ref": "#/components/schemas/Timestamp"}, {"type": "null"}]
+
+    InvoiceDraftRequest:
+      type: object
+      required: ["customer_id", "lines"]
+      additionalProperties: false
+      properties:
+        customer_id: {"$ref": "#/components/schemas/Ulid"}
+        issue_date:
+          allOf: [{"$ref": "#/components/schemas/AccountingDate"}]
+          description: Today when omitted.
+        delivery_date: {"$ref": "#/components/schemas/AccountingDate"}
+        currency:
+          allOf: [{"$ref": "#/components/schemas/CurrencyCode"}]
+          description: The functional currency when omitted. Another one needs a rate on the issue date.
+        revenue_account_code:
+          type: string
+          description: The revenue account for every line that does not name its own.
+        note: {"type": "string", "maxLength": 1000}
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            type: object
+            required: ["description", "quantity", "unit_price", "tax_code"]
+            additionalProperties: false
+            properties:
+              description: {"type": "string", "maxLength": 500}
+              quantity:
+                type: string
+                pattern: '^\d{1,13}(\.\d{1,8})?$'
+              unit_price:
+                type: string
+                pattern: '^\d{1,13}(\.\d{1,8})?$'
+                description: Before tax. A string, at up to eight places.
+              unit_code:
+                type: string
+                description: UN/ECE Rec 20 - `C62` (one) when omitted, or the item's unit.
+              item_id: {"$ref": "#/components/schemas/Ulid"}
+              tax_code:
+                type: string
+                description: A code from `GET /invoice-options`, resolved to its rate on the tax point.
+              revenue_account_code: {"type": "string"}
+
+    IssueRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        payment_term:
+          type: string
+          description: A payment term code from `GET /invoice-options`. The due dates are computed from it and frozen on the invoice.
+
+    InvoiceOptions:
+      type: object
+      required: ["revenue_accounts", "tax_codes", "payment_terms"]
+      additionalProperties: false
+      properties:
+        revenue_accounts:
+          type: array
+          items:
+            type: object
+            required: ["code", "name"]
+            properties:
+              code: {"type": "string"}
+              name: {"type": "object"}
+        tax_codes:
+          type: array
+          items:
+            type: object
+            required: ["code", "category", "rate", "label"]
+            properties:
+              code: {"type": "string"}
+              category: {"type": "string"}
+              rate: {"$ref": "#/components/schemas/DecimalString"}
+              label: {"type": "object"}
+        payment_terms:
+          type: array
+          items:
+            type: object
+            required: ["code", "name"]
+            properties:
+              code: {"type": "string"}
+              name: {"type": "object"}
 
     InvoicePage:
       type: object

@@ -147,6 +147,23 @@ Route::middleware([
         ->middleware('api.scope:report.view')
         ->name('api.invoices.show');
 
+    /*
+    | Drafting and issuing a sales invoice - PF-266. A draft books nothing;
+    | issuing numbers it, posts it and freezes it, so that route carries
+    | `api.idempotent`.
+    */
+    Route::get('/invoice-options', [InvoiceApiController::class, 'options'])
+        ->middleware('api.scope:invoice.draft')
+        ->name('api.invoices.options');
+
+    Route::post('/invoices', [InvoiceApiController::class, 'store'])
+        ->middleware('api.scope:invoice.draft')
+        ->name('api.invoices.store');
+
+    Route::post('/invoices/{id}/issue', [InvoiceApiController::class, 'issue'])
+        ->middleware(['api.scope:invoice.issue', 'api.idempotent'])
+        ->name('api.invoices.issue');
+
     Route::get('/bills', [BillApiController::class, 'index'])
         ->middleware('api.scope:report.view')
         ->name('api.bills.index');
