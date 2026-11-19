@@ -1053,6 +1053,157 @@ paths:
         '429': {"$ref": "#/components/responses/RateLimited"}
         '500': {"$ref": "#/components/responses/ServerError"}
 
+  /bills/{id}/submit:
+    post:
+      tags: ["Purchasing"]
+      operationId: submitBill
+      summary: Submit a draft bill for approval
+      description: |
+        Opens the approval chain. The chain is compiled from the company's
+        approval rules **once and written down** - a rule changed later does
+        not move the goalposts under people already in it - and a bill no rule
+        covers is refused (422) rather than treated as approved.
+
+        Only a draft can be submitted (409 otherwise). Needs `bill.create`.
+        Returns the bill, with `approval` showing the chain and who can clear
+        its open step.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+        - {"$ref": "#/components/parameters/ResourceId"}
+      responses:
+        '200':
+          description: The bill, awaiting approval
+          headers:
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/BillDetail"}
+              examples:
+                awaiting:
+                  summary: Waiting for the controller
+                  value: {"resource": "bill", "id": "01jd3xq7f8k2m9n4p5r6s7t8vc", "status": "awaiting_approval", "document_type": "380", "supplier_document_number": "SUP-DRAFT-001", "supplier_document_date": "2026-11-18", "posting_date": "2026-11-18", "due_on": "2026-12-18", "supplier": {"id": "01jd3xq7f8k2m9n4p5r6s7t8vd", "name": "Sahaba Technology"}, "currency": "SAR", "net": {"amount": "2860.0000", "currency": "SAR", "presentation_exponent": 2}, "tax": {"amount": "429.0000", "currency": "SAR", "presentation_exponent": 2}, "gross": {"amount": "3289.0000", "currency": "SAR", "presentation_exponent": 2}, "payable": {"amount": "3289.0000", "currency": "SAR", "presentation_exponent": 2}, "open_balance": {"amount": "3289.0000", "currency": "SAR", "presentation_exponent": 2}, "approved_at": null, "posted_at": null, "tax_point": "2026-11-18", "recoverable_tax": {"amount": "429.0000", "currency": "SAR", "presentation_exponent": 2}, "non_recoverable_tax": {"amount": "0.0000", "currency": "SAR", "presentation_exponent": 2}, "lines": [], "tax_breakdown": [], "approval": {"id": "01jd3xq7f8k2m9n4p5r6s7t8vn", "status": "pending", "requested_by": "01jd3xq7f8k2m9n4p5r6s7t8vp", "requested_at": "2026-11-19T11:30:02Z", "decided_at": null, "outcome": null, "who_can_decide": "anyone with the controller role", "steps": [{"sequence": 1, "role": "controller", "user_id": null, "quorum": 1, "approvals": 0, "status": "open"}], "decisions": []}}
+        '400': {"$ref": "#/components/responses/BadRequest"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '404': {"$ref": "#/components/responses/NotFound"}
+        '409': {"$ref": "#/components/responses/Conflict"}
+        '422': {"$ref": "#/components/responses/ValidationFailed"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /bills/{id}/approve:
+    post:
+      tags: ["Purchasing"]
+      operationId: approveBill
+      summary: Approve the open step - and, on the last, book the bill
+      description: |
+        Records this person's approval of the step they hold. While steps
+        remain, the bill waits. **When the last step clears, the bill is
+        approved and posted to the ledger in the same transaction** - so
+        "approved" never means "approved, and somebody still has to book it".
+        If the ledger refuses (an unacknowledged duplicate, an open
+        three-way-match exception) the approval is refused with that reason
+        and nothing is recorded; approve again once it is fixed.
+
+        The engine holds the rest:
+        - **The person who submitted cannot approve** (403
+          `segregation-of-duties-conflict`), and the refusal names who can.
+        - The approver must hold the open step's role, within their limit,
+          tested on the functional amount (403 `forbidden`).
+        - A bill that **changed** since it was submitted returns its chain
+          to the start (412 `stale-write`) - the earlier approvers approved
+          a different document.
+
+        It can post to the ledger, so `Idempotency-Key` is required. Needs
+        `bill.approve`.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+        - {"$ref": "#/components/parameters/IdempotencyKey"}
+        - {"$ref": "#/components/parameters/ResourceId"}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {"$ref": "#/components/schemas/ApprovalComment"}
+            examples:
+              checked:
+                summary: An approval with a note
+                value: {"comment": "Checked against the purchase order."}
+      responses:
+        '200':
+          description: The bill after the decision - posted, or still awaiting the next step
+          headers:
+            Idempotent-Replay: {"$ref": "#/components/headers/IdempotentReplay"}
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/BillDetail"}
+              examples:
+                posted:
+                  summary: The last step cleared, and the bill is booked
+                  value: {"resource": "bill", "id": "01jd3xq7f8k2m9n4p5r6s7t8vc", "status": "posted", "document_type": "380", "supplier_document_number": "SUP-DRAFT-001", "supplier_document_date": "2026-11-18", "posting_date": "2026-11-18", "due_on": "2026-12-18", "supplier": {"id": "01jd3xq7f8k2m9n4p5r6s7t8vd", "name": "Sahaba Technology"}, "currency": "SAR", "net": {"amount": "2860.0000", "currency": "SAR", "presentation_exponent": 2}, "tax": {"amount": "429.0000", "currency": "SAR", "presentation_exponent": 2}, "gross": {"amount": "3289.0000", "currency": "SAR", "presentation_exponent": 2}, "payable": {"amount": "3289.0000", "currency": "SAR", "presentation_exponent": 2}, "open_balance": {"amount": "3289.0000", "currency": "SAR", "presentation_exponent": 2}, "approved_at": "2026-11-19T11:32:46Z", "posted_at": "2026-11-19T11:32:46Z", "tax_point": "2026-11-18", "recoverable_tax": {"amount": "429.0000", "currency": "SAR", "presentation_exponent": 2}, "non_recoverable_tax": {"amount": "0.0000", "currency": "SAR", "presentation_exponent": 2}, "lines": [], "tax_breakdown": [], "approval": {"id": "01jd3xq7f8k2m9n4p5r6s7t8vn", "status": "approved", "requested_by": "01jd3xq7f8k2m9n4p5r6s7t8vp", "requested_at": "2026-11-19T11:30:02Z", "decided_at": "2026-11-19T11:32:46Z", "outcome": null, "who_can_decide": null, "steps": [{"sequence": 1, "role": "controller", "user_id": null, "quorum": 1, "approvals": 1, "status": "approved"}], "decisions": [{"user_id": "01jd3xq7f8k2m9n4p5r6s7t8vq", "name": "Demo Controller", "decision": "approved", "comment": "Checked against the purchase order.", "decided_at": "2026-11-19T11:32:46Z"}]}}
+        '400': {"$ref": "#/components/responses/BadRequest"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '404': {"$ref": "#/components/responses/NotFound"}
+        '409': {"$ref": "#/components/responses/Conflict"}
+        '412': {"$ref": "#/components/responses/Stale"}
+        '422': {"$ref": "#/components/responses/ValidationFailed"}
+        '423': {"$ref": "#/components/responses/PeriodClosed"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /bills/{id}/reject:
+    post:
+      tags: ["Purchasing"]
+      operationId: rejectBill
+      summary: Reject the bill back to draft
+      description: |
+        A rejection **needs a reason** (at least five characters) - one that
+        is not returns the document to somebody with no idea what to change.
+        The bill goes back to draft, to be corrected and submitted again,
+        when its chain starts from the beginning. Books nothing, so no
+        `Idempotency-Key`. Needs `bill.approve`.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+        - {"$ref": "#/components/parameters/ResourceId"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"$ref": "#/components/schemas/RejectionReason"}
+            examples:
+              quantity:
+                summary: Sent back with what to fix
+                value: {"comment": "The quantity on line 1 does not match the delivery note."}
+      responses:
+        '200':
+          description: The bill, back in draft, with the rejection on its chain
+          headers:
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/BillDetail"}
+              examples:
+                rejected:
+                  summary: Rejected with a reason
+                  value: {"resource": "bill", "id": "01jd3xq7f8k2m9n4p5r6s7t8vc", "status": "draft", "document_type": "380", "supplier_document_number": "SUP-DRAFT-001", "supplier_document_date": "2026-11-18", "posting_date": "2026-11-18", "due_on": "2026-12-18", "supplier": {"id": "01jd3xq7f8k2m9n4p5r6s7t8vd", "name": "Sahaba Technology"}, "currency": "SAR", "net": {"amount": "2860.0000", "currency": "SAR", "presentation_exponent": 2}, "tax": {"amount": "429.0000", "currency": "SAR", "presentation_exponent": 2}, "gross": {"amount": "3289.0000", "currency": "SAR", "presentation_exponent": 2}, "payable": {"amount": "3289.0000", "currency": "SAR", "presentation_exponent": 2}, "open_balance": {"amount": "3289.0000", "currency": "SAR", "presentation_exponent": 2}, "approved_at": null, "posted_at": null, "tax_point": "2026-11-18", "recoverable_tax": {"amount": "429.0000", "currency": "SAR", "presentation_exponent": 2}, "non_recoverable_tax": {"amount": "0.0000", "currency": "SAR", "presentation_exponent": 2}, "lines": [], "tax_breakdown": [], "approval": {"id": "01jd3xq7f8k2m9n4p5r6s7t8vn", "status": "rejected", "requested_by": "01jd3xq7f8k2m9n4p5r6s7t8vp", "requested_at": "2026-11-19T11:30:02Z", "decided_at": "2026-11-19T11:31:10Z", "outcome": null, "who_can_decide": null, "steps": [{"sequence": 1, "role": "controller", "user_id": null, "quorum": 1, "approvals": 0, "status": "rejected"}], "decisions": [{"user_id": "01jd3xq7f8k2m9n4p5r6s7t8vq", "name": "Demo Controller", "decision": "rejected", "comment": "The quantity on line 1 does not match the delivery note.", "decided_at": "2026-11-19T11:31:10Z"}]}}
+        '400': {"$ref": "#/components/responses/BadRequest"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '404': {"$ref": "#/components/responses/NotFound"}
+        '409': {"$ref": "#/components/responses/Conflict"}
+        '412': {"$ref": "#/components/responses/Stale"}
+        '422': {"$ref": "#/components/responses/ValidationFailed"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
   /parties:
     get:
       tags: ["Parties"]
@@ -1165,6 +1316,67 @@ paths:
         '400': {"$ref": "#/components/responses/BadRequest"}
         '401': {"$ref": "#/components/responses/Unauthenticated"}
         '403': {"$ref": "#/components/responses/Forbidden"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /payments:
+    post:
+      tags: ["Banking"]
+      operationId: recordPayment
+      summary: Record a payment, and apply it to documents
+      description: |
+        Records money in (`receipt`) or out (`disbursement`) through a bank
+        account or a cash account, and - optionally, in the same request -
+        applies it to the invoices or bills it settles.
+
+        **All or nothing.** The payment and its allocations are one
+        transaction: if any allocation is refused, nothing is recorded. A
+        payment recorded while its allocation was refused would sit in
+        unapplied cash with the invoice still owed - two facts nobody intended.
+
+        **It posts to the ledger, so `Idempotency-Key` is required.** A retried
+        receipt without one is a second receipt.
+
+        Each allocation must name a document this payment can settle: a
+        receipt settles an **issued** sales invoice, a disbursement a
+        **posted** bill, with the same party when `party_id` is given - and
+        no more than is still open on it. Refusals are addressed by pointer.
+
+        Needs `payment.record`, and `payment.allocate` as well when
+        `allocations` is not empty.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+        - {"$ref": "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"$ref": "#/components/schemas/PaymentRequest"}
+            examples:
+              customerPaid:
+                summary: A customer paid invoice 28 by bank transfer
+                value: {"direction": "receipt", "method": "30", "amount": "4830.0000", "currency": "SAR", "value_date": "2026-11-19", "bank_account_id": "01jd3xq7f8k2m9n4p5r6s7t8vf", "party_id": "01jd3xq7f8k2m9n4p5r6s7t8vb", "reference": "TRF 88213", "allocations": [{"document_type": "invoice", "document_id": "01jd3xq7f8k2m9n4p5r6s7t8va", "amount": "4830.0000"}]}
+      responses:
+        '201':
+          description: Recorded, and applied
+          headers:
+            Idempotent-Replay: {"$ref": "#/components/headers/IdempotentReplay"}
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/Payment"}
+              examples:
+                recorded:
+                  summary: Fully applied to one invoice
+                  value: {"resource": "payment", "id": "01jd3xq7f8k2m9n4p5r6s7t8vj", "number": "PAY-2026/00035", "direction": "receipt", "method": "30", "amount": {"amount": "4830.0000", "currency": "SAR", "presentation_exponent": 2}, "value_date": "2026-11-19", "bank_account_id": "01jd3xq7f8k2m9n4p5r6s7t8vf", "party_id": "01jd3xq7f8k2m9n4p5r6s7t8vb", "journal_entry_id": "01jd3xq7f8k2m9n4p5r6s7t8vk", "allocations": [{"id": "01jd3xq7f8k2m9n4p5r6s7t8vm", "document_type": "invoice", "document_id": "01jd3xq7f8k2m9n4p5r6s7t8va", "amount": {"amount": "4830.0000", "currency": "SAR", "presentation_exponent": 2}}], "unallocated": {"amount": "0.0000", "currency": "SAR", "presentation_exponent": 2}}
+        '400': {"$ref": "#/components/responses/BadRequest"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '409': {"$ref": "#/components/responses/Conflict"}
+        '422': {"$ref": "#/components/responses/ValidationFailed"}
+        '423': {"$ref": "#/components/responses/PeriodClosed"}
         '429': {"$ref": "#/components/responses/RateLimited"}
         '500': {"$ref": "#/components/responses/ServerError"}
 
@@ -1566,6 +1778,20 @@ components:
             stillRunning:
               summary: The first request with this key has not committed
               value: {"type": "https://peakflow.app/problems/idempotency-key-in-flight", "title": "The first request with this Idempotency-Key is still running", "status": 409, "detail": "The first request with key \"7c0f3d1e4b5a6978f0a1b2c3d4e5\" is still running and has not committed.", "instance": "/api/v1/journal-entries", "retry_after": 2}
+
+    Stale:
+      description: |
+        The document changed after the decision being made about it was
+        asked for - an approval chain about a bill that has since been
+        edited. The chain starts again from the beginning; re-read the
+        document.
+      content:
+        application/problem+json:
+          schema: {"$ref": "#/components/schemas/Problem"}
+          examples:
+            changed:
+              summary: The bill was edited while it was being approved
+              value: {"type": "https://peakflow.app/problems/stale-write", "title": "The record has changed since it was read", "status": 412, "detail": "The document has changed since the chain started, so this approval would be about a different document.", "instance": "/api/v1/bills/01jd3xq7f8k2m9n4p5r6s7t8vc/approve"}
 
     ValidationFailed:
       description: |
@@ -2588,12 +2814,78 @@ components:
               oneOf: [{"$ref": "#/components/schemas/AccountingDate"}, {"type": "null"}]
             recoverable_tax: {"$ref": "#/components/schemas/NullableMoney"}
             non_recoverable_tax: {"$ref": "#/components/schemas/NullableMoney"}
+            approval:
+              description: The bill's most recent approval chain, or null when it was never submitted.
+              oneOf: [{"$ref": "#/components/schemas/BillApproval"}, {"type": "null"}]
             lines:
               type: array
               items: {"$ref": "#/components/schemas/DocumentLine"}
             tax_breakdown:
               type: array
               items: {"$ref": "#/components/schemas/TaxBreakdownRow"}
+
+    BillApproval:
+      type: object
+      required: ["id", "status", "requested_by", "requested_at", "decided_at", "outcome", "who_can_decide", "steps", "decisions"]
+      additionalProperties: false
+      properties:
+        id: {"$ref": "#/components/schemas/Ulid"}
+        status:
+          type: string
+          enum: ["pending", "approved", "rejected", "cancelled", "stale"]
+          description: "`stale` - the bill changed under the chain, which restarts from the beginning."
+        requested_by: {"type": ["string", "null"]}
+        requested_at:
+          oneOf: [{"$ref": "#/components/schemas/Timestamp"}, {"type": "null"}]
+        decided_at:
+          oneOf: [{"$ref": "#/components/schemas/Timestamp"}, {"type": "null"}]
+        outcome: {"type": ["string", "null"]}
+        who_can_decide:
+          type: ["string", "null"]
+          description: Who can clear the open step - the engine's own sentence. Null once the chain is decided.
+        steps:
+          type: array
+          items:
+            type: object
+            required: ["sequence", "role", "user_id", "quorum", "approvals", "status"]
+            additionalProperties: false
+            properties:
+              sequence: {"type": "integer"}
+              role: {"type": ["string", "null"]}
+              user_id: {"type": ["string", "null"]}
+              quorum: {"type": "integer"}
+              approvals: {"type": "integer"}
+              status: {"type": "string"}
+        decisions:
+          type: array
+          items:
+            type: object
+            required: ["user_id", "name", "decision", "comment", "decided_at"]
+            additionalProperties: false
+            properties:
+              user_id: {"$ref": "#/components/schemas/Ulid"}
+              name: {"type": ["string", "null"]}
+              decision: {"type": "string", "enum": ["approved", "rejected"]}
+              comment: {"type": ["string", "null"]}
+              decided_at:
+                oneOf: [{"$ref": "#/components/schemas/Timestamp"}, {"type": "null"}]
+
+    ApprovalComment:
+      type: object
+      additionalProperties: false
+      properties:
+        comment: {"type": "string", "maxLength": 500}
+
+    RejectionReason:
+      type: object
+      required: ["comment"]
+      additionalProperties: false
+      properties:
+        comment:
+          type: string
+          minLength: 5
+          maxLength: 500
+          description: What to change. A rejection that does not say returns the bill to somebody with no idea.
 
     BillPage:
       type: object
@@ -2768,3 +3060,80 @@ components:
         report:
           type: object
           description: The statement - see above.
+
+    PositiveAmount:
+      type: string
+      pattern: '^\d{1,17}(\.\d{1,4})?$'
+      description: A positive decimal string, at most four places. Never a JSON number.
+
+    PaymentRequest:
+      type: object
+      required: ["direction", "method", "amount", "currency", "value_date"]
+      additionalProperties: false
+      properties:
+        direction: {"type": "string", "enum": ["receipt", "disbursement"]}
+        method:
+          type: string
+          enum: ["1", "10", "20", "30", "42", "48", "49", "58", "59", "68", "97"]
+          description: |
+            UNTDID 4461 - `30` credit transfer, `10` cash, `20` cheque, `48`
+            card, `49` direct debit. Every method but cash and clearing moves
+            through a bank, and so needs `bank_account_id`.
+        amount: {"$ref": "#/components/schemas/PositiveAmount"}
+        currency: {"$ref": "#/components/schemas/CurrencyCode"}
+        value_date: {"$ref": "#/components/schemas/AccountingDate"}
+        bank_account_id:
+          allOf: [{"$ref": "#/components/schemas/Ulid"}]
+          description: One of the company's bank accounts, in the payment's currency. Exactly one of this and `cash_account_id`.
+        cash_account_id:
+          allOf: [{"$ref": "#/components/schemas/Ulid"}]
+          description: A cash account in the chart, in the functional currency.
+        party_id: {"$ref": "#/components/schemas/Ulid"}
+        reference:
+          type: string
+          maxLength: 140
+          description: The bank's or the payer's reference, for reconciliation.
+        note: {"type": "string", "maxLength": 500}
+        allocations:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            required: ["document_type", "document_id", "amount"]
+            additionalProperties: false
+            properties:
+              document_type: {"type": "string", "enum": ["invoice", "bill"]}
+              document_id: {"$ref": "#/components/schemas/Ulid"}
+              amount: {"$ref": "#/components/schemas/PositiveAmount"}
+
+    Payment:
+      type: object
+      required: ["resource", "id", "number", "direction", "method", "amount", "value_date", "journal_entry_id", "allocations", "unallocated"]
+      additionalProperties: false
+      properties:
+        resource: {"type": "string", "const": "payment"}
+        id: {"$ref": "#/components/schemas/Ulid"}
+        number: {"type": ["string", "null"]}
+        direction: {"type": "string", "enum": ["receipt", "disbursement"]}
+        method: {"type": "string"}
+        amount: {"$ref": "#/components/schemas/Money"}
+        value_date: {"$ref": "#/components/schemas/AccountingDate"}
+        bank_account_id: {"type": ["string", "null"]}
+        party_id: {"type": ["string", "null"]}
+        journal_entry_id:
+          type: ["string", "null"]
+          description: The entry that put the money in unapplied cash.
+        allocations:
+          type: array
+          items:
+            type: object
+            required: ["id", "document_type", "document_id", "amount"]
+            additionalProperties: false
+            properties:
+              id: {"type": ["string", "null"]}
+              document_type: {"type": "string", "enum": ["invoice", "bill"]}
+              document_id: {"$ref": "#/components/schemas/Ulid"}
+              amount: {"$ref": "#/components/schemas/Money"}
+        unallocated:
+          allOf: [{"$ref": "#/components/schemas/Money"}]
+          description: What is left in unapplied cash, waiting for a document to claim it.

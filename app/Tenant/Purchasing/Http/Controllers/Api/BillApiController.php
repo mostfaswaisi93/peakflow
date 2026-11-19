@@ -4,11 +4,23 @@ declare(strict_types=1);
 
 namespace App\Tenant\Purchasing\Http\Controllers\Api;
 
+use App\Support\Http\Api\DatabaseRefusal;
 use App\Support\Http\Api\Page;
 use App\Support\Http\Api\Row;
 use App\Support\Http\Api\SortOrder;
 use App\Support\Http\Api\Wire;
+use App\Support\Http\Problem;
+use App\Support\Http\ProblemType;
+use App\Tenant\Identity\Models\User;
+use App\Tenant\Purchasing\Exceptions\BillRefused;
+use App\Tenant\Purchasing\Models\ApprovalRequest;
 use App\Tenant\Purchasing\Models\Bill;
+use App\Tenant\Purchasing\Services\BillApprovals;
+use App\Tenant\Tenancy\Exceptions\EntityNotInScope;
+use App\Tenant\Tenancy\Models\Entity;
+use App\Tenant\Tenancy\Services\EntityContext;
+use Illuminate\Auth\AuthenticationException;
+use Illuminate\Database\QueryException;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -30,6 +42,11 @@ use Illuminate\Support\Facades\Gate;
  */
 final class BillApiController
 {
+    public function __construct(
+        private readonly BillApprovals $approvals,
+        private readonly EntityContext $entities,
+    ) {}
+
     /** @var array<string, string> NOT NULL columns only - see SortOrder. */
     private const SORTABLE = [
         'posting_date' => 'bills.posting_date',
@@ -111,6 +128,8 @@ final class BillApiController
             ->values()
             ->all();
 
+        $body['approval'] = $this->approval($id);
+
         $body['tax_breakdown'] = DB::connection('tenant')->table('bill_tax_breakdown')
             ->where('bill_id', $id)
             ->orderBy('category')
@@ -128,6 +147,154 @@ final class BillApiController
             ->all();
 
         return new JsonResponse($body);
+    }
+
+    /**
+     * Submit a draft bill for approval - PF-265.
+     *
+     * The chain is compiled from the company's rules and written down; a bill
+     * no rule covers is refused rather than waved through.
+     */
+    public function submit(Request $request, string $id): JsonResponse
+    {
+        Gate::authorize('bill.create');
+
+        [$bill, $entity, $user] = $this->subject($request, $id);
+
+        $this->approvals->submit($bill, $entity, $user->id);
+
+        return $this->show($id);
+    }
+
+    /**
+     * Approve the open step. When it is the last, the bill is posted in the
+     * same transaction - see BillApprovals.
+     */
+    public function approve(Request $request, string $id): JsonResponse|Problem
+    {
+        Gate::authorize('bill.approve');
+
+        $request->validate(['comment' => ['nullable', 'string', 'max:500']]);
+
+        return $this->decide($request, $id, 'approved');
+    }
+
+    /** Reject: the bill returns to draft, with the reason on the chain. */
+    public function reject(Request $request, string $id): JsonResponse|Problem
+    {
+        Gate::authorize('bill.approve');
+
+        $request->validate(['comment' => ['required', 'string', 'min:5', 'max:500']]);
+
+        return $this->decide($request, $id, 'rejected');
+    }
+
+    /** @param 'approved'|'rejected' $decision */
+    private function decide(Request $request, string $id, string $decision): JsonResponse|Problem
+    {
+        [$bill, $entity, $user] = $this->subject($request, $id);
+
+        try {
+            $this->approvals->decide(
+                $bill,
+                $entity,
+                $user->id,
+                $decision,
+                $request->filled('comment') ? $request->string('comment')->trim()->value() : null,
+            );
+        } catch (BillRefused $refused) {
+            /*
+             | The ledger refused to book the bill the last approval cleared -
+             | a duplicate nobody acknowledged, an open three-way match. The
+             | whole decision rolled back with it, so the bill is still
+             | awaiting this approval, and can be approved again once fixed.
+             */
+            return Problem::of(ProblemType::ValidationFailed)->withDetail($refused->getMessage());
+        } catch (QueryException $e) {
+            return DatabaseRefusal::problem($e) ?? throw $e;
+        }
+
+        return $this->show($id);
+    }
+
+    /** @return array{0: Bill, 1: Entity, 2: User} */
+    private function subject(Request $request, string $id): array
+    {
+        /** @var Bill $bill */
+        $bill = Bill::query()->findOrFail($id);
+        $entity = $this->entities->entity();
+        $user = $request->user();
+
+        if (! $entity instanceof Entity) {
+            throw EntityNotInScope::forQueryOn(Bill::class);
+        }
+
+        if (! $user instanceof User) {
+            throw new AuthenticationException();
+        }
+
+        return [$bill, $entity, $user];
+    }
+
+    /**
+     * The bill's latest approval chain, as the app shows it.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function approval(string $billId): ?array
+    {
+        $chain = DB::connection('tenant')->table('approval_requests')
+            ->where('subject_type', 'bill')
+            ->where('subject_id', $billId)
+            ->orderByDesc('requested_at')
+            ->first(['id', 'status', 'requested_by', 'requested_at', 'decided_at', 'outcome_detail']);
+
+        if ($chain === null) {
+            return null;
+        }
+
+        $chainId = Row::text($chain, 'id');
+        $status = Row::text($chain, 'status');
+
+        $model = $status === 'pending' ? ApprovalRequest::query()->find($chainId) : null;
+
+        return [
+            'id' => $chainId,
+            'status' => $status,
+            'requested_by' => Row::nullableText($chain, 'requested_by'),
+            'requested_at' => Wire::timestamp(Row::nullableText($chain, 'requested_at')),
+            'decided_at' => Wire::timestamp(Row::nullableText($chain, 'decided_at')),
+            'outcome' => Row::nullableText($chain, 'outcome_detail'),
+            'who_can_decide' => $model instanceof ApprovalRequest ? $this->approvals->whoCanDecide($model) : null,
+            'steps' => DB::connection('tenant')->table('approval_steps')
+                ->where('approval_request_id', $chainId)
+                ->orderBy('sequence')
+                ->get(['sequence', 'role', 'user_id', 'quorum', 'approvals', 'status'])
+                ->map(static fn (object $step): array => [
+                    'sequence' => (int) Row::text($step, 'sequence'),
+                    'role' => Row::nullableText($step, 'role'),
+                    'user_id' => Row::nullableText($step, 'user_id'),
+                    'quorum' => (int) Row::text($step, 'quorum'),
+                    'approvals' => (int) Row::text($step, 'approvals'),
+                    'status' => Row::text($step, 'status'),
+                ])
+                ->values()
+                ->all(),
+            'decisions' => DB::connection('tenant')->table('approval_decisions')
+                ->leftJoin('users', 'users.id', '=', 'approval_decisions.user_id')
+                ->where('approval_decisions.approval_request_id', $chainId)
+                ->orderBy('approval_decisions.decided_at')
+                ->get(['approval_decisions.user_id', 'users.name', 'approval_decisions.decision', 'approval_decisions.comment', 'approval_decisions.decided_at'])
+                ->map(static fn (object $decision): array => [
+                    'user_id' => Row::text($decision, 'user_id'),
+                    'name' => Row::nullableText($decision, 'name'),
+                    'decision' => Row::text($decision, 'decision'),
+                    'comment' => Row::nullableText($decision, 'comment'),
+                    'decided_at' => Wire::timestamp(Row::nullableText($decision, 'decided_at')),
+                ])
+                ->values()
+                ->all(),
+        ];
     }
 
     private function listing(): Builder

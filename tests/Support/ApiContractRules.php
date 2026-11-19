@@ -230,6 +230,8 @@ final class ApiContractRules
                 'signing out closes the session, and the devices are listed' => fn (): array => $this->signingOut(),
                 'a device token carries no scope that needs somebody present' => fn (): array => $this->noStepUpOnADevice(),
                 'every read endpoint answers a token holding its scope' => fn (): array => $this->theReadSurfaceAnswers(),
+                'a payment settles only what it can, or is not recorded' => fn (): array => $this->aPaymentSettlesOnlyWhatItCan(),
+                'a bill decision is refused before it is recorded' => fn (): array => $this->billDecisionsAreGuarded(),
                 'a second factor is required, and one code opens one session' => fn (): array => $this->theSecondFactorStage(),
 
                 // PF-222 - money and dates.
@@ -1890,6 +1892,8 @@ final class ApiContractRules
                     && (str_contains($entry, 'journal.post')
                         || str_contains($entry, 'invoice.issue')
                         || str_contains($entry, 'payment.record')
+                        // Applying money to a document posts too - PF-264.
+                        || str_contains($entry, 'payment.allocate')
                         || str_contains($entry, 'payment.release')),
             );
 
@@ -3220,6 +3224,138 @@ final class ApiContractRules
 
             if ($detail->getStatusCode() !== 200) {
                 $problems[] = sprintf('GET /parties/%s answered %d', $first, $detail->getStatusCode());
+            }
+        }
+
+        $this->signOutQuietly($session);
+
+        return $problems;
+    }
+
+    /**
+     * POST /payments refuses, before anything is written - PF-264.
+     *
+     * The fixture company has no bank account or invoice to settle, so this
+     * drives the refusals, which is where the money would go wrong: a key is
+     * required, and an allocation naming a document the payment cannot settle
+     * is a 422 addressed to that allocation - with no payment left behind in
+     * unapplied cash.
+     *
+     * @return list<string>
+     */
+    private function aPaymentSettlesOnlyWhatItCan(): array
+    {
+        foreach (['payment.record', 'payment.allocate'] as $key) {
+            DB::connection('tenant')->table('role_permissions')->insertOrIgnore([
+                'id' => (string) Str::ulid(),
+                'role_id' => $this->roleId,
+                'permission_id' => (string) Permission::query()->where('key', $key)->value('id'),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        [$response, $session] = $this->signInOnADevice();
+
+        if ($response->getStatusCode() !== 201) {
+            return ['could not sign in to record a payment'];
+        }
+
+        $problems = [];
+        $marker = 'contract-suite-'.Str::lower(Str::random(10));
+        $body = [
+            'direction' => 'receipt',
+            'method' => '30',
+            'amount' => '10.0000',
+            'currency' => 'SAR',
+            'value_date' => now()->toDateString(),
+            'bank_account_id' => strtolower((string) Str::ulid()),
+            'reference' => $marker,
+            'allocations' => [[
+                'document_type' => 'invoice',
+                'document_id' => strtolower((string) Str::ulid()),
+                'amount' => '10.0000',
+            ]],
+        ];
+
+        $noKey = $this->request('POST', '/api/v1/payments', $body, $this->deviceHeaders($session), 'recordPayment');
+
+        if ($noKey->getStatusCode() !== 422 || ($this->problem($noKey)['type'] ?? null) !== ProblemType::IdempotencyKeyRequired->uri()) {
+            $problems[] = sprintf('a payment with no Idempotency-Key answered %d rather than 422', $noKey->getStatusCode());
+        }
+
+        $refused = $this->request(
+            'POST',
+            '/api/v1/payments',
+            $body,
+            $this->deviceHeaders($session) + ['Idempotency-Key' => 'contract-suite-'.Str::random(24)],
+            'recordPayment',
+        );
+
+        $pointers = array_column((array) ($this->problem($refused)['errors'] ?? []), 'pointer');
+
+        if ($refused->getStatusCode() !== 422 || ! \in_array('/allocations/0/document_id', $pointers, true)) {
+            $problems[] = sprintf(
+                'a payment allocated to a document that does not exist answered %d without addressing the '.
+                'allocation: %s',
+                $refused->getStatusCode(),
+                Str::limit((string) $refused->getContent(), 200),
+            );
+        }
+
+        if (DB::connection('tenant')->table('payments')->where('external_reference', $marker)->exists()) {
+            $problems[] = 'a refused payment was recorded anyway, and sits in unapplied cash';
+        }
+
+        $this->signOutQuietly($session);
+
+        return $problems;
+    }
+
+    /**
+     * The bill approval routes refuse what they must - PF-265.
+     *
+     * The chain itself is ApprovalRules' to prove; this is the HTTP edge: an
+     * approval that can book needs its key, a rejection needs its reason, and
+     * another company's bill is a 404 like any other record.
+     *
+     * @return list<string>
+     */
+    private function billDecisionsAreGuarded(): array
+    {
+        foreach (['bill.create', 'bill.approve'] as $key) {
+            DB::connection('tenant')->table('role_permissions')->insertOrIgnore([
+                'id' => (string) Str::ulid(),
+                'role_id' => $this->roleId,
+                'permission_id' => (string) Permission::query()->where('key', $key)->value('id'),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        [$response, $session] = $this->signInOnADevice();
+
+        if ($response->getStatusCode() !== 201) {
+            return ['could not sign in to decide on a bill'];
+        }
+
+        $problems = [];
+        $headers = $this->deviceHeaders($session);
+        $unknown = strtolower((string) Str::ulid());
+
+        $checks = [
+            ['/api/v1/bills/'.$unknown.'/submit', 'submitBill', null, $headers, 404],
+            ['/api/v1/bills/'.$unknown.'/approve', 'approveBill', [], $headers, 422],
+            ['/api/v1/bills/'.$unknown.'/approve', 'approveBill', [], $headers + ['Idempotency-Key' => 'contract-suite-'.Str::random(24)], 404],
+            ['/api/v1/bills/'.$unknown.'/reject', 'rejectBill', ['comment' => 'no'], $headers, 422],
+            ['/api/v1/bills/'.$unknown.'/reject', 'rejectBill', ['comment' => 'Wrong supplier on the bill.'], $headers, 404],
+        ];
+
+        foreach ($checks as [$uri, $operation, $body, $with, $expected]) {
+            $answer = $this->request('POST', $uri, $body ?? [], $with, $operation);
+
+            if ($answer->getStatusCode() !== $expected) {
+                $problems[] = sprintf('POST %s answered %d rather than %d', $uri, $answer->getStatusCode(), $expected);
             }
         }
 
