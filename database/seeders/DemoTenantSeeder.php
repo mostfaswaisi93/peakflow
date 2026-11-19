@@ -11,10 +11,12 @@ use App\Support\Money\Money;
 use App\Support\Money\Rate;
 use App\Tenant\Banking\Matching\MatchingEngine;
 use App\Tenant\Banking\Models\BankAccount;
+use App\Tenant\Banking\Models\BankStatement;
 use App\Tenant\Banking\Models\BankTransaction;
 use App\Tenant\Banking\Models\MatchProposal;
 use App\Tenant\Banking\Services\BankAccounts;
 use App\Tenant\Banking\Services\Matches;
+use App\Tenant\Banking\Services\Reconciliations;
 use App\Tenant\Banking\Services\StatementImport;
 use App\Tenant\Catalog\Models\PaymentTerm;
 use App\Tenant\Catalog\Services\CurrencyPolicy;
@@ -275,13 +277,16 @@ final class DemoTenantSeeder extends Seeder
 
             $this->importStatements();
             $this->reconcile();
+            $reconciled = $this->standTheReconciliations();
             $this->fileTheTaxPeriods();
 
             $this->command?->info(\sprintf(
-                '  %d invoices, %d bills and %d bank lines over %d days, through the real services.',
+                '  %d invoices, %d bills, %d bank lines and %d standing reconciliation(s) over %d days, '.
+                'through the real services.',
                 $invoices,
                 $bills,
                 \count($this->bankMovements),
+                $reconciled,
                 self::DAYS,
             ));
         });
@@ -1347,6 +1352,66 @@ final class DemoTenantSeeder extends Seeder
                 }
             }
         }
+    }
+
+    /**
+     * A standing reconciliation per statement, except the most recent - PF-281.
+     *
+     * ## Matching is not reconciling
+     *
+     * `reconcile()` above accepts match proposals, which is what ties a
+     * bank LINE to a document. A reconciliation is the other statement: on
+     * this date, the bank's closing balance and the ledger's agree, and
+     * here are the four items that explain any difference. The fixture did
+     * the first and never the second, so `ledger:verify` reported *"has 1
+     * statement(s) in 2026-03 and no reconciliation standing for the end of
+     * it"* for all thirteen months - and it was right, because cash is the
+     * one balance an auditor can confirm independently and closing without
+     * it leaves the most verifiable figure unverified.
+     *
+     * ## The newest one is left open on purpose
+     *
+     * A company reconciles last month's statement, not this morning's. A
+     * fixture where every statement is reconciled up to the minute has no
+     * "to do" state on the screen that exists to show it.
+     *
+     * ## And a refusal here is information, not an error to swallow
+     *
+     * `Reconciliations::reconcile()` refuses an account whose balances do
+     * not agree - "an account that does not reconcile is not reconciled" -
+     * so a statement that will not reconcile is reported rather than
+     * skipped quietly. That refusal is the fixture telling us the books do
+     * not tie, which is the thing this task is for.
+     */
+    private function standTheReconciliations(): int
+    {
+        $reconciliations = app(Reconciliations::class);
+        $statements = BankStatement::query()
+            ->where('bank_account_id', self::text($this->bank()->getKey()))
+            ->orderBy('period_to')
+            ->get();
+
+        $stood = 0;
+        $last = $statements->count() - 1;
+
+        foreach ($statements as $index => $statement) {
+            if ($index === $last) {
+                break; // this month's, still being worked through
+            }
+
+            try {
+                $reconciliations->reconcile($statement, $this->userId);
+                $stood++;
+            } catch (Throwable $e) {
+                $this->command?->warn(sprintf(
+                    '  %s would not reconcile: %s',
+                    self::text($statement->getAttribute('period_to')),
+                    $e->getMessage(),
+                ));
+            }
+        }
+
+        return $stood;
     }
 
     /**
