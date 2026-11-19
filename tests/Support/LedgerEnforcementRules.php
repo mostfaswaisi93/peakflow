@@ -102,6 +102,7 @@ final class LedgerEnforcementRules
                 // FIRST, because every check below is meaningless if a guard
                 // is switched off - and they would all pass.
                 'every ledger guard is enabled' => $this->guardsAreEnabled(),
+                'the critical queries prune partitions and have their indexes' => $this->theCriticalQueriesPruneAndIndex(),
                 'an entry must balance in the functional currency' => $this->entriesMustBalance(),
                 'a header or control account refuses a manual posting' => $this->accountsRefuseWhatTheyShould(),
                 'a closed period refuses a posting' => $this->closedPeriodsRefuse(),
@@ -1329,6 +1330,184 @@ final class LedgerEnforcementRules
             implode(', ', array_map(static fn ($role): string => $role->value, $missing)),
         )];
     }
+
+    /**
+     * The planner prunes partitions and reaches for the indexes - PF-243.
+     *
+     * ## Why `EXPLAIN` rather than a timing
+     *
+     * On a fixture, everything is fast. `journal_lines` here holds a few
+     * hundred rows across 43 monthly partitions, so a sequential scan of one
+     * of them costs nothing and a timing assertion would pass against a
+     * query that reads the whole table on a real tenant.
+     *
+     * What `EXPLAIN` answers is structural and the same at any size: **which
+     * relations the plan touches**. A date-bounded query over a
+     * RANGE-partitioned table either prunes to the months it asked for or it
+     * does not, and that answer does not depend on how many rows are in
+     * them.
+     *
+     * ## The positive control is the whole check
+     *
+     * Asserting "the bounded query touches one partition" alone passes
+     * against a table that is not partitioned at all, against a fixture with
+     * one partition, and against a planner that pruned for some other
+     * reason. So the unbounded form of the same query is planned too, and it
+     * has to touch MANY - which is what makes the one a consequence of the
+     * bound rather than of the data.
+     *
+     * ## Indexes are asserted with `enable_seqscan` off
+     *
+     * A planner on a small table correctly prefers a sequential scan, so
+     * "the plan uses an index" is false here for the right reason. Turning
+     * the preference off asks the question that actually matters - **is
+     * there an index it COULD use** - because `enable_seqscan = off` is a
+     * discouragement and not a prohibition: with no usable index the plan
+     * stays sequential and the assertion fails.
+     *
+     * Inside a transaction that is rolled back, so the setting does not
+     * escape into the checks that follow.
+     *
+     * @return list<string>
+     */
+    public function theCriticalQueriesPruneAndIndex(): array
+    {
+        $connection = DB::connection('tenant');
+
+        $partitions = (int) $connection->selectOne(
+            'SELECT count(*) AS c FROM pg_inherits i JOIN pg_class p ON p.oid = i.inhparent WHERE p.relname = ?',
+            ['journal_lines'],
+        )->c;
+
+        if ($partitions < 3) {
+            return [sprintf(
+                'journal_lines has %d partition(s), so pruning cannot be demonstrated. The table is '.
+                'RANGE partitioned on accounting_date and this check is about the planner using '.
+                'that - with one partition there is nothing to prune to',
+                $partitions,
+            )];
+        }
+
+        $entityId = (string) $connection->table('entities')->orderBy('code')->value('id');
+        $problems = [];
+
+        $bounded = $this->partitionsIn($connection->select(
+            'EXPLAIN SELECT sum(l.functional_amount) FROM journal_lines l '.
+            'WHERE l.entity_id = ? AND l.accounting_date BETWEEN ? AND ?',
+            [$entityId, '2026-05-01', '2026-05-31'],
+        ));
+
+        $unbounded = $this->partitionsIn($connection->select(
+            'EXPLAIN SELECT sum(l.functional_amount) FROM journal_lines l WHERE l.entity_id = ?',
+            [$entityId],
+        ));
+
+        if ($unbounded <= $bounded) {
+            $problems[] = sprintf(
+                'a query with no date bound plans %d partition(s) and a bounded one plans %d, so the '.
+                'bound is changing nothing. Either the table is no longer partitioned on '.
+                'accounting_date or the planner cannot use it - and on a tenant with years of '.
+                'history that is every month read to answer about one',
+                $unbounded,
+                $bounded,
+            );
+        }
+
+        if ($bounded > 2) {
+            $problems[] = sprintf(
+                'a query bounded to one month plans %d partitions out of %d. A month spans at most '.
+                'two when the boundary falls inside one; more than that is the bound not reaching '.
+                'the partition key',
+                $bounded,
+                $partitions,
+            );
+        }
+
+        /*
+         | And an index exists for each shape the product actually runs.
+         |
+         | The names are the ones the schema declares, so a dropped or
+         | renamed index fails here rather than at the first slow month-end.
+         */
+        $expected = [
+            'journal_lines' => ['journal_lines_trial_balance', 'journal_lines_account_detail'],
+            'invoices' => ['invoices_entity_id_status_index', 'invoices_entity_id_party_id_index'],
+            'bills' => ['bills_entity_id_status_index'],
+        ];
+
+        foreach ($expected as $table => $indexes) {
+            $present = array_map(
+                static fn (object $row): string => (string) $row->indexname,
+                $connection->select('SELECT indexname FROM pg_indexes WHERE tablename = ?', [$table]),
+            );
+
+            foreach ($indexes as $index) {
+                if (! \in_array($index, $present, true)) {
+                    $problems[] = sprintf(
+                        'the index "%s" is gone from %s. It is what the %s reads through, and without '.
+                        'it the query still answers - at a cost nothing in this suite would notice '.
+                        'and every month-end would',
+                        $index,
+                        $table,
+                        $table === 'journal_lines' ? 'trial balance and the GL detail' : 'register',
+                    );
+                }
+            }
+        }
+
+        /*
+         | The planner can actually reach one.
+         |
+         | Rolled back, because `enable_seqscan` is a session setting and a
+         | check that left it off would make every later plan in this suite
+         | a different plan.
+         */
+        $connection->beginTransaction();
+
+        try {
+            $connection->statement('SET LOCAL enable_seqscan = off');
+
+            $plan = implode(' ', array_map(
+                static fn (object $row): string => (string) current((array) $row),
+                $connection->select(
+                    'EXPLAIN SELECT l.account_id, sum(l.functional_amount) FROM journal_lines l '.
+                    'WHERE l.entity_id = ? AND l.accounting_date BETWEEN ? AND ? GROUP BY l.account_id',
+                    [$entityId, '2026-05-01', '2026-05-31'],
+                ),
+            ));
+
+            if (! str_contains($plan, 'Index Scan') && ! str_contains($plan, 'Index Only Scan') && ! str_contains($plan, 'Bitmap')) {
+                $problems[] = sprintf(
+                    'with sequential scans discouraged, the trial-balance shape still plans without '.
+                    'an index: %s. enable_seqscan = off is a discouragement and not a prohibition, '.
+                    'so a plan that stays sequential under it is a plan with no index available',
+                    Str::limit(preg_replace('/\s+/', ' ', $plan) ?? '', 160),
+                );
+            }
+        } finally {
+            $connection->rollBack();
+        }
+
+        return $problems;
+    }
+
+    /**
+     * How many `journal_lines` partitions a plan names.
+     *
+     * @param  list<object>  $plan
+     */
+    private function partitionsIn(array $plan): int
+    {
+        $text = implode("\n", array_map(
+            static fn (object $row): string => (string) current((array) $row),
+            $plan,
+        ));
+
+        preg_match_all('/journal_lines_\d{4}_\d{2}/', $text, $matches);
+
+        return \count(array_unique($matches[0]));
+    }
+
 
     /**
      * Every trigger guarding the ledger is actually ENABLED.
