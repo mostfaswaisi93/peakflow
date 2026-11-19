@@ -40,6 +40,18 @@ enum ProblemType: string
 {
     // Authentication and authorization
     case Unauthenticated = 'unauthenticated';
+
+    /*
+     | A sign-in that did not succeed - PF-260.
+     |
+     | ONE type for an unknown workspace, an unknown address, a wrong
+     | password, a deactivated account and a wrong or expired code, and the
+     | same sentence for all of them. Distinguishing them turns the sign-in
+     | endpoint into an oracle that answers "does this person bank with you"
+     | to anybody who asks - the same reason the browser's form says one thing.
+     | The audit log records which it actually was.
+     */
+    case SignInRefused = 'sign-in-refused';
     case Forbidden = 'forbidden';
     case SegregationOfDutiesConflict = 'segregation-of-duties-conflict';
     case StepUpRequired = 'step-up-authentication-required';
@@ -108,7 +120,8 @@ enum ProblemType: string
     public function status(): int
     {
         return match ($this) {
-            self::Unauthenticated => 401,
+            self::Unauthenticated,
+            self::SignInRefused => 401,
 
             self::Forbidden,
             self::SegregationOfDutiesConflict,
@@ -163,6 +176,7 @@ enum ProblemType: string
     {
         return match ($this) {
             self::Unauthenticated => 'Authentication is required',
+            self::SignInRefused => 'The sign-in was refused',
             self::Forbidden => 'Not permitted',
             self::SegregationOfDutiesConflict => 'Segregation of duties conflict',
             self::StepUpRequired => 'Re-authentication is required for this action',
@@ -223,6 +237,7 @@ enum ProblemType: string
     {
         return match ($this) {
             self::Unauthenticated => 'Send a bearer token in the Authorization header. The API accepts no other credential.',
+            self::SignInRefused => 'The workspace, email address, password or code was not accepted. Check them and try again.',
             self::Forbidden => 'The user behind this token holds no permission for this action in this entity.',
             self::SegregationOfDutiesConflict => 'The same person already performed the duty that conflicts with this one.',
             self::StepUpRequired => 'This action needs a fresh re-authentication, which a long-lived token cannot provide.',
@@ -262,6 +277,7 @@ enum ProblemType: string
     {
         return match ($this) {
             self::Unauthenticated => 'أرسل رمزًا من نوع bearer في ترويسة Authorization. لا تقبل الواجهة أي اعتماد آخر.',
+            self::SignInRefused => 'لم تُقبل مساحة العمل أو البريد الإلكتروني أو كلمة المرور أو الرمز. تحقّق منها وأعد المحاولة.',
             self::Forbidden => 'المستخدم صاحب هذا الرمز لا يملك صلاحية هذا الإجراء في هذا الكيان.',
             self::SegregationOfDutiesConflict => 'الشخص نفسه نفّذ من قبل المهمة التي تتعارض مع هذه.',
             self::StepUpRequired => 'هذا الإجراء يحتاج إعادة توثيق لحظية، ولا يمكن لرمز طويل الأجل أن يقدّمها.',

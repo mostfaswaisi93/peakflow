@@ -26,9 +26,20 @@
     will refuse them - but a menu that was the only thing in the way would
     be a menu somebody types past.
 --}}
+{{--
+    ## Rendered in two places, one part each
+
+    `part` is `column` (the `<nav>` beside the content, from `lg` up) or
+    `disclosure` (the menu button at the start of the header, below `lg`).
+    The header owns the button so a narrow screen gets one bar, not a header
+    and a second navy bar under it; the panel hangs from the header, which
+    is its positioned ancestor. Called without `part`, both render, as
+    before.
+--}}
+@php($part ??= 'both')
 @php($sections = \App\Support\Ui\Navigation::forCurrentUser())
 
-@if ($sections !== [])
+@if ($sections !== [] && $part !== 'disclosure')
     <nav aria-label="{{ __('التنقل الرئيسي') }}"
          class="hidden shrink-0 border-e border-outline bg-sidebar p-4 lg:block lg:w-64">
         {{--
@@ -44,19 +55,38 @@
             start scrolling the page behind it - the gesture that loses a
             user their place in a long list without ever looking like it did.
         --}}
-        <div class="scrollbar-on-sidebar sticky top-4 max-h-[calc(100dvh-5rem)] overflow-y-auto overscroll-contain pe-1">
+        {{-- `top-20` clears the sticky header (4rem) with the same 1rem gap
+             the column had before the header stuck. --}}
+        <div class="scrollbar-on-sidebar sticky top-20 max-h-[calc(100dvh-6rem)] overflow-y-auto overscroll-contain pe-1">
             @include('partials.nav-list', ['sections' => $sections])
         </div>
     </nav>
+@endif
 
-    <details class="border-b border-outline bg-sidebar lg:hidden">
-        <summary class="flex cursor-pointer items-center gap-2 px-6 py-3 text-body text-on-sidebar
-                        marker:content-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus-ring">
-            <x-icon name="menu" class="size-5"/>
-            <span>{{ __('التنقل الرئيسي') }}</span>
+@if ($sections !== [] && $part !== 'column')
+    {{--
+        The narrow-screen menu: an icon button in the header, a panel under it.
+
+        `name="pf-header"` makes it one of the header's exclusive group, so
+        opening it closes the theme, density and account menus and the other
+        way round - the browser's own accordion, no script.
+
+        The label is the button's accessible name, hidden visually: three
+        lines are the one icon everybody reads without a word under it.
+    --}}
+    <details name="pf-header" class="group lg:hidden">
+        <summary class="-ms-2 flex size-10 list-none items-center justify-center rounded-button text-on-surface-muted
+                        transition-colors duration-(--duration-fast) ease-(--ease-standard)
+                        hover:bg-surface-hover hover:text-on-surface group-open:bg-surface-selected group-open:text-on-surface
+                        focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring
+                        [&::-webkit-details-marker]:hidden">
+            <x-icon name="menu" class="size-6 group-open:hidden"/>
+            <x-icon name="close" class="hidden size-6 group-open:block"/>
+            <span class="sr-only">{{ __('التنقل الرئيسي') }}</span>
         </summary>
 
-        <div class="px-4 pb-4">
+        <div class="scrollbar-on-sidebar absolute inset-x-0 top-full z-(--z-drawer) max-h-[calc(100dvh-7rem)] overflow-y-auto overscroll-contain
+                    border-b border-outline bg-sidebar px-4 py-5 shadow-e3 sm:px-6">
             @include('partials.nav-list', ['sections' => $sections])
         </div>
     </details>

@@ -39,8 +39,13 @@
 
      `brand` (default on) puts the logo above the page. Off where the page
      carries it itself (sign-in), and off on a customer's document, which is
-     the ISSUER'S document - the platform signs it in a footer, not a header. --}}
-<body @class(['min-h-dvh bg-background text-on-background antialiased', 'aurora' => $aurora ?? false])>
+     the ISSUER'S document - the platform signs it in a footer, not a header.
+
+     `overflow-x-clip`: the sign-in card's organic shapes deliberately hang
+     past its edges, and on a phone that is past the screen's - the page was
+     447 px wide on a 375 px screen and scrolled sideways onto a blob. `clip`
+     rather than `hidden`, so nothing becomes a scroll container. --}}
+<body @class(['min-h-dvh overflow-x-clip bg-background text-on-background antialiased', 'aurora' => $aurora ?? false])>
     <main class="mx-auto flex min-h-dvh max-w-xl flex-col justify-center px-6 py-16">
         @if ($brand ?? true)
             <x-brand.logo size="small" class="mb-10 h-8 self-center"/>

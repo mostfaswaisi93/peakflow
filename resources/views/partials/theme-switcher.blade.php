@@ -8,15 +8,24 @@
 
     The choice is stored on the user and in a cookie, then the page reloads in
     it - rendered by the server, so it never flashes the previous theme.
+
+    In the header it is an icon button below `xl` and an icon with its words
+    from `xl` up. The words are always there for a screen reader - `sr-only`,
+    not removed - so the button is announced as "المظهر: فاتح" at every width.
 --}}
-<details class="relative">
-    <summary class="flex cursor-pointer list-none items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-on-surface-muted
+@php($themeSummary = __('المظهر').': '.__($theme->label()))
+<details name="pf-header" class="group relative">
+    <summary title="{{ $themeSummary }}"
+             class="flex h-10 min-w-10 list-none items-center justify-center gap-2 rounded-button px-2.5 text-label text-on-surface-muted
                     transition-colors duration-(--duration-fast) ease-(--ease-standard)
-                    hover:bg-surface-hover hover:text-on-surface
+                    hover:bg-surface-hover hover:text-on-surface group-open:bg-surface-selected group-open:text-on-surface
                     focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring
                     [&::-webkit-details-marker]:hidden">
-        {{ __('المظهر') }}:
-        <span class="font-medium text-on-surface">{{ __($theme->label()) }}</span>
+        <x-icon name="theme" class="size-5"/>
+        <span class="sr-only xl:not-sr-only xl:whitespace-nowrap">
+            {{ __('المظهر') }}:
+            <span class="font-medium text-on-surface">{{ __($theme->label()) }}</span>
+        </span>
     </summary>
 
     <form method="POST" action="{{ route('preferences.theme') }}"

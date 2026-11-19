@@ -1146,6 +1146,25 @@
     }
 
     /* ----------------------------------------------------------------------
+     *  A SCROLL AREA holds everything inside it.
+     *
+     *  `overflow-x: auto` clips what flows inside it, but NOT an absolutely
+     *  positioned descendant whose containing block is further out - and
+     *  `sr-only` is `position: absolute`. A table's visually hidden column
+     *  labels escaped the table's own scroll area that way and widened the
+     *  whole page: the trial balance was 704 px wide on a 375 px phone, and
+     *  scrolled sideways onto nothing.
+     *
+     *  Every horizontal scroll area is made the containing block, once, so the
+     *  next table cannot repeat it. `:where()` keeps it at zero specificity and
+     *  it sits in `base`, so an explicit `sticky` or `absolute` on the same
+     *  element still wins.
+     * ------------------------------------------------------------------- */
+    :where(.overflow-auto, .overflow-x-auto, .overflow-x-scroll) {
+        position: relative;
+    }
+
+    /* ----------------------------------------------------------------------
      *  TABULAR NUMERALS - applied to every figure, everywhere.
      *
      *  A proportional `1` in a currency column is the single most common
