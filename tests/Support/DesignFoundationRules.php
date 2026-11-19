@@ -117,6 +117,7 @@ final class DesignFoundationRules
             'the focus indicator is identifiable on every fill it can land on' => $this->focusIndicatorIsIdentifiable($css),
             'nothing eats the focus halo' => $this->nothingEatsTheHalo(),
             'every foreground and background written onto one element is a declared pair' => $this->renderedPairsAreDeclared($css),
+            'a row\'s three states are three, and the selected one survives losing colour' => $this->rowStatesStayThree($css),
 
             // PF-201 - typography
             'no font is fetched from a third party at runtime' => $this->fontsAreNotFetchedAtRuntime($css),
@@ -501,6 +502,127 @@ final class DesignFoundationRules
     /* =======================================================================
      |  PF-200 - the contrast matrix
      * ==================================================================== */
+
+    /**
+     * Zebra, hover and selected are three states - PF-278.
+     *
+     * ## Why distinctness is the thing measured
+     *
+     * They answer different questions: which line am I on, which line is
+     * the pointer over, which lines did I pick. Two of them rendering the
+     * same tint is worse than having only one, because the person believes
+     * the one they are reading - and in a payment run "which rows am I
+     * about to pay" is not a question to be wrong about.
+     *
+     * The grid draws them from `surface-sunken`, `surface-hover` and
+     * `surface-selected` over a row of `surface`, so this asserts all four
+     * differ in every theme. It is an equality check rather than a contrast
+     * one on purpose: a tint one step from its neighbour is a legitimate
+     * design choice at 1.05:1, and a threshold here would either forbid
+     * subtlety or pass two values that are literally the same.
+     *
+     * ## And the part that is not a colour
+     *
+     * A printed statement has no backgrounds and forced-colours mode
+     * replaces every one of them, so a selection shown only as a tint
+     * survives neither. The selected row carries a bar on its inline-start
+     * edge, and this checks that the bar exists, that it is positioned
+     * logically rather than with a physical offset, and that the
+     * forced-colours block keeps it.
+     *
+     * @return list<string>
+     */
+    public function rowStatesStayThree(string $css): array
+    {
+        $blocks = self::blocks($css);
+        $violations = [];
+
+        $states = [
+            'the row itself' => '--c-surface',
+            'zebra' => '--c-surface-sunken',
+            'hover' => '--c-surface-hover',
+            'selected' => '--c-surface-selected',
+        ];
+
+        foreach (self::THEMES as $theme => [$selectors, , ]) {
+            $tokens = self::resolve($blocks, $selectors);
+            $seen = [];
+
+            foreach ($states as $label => $role) {
+                try {
+                    [$hex] = self::colour($tokens, $role);
+                } catch (RuntimeException $e) {
+                    $violations[] = \sprintf('%s: %s', $theme, $e->getMessage());
+
+                    continue 2;
+                }
+
+                if (isset($seen[$hex])) {
+                    $violations[] = \sprintf(
+                        '%s: %s and %s are both %s, so two of a row\'s states render identically. The '.
+                        'person believes whichever one they are reading',
+                        $theme,
+                        $seen[$hex],
+                        $label,
+                        $hex,
+                    );
+                }
+
+                $seen[$hex] = $label;
+            }
+        }
+
+        // The mark that is not a colour.
+        if (! str_contains($css, "tr[aria-selected='true'] > :first-child::before")) {
+            $violations[] = 'the selected row has no mark other than its tint. A printed statement has no '.
+                'backgrounds and forced-colours mode replaces every one of them, so a selection shown '.
+                'only as a colour is a selection that survives neither';
+        }
+
+        if (preg_match('/tr\[aria-selected=.true.\] > :first-child::before\s*\{[^}]*inset-inline-start/s', $css) !== 1) {
+            $violations[] = 'the selected row\'s mark is not placed with `inset-inline-start`, so it is '.
+                'either on the wrong edge in Arabic or it is positioned with a physical offset - and a '.
+                'selection bar down the far side of the row is a selection bar nobody reads as one';
+        }
+
+        $forced = self::forcedColoursBlock($css);
+
+        if ($forced !== null && ! str_contains($forced, "tr[aria-selected='true'] > :first-child::before")) {
+            $violations[] = 'the forced-colours block does not keep the selected row\'s mark. That is the '.
+                'one mode where the tint is certainly gone, so it is the one mode where the mark has to '.
+                'be there';
+        }
+
+        return $violations;
+    }
+
+    /** The one forced-colours block, or null if the stylesheet has none. */
+    private static function forcedColoursBlock(string $css): ?string
+    {
+        $at = strpos($css, '@media (forced-colors: active)');
+
+        if ($at === false) {
+            return null;
+        }
+
+        $start = strpos($css, '{', $at);
+
+        if ($start === false) {
+            return null;
+        }
+
+        $depth = 0;
+
+        for ($i = $start, $n = \strlen($css); $i < $n; $i++) {
+            $depth += $css[$i] === '{' ? 1 : ($css[$i] === '}' ? -1 : 0);
+
+            if ($depth === 0) {
+                return substr($css, $start, $i - $start + 1);
+            }
+        }
+
+        return null;
+    }
 
     /**
      * WCAG 1.4.11 and 2.4.11: the focus indicator against the component AND

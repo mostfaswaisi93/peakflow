@@ -548,7 +548,7 @@
                 </tr>
             </thead>
 
-            <tbody class="divide-y divide-outline-subtle bg-surface">
+            <tbody class="grid-rows divide-y divide-outline-subtle bg-surface">
                 @if ($rendered === 0)
                     <tr role="row" aria-rowindex="2">
                         <td role="gridcell" colspan="{{ count($visible) }}"

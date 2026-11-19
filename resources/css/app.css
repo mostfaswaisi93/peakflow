@@ -1204,6 +1204,73 @@
         color: var(--color-on-surface-muted);
     }
 
+    /* ----------------------------------------------------------------------
+     *  THREE ROW STATES, AND THEY HAVE TO STAY THREE - PF-278.
+     *
+     *  Zebra, hover and selected answer different questions: which line am I
+     *  on, which line is the pointer over, which lines did I pick. Two of
+     *  them rendering the same tint is worse than having only one, because
+     *  the person believes the one they are reading.
+     *
+     *  Every theme defines four distinct values here - `surface` for the row
+     *  itself, then sunken, hover and selected - so the three states are
+     *  distinguishable in all five, including both high-contrast ones. The
+     *  three pairs with `on-surface` are declared in `contrast-pairs.json`
+     *  and measured on every run.
+     *
+     *  ## The selected row carries a mark that is not a colour
+     *
+     *  Because the two places this matters most are the two places colour
+     *  disappears. A printed statement has no backgrounds, and forced-colours
+     *  mode replaces every one of them with the system's own. A selection
+     *  shown only as a tint is a selection that does not survive either, and
+     *  "which rows am I about to pay" is not a question to answer with a
+     *  colour a printer drops.
+     *
+     *  So the mark is a bar on the row's inline-start edge, drawn on a
+     *  pseudo-element with `inset-inline-start` - logical, so it is on the
+     *  right in Arabic without a second rule, and the physical-property
+     *  check in `bin/verify design` holds that line.
+     * ------------------------------------------------------------------- */
+    .grid-rows > tr:nth-child(even) {
+        background-color: var(--color-surface-sunken);
+    }
+
+    .grid-rows > tr:hover {
+        background-color: var(--color-surface-hover);
+    }
+
+    .grid-rows > tr[aria-selected='true'] {
+        background-color: var(--color-surface-selected);
+    }
+
+    /* The first cell is the START cell in both directions: a table reverses
+       its own cell order in RTL, so this needs no direction of its own. */
+    .grid-rows > tr[aria-selected='true'] > :first-child {
+        position: relative;
+    }
+
+    .grid-rows > tr[aria-selected='true'] > :first-child::before {
+        content: '';
+        position: absolute;
+        inset-block: 0;
+        inset-inline-start: 0;
+        width: 3px;
+        background-color: var(--color-primary);
+    }
+
+    @media print {
+        /* Zebra and hover both go. Paper has no pointer, and a striped table
+           prints as a table somebody spilled toner on - while costing the
+           ink of every other row. The selection's bar stays, because it is
+           the one state that carries meaning off the screen. */
+        .grid-rows > tr:nth-child(even),
+        .grid-rows > tr:hover,
+        .grid-rows > tr[aria-selected='true'] {
+            background-color: transparent;
+        }
+    }
+
     /* Focus is always visible, and tested as its own token pair against both
        the component and the adjacent background (WCAG 2.4.11). */
     :focus-visible {
@@ -1548,6 +1615,13 @@ select:not([multiple]):not([size]) {
     :focus-visible {
         outline: 2px solid Highlight;
         outline-offset: 2px;
+    }
+
+    /* The system supplies every fill here, so a selected row's tint is gone
+       and its inline-start bar is all that is left to say "selected" - in
+       the colour the OS reserves for exactly that - PF-278. */
+    .grid-rows > tr[aria-selected='true'] > :first-child::before {
+        background-color: Highlight;
     }
 
     [aria-pressed='true'],
