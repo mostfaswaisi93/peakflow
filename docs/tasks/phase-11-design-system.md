@@ -386,8 +386,19 @@ Accounting software is tables. Everything else is navigation around them. A tabl
 
 **Commits to:** a page that is honest about what it is about to show.
 
-- [ ] A skeleton is **the shape of the content that is coming**, not a grey box - a table skeleton has the table's columns, a tile skeleton has the tile's rows
-- [ ] It is used only where the wait is measured to be long enough to matter, and the measurement is recorded per screen; everywhere else the page simply arrives
-- [ ] A skeleton never shifts the layout when the content replaces it - the thing it is standing in for occupies the same box
-- [ ] It is announced to a screen reader as busy, and the announcement stops when the content lands
-- [ ] Under `prefers-reduced-motion` the shimmer stops and the skeleton stays, because the shimmer is decoration and the placeholder is information
+- [x] A skeleton is **the shape of the content that is coming**, not a grey box - a table skeleton has the table's columns, a tile skeleton has the tile's rows
+  - Three shapes - `table`, `tile`, `text` - and the table's columns are at the grid's own fractions rather than six equal bars, because a list of five figures and a name does not look like six identical rectangles. The table skeleton is even zebra-striped, so it reads as that table rather than as a form.
+- [x] It is used only where the wait is measured to be long enough to matter, and the measurement is recorded per screen; everywhere else the page simply arrives
+  - **Measured, and the answer is nowhere.** Thirteen screens, five loads each, in a browser against the showcase workspace: medians from 84ms to 176ms, none over the 200ms threshold. [`docs/design/wait-budget.md`](../design/wait-budget.md) holds the table.
+  - So the component exists and **no screen uses it**, and `SkeletonRules` enforces that: a template using `<x-skeleton>` that is not in the budget above the threshold is refused. The bite puts one on the invoice list and gets *"`/sales/invoices` is measured at 127ms, under the 200ms threshold"*.
+  - That is the criterion working rather than being dodged. Putting a placeholder on a page that arrives in 127ms because placeholders are a thing products have is how a product acquires the feeling of being slower than it is - the eye registers that something changed and has no time to read what.
+  - **The reason the numbers are this shape is architectural:** there is not one `fetch` or `XMLHttpRequest` in the product. Every screen is rendered by the server and arrives whole, so there is no moment where a page exists and its content does not - which is the moment a skeleton is for. The wait that does exist is between pages, and that is the loader's.
+  - The budget says what would change this: a median crossing 200ms on real tenant data rather than the showcase, the first asynchronous load, or a long operation getting its own screen. It also says to re-measure, because a number in a document nobody re-took is a number that was true once.
+- [x] A skeleton never shifts the layout when the content replaces it - the thing it is standing in for occupies the same box
+  - Every dimension is the content's own token. The rows are `var(--row-height)` tall - the same density token `<x-grid>`'s rows use - so a skeleton is the right height in all three densities rather than at one of them. A check asserts that specifically, and its bite replaces the token with the literal that happens to match the default: the figure is correct at that density and wrong at the other two, which is exactly the bug a literal causes and the reason it is worth refusing.
+- [x] It is announced to a screen reader as busy, and the announcement stops when the content lands
+  - `aria-busy` on the wrapper with one sentence of real text, and the shapes themselves `aria-hidden`: reading out eleven empty boxes is not a description of anything. The announcement stops when the skeleton is replaced, because it is the element that carried it.
+  - `aria-busy` alone says a region is busy and not what is coming, which is why the sentence is there as well.
+- [x] Under `prefers-reduced-motion` the shimmer stops and the skeleton stays, because the shimmer is decoration and the placeholder is information
+  - **Satisfied by there being no shimmer at all**, which is the stronger form of the same reasoning. The criterion's own words are the argument: the shimmer is decoration and the placeholder is information - so the decoration was not built. The house rule that nothing loops would have needed an exception for it, and the loader's exception is defensible because its repetition *is* information; a shimmer's is not.
+  - The practical gain is that the reduced path and the ordinary one are one component rather than two kept in step by hand. A check refuses any animation on the skeleton, and its bite adds one.

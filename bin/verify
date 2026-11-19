@@ -378,6 +378,7 @@ if ($only === 'all' || $only === 'design') {
 
 if ($only === 'all' || $only === 'design-system') {
     $suites['Design foundations'] = $suite(static fn (): array => (new Tests\Support\DesignFoundationRules($base))->all());
+    $suites['Skeletons and the wait budget'] = $suite(static fn (): array => (new Tests\Support\SkeletonRules($base))->all());
 }
 
 if ($only === 'all' || $only === 'shell') {

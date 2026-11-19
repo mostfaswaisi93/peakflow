@@ -1407,6 +1407,70 @@
        and the one that is easy to delete by accident. The visible label is
        what still says something is happening once the mark is still. */
 
+    /* ----------------------------------------------------------------------
+     *  SKELETONS - PF-280.
+     *
+     *  The shape of what is coming, at the size it will come at. Every
+     *  dimension here is the content's own - the row height is the density
+     *  token `<x-grid>`'s rows use - so the content replaces the skeleton
+     *  without moving anything. A placeholder that shifts the layout when it
+     *  resolves is worse than an empty space: the person has already started
+     *  reading, and the line they were on moves.
+     *
+     *  ## No shimmer
+     *
+     *  The shimmer is the decorative part of a skeleton and the house rule
+     *  is that nothing loops. The placeholder is the information and it is
+     *  all here - which also means there is nothing to stop under
+     *  `prefers-reduced-motion`, so the reduced path and the ordinary one
+     *  are the same component rather than two kept in step by hand.
+     * ------------------------------------------------------------------- */
+    .pf-skeleton__row {
+        display: flex;
+        align-items: center;
+        gap: calc(var(--spacing) * 3);
+        block-size: var(--row-height);
+        padding-inline: calc(var(--spacing) * 3);
+        border-block-end: 1px solid var(--color-outline-subtle);
+    }
+
+    .pf-skeleton__row--head {
+        background-color: var(--color-surface-sunken);
+    }
+
+    /* Even rows tinted, because the table they stand in for is - so the
+       skeleton reads as that table rather than as a form. */
+    .pf-skeleton__row:nth-child(even) {
+        background-color: var(--color-surface-sunken);
+    }
+
+    .pf-skeleton__cell {
+        display: block;
+        block-size: 0.75em;
+        border-radius: var(--radius-field, 0.25rem);
+        background-color: var(--color-surface-hover);
+    }
+
+    .pf-skeleton__cell--line {
+        inline-size: 100%;
+        margin-block: calc(var(--spacing) * 2);
+    }
+
+    .pf-skeleton__cell--line:last-child {
+        inline-size: 60%;
+    }
+
+    .pf-skeleton__tile {
+        display: flex;
+        flex-direction: column;
+        gap: calc(var(--spacing) * 2);
+        padding: calc(var(--spacing) * 4);
+    }
+
+    .pf-skeleton__cell--label  { inline-size: 40%; }
+    .pf-skeleton__cell--figure { inline-size: 65%; block-size: 1.75em; }
+    .pf-skeleton__cell--note   { inline-size: 30%; }
+
     /* Focus is always visible, and tested as its own token pair against both
        the component and the adjacent background (WCAG 2.4.11). */
     :focus-visible {
