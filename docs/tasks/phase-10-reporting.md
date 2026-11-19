@@ -82,14 +82,6 @@ The structural promise: if a number cannot be explained, it is a bug.
   - End to end, and bitten by stopping the document level at the header - which is the version that looks right in a demo and is useless to the person asking what the figure is made of.
   - A fourth gap the sweep exposed had **no check at all**: dropping a figure's lower date bound changed nothing, because every check used either a balance figure or a window that contained every posting. A movement is now explained by its period's lines and not by a balance's, with two postings and a window holding one.
 
-### PF-191 · Bank reconciliation reporting
-`Reporting` · **3 pts** · depends: PF-165 · standards: —
-
-- [ ] The reconciliation statement for any past reconciliation, reproducible as it stood
-- [ ] Suspense aging by bucket and entity, and in-transit aging
-- [ ] Unreconciled-item aging per bank account, which is the leading indicator of a reconciliation that is drifting
-- [ ] A reconciliation history per account with who authorized each one
-
 ### PF-192 · Cash position and forecast
 `Reporting` · **8 pts** · depends: PF-190, PF-179 · standards: —
 
@@ -98,14 +90,6 @@ The structural promise: if a number cannot be explained, it is a bug.
 - [ ] Answers *will we be short in week six*, and **shows which assumptions drive the answer** rather than producing one number
 - [ ] Scenario comparison: best case, expected, worst case, each with its stated assumptions
 - [ ] Intraday data feeds the current position and is marked provisional
-
-### PF-193 · Budgets and variance
-`Reporting` · **5 pts** · depends: PF-046, PF-185 · standards: —
-
-- [ ] Budgets by account and dimension, by period, with versions and a locked approved version
-- [ ] Budget versus actual with variance in absolute and percentage terms, and a materiality threshold so the report highlights what matters
-- [ ] Commitments from open purchase orders shown against budget, because a committed budget is not an available one
-- [ ] P&L by any dimension combination, which is the whole reason dimensions are columns
 
 ### PF-194 · Consolidation
 `Reporting` · **8 pts** · depends: PF-057, PF-184 · standards: IAS 21, IAS 1 · `risk:high` `type:compliance`

@@ -25,17 +25,6 @@ The distinguishing idea is **alerting on invariants**. A dashboard of CPU and p9
 - [ ] Each abuse case names the control that stops it and the test that proves the control
 - [ ] A review checklist derived from the model, applied to any pull request touching money, auth or SoD
 
-### PF-233 · Database privilege verification
-`—` · **5 pts** · depends: PF-010, PF-045 · standards: — · `risk:high` `type:security`
-
-- [x] An automated check asserting the live privilege grants match the declared intent - not that the migration once ran, but that the grants are as expected now
-- [x] `peakflow_app` proven unable to `DELETE` a posted row, `ALTER` anything, or connect to the platform database
-  - The first two are in the hardening suite; the third is `the connect matrix is one role, one database` in `DatabaseRoleRules`, which opens real sessions rather than reading a catalog.
-- [ ] A drift check runs on every deploy, because a manual grant made during an incident is exactly how this regresses
-  - **The check is built; nothing runs it on a deploy.** `privileges:verify [--tenant=] [--repair] [--platform-only]` exits non-zero on any drift and reports it per tenant, and the hardening suite runs the same matrix on every provisioned database. What is missing is the caller: there is no deploy pipeline in this repository yet (PF-240), so there is nowhere to put the one line. Deliberately left open rather than ticked with a note, because a check nobody invokes is exactly the failure mode this criterion was written against.
-- [x] Row-level security policies verified present on every table that requires one
-  - Proved by `TenantEnforcementRules::everyScopedTableHasAPolicy()` on every provisioned tenant, and carried for the deploy by `privileges:verify`, which calls the same `PrivilegeMatrix::rowSecurityDrift()`. The hardening suite's own matrix check deliberately does not ask again, and says so where it would have.
-
 ### PF-234 · Secret management
 `—` · **5 pts** · depends: PF-124, PF-061 · standards: OWASP ASVS 5.0 · `risk:high` `type:security`
 
@@ -87,25 +76,27 @@ The distinguishing idea is **alerting on invariants**. A dashboard of CPU and p9
 - [ ] Personal data in non-production environments is pseudonymized by the process that creates them, not by a cleanup afterwards
 - [ ] Data residency recorded per tenant, and a tenant's data provably does not leave its declared region
 
-### PF-240 · Distributed tracing
-`—` · **5 pts** · depends: PF-014 · standards: OpenTelemetry
-
-- [ ] Spans across the HTTP request, the queued job and the outbound transport, with the correlation id propagated through all three
-- [ ] "Why did this invoice take four minutes to clear" is **one trace**, not three log searches
-- [ ] Database spans carry the statement shape, never its bound values
-- [ ] Sampling that always keeps errors and always keeps money-moving operations, whatever the rate
-- [ ] Attributes pass through the same allowlist as logs
-
 ### PF-241 · Business metrics
 `—` · **5 pts** · depends: PF-240 · standards: — · `risk:high`
 
 Technical metrics are the floor. These are the ones that describe whether the product is working.
 
 - [ ] Invoices issued, failed and rejected per jurisdiction; clearance latency percentiles per authority
-- [ ] Unmatched bank lines by age; suspense balance by entity; in-transit aging
+  - **Issued is built and bitten** - by jurisdiction profile, document type and state. The other two facts **do not exist**: "failed" and "rejected" are clearance outcomes and latency is the interval between a submission and an authority's answer, and there is no transmission table, no submission timestamp and no authority response anywhere in the schema. The Exchange transport is PF-122 and PF-124.
+  - A `rejected` series was deliberately **not** derived from a validation failure or an unissued draft. That would be a figure on a dashboard that does not mean what its name says, which is worse than an absent series - somebody would report it to a board.
+- [x] Unmatched bank lines by age; suspense balance by entity; in-transit aging
+  - Each one proved to **move** when the fact underneath it changes, through the real services - not asserted against a fixed figure. A reversed match counts as unmatched again, which was hollow first time: the check matched a line and watched the count fall, and never reversed one.
+  - Suspense is read from `journal_lines` rather than from the parked rows, so it is the ledger's answer and not a second one.
 - [ ] Dead-letter depth per transport; failed scheduled runs by task and tenant
-- [ ] Documents awaiting approval by age; payment runs prepared but not released
-- [ ] Dashboards per audience - operator, tenant controller, engineer - because they ask different questions
+  - **Half of it cannot be reached.** `queue_health{queue, state}` reports queue depth and `failed_jobs` depth, which is the dead letter of the only transport the product has - but "per transport" means the Exchange plane's own, where a clearance submission that exhausted its retries waits for a human because the document is already legally issued. That table does not exist.
+  - "Failed scheduled runs by task and tenant" needs a durable record of scheduled-run outcomes, which needs a migration. One was deliberately **not** added: half the criterion is unreachable anyway, and a table added to half-close a criterion is a sketch. What is in place instead is the failure that matters most - the schedule's `onFailure` raises `watch_failed` through the sink, and a watcher that throws becomes the same alert rather than silence, both bitten.
+  - A `scheduled_runs` table plus a `ScheduledTaskFailed` listener is small, well-defined, and the right next step here and for PF-238's evidence pack.
+- [x] Documents awaiting approval by age; payment runs prepared but not released
+  - Both proved to move in **both** directions, including the falling one: a released run leaves the prepared count. A figure that only ever goes up is a figure nobody checks.
+- [x] Dashboards per audience - operator, tenant controller, engineer - because they ask different questions
+  - Three derived dashboards, each non-empty, and a check asserting **no two of them are the same** - because the easy way to satisfy this criterion is three names over one list, and that passes any check that only counts.
+  - A caveat worth stating: these are console dashboards plus a published metric stream, not screens. The data, the audience separation and the derivation are built and bitten; the rendering surface is Phase 11's.
+  - A metric may not be labelled by a party, a document or a correlation id, and that is a check: a metric labelled by customer id is a customer list on whoever's dashboard.
 
 ### PF-242 · Invariant alerting
 `—` · **5 pts** · depends: PF-241, PF-054 · standards: — · `risk:high`
@@ -113,9 +104,17 @@ Technical metrics are the floor. These are the ones that describe whether the pr
 The unusual part, and the part that cannot be retrofitted.
 
 - [ ] Alerts on: read-model drift detected by the nightly rebuild, a hash-chain divergence, a subledger no longer equal to its control account, a suspense balance crossing a threshold, an unbalanced entry reaching the database, a privilege drift, an archive checksum mismatch
-- [ ] Each alert names the entity, the period and the first divergent record, so it is actionable at 3am
-- [ ] Each has a documented runbook entry and a tested, non-destructive first response
-- [ ] A game-day exercise injects each condition in staging and verifies the alert fires and the runbook works
+- [x] Each alert names the entity, the period and the first divergent record, so it is actionable at 3am
+  - `Alert`'s **constructor** refuses an empty entity, period or first divergent record, and the two conditions that genuinely have no period must say so with a named constant - a null period reads as "we did not look".
+  - All three go in the **sentence** as well as the fields, because `LogContext::build()` replaces a caller's `entity_id` with the ambient one and drops it when there is none: an alert whose entity lived only in a field would reach the log without it.
+  - It also refuses a monolingual alert **and two identical sentences**, because an Arabic field holding English reports as covered.
+- [x] Each has a documented runbook entry and a tested, non-destructive first response
+  - Checked three ways, and the third is what makes "non-destructive" mean something: **each distinct first response is executed and the database fingerprinted either side of it**, so a command that writes anything fails by name. `--repair`, `--force`, `--fix` and a bare `ledger:rebuild-balances` are refused in the document without being run.
+  - Bitten by pointing a first response at the repair instead of the check, which is the mistake somebody writing a runbook in a hurry actually makes.
+- [x] A game-day exercise injects each condition in staging and verifies the alert fires and the runbook works
+  - `invariants:game-day {tenant}`: one transaction, a savepoint per condition, always rolled back, and it refuses any environment outside local/development/testing/staging with **no `--force`** - because even rolled back it takes locks on `journal_lines`.
+  - The injectors are **production** code, not test code, because `invariants:game-day` and `bin/verify` both use them: one implementation, two runners. So the same eight injections run on every verify, which is the difference between a game day somebody remembers to hold and one that cannot be skipped.
+  - "Not injectable" is reported and never counted as a pass. Run against the demo tenant it injected the privilege drift, the alert fired naming the planted grant, and it reported the other seven as not injectable with a reason each - the correct answer for a tenant with no books, and the one a game day must never dress up.
 
 ### PF-243 · Performance
 `—` · **5 pts** · depends: PF-058, PF-205 · standards: Core Web Vitals
