@@ -14,6 +14,7 @@ use App\Tenant\Purchasing\Http\Controllers\Api\BillApiController;
 use App\Tenant\Reporting\Http\Controllers\Api\OverviewApiController;
 use App\Tenant\Reporting\Http\Controllers\Api\ReportApiController;
 use App\Tenant\Sales\Http\Controllers\Api\InvoiceApiController;
+use App\Tenant\Settlement\Http\Controllers\Api\PaymentApiController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -154,6 +155,24 @@ Route::middleware([
         ->middleware('api.scope:report.view')
         ->name('api.bills.show');
 
+    /*
+    | A bill's way through approval - PF-265. Submitting opens the chain;
+    | the approval that clears its last step also books the bill, so that
+    | route posts to the ledger and carries `api.idempotent`. A rejection
+    | books nothing and returns the bill to draft.
+    */
+    Route::post('/bills/{id}/submit', [BillApiController::class, 'submit'])
+        ->middleware('api.scope:bill.create')
+        ->name('api.bills.submit');
+
+    Route::post('/bills/{id}/approve', [BillApiController::class, 'approve'])
+        ->middleware(['api.scope:bill.approve', 'api.idempotent'])
+        ->name('api.bills.approve');
+
+    Route::post('/bills/{id}/reject', [BillApiController::class, 'reject'])
+        ->middleware('api.scope:bill.approve')
+        ->name('api.bills.reject');
+
     Route::get('/parties', [PartyApiController::class, 'index'])
         ->middleware('api.scope:party.manage')
         ->name('api.parties.index');
@@ -165,6 +184,15 @@ Route::middleware([
     Route::get('/bank-accounts', BankAccountApiController::class)
         ->middleware('api.scope:bank.manage')
         ->name('api.bank-accounts.index');
+
+    /*
+    | Recording a payment, and applying it to documents - PF-264. It posts to
+    | the ledger, so it carries `api.idempotent`: a retried receipt without a
+    | key is a second receipt.
+    */
+    Route::post('/payments', [PaymentApiController::class, 'store'])
+        ->middleware(['api.scope:payment.record', 'api.idempotent'])
+        ->name('api.payments.store');
 
     /*
     | The financial statements - PF-263. The same services as the browser's
