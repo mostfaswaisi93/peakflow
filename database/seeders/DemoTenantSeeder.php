@@ -6,6 +6,7 @@ namespace Database\Seeders;
 
 use App\Platform\Models\Tenant;
 use App\Platform\Services\TenantConnectionResolver;
+use App\Platform\Services\TenantProvisioner;
 use App\Support\Money\Money;
 use App\Tenant\Banking\Matching\MatchingEngine;
 use App\Tenant\Banking\Models\BankAccount;
@@ -15,11 +16,14 @@ use App\Tenant\Banking\Services\BankAccounts;
 use App\Tenant\Banking\Services\Matches;
 use App\Tenant\Banking\Services\StatementImport;
 use App\Tenant\Catalog\Models\PaymentTerm;
+use App\Tenant\Identity\Models\Role;
 use App\Tenant\Identity\Models\User;
+use App\Tenant\Identity\Models\UserEntityRole;
 use App\Tenant\Ledger\Enums\ControlRole;
 use App\Tenant\Ledger\Enums\PeriodState;
 use App\Tenant\Ledger\Models\Account;
 use App\Tenant\Ledger\Posting\Rules\OpeningBalanceRule;
+use App\Tenant\Ledger\Services\ChartTemplate;
 use App\Tenant\Ledger\Services\FiscalCalendarGenerator;
 use App\Tenant\Ledger\Services\PeriodStateMachine;
 use App\Tenant\Ledger\Services\Poster;
@@ -92,32 +96,99 @@ final class DemoTenantSeeder extends Seeder
     private const string MARKER = 'DEMO-C-01';
 
     /** How far back the company's history starts. */
-    private const int DAYS = 150;
+    /**
+     * A year, so every ageing bucket has something in it - PF-281.
+     *
+     * 150 days could not put anything in a 365-day bucket, and an ageing
+     * report whose last column is always empty reads as a report that does
+     * not work rather than as a company that collects its debts.
+     */
+    private const int DAYS = 365;
+
+    /**
+     * The functional currency, and the jurisdiction that goes with it.
+     *
+     * ## This is a default, not an option
+     *
+     * The fixture used to trade in riyals under a Saudi VAT registration.
+     * Changing the currency alone would have left a Saudi registration
+     * billing in shekels, which is not a demo anybody could show to an
+     * accountant - so the registration, the party countries, the bank and
+     * the tax code move together.
+     *
+     * ## The rate, and what it rests on
+     *
+     * 16% is the Palestinian Authority's standard VAT rate. Under the Paris
+     * Economic Protocol the PA's rate tracks Israel's within two percentage
+     * points, and Israel's standard rate is 18%.
+     *
+     * That is stated here as **the demo's assumption**, not as a verified
+     * statutory citation: no authority source could be read from this
+     * environment, and `config/tax_returns.php` already marks the box
+     * numbers it could not verify for the same reason. A fixture is the
+     * right place for an assumption as long as it is written down; a tax
+     * engine is not, and this rate is not wired into one.
+     *
+     * The jurisdiction has no profile of its own and does not need one: it
+     * falls through to the `generic` EN 16931 return in
+     * `config/tax_returns.php`, which is explicit about being a minimal
+     * form rather than a statutory one.
+     */
+    private const string TENANT_SLUG = 'showcase';
+
+    private const string ENTITY_CODE = 'SHOW';
+
+    private const string USER_EMAIL = 'owner@showcase.test';
+
+    private const string CURRENCY = 'ILS';
+
+    private const string JURISDICTION = 'PS';
+
+    private const string VAT_RATE = '16.000000';
+
+    /**
+     * A customer who buys in dollars and a supplier who invoices in euros.
+     *
+     * Without these the FX difference account stays at zero and the
+     * revaluation has nothing to revalue, so two whole screens of the
+     * product demonstrate as empty - PF-281.
+     */
+    private const string FOREIGN_SALES_CURRENCY = 'USD';
+
+    private const string FOREIGN_PURCHASE_CURRENCY = 'EUR';
 
     private const string OPENING_BALANCE = '85000.0000';
 
     private const array CUSTOMERS = [
         ['شركة النور للتجارة', 'NET30'],
         ['مؤسسة الأفق للمقاولات', 'NET30'],
-        ['مجموعة الواحة القابضة', 'EOM30'],
-        ['شركة رمال الخليج', 'NET15'],
-        ['مكتب السدرة للاستشارات', 'NET30'],
-        ['شركة نجد للصناعات', 'NET30'],
+        ['مجموعة الزيتون القابضة', 'EOM30'],
+        ['شركة البحر المتوسط للتوزيع', 'NET15'],
+        ['مكتب السنابل للاستشارات', 'NET30'],
+        ['شركة الكرمل للصناعات', 'NET30'],
     ];
 
     /** [legal name, expense account code, what they bill for]. */
     private const array SUPPLIERS = [
         ['شركة المكتب الحديث للقرطاسية', '5.2', 'Office supplies'],
-        ['مؤسسة الخليج للخدمات اللوجستية', '5.1', 'Freight and delivery'],
+        ['مؤسسة الشرق للخدمات اللوجستية', '5.1', 'Freight and delivery'],
         ['شركة سحابة للتقنية', '5.2', 'Cloud hosting and licences'],
         ['شركة العقارات المتحدة', '5.2', 'Office rent'],
         ['شركة الطاقة والمرافق', '5.2', 'Electricity and water'],
     ];
 
-    /** Net invoice amounts in whole riyals - multiples of 20, so 15% VAT is exact. */
-    private const array INVOICE_NETS = [12400, 7860, 18900, 4200, 9600, 22300, 6740, 14200, 5380, 16820, 8460, 11240];
+    /**
+     * Net invoice amounts in whole shekels - multiples of 25.
+     *
+     * 16% is 4/25, so a net that is a multiple of 25 carries a tax amount in
+     * whole shekels. Not because a fraction could not be represented - the
+     * money type is decimal - but because a demo whose every line reads
+     * 1,257.60 invites the viewer to wonder whether the rounding is right
+     * instead of looking at the product.
+     */
+    private const array INVOICE_NETS = [12400, 7850, 18900, 4200, 9600, 22300, 6750, 14200, 5375, 16825, 8450, 11250];
 
-    private const array BILL_NETS = [2400, 5600, 3120, 8900, 1760, 12600, 4320, 6980];
+    private const array BILL_NETS = [2400, 5600, 3125, 8900, 1750, 12600, 4325, 6975];
 
     /** Every Nth invoice is paid late or not at all, so ageing has a tail. */
     private const int SLOW_PAYER_EVERY = 6;
@@ -155,27 +226,25 @@ final class DemoTenantSeeder extends Seeder
     {
         if (! app()->environment(['local', 'testing'])) {
             throw new RuntimeException(
-                'DemoTenantSeeder writes five months of invented books and will not run in the '.
+                'DemoTenantSeeder writes a year of invented books and will not run in the '.
                 app()->environment().' environment.',
             );
         }
 
-        $tenant = Tenant::query()->where('slug', DevelopmentSeeder::TENANT_SLUG)->first()
-            ?? throw new RuntimeException('No `demo` workspace. Run DevelopmentSeeder first.');
+        $tenant = $this->workspace();
 
         app(TenantConnectionResolver::class)->point($tenant);
 
-        $entity = Entity::query()->where('code', 'DEMO')->first()
-            ?? throw new RuntimeException('The demo workspace has no DEMO entity. Run DevelopmentSeeder first.');
+        $entity = $this->showcaseEntity();
 
         if (Party::query()->where('code', self::MARKER)->exists()) {
-            $this->command?->info('  The demo books are already there - nothing to do.');
+            $this->command?->info('  The showcase books are already there - nothing to do.');
 
             return;
         }
 
         $this->entity = $entity;
-        $this->userId = self::text(User::query()->where('email', DevelopmentSeeder::USER_EMAIL)->value('id'));
+        $this->userId = self::text($this->owner($entity)->getKey());
 
         app(EntityContext::class)->use($entity);
 
@@ -204,6 +273,118 @@ final class DemoTenantSeeder extends Seeder
     }
 
     /* -----------------------------------------------------------------------
+     |  Its own workspace
+     * -------------------------------------------------------------------- */
+
+    /**
+     * Provision the showcase workspace, separately from `demo` - PF-281.
+     *
+     * ## Why it is not the development workspace
+     *
+     * It used to borrow `demo`, which made the two fixtures one: the
+     * development seeder had to stay in whatever shape the demo books
+     * needed, and a developer who wanted the minimal workspace got a year
+     * of trading in it or nothing at all.
+     *
+     * The coupling had a second cost that is harder to see. `demo` is
+     * created once and re-seeded for months, so its chart of accounts is
+     * whatever template version was current the day it was provisioned -
+     * and `ChartTemplate::apply()` is a no-op on an entity that already has
+     * a chart, by design. An entity created under chart v5 never receives
+     * the accounts v6 added, there is no upgrade path, and the symptom is
+     * the books refusing a posting for want of an `unapplied_cash` account
+     * that the template has had for versions. A workspace provisioned when
+     * the showcase is seeded has the current chart because it has no other.
+     */
+    private function workspace(): Tenant
+    {
+        $existing = Tenant::query()->where('slug', self::TENANT_SLUG)->first();
+
+        if ($existing !== null) {
+            return $existing;
+        }
+
+        // Through the real provisioner: a seeder that writes the registry row
+        // itself produces a tenant with no database, and the first query
+        // fails about a missing password rather than about the seeder.
+        return app(TenantProvisioner::class)->create('Peakflow Showcase', 'business', self::TENANT_SLUG);
+    }
+
+    private function showcaseEntity(): Entity
+    {
+        $entity = Entity::query()->where('code', self::ENTITY_CODE)->first();
+
+        if ($entity !== null) {
+            return $entity;
+        }
+
+        $entity = Entity::query()->create([
+            'code' => self::ENTITY_CODE,
+            'legal_name' => 'شركة بيك فلو للتجارة العامة',
+            'trading_name' => 'Peakflow Showcase',
+            'country' => self::JURISDICTION,
+            'functional_currency' => self::CURRENCY,
+            'presentation_currency' => self::CURRENCY,
+            'jurisdiction_profiles' => ['generic'],
+            'active' => true,
+        ]);
+
+        app(EntityContext::class)->during(
+            $entity,
+            static fn (): array => app(ChartTemplate::class)->apply((string) $entity->getKey(), 'ifrs-generic'),
+        );
+
+        return $entity;
+    }
+
+    /**
+     * The owner of the showcase workspace.
+     *
+     * Invented, under a domain RFC 2606 reserves, as PF-239 requires: a
+     * fixture that seeds a plausible real address is a fixture that mails
+     * somebody when a notification path is wired up by accident.
+     */
+    private function owner(Entity $entity): User
+    {
+        $user = User::query()->where('email', self::USER_EMAIL)->first();
+
+        if ($user === null) {
+            $user = User::query()->create([
+                'name' => 'Showcase Owner',
+                'email' => self::USER_EMAIL,
+                'password' => 'peakflow',
+                'locale' => 'ar',
+                'timezone' => 'Asia/Hebron',
+                'active' => true,
+            ]);
+        }
+
+        $owner = Role::query()->where('key', 'owner')->first();
+
+        if ($owner !== null) {
+            $assigned = UserEntityRole::query()
+                ->where('user_id', $user->getKey())
+                ->where('entity_id', $entity->getKey())
+                ->where('role_id', $owner->getKey())
+                ->exists();
+
+            if (! $assigned) {
+                UserEntityRole::query()->create([
+                    'user_id' => $user->getKey(),
+                    'entity_id' => $entity->getKey(),
+                    'role_id' => $owner->getKey(),
+                ]);
+            }
+        }
+
+        if ($user->last_entity_id === null) {
+            $user->forceFill(['last_entity_id' => $entity->getKey()])->save();
+        }
+
+        return $user;
+    }
+
+    /* -----------------------------------------------------------------------
      |  Setup
      * -------------------------------------------------------------------- */
 
@@ -211,21 +392,56 @@ final class DemoTenantSeeder extends Seeder
     {
         $entityId = self::text($this->entity()->getKey());
 
-        if (! TaxRegistration::query()->where('entity_id', $entityId)->where('jurisdiction', 'SA')->exists()) {
+        if (! TaxRegistration::query()->where('entity_id', $entityId)->where('jurisdiction', self::JURISDICTION)->exists()) {
             TaxRegistration::create([
                 'entity_id' => $entityId,
-                'jurisdiction' => 'SA',
+                'jurisdiction' => self::JURISDICTION,
                 'scheme' => 'VAT',
-                'identifier' => '310000000000003',
-                'eas_code' => '0088',
+                'identifier' => '400000003',
+                'eas_code' => null,
                 'effective_from' => '2020-01-01',
                 'is_primary' => true,
                 'filing_frequency' => 'monthly',
             ]);
         }
 
-        if (! ReturnPeriod::query()->where('entity_id', $entityId)->exists()) {
-            app(ReturnPeriods::class)->generateYear($this->entity(), 'SA', $this->today->year);
+        /*
+         | Both calendar years, because a year of trading crosses one.
+         |
+         | With 150 days of history this happened to work from the current
+         | year alone for most of the year and to break in January, which is
+         | the kind of fixture that is green until somebody demonstrates the
+         | product in the first week of a new year.
+         */
+        foreach (array_unique([$this->start->year, $this->today->year]) as $year) {
+            $already = ReturnPeriod::query()
+                ->where('entity_id', $entityId)
+                ->where('jurisdiction', self::JURISDICTION)
+                ->where('label', 'like', $year.'%')
+                ->exists();
+
+            if (! $already) {
+                // generateYear REFUSES a year it has already generated rather
+                // than skipping it, so the guard has to be here.
+                app(ReturnPeriods::class)->generateYear($this->entity(), self::JURISDICTION, $year);
+            }
+        }
+
+        /*
+         | The fiscal years the history spans, before the periods inside them.
+         |
+         | A year of trading crosses a year boundary, and `periodFor()`
+         | returns null rather than creating anything - so with only the
+         | current fiscal year in place the seeder stopped at "No accounting
+         | period covers 2025-11". `generate()` returns an existing year
+         | untouched, so asking for both is safe on a re-run.
+         */
+        foreach (array_unique([$this->start->year, $this->today->year]) as $year) {
+            app(FiscalCalendarGenerator::class)->generate(
+                entityId: $entityId,
+                label: (string) $year,
+                startsOn: Carbon::create($year, 1, 1),
+            );
         }
 
         // Open every accounting period the history touches.
@@ -240,15 +456,15 @@ final class DemoTenantSeeder extends Seeder
 
         $this->taxCodeId = self::text(app(TaxCodes::class)->introduce(
             entityId: $entityId,
-            code: 'SA-S-15',
+            code: 'PS-S-16',
             category: TaxCategory::Standard,
-            jurisdiction: 'SA',
-            rate: '15.000000',
+            jurisdiction: self::JURISDICTION,
+            rate: self::VAT_RATE,
             from: CarbonImmutable::parse('2020-07-01'),
             labelAr: 'النسبة الأساسية',
             labelEn: 'Standard rate',
             source: 'the demo seeder',
-            reportingBoxes: ['sa' => ['output' => 'standard_sales']],
+            reportingBoxes: ['generic' => ['output' => 'standard_sales', 'input' => 'standard_purchases']],
         )->getKey());
 
         foreach (Account::query()->where('entity_id', $entityId)->where('postable', true)->get(['id', 'code']) as $account) {
@@ -293,17 +509,17 @@ final class DemoTenantSeeder extends Seeder
             'legal_name' => $name,
             'is_customer' => $customer,
             'is_supplier' => ! $customer,
-            'country' => 'SA',
-            'default_currency' => 'SAR',
+            'country' => self::JURISDICTION,
+            'default_currency' => self::CURRENCY,
             'active' => true,
         ]);
 
         PartyTaxRegistration::create([
             'party_id' => $party->getKey(),
-            'jurisdiction' => 'SA',
+            'jurisdiction' => self::JURISDICTION,
             'scheme' => 'VAT',
-            'identifier' => \sprintf('3000000000%03d03', $n),
-            'eas_code' => '0088',
+            'identifier' => \sprintf('4%08d', $n),
+            'eas_code' => null,
             'is_primary' => true,
             'validity' => PartyTaxRegistration::range(CarbonImmutable::parse('2019-01-01')),
         ]);
@@ -322,15 +538,25 @@ final class DemoTenantSeeder extends Seeder
         $this->bank = app(BankAccounts::class)->open(
             entity: $this->entity(),
             label: 'الحساب الجاري الرئيسي',
-            institutionName: 'Al Rajhi Bank',
-            institutionCountry: 'SA',
+            /*
+             | An invented institution, and an invented bank code inside the
+             | IBAN and the BIC.
+             |
+             | The check digits are real - PS51DEMO... satisfies mod-97, so
+             | the fixture exercises the validator rather than bypassing it -
+             | but `DEMO` is not an assigned bank code and `DEMOPS22` is not
+             | an assigned BIC. A demo that carries a real bank's identifiers
+             | is a demo that names a company which had no say in it.
+             */
+            institutionName: 'Demo Bank of Palestine (invented)',
+            institutionCountry: self::JURISDICTION,
             holderLegalName: self::text($this->entity()->getAttribute('legal_name')),
-            currency: 'SAR',
+            currency: self::CURRENCY,
             glAccountId: $bankGl,
             openingDate: Carbon::parse($this->start->toDateString()),
             openingBalance: self::OPENING_BALANCE,
-            iban: 'SA0380000000608010167519',
-            bic: 'RJHISARI',
+            iban: 'PS51DEMO000000000000000012345',
+            bic: 'DEMOPS22',
             domesticScheme: null,
             domesticIdentifier: null,
             userId: $this->userId,
@@ -365,7 +591,7 @@ final class DemoTenantSeeder extends Seeder
                 $this->draft($customer, $day, $net),
                 $this->entity(),
                 $this->userId,
-                ['country' => 'SA', 'rule' => 'domestic', 'category' => 'S', 'rate' => '15.000000'],
+                ['country' => self::JURISDICTION, 'rule' => 'domestic', 'category' => 'S', 'rate' => self::VAT_RATE],
                 $terms,
             );
             $issued++;
@@ -387,7 +613,7 @@ final class DemoTenantSeeder extends Seeder
     private function draft(Party $customer, CarbonImmutable $day, int $net, bool $readBack = true): Invoice
     {
         $netAmount = $net.'.0000';
-        $tax = (string) BigDecimal::of($net)->multipliedBy(15)->dividedBy(100, 4);
+        $tax = self::taxOn($netAmount);
         $gross = (string) BigDecimal::of($netAmount)->plus($tax)->toScale(4);
         $entityId = self::text($this->entity()->getKey());
 
@@ -399,7 +625,7 @@ final class DemoTenantSeeder extends Seeder
             'party_id' => self::text($customer->getKey()),
             'issue_date' => $day->toDateString(),
             'tax_point' => $day->toDateString(),
-            'currency' => 'SAR',
+            'currency' => self::CURRENCY,
             'net_amount' => $netAmount,
             'tax_amount' => $tax,
             'gross_amount' => $gross,
@@ -419,9 +645,9 @@ final class DemoTenantSeeder extends Seeder
             'revenue_account_id' => $this->revenueAccountId,
             'tax_code_id' => $this->taxCodeId,
             'tax_category' => 'S',
-            'tax_rate' => '15.000000',
+            'tax_rate' => self::VAT_RATE,
             'tax_point' => $day->toDateString(),
-            'place_of_supply' => 'SA',
+            'place_of_supply' => self::JURISDICTION,
             'place_of_supply_rule' => 'domestic',
         ]);
 
@@ -429,7 +655,7 @@ final class DemoTenantSeeder extends Seeder
             'entity_id' => $entityId,
             'invoice_id' => self::text($invoice->getKey()),
             'category' => 'S',
-            'rate' => '15.000000',
+            'rate' => self::VAT_RATE,
             'taxable_amount' => $netAmount,
             'tax_amount' => $tax,
             'report_box' => 'standard_sales',
@@ -442,7 +668,7 @@ final class DemoTenantSeeder extends Seeder
     {
         $payable = self::text($invoice->getAttribute('payable_amount'));
         $number = self::text($invoice->getAttribute('number'));
-        $amount = Money::of($payable, 'SAR');
+        $amount = Money::of($payable, self::CURRENCY);
 
         $payment = app(Payments::class)->record(
             entityId: self::text($this->entity()->getKey()),
@@ -487,7 +713,7 @@ final class DemoTenantSeeder extends Seeder
             $supplier = $suppliers[$i % \count($suppliers)] ?? throw new RuntimeException('No supplier.');
             [, $accountCode, $what] = self::SUPPLIERS[$i % \count(self::SUPPLIERS)];
             $net = self::BILL_NETS[$i % \count(self::BILL_NETS)];
-            $tax = (string) BigDecimal::of($net)->multipliedBy(15)->dividedBy(100, 4);
+            $tax = self::taxOn($net.'.0000');
 
             $bill = app(Bills::class)->enter(
                 entity: $this->entity(),
@@ -496,7 +722,7 @@ final class DemoTenantSeeder extends Seeder
                 supplierDocumentDate: Carbon::parse($day->toDateString()),
                 taxPoint: Carbon::parse($day->toDateString()),
                 postingDate: Carbon::parse($day->toDateString()),
-                currency: 'SAR',
+                currency: self::CURRENCY,
                 lines: [[
                     'description' => $what,
                     'quantity' => '1',
@@ -505,7 +731,7 @@ final class DemoTenantSeeder extends Seeder
                     'expense_account_id' => $this->accounts[$accountCode] ?? $this->account('5.2'),
                     'tax_code_id' => $this->taxCodeId,
                     'tax_category' => 'S',
-                    'tax_rate' => '15.000000',
+                    'tax_rate' => self::VAT_RATE,
                     'tax_amount' => $tax,
                 ]],
                 createdBy: $this->userId,
@@ -530,7 +756,7 @@ final class DemoTenantSeeder extends Seeder
     {
         $payable = self::text($bill->getAttribute('payable_amount'));
         $reference = self::text($bill->getAttribute('supplier_document_number'));
-        $amount = Money::of($payable, 'SAR');
+        $amount = Money::of($payable, self::CURRENCY);
 
         $payment = app(Payments::class)->record(
             entityId: self::text($this->entity()->getKey()),
@@ -577,7 +803,7 @@ final class DemoTenantSeeder extends Seeder
             supplierDocumentDate: Carbon::parse($this->today->toDateString()),
             taxPoint: Carbon::parse($this->today->toDateString()),
             postingDate: Carbon::parse($this->today->toDateString()),
-            currency: 'SAR',
+            currency: self::CURRENCY,
             lines: [[
                 'description' => 'Cloud hosting and licences',
                 'quantity' => '1',
@@ -586,7 +812,7 @@ final class DemoTenantSeeder extends Seeder
                 'expense_account_id' => $this->account('5.2'),
                 'tax_code_id' => $this->taxCodeId,
                 'tax_category' => 'S',
-                'tax_rate' => '15.000000',
+                'tax_rate' => self::VAT_RATE,
                 'tax_amount' => '429.0000',
             ]],
             createdBy: $this->userId,
@@ -731,6 +957,25 @@ final class DemoTenantSeeder extends Seeder
                 $this->command?->warn('  Return period '.$label.': '.$e->getMessage());
             }
         }
+    }
+
+    /**
+     * The tax on a net amount, at the rate the fixture declares.
+     *
+     * Both callers used to compute `net * 15 / 100` with the 15 written
+     * out, while putting `self::VAT_RATE` in the document's `tax_rate`
+     * column. So every line declared 16% and carried a 15% figure, and a
+     * tax breakdown that disagrees with its own rate is the kind of
+     * fixture an auditor would stop reading at.
+     *
+     * One function, so the rate cannot be declared in one place and
+     * computed in another.
+     */
+    private static function taxOn(string $net): string
+    {
+        return (string) BigDecimal::of($net)
+            ->multipliedBy(self::VAT_RATE)
+            ->dividedBy(100, 4, \Brick\Math\RoundingMode::HALF_UP);
     }
 
     private function entity(): Entity

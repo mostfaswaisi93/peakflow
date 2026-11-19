@@ -90,7 +90,7 @@ final class SupplierCreditRules
                 'the aging keeps currencies apart' => fn (): array => $this->currenciesApart(),
                 'DPO is null rather than zero with no purchases' => fn (): array => $this->dpoWithNoPurchases(),
                 'DPO divides the payable by the window\'s purchases' => fn (): array => $this->dpo(),
-                'an open-item statement lists what is unpaid' => fn (): array => $this->openItem(),
+                'an open-item statement lists only what is still owed' => fn (): array => $this->openItem(),
                 'a balance-forward statement runs from an opening balance' => fn (): array => $this->balanceForward(),
                 'and refuses to add two currencies into one balance' => fn (): array => $this->balanceForwardCurrencies(),
                 'and the ledger still proves its own invariants' => fn (): array => [],
@@ -1300,12 +1300,29 @@ final class SupplierCreditRules
     private function openItem(): array
     {
         $violations = [];
-        $paid = $this->postedBill();
+        $settled = $this->postedBill();
         $open = $this->postedBill(net: '2000.0000');
 
-        DB::connection('tenant')->table('bills')
-            ->where('id', (string) $paid->getKey())
-            ->update(['paid_amount' => (string) $paid->gross_amount]);
+        /*
+         | Settled through a real credit note, not by writing a column.
+         |
+         | This fixture used to `update(['paid_amount' => ...])`, and
+         | `bills.paid_amount` is written by NOTHING in the product:
+         | Settlement records an allocation in its own table and may not
+         | reach into Purchasing's models to denormalise it. So the check
+         | passed against a state the product cannot reach, and reported
+         | nothing when the open-item statement was in fact listing every
+         | paid bill for ever - which is what a supplier reads when they
+         | are chasing.
+         |
+         | A full credit note takes the open balance to zero through a
+         | service, which is a state the product does produce. The paid
+         | case belongs to the settlement suite, where
+         | `allocationClosesThePayable()` posts a real disbursement and an
+         | allocation against a bill and asserts both control accounts.
+         */
+        $credit = $this->creditFull($settled);
+        app(SupplierCredits::class)->post($credit, $this->entity(), $this->actorId());
 
         $statement = app(PayablesAging::class)->statement(
             $this->entityId,
@@ -1316,9 +1333,9 @@ final class SupplierCreditRules
 
         $documents = array_map(static fn (array $line): string => (string) $line['document'], $statement['lines']);
 
-        if (\in_array((string) $paid->supplier_document_number, $documents, true)) {
-            $violations[] = 'a bill paid in full is on the open-item statement, which is what a supplier '.
-                'reads when they are chasing';
+        if (\in_array((string) $settled->supplier_document_number, $documents, true)) {
+            $violations[] = 'a bill with nothing left owing is on the open-item statement, which is what '.
+                'a supplier reads when they are chasing';
         }
 
         if (! \in_array((string) $open->supplier_document_number, $documents, true)) {

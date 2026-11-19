@@ -99,6 +99,7 @@ final class PayablesAging
             ->whereIn('status', ['approved', 'posted'])
             ->when($partyId !== null, static fn ($q) => $q->where('party_id', $partyId))
             ->with(['lines', 'creditNotes', 'creditAllocations', 'supplier'])
+            ->selectRaw("bills.*, peakflow_document_open_balance('bill', bills.id)::text AS open_balance")
             ->get();
 
         $rows = [];
@@ -374,6 +375,7 @@ final class PayablesAging
             ->where('posting_date', '<=', $to->toDateString())
             ->with(['creditNotes', 'creditAllocations'])
             ->when($currency !== null, static fn ($q) => $q->where('currency', $currency))
+            ->selectRaw("bills.*, peakflow_document_open_balance('bill', bills.id)::text AS open_balance")
             ->orderBy('supplier_document_date')
             ->get();
 
@@ -568,7 +570,29 @@ final class PayablesAging
         return $instalments;
     }
 
-    /** What a bill still owes, net of payments and allocated credits. */
+    /**
+     * What a bill still owes, from the one definition - PF-281.
+     *
+     * ## It used to ask the model, and the model could not know
+     *
+     * `Bill::outstanding()` is gross less `bills.paid_amount` less the two
+     * credit terms - and **nothing writes `paid_amount`**. Settlement
+     * records an allocation in its own table and may not reach into
+     * Purchasing's models to denormalise it, so the column has been zero
+     * since it was added. Every posted bill therefore aged at its full
+     * gross for ever: the showcase books paid 41 of 56 bills and this
+     * report still showed all 56 in full.
+     *
+     * `peakflow_document_open_balance` is the definition the screens and
+     * the payment run already use. Asking it here is what makes "which
+     * bills are still open" have one answer rather than two that both look
+     * right - which is the failure `BillListController` wrote down and this
+     * report was quietly demonstrating.
+     *
+     * The column is left in place and unused rather than dropped: it is on
+     * `ExpenseClaim` too, where it IS written, and removing it from `bills`
+     * is a migration with its own task.
+     */
     private function outstandingOf(Bill $bill): Money
     {
         if ($bill->isCreditNote()) {
@@ -598,7 +622,24 @@ final class PayablesAging
             return $bill->gross()->minus($used)->negated();
         }
 
-        return $bill->outstanding();
+        $open = $bill->getAttribute('open_balance');
+
+        if ($open === null) {
+            /*
+             | A caller that did not select it gets it asked for, one row.
+             |
+             | Slower, and still one definition. Falling back to
+             | `Bill::outstanding()` here would reinstate the second answer
+             | for whichever caller forgot the select, which is the shape of
+             | bug this method exists to have fixed.
+             */
+            $open = DB::connection('tenant')->scalar(
+                "select peakflow_document_open_balance('bill', ?)::text",
+                [(string) $bill->getKey()],
+            );
+        }
+
+        return Money::of((string) $open, (string) $bill->currency);
     }
 
     /** @return list<array<string, mixed>> */

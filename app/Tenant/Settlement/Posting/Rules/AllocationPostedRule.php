@@ -56,8 +56,10 @@ final class AllocationPostedRule implements PostingRule
             'تخصيص مقبوضات على مستند',
             'A payment allocated to a document',
             [
-                ['Dr', ControlRole::UnappliedCash, 'releasing what was held for the payer'],
-                ['Cr', ControlRole::AccountsReceivable, 'the part of the document this payment settles, against the party'],
+                ['Dr', ControlRole::UnappliedCash, 'releasing what was held for the payer, on a receipt'],
+                ['Cr', ControlRole::AccountsReceivable, 'the part of the document this receipt settles, against the party'],
+                ['Dr', ControlRole::AccountsPayable, 'the part of the bill this payment settles, against the party - a payable is CLOSED by a debit'],
+                ['Cr', ControlRole::UnappliedCash, 'releasing what was held for the payee, on a disbursement'],
             ],
         );
     }
@@ -81,29 +83,49 @@ final class AllocationPostedRule implements PostingRule
         $currency = (string) ($event['currency'] ?? $context->functionalCurrency);
 
         /*
-         | A bill settles the payable side, not the receivable one.
+         | A bill settles the payable side, and it settles it the OTHER WAY
+         | round - PF-281.
          |
-         | Same shape, other control account. Writing two rules for it
-         | would duplicate the clearing line and the party handling, and
-         | the pair would drift the first time one of them changed.
+         | This used to read "same shape, other control account", and swap
+         | only the role. It is not the same shape. A customer receipt
+         | releases cash held for the payer and relieves a receivable: Dr
+         | clearing, Cr the control. A supplier payment is the mirror - the
+         | money left the bank, so the clearing position is released the
+         | other way and the liability is CLOSED, which is a debit.
+         |
+         | Swapping the role alone credits accounts payable to pay a bill,
+         | so the entry still balances, every row is individually valid,
+         | and the company appears to owe MORE after paying. In the showcase
+         | fixture it put 524,860 into a clearing account that must wash to
+         | zero - twice the 262,430 that had been paid, once for the sign on
+         | each leg - and overstated the payables control by the same.
+         |
+         | Nothing caught it because nothing posted an allocation against a
+         | bill and then looked at the two accounts. `ledger:verify` found it
+         | the first time a fixture paid a supplier.
          */
-        $control = ($event['payable'] ?? false) === true
+        $settlesAPayable = ($event['payable'] ?? false) === true;
+
+        $control = $settlesAPayable
             ? ControlRole::AccountsPayable
             : ControlRole::AccountsReceivable;
 
         if ($currency === $context->functionalCurrency) {
             $amount = $context->money((string) $event['amount']);
 
+            $clearing = $settlesAPayable ? $amount->negated() : $amount;
+            $relief = $settlesAPayable ? $amount : $amount->negated();
+
             return [
                 PostingLine::toRole(
                     ControlRole::UnappliedCash,
-                    $amount,
+                    $clearing,
                     partyId: $partyId,
                     narration: $narration,
                 ),
                 PostingLine::toRole(
                     $control,
-                    $amount->negated(),
+                    $relief,
                     partyId: $partyId,
                     narration: $narration,
                 ),
@@ -141,9 +163,12 @@ final class AllocationPostedRule implements PostingRule
         $original = Money::of((string) $event['amount'], $currency);
         $policy = RoundingPolicy::halfUp(Scale::Amount);
 
+        // The same mirroring as the functional-currency branch above: for a
+        // payable the clearing position is released the other way and the
+        // liability is closed by a debit.
         $clearing = PostingLine::translatedToRole(
             role: ControlRole::UnappliedCash,
-            original: $original,
+            original: $settlesAPayable ? $original->negated() : $original,
             rate: $payment,
             policy: $policy,
             partyId: $partyId,
@@ -152,7 +177,7 @@ final class AllocationPostedRule implements PostingRule
 
         $relief = PostingLine::translatedToRole(
             role: $control,
-            original: $original->negated(),
+            original: $settlesAPayable ? $original : $original->negated(),
             rate: $document,
             policy: $policy,
             partyId: $partyId,

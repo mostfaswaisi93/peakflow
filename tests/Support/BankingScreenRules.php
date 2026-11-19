@@ -560,6 +560,34 @@ final class BankingScreenRules
     {
         $controls = [];
 
+        /*
+         | Script and style bodies are not markup.
+         |
+         | This check reported two unlabelled `<select>` fields for months,
+         | and both of them were the words "The company `<select>` submits
+         | when it changes" in a JavaScript comment in the shell's inlined
+         | script. A regex over the whole document cannot tell prose about a
+         | tag from a tag.
+         |
+         | The cost of a false positive here is worse than the noise: a
+         | suite with a failure nobody can act on is a suite people learn to
+         | run with one failure, and the next real one arrives into a
+         | report that already has a red line in it.
+         |
+         | HTML comments go too, for the same reason - a control commented
+         | out is not rendered, and asking for a label on it is asking for a
+         | label on nothing.
+         */
+        $html = (string) preg_replace(
+            [
+                '#<script\b[^>]*>.*?</script\s*>#is',
+                '#<style\b[^>]*>.*?</style\s*>#is',
+                '#<!--.*?-->#s',
+            ],
+            '',
+            $html,
+        );
+
         if (preg_match_all('/<(input|select|textarea)\b([^>]*)>/i', $html, $found, PREG_SET_ORDER) === 0) {
             return $controls;
         }

@@ -21,6 +21,7 @@ use App\Tenant\Settlement\Services\ReleaseReview;
 use App\Tenant\Settlement\Services\UnappliedCash;
 use App\Tenant\Settlement\Services\ExpectedCreditLoss;
 use App\Tenant\Settlement\Services\WriteOffs;
+use App\Tenant\Parties\Models\Party;
 use Brick\Math\BigDecimal;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -99,6 +100,8 @@ final class SettlementRules
                 // ---- Allocations - PF-168 ------------------------------
                 'one payment settles several documents' => fn (): array => $this->partialAcrossDocuments(),
                 'allocating moves what the customer owes' => fn (): array => $this->allocationMovesTheBalance(),
+                'allocating to a bill closes the payable and washes the clearing' => fn (): array => $this->allocationClosesThePayable(),
+                'a paid bill leaves the payables ageing' => fn (): array => $this->paidBillLeavesTheAgeing(),
                 'the database refuses more than the payment' => fn (): array => $this->overAllocatingThePayment(),
                 'the database refuses more than the document' => fn (): array => $this->overAllocatingTheDocument(),
                 'an allocation is in the payment\'s currency' => fn (): array => $this->allocationCurrency(),
@@ -758,6 +761,159 @@ final class SettlementRules
         }
 
         return $failures;
+    }
+
+    /**
+     * Paying a supplier must REDUCE what we owe - PF-281.
+     *
+     * ## The twin that was missing
+     *
+     * `allocationMovesTheBalance()` above covers a customer receipt. There
+     * was no equivalent for a bill, and `AllocationPostedRule` treated the
+     * payable case as "same shape, other control account" - swapping the
+     * role and keeping the signs.
+     *
+     * So paying a supplier CREDITED accounts payable. The entry balanced,
+     * every row was individually valid, and the company appeared to owe
+     * more after paying. In the showcase fixture it left 524,860 in a
+     * clearing account that must wash to zero - twice the 262,430 paid,
+     * once for the sign on each leg.
+     *
+     * ## Two assertions, because one of them is weaker than it looks
+     *
+     * The control account moving the right way is the obvious one. The
+     * clearing position returning to where it started is the one that
+     * cannot be satisfied by accident: a disbursement debits it and the
+     * allocation must credit it back, so any sign error on either leg
+     * leaves a residue - in an account whose whole purpose is to be empty
+     * once every payment has been told which document it was for.
+     *
+     * @return list<string>
+     */
+    private function allocationClosesThePayable(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $billId = $this->anApprovedBill($supplier, '1000.0000', '2026-06-01');
+
+        $payableBefore = $this->balanceOf(ControlRole::AccountsPayable);
+        $clearingBefore = $this->balanceOf(ControlRole::UnappliedCash);
+
+        // A disbursement and then an allocation, which is how a bill is paid.
+        $this->settle($billId, '1000.0000');
+
+        $payableAfter = $this->balanceOf(ControlRole::AccountsPayable);
+        $clearingAfter = $this->balanceOf(ControlRole::UnappliedCash);
+
+        $failures = [];
+
+        $payableMovement = $payableAfter->minus($payableBefore)->amount;
+
+        if (! $payableMovement->isEqualTo('1000.0000')) {
+            $failures[] = sprintf(
+                'paying 1000 moved the payable control by %s rather than +1000 (%s to %s). A payable is '.
+                'a credit balance, so settling it is a DEBIT: a negative movement here means the '.
+                'company is recorded as owing more after paying',
+                (string) $payableMovement,
+                (string) $payableBefore->amount,
+                (string) $payableAfter->amount,
+            );
+        }
+
+        $clearingMovement = $clearingAfter->minus($clearingBefore)->amount;
+
+        if (! $clearingMovement->isZero()) {
+            $failures[] = sprintf(
+                'the clearing position kept %s of a payment that had been fully allocated (%s to %s). '.
+                'A disbursement debits it and the allocation credits it back, so a residue means one '.
+                'of the two legs has the wrong sign - and this account exists to be empty once every '.
+                'payment has been told which document it belongs to',
+                (string) $clearingMovement,
+                (string) $clearingBefore->amount,
+                (string) $clearingAfter->amount,
+            );
+        }
+
+        return $failures;
+    }
+
+    /**
+     * A bill that has been paid stops being owed - PF-281.
+     *
+     * ## Why this check is in the settlement suite
+     *
+     * Because paying is what it needs, and only a payment tells these two
+     * definitions of "open" apart.
+     *
+     * `peakflow_document_open_balance` counts allocations.
+     * `Bill::outstanding()` counts `bills.paid_amount`, a column **nothing
+     * writes** - Settlement records an allocation in its own table and may
+     * not reach into Purchasing's models to denormalise it. Both count
+     * credit notes, so a credited bill looks settled under either and
+     * proves nothing; a PAID bill is zero under one and fully open under
+     * the other.
+     *
+     * `PayablesAging` asked the model, so every posted bill aged at its
+     * full gross for ever. The showcase fixture paid 41 of 56 bills and
+     * the report still showed all 56 in full - 367,683.75 against a
+     * control account of 105,253.75.
+     *
+     * `BillListController` had already written down what that costs: the
+     * screens read the function, the ageing read the model, so "which
+     * bills are still open" had two answers and both looked right. A
+     * payment run selecting from the wrong one pays a supplier twice.
+     *
+     * @return list<string>
+     */
+    private function paidBillLeavesTheAgeing(): array
+    {
+        $supplier = $this->aPayableSupplier();
+        $billId = $this->anApprovedBill($supplier, '1000.0000', '2026-06-01');
+
+        $before = $this->payablesTotalFor($supplier);
+
+        $this->settle($billId, '1000.0000');
+
+        $after = $this->payablesTotalFor($supplier);
+
+        $movement = $before->minus($after);
+
+        if (! $movement->isEqualTo('1000.0000')) {
+            return [sprintf(
+                'paying a 1,000 bill in full moved the payables ageing by %s rather than 1,000 (%s to '.
+                '%s). A bill that has been paid is still being reported as owed, which is the figure a '.
+                'payment run selects from',
+                (string) $movement,
+                (string) $before,
+                (string) $after,
+            )];
+        }
+
+        return [];
+    }
+
+    /**
+     * This supplier's total in the payables ageing.
+     *
+     * Filtered to the one supplier, because the suite's tenant carries
+     * whatever other checks in this savepoint have entered, and a total
+     * over all of them would move for reasons this check is not about.
+     */
+    private function payablesTotalFor(Party $supplier): BigDecimal
+    {
+        $report = app(\App\Tenant\Purchasing\Services\PayablesAging::class)->report(
+            $this->entityId,
+            Carbon::parse('2026-06-30'),
+            null,
+            (string) $supplier->getKey(),
+        );
+
+        $total = BigDecimal::zero();
+
+        foreach ($report['rows'] as $row) {
+            $total = $total->plus(BigDecimal::of((string) $row['outstanding']));
+        }
+
+        return $total;
     }
 
     /** @return list<string> */
