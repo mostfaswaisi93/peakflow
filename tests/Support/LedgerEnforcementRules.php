@@ -110,6 +110,7 @@ final class LedgerEnforcementRules
                 'the chart opens with every required control role' => $this->chartIsUsable(),
                 'a posting rule that does not balance is refused by name' => $this->badRulesFailByName(),
                 'ledger:verify finds an entry someone unbalanced' => $this->verifyCatchesDamage(),
+                'a rate is stale only when no newer one had arrived' => $this->staleIsNotMerelyOld(),
                 'a reversed entry still counts in the trial balance' => $this->reversalsNetOut(),
                 "a dimension from another entity cannot reach a line" => $this->dimensionsAreScoped(),
                 'a required dimension is refused when absent' => $this->requiredDimensionsBite(),
@@ -1681,6 +1682,166 @@ final class LedgerEnforcementRules
      *
      * @return list<string>
      */
+    /**
+     * Old and stale are different questions - PF-281.
+     *
+     * ## Both legs, because one of them is the whole point
+     *
+     * The warning exists for a feed outage: we translated at an old rate
+     * because no newer one had arrived. Written as "older than the
+     * threshold" it also flagged every cross-currency settlement in the
+     * product, because `AllocationPostedRule` relieves a receivable at the
+     * rate the document was booked at - so a dollar invoice paid after
+     * fifty days carried a fifty-day-old rate, correctly, and produced a
+     * warning nobody could act on.
+     *
+     * So this check asserts the distinction in both directions, and the
+     * second half is the one that matters. A check that only proved the
+     * outage case is still passed by the version that flags everything.
+     *
+     * @return list<string>
+     */
+    private function staleIsNotMerelyOld(): array
+    {
+        $verifier = app(LedgerVerifier::class);
+        $violations = [];
+        $savepoint = 'stale_'.bin2hex(random_bytes(4));
+
+        $this->connection->statement('SAVEPOINT '.$savepoint);
+
+        try {
+            $entryId = (string) Str::ulid();
+
+            // A rate 20 days before the posting, against a threshold of 3,
+            // and no rate between the two.
+            $rateDate = Carbon::parse($this->postingDate)->subDays(20)->toDateString();
+
+            /*
+             | Written WITH the translation, not updated into it.
+             |
+             | A posted entry is immutable - `journal_entries_posted_are_
+             | immutable` refuses the update and tells you to correct it
+             | with a reversal - so the fx columns have to be there from the
+             | first insert. The control is right and the first version of
+             | this check was wrong.
+             */
+            /*
+             | The entity has to transact in the currency first.
+             |
+             | `entities_transact_in_enabled_currencies` refuses a posting in
+             | a currency nobody enabled, "rather than converted at a rate
+             | nobody chose" - which is the control working, and is why this
+             | is enabled here rather than worked around.
+             */
+            app(\App\Tenant\Catalog\Services\CurrencyPolicy::class)->enable(
+                \App\Tenant\Tenancy\Models\Entity::query()->findOrFail($this->entityId),
+                'EUR',
+            );
+
+            $this->connection->statement("SELECT set_config('peakflow.posting_rule', '', true)");
+
+            $this->connection->table('journal_entries')->insert([
+                'id' => $entryId,
+                'entity_id' => $this->entityId,
+                'journal_id' => $this->journalId,
+                'period_id' => $this->periodId,
+                'number' => 'FX-'.Str::ulid(),
+                'accounting_date' => $this->postingDate,
+                'status' => 'posted',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            foreach ([['1.1.1.1', '100.0000'], ['4.1', '-100.0000']] as [$code, $amount]) {
+                $this->connection->table('journal_lines')->insert([
+                    'id' => (string) Str::ulid(),
+                    'entity_id' => $this->entityId,
+                    'journal_entry_id' => $entryId,
+                    'accounting_date' => $this->postingDate,
+                    'period_id' => $this->periodId,
+                    'account_id' => $this->accounts[$code],
+                    'amount' => (string) \Brick\Math\BigDecimal::of($amount)->dividedBy('4', 4, \Brick\Math\RoundingMode::HalfUp),
+                    'currency' => 'EUR',
+                    'functional_amount' => $amount,
+                    'fx_rate' => '4.0000',
+                    'fx_rate_set' => 'market',
+                    'fx_rate_as_of' => $rateDate,
+                    'fx_rate_provider' => 'probe',
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+
+            $this->connection->table('fx_rates')->insert([
+                'id' => (string) Str::ulid(),
+                'rate_set' => 'market',
+                'from_currency' => 'EUR',
+                'to_currency' => $this->functionalCurrency(),
+                'as_of_date' => $rateDate,
+                'rate' => '4.0000',
+                'provider' => 'probe',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            if (! $this->reportsAStaleRate($verifier)) {
+                $violations[] = 'a posting translated at a 20-day-old rate with nothing newer loaded was '.
+                    'not reported. That is the feed-outage case the warning exists for: trading on an old '.
+                    'rate is legitimate and silently normal is what it must never be';
+            }
+
+            /*
+             | Now a rate that DID arrive before the posting.
+             |
+             | The line still carries the older one - which is what a
+             | document-relief leg does on purpose - so nothing about the
+             | posting has changed. What has changed is that using the older
+             | rate was a decision rather than a shortage, and a decision is
+             | not what this warning reports.
+             */
+            $this->connection->table('fx_rates')->insert([
+                'id' => (string) Str::ulid(),
+                'rate_set' => 'market',
+                'from_currency' => 'EUR',
+                'to_currency' => $this->functionalCurrency(),
+                'as_of_date' => Carbon::parse($this->postingDate)->subDay()->toDateString(),
+                'rate' => '4.1000',
+                'provider' => 'probe',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            if ($this->reportsAStaleRate($verifier)) {
+                $violations[] = 'a posting that deliberately used the rate its document was booked at was '.
+                    'reported as stale although a newer rate had arrived. Every cross-currency settlement '.
+                    'in the product does exactly this, so the warning fires on all of them and becomes a '.
+                    'line people learn to run the suite with';
+            }
+        } finally {
+            $this->connection->statement('ROLLBACK TO SAVEPOINT '.$savepoint);
+        }
+
+        return $violations;
+    }
+
+    private function reportsAStaleRate(LedgerVerifier $verifier): bool
+    {
+        foreach ($verifier->verify($this->entityId) as $finding) {
+            if (str_contains($finding->kind, 'stale rate')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function functionalCurrency(): string
+    {
+        return (string) $this->connection->table('entities')
+            ->where('id', $this->entityId)
+            ->value('functional_currency');
+    }
+
     public function verifyCatchesDamage(): array
     {
         $verifier = app(LedgerVerifier::class);

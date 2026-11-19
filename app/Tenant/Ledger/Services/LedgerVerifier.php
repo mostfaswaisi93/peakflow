@@ -143,6 +143,27 @@ final class LedgerVerifier
      * Against today, every rate in a closed year eventually looks stale and
      * the finding becomes noise nobody reads.
      *
+     * ## Old is not the same as stale - PF-281
+     *
+     * An age over the threshold used to be enough, and that flagged every
+     * cross-currency settlement in the product. `AllocationPostedRule`
+     * relieves a receivable at **the rate the document was booked at** -
+     * deliberately, because that is what was debited when it was issued -
+     * so the rate's age on that line equals the time the customer took to
+     * pay. A dollar invoice settled after fifty days produced a fifty-day-
+     * old rate and a warning, and there was nothing anybody could do about
+     * either.
+     *
+     * The warning exists for a feed outage: we used an old rate because no
+     * newer one had arrived. So the question is not "was this rate old" but
+     * "was there a newer one we could have used" - and if there was, using
+     * the older one was a decision rather than a shortage. The `NOT EXISTS`
+     * is that distinction.
+     *
+     * It keeps the case it was written for. If the feed is down for a week,
+     * no newer rate exists for any posting in that week, and every one of
+     * them is still reported.
+     *
      * @return list<LedgerFinding>
      */
     private function translationsAtStaleRates(?string $entityId): array
@@ -159,6 +180,18 @@ final class LedgerVerifier
             JOIN fx_rate_sets s ON s.code = l.fx_rate_set
             WHERE l.fx_rate_as_of IS NOT NULL
               AND l.accounting_date - l.fx_rate_as_of > s.staleness_threshold_days
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM fx_rates r
+                  JOIN entities en ON en.id = l.entity_id
+                  WHERE r.rate_set = l.fx_rate_set
+                    AND r.from_currency = l.currency
+                    AND r.to_currency = en.functional_currency
+                    AND r.as_of_date > l.fx_rate_as_of
+                    AND r.as_of_date <= l.accounting_date
+                    AND r.withdrawn_at IS NULL
+                    AND r.superseded_by_id IS NULL
+              )
               AND (cast(? AS char(26)) IS NULL OR l.entity_id = cast(? AS char(26)))
             GROUP BY e.number, l.fx_rate_set, s.staleness_threshold_days
             LIMIT 50

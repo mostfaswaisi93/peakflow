@@ -8,6 +8,7 @@ use App\Platform\Models\Tenant;
 use App\Platform\Services\TenantConnectionResolver;
 use App\Platform\Services\TenantProvisioner;
 use App\Support\Money\Money;
+use App\Support\Money\Rate;
 use App\Tenant\Banking\Matching\MatchingEngine;
 use App\Tenant\Banking\Models\BankAccount;
 use App\Tenant\Banking\Models\BankTransaction;
@@ -16,12 +17,15 @@ use App\Tenant\Banking\Services\BankAccounts;
 use App\Tenant\Banking\Services\Matches;
 use App\Tenant\Banking\Services\StatementImport;
 use App\Tenant\Catalog\Models\PaymentTerm;
+use App\Tenant\Catalog\Services\CurrencyPolicy;
+use App\Tenant\Catalog\Services\ExchangeRates;
 use App\Tenant\Identity\Models\Role;
 use App\Tenant\Identity\Models\User;
 use App\Tenant\Identity\Models\UserEntityRole;
 use App\Tenant\Ledger\Enums\ControlRole;
 use App\Tenant\Ledger\Enums\PeriodState;
 use App\Tenant\Ledger\Models\Account;
+use App\Tenant\Ledger\Models\AccountRole;
 use App\Tenant\Ledger\Posting\Rules\OpeningBalanceRule;
 use App\Tenant\Ledger\Services\ChartTemplate;
 use App\Tenant\Ledger\Services\FiscalCalendarGenerator;
@@ -157,6 +161,12 @@ final class DemoTenantSeeder extends Seeder
 
     private const string FOREIGN_PURCHASE_CURRENCY = 'EUR';
 
+    /** One IBAN per foreign account: invented bank code, real check digits. */
+    private const array FOREIGN_IBANS = [
+        'USD' => 'PS53DEMO000000000000000067890',
+        'EUR' => 'PS47DEMO000000000000000054321',
+    ];
+
     private const string OPENING_BALANCE = '85000.0000';
 
     private const array CUSTOMERS = [
@@ -256,6 +266,11 @@ final class DemoTenantSeeder extends Seeder
 
             $invoices = $this->sell($customers);
             $bills = $this->buy($suppliers);
+
+            $abroad = $this->tradeAbroad();
+            $invoices += $abroad['invoices'];
+            $bills += $abroad['bills'];
+
             $this->leaveSomeDrafts($customers, $suppliers);
 
             $this->importStatements();
@@ -476,6 +491,105 @@ final class DemoTenantSeeder extends Seeder
         foreach (PaymentTerm::query()->where('active', true)->get() as $term) {
             $this->terms[self::text($term->getAttribute('code'))] = $term;
         }
+
+        $this->loadTheRates();
+    }
+
+    /**
+     * A rate curve, because one rate makes an FX fixture prove nothing.
+     *
+     * ## Why a curve rather than a rate
+     *
+     * `ExchangeRates` resolves the most recent rate on or before a date. A
+     * single rate would therefore be the rate on the invoice AND the rate
+     * on the payment, the two legs of the allocation would translate at the
+     * same number, and the realized difference would be zero - so the FX
+     * difference account would sit at zero and the fixture would
+     * demonstrate nothing while looking complete.
+     *
+     * One rate a day, drifting, so a document settles at a different rate
+     * than it was booked at. That difference is what
+     * `AllocationPostedRule` books as realized, and it is left over by
+     * construction rather than computed.
+     *
+     * ## Daily, because monthly was stale
+     *
+     * The first version loaded one rate a month, which is a rate up to 30
+     * days old on the day a document is posted and up to 50 on the day it
+     * is paid. `LedgerVerifier` reported every one of those as *"posted at
+     * a stale rate... against a threshold of 3"*, and it was right: trading
+     * on an old rate is legitimate when a feed is down, and a fixture whose
+     * normal state is a stale rate teaches the reader to ignore the
+     * finding. It starts three days before the first document so the
+     * earliest one is not itself stale.
+     *
+     * A real feed publishes daily, so this does too - 366 days of two
+     * pairs, which is what the staleness threshold is written against.
+     *
+     * ## The figures
+     *
+     * Plausible mid-market levels for the shekel - roughly 3.6-3.8 to the
+     * dollar and 3.9-4.2 to the euro - moved by a few agorot a month. They
+     * are invented, and the provider says so: `seed` is not a feed, and a
+     * fixture that labelled these as coming from a central bank would be a
+     * fixture somebody eventually cites.
+     */
+    private function loadTheRates(): void
+    {
+        $policy = app(CurrencyPolicy::class);
+
+        foreach ([self::FOREIGN_SALES_CURRENCY, self::FOREIGN_PURCHASE_CURRENCY] as $code) {
+            $policy->enable($this->entity(), $code);
+        }
+
+        $rates = app(ExchangeRates::class);
+        $n = 0;
+
+        for ($day = $this->start->subDays(3); $day->lessThanOrEqualTo($this->today); $day = $day->addDay(), $n++) {
+            /*
+             | A deterministic wobble, not random.
+             |
+             | A seeder whose figures change between runs produces a
+             | different trial balance every time, and then nobody can tell
+             | a real change from the seed moving under them.
+             */
+            $wobble = (($n * 7) % 61) - 30;
+
+            $rates->record(
+                self::FOREIGN_SALES_CURRENCY,
+                self::CURRENCY,
+                Carbon::parse($day->toDateString()),
+                (string) BigDecimal::of('3.7000')->plus(BigDecimal::of($wobble)->multipliedBy('0.0020'))->toScale(4),
+                'seed',
+            );
+
+            $rates->record(
+                self::FOREIGN_PURCHASE_CURRENCY,
+                self::CURRENCY,
+                Carbon::parse($day->toDateString()),
+                (string) BigDecimal::of('4.0500')->plus(BigDecimal::of(-$wobble)->multipliedBy('0.0025'))->toScale(4),
+                'seed',
+            );
+        }
+    }
+
+    /**
+     * The rate in force for a currency on a day.
+     *
+     * `rateFor()` refuses rather than returning null or 1 when nothing is
+     * loaded, which is the behaviour this criterion wants: a document
+     * posted at a rate nobody loaded is the thing to make impossible, and
+     * a fixture with its own fallback would be the fallback. If this
+     * throws, the curve does not cover the dates the fixture uses, and the
+     * fix is the curve.
+     */
+    private function rateOn(string $currency, CarbonImmutable $day): Rate
+    {
+        return app(ExchangeRates::class)->rateFor(
+            $currency,
+            self::CURRENCY,
+            Carbon::parse($day->toDateString()),
+        );
     }
 
     /** @return list<Party> */
@@ -502,15 +616,20 @@ final class DemoTenantSeeder extends Seeder
         return $parties;
     }
 
-    private function party(string $code, string $name, bool $customer, int $n): Party
-    {
+    private function party(
+        string $code,
+        string $name,
+        bool $customer,
+        int $n,
+        ?string $currency = null,
+    ): Party {
         $party = Party::create([
             'code' => $code,
             'legal_name' => $name,
             'is_customer' => $customer,
             'is_supplier' => ! $customer,
             'country' => self::JURISDICTION,
-            'default_currency' => self::CURRENCY,
+            'default_currency' => $currency ?? self::CURRENCY,
             'active' => true,
         ]);
 
@@ -610,12 +729,28 @@ final class DemoTenantSeeder extends Seeder
         return $issued;
     }
 
-    private function draft(Party $customer, CarbonImmutable $day, int $net, bool $readBack = true): Invoice
-    {
+    private function draft(
+        Party $customer,
+        CarbonImmutable $day,
+        int $net,
+        bool $readBack = true,
+        ?string $currency = null,
+    ): Invoice {
+        $currency ??= self::CURRENCY;
         $netAmount = $net.'.0000';
         $tax = self::taxOn($netAmount);
         $gross = (string) BigDecimal::of($netAmount)->plus($tax)->toScale(4);
         $entityId = self::text($this->entity()->getKey());
+
+        /*
+         | The rate is frozen on the document, not looked up when it is read.
+         |
+         | `InvoiceValidator` refuses a foreign-currency invoice with no
+         | rate, which is the control working: an invoice whose functional
+         | value is computed at read time changes value when a rate is
+         | corrected, and an issued document does not get to do that.
+         */
+        $rate = $currency === self::CURRENCY ? null : $this->rateOn($currency, $day);
 
         $invoice = Invoice::create([
             'entity_id' => $entityId,
@@ -625,7 +760,10 @@ final class DemoTenantSeeder extends Seeder
             'party_id' => self::text($customer->getKey()),
             'issue_date' => $day->toDateString(),
             'tax_point' => $day->toDateString(),
-            'currency' => self::CURRENCY,
+            'currency' => $currency,
+            'fx_rate' => $rate?->value,
+            'fx_source' => $rate === null ? null : 'seed',
+            'fx_rate_date' => $rate === null ? null : $day->toDateString(),
             'net_amount' => $netAmount,
             'tax_amount' => $tax,
             'gross_amount' => $gross,
@@ -697,6 +835,288 @@ final class DemoTenantSeeder extends Seeder
             'name' => self::text($customer->getAttribute('legal_name')),
             'remittance' => 'Payment '.$number,
         ];
+    }
+
+    /* -----------------------------------------------------------------------
+     |  Trading in another currency
+     * -------------------------------------------------------------------- */
+
+    /**
+     * One customer in dollars and one supplier in euros - PF-281.
+     *
+     * ## Foreign currency, not foreign supply
+     *
+     * Both are local companies that contract in another currency, which is
+     * ordinary here. Making them foreign would also make the sale an
+     * export, and an export is a different tax treatment - a zero-rated
+     * category, a place of supply outside the jurisdiction and a second tax
+     * code - none of which this criterion asks for. The criterion asks for
+     * a non-zero FX difference account and a revaluation with something to
+     * revalue, and a currency is enough for both.
+     *
+     * ## Why the payment lands months later
+     *
+     * The realized difference only exists if the rate moved between the
+     * document and the money. A payment the same week settles at the rate
+     * it was booked at, the two legs of the allocation translate at the
+     * same number, and `fx_gain_loss` stays at zero while every screen
+     * looks populated - which is the fixture proving nothing and looking
+     * like it proved something.
+     *
+     * @return array{invoices: int, bills: int}
+     */
+    private function tradeAbroad(): array
+    {
+        $customer = $this->party(self::MARKER.'-USD', 'شركة الجسر للتجارة الدولية', true, 90, self::FOREIGN_SALES_CURRENCY);
+        $supplier = $this->party(self::MARKER.'-EUR', 'شركة البحر للشحن الدولي', false, 91, self::FOREIGN_PURCHASE_CURRENCY);
+
+        $dollars = $this->foreignBank(self::FOREIGN_SALES_CURRENCY, 'الحساب بالدولار');
+        $euros = $this->foreignBank(self::FOREIGN_PURCHASE_CURRENCY, 'الحساب باليورو');
+
+        $invoices = 0;
+        $bills = 0;
+
+        // Four quarters, so each one straddles a rate change.
+        foreach ([40, 130, 220, 310] as $i => $offset) {
+            $day = $this->start->addDays($offset);
+            $net = [7500, 12000, 4800, 9600][$i];
+
+            $invoice = app(Issuer::class)->issue(
+                $this->draft($customer, $day, $net, currency: self::FOREIGN_SALES_CURRENCY),
+                $this->entity(),
+                $this->userId,
+                ['country' => self::JURISDICTION, 'rule' => 'domestic', 'category' => 'S', 'rate' => self::VAT_RATE],
+                $this->terms['NET30'] ?? null,
+            );
+            $invoices++;
+
+            // 50 days, so the rate has moved by the time the money arrives.
+            $paidOn = $day->addDays(50);
+
+            /*
+             | The last one stays open, so the revaluation has something.
+             |
+             | `MonetaryRevaluation` works on monetary balances still held in
+             | a foreign currency. If every foreign document were settled the
+             | account would be flat at the period end, the revaluation would
+             | have nothing to revalue, and that screen would demonstrate as
+             | empty - which is half of what this criterion asks for.
+             */
+            $leaveOpen = $i === 3;
+
+            if (! $leaveOpen && $paidOn->lessThan($this->today->subDays(2))) {
+                $this->settleAbroad(
+                    'invoice',
+                    self::text($invoice->getKey()),
+                    self::text($invoice->getAttribute('payable_amount')),
+                    self::FOREIGN_SALES_CURRENCY,
+                    PaymentDirection::Receipt,
+                    $dollars,
+                    $customer,
+                    self::text($invoice->getAttribute('number')),
+                    $paidOn,
+                );
+            }
+        }
+
+        foreach ([70, 190, 300] as $i => $offset) {
+            $day = $this->start->addDays($offset);
+            $net = [3200, 5400, 2600][$i];
+
+            /*
+             | Asked for, though `Bills::enter()` resolves it itself.
+             |
+             | It refuses if nothing is loaded for the pair and the date, so
+             | this fails HERE - naming the pair and the day - rather than
+             | inside the service with a bill half-built. The criterion is
+             | that no document is posted at a rate nobody loaded, and the
+             | cheapest place to prove the curve covers the fixture's dates
+             | is before the first bill of each one.
+             */
+            $this->rateOn(self::FOREIGN_PURCHASE_CURRENCY, $day);
+
+            $bill = app(Bills::class)->enter(
+                entity: $this->entity(),
+                partyId: self::text($supplier->getKey()),
+                supplierDocumentNumber: sprintf('MFB-%s-%02d', $this->today->format('y'), $i + 1),
+                supplierDocumentDate: Carbon::parse($day->toDateString()),
+                taxPoint: Carbon::parse($day->toDateString()),
+                postingDate: Carbon::parse($day->toDateString()),
+                currency: self::FOREIGN_PURCHASE_CURRENCY,
+                lines: [[
+                    'description' => 'International freight',
+                    'quantity' => '1',
+                    'unit_price' => (string) $net,
+                    'net_amount' => $net.'.0000',
+                    'expense_account_id' => $this->accounts['5.1'] ?? $this->account('5.2'),
+                    'tax_code_id' => $this->taxCodeId,
+                    'tax_category' => 'S',
+                    'tax_rate' => self::VAT_RATE,
+                    'tax_amount' => self::taxOn($net.'.0000'),
+                ]],
+                createdBy: $this->userId,
+                paymentTermId: isset($this->terms['NET30']) ? self::text($this->terms['NET30']->getKey()) : null,
+            );
+
+            $bill = app(Bills::class)->post($bill, $this->entity(), $this->userId);
+            $bills++;
+
+            $paidOn = $day->addDays(45);
+
+            // And one euro bill unpaid, for the same reason on the other side.
+            if ($i !== 2 && $paidOn->lessThan($this->today->subDays(2))) {
+                $this->settleAbroad(
+                    'bill',
+                    self::text($bill->getKey()),
+                    self::text($bill->getAttribute('payable_amount')),
+                    self::FOREIGN_PURCHASE_CURRENCY,
+                    PaymentDirection::Disbursement,
+                    $euros,
+                    $supplier,
+                    self::text($bill->getAttribute('supplier_document_number')),
+                    $paidOn,
+                );
+            }
+        }
+
+        return ['invoices' => $invoices, 'bills' => $bills];
+    }
+
+    /**
+     * Record and allocate a payment in the document's own currency.
+     *
+     * A payment in one currency against a bank account in another is
+     * refused - rightly, because a rate would have to be picked and
+     * nothing would say which - so each currency has its own account.
+     */
+    private function settleAbroad(
+        string $documentType,
+        string $documentId,
+        string $payable,
+        string $currency,
+        PaymentDirection $direction,
+        BankAccount $account,
+        Party $party,
+        string $reference,
+        CarbonImmutable $on,
+    ): void {
+        $amount = Money::of($payable, $currency);
+
+        $payment = app(Payments::class)->record(
+            entityId: self::text($this->entity()->getKey()),
+            direction: $direction,
+            method: PaymentMethod::CreditTransfer,
+            amount: $amount,
+            valueDate: Carbon::parse($on->toDateString()),
+            userId: $this->userId,
+            bankAccountId: self::text($account->getKey()),
+            partyId: self::text($party->getKey()),
+            externalReference: $reference,
+        );
+
+        app(Allocations::class)->allocate(
+            paymentId: self::text($payment['id'] ?? null),
+            documentType: $documentType,
+            documentId: $documentId,
+            amount: $amount,
+            userId: $this->userId,
+            on: Carbon::parse($on->toDateString()),
+        );
+    }
+
+    /**
+     * A bank account in a currency other than the functional one.
+     *
+     * ## Each one gets its own GL account, because the product insists
+     *
+     * The first version pointed all three accounts at the bank control
+     * account, reasoning that the ledger records a currency on every line
+     * so one account could carry them all. `BankAccounts::open()` refused
+     * it, and the refusal is the better argument: *"Two bank accounts
+     * sharing one GL account cannot be reconciled separately: the ledger
+     * has one balance and the bank has two, and no arithmetic recovers
+     * which part is which."* Reconciliation is per account, and a shared
+     * control account makes it impossible rather than inconvenient.
+     *
+     * So each currency gets a sub-account under the bank control account -
+     * which is what the refusal says to do, and what a real chart looks
+     * like for a company holding three currencies.
+     */
+    private function foreignBank(string $currency, string $label): BankAccount
+    {
+        return app(BankAccounts::class)->open(
+            entity: $this->entity(),
+            label: $label,
+            institutionName: 'Demo Bank of Palestine (invented)',
+            institutionCountry: self::JURISDICTION,
+            holderLegalName: self::text($this->entity()->getAttribute('legal_name')),
+            currency: $currency,
+            glAccountId: $this->bankSubAccountFor($currency),
+            openingDate: Carbon::parse($this->start->toDateString()),
+            openingBalance: '0',
+            // Invented bank code, real check digits - as with the shekel
+            // account above. An account with neither an IBAN nor a domestic
+            // identifier is refused, and rightly: it is an account nobody
+            // can pay into that looks complete until somebody tries.
+            iban: self::FOREIGN_IBANS[$currency] ?? throw new RuntimeException(
+                'No IBAN is defined for the '.$currency.' account.',
+            ),
+            bic: 'DEMOPS22',
+            userId: $this->userId,
+        );
+    }
+
+    /**
+     * A postable sub-account of the bank control account, for one currency.
+     *
+     * No `AccountRole`: the role belongs to the parent, and a second
+     * account claiming `bank` would make "the bank control account"
+     * ambiguous for every posting rule that asks for it by role.
+     */
+    private function bankSubAccountFor(string $currency): string
+    {
+        $entityId = self::text($this->entity()->getKey());
+
+        $parent = Account::query()
+            ->where('entity_id', $entityId)
+            ->whereIn('id', AccountRole::query()
+                ->where('entity_id', $entityId)
+                ->where('role', ControlRole::Bank->value)
+                ->select('account_id'))
+            ->firstOrFail();
+
+        $code = self::text($parent->getAttribute('code')).'.'.strtolower($currency);
+
+        $existing = Account::query()->where('entity_id', $entityId)->where('code', $code)->first();
+
+        if ($existing !== null) {
+            return self::text($existing->getKey());
+        }
+
+        $path = self::text($parent->getAttribute('path')).'.'.strtolower($currency);
+
+        $account = Account::create([
+            'entity_id' => $entityId,
+            'code' => $code,
+            'name_ar' => 'النقد في البنك - '.$currency,
+            'name_en' => 'Cash at bank - '.$currency,
+            'parent_id' => $parent->getKey(),
+            'path' => $path,
+            'depth' => substr_count($path, '.'),
+            /*
+             | The enum itself, not self::text() of it.
+             |
+             | `type` is cast, so getAttribute returns an AccountType and
+             | self::text() of an enum is the empty string - which Eloquent
+             | then refuses as a backing value, several frames away.
+             */
+            'type' => $parent->getAttribute('type'),
+            'statement_line' => $parent->getAttribute('statement_line'),
+            'postable' => true,
+            'monetary' => true,
+        ]);
+
+        return self::text($account->getKey());
     }
 
     /* -----------------------------------------------------------------------
@@ -975,7 +1395,7 @@ final class DemoTenantSeeder extends Seeder
     {
         return (string) BigDecimal::of($net)
             ->multipliedBy(self::VAT_RATE)
-            ->dividedBy(100, 4, \Brick\Math\RoundingMode::HALF_UP);
+            ->dividedBy(100, 4, \Brick\Math\RoundingMode::HalfUp);
     }
 
     private function entity(): Entity
