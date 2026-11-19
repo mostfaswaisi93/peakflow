@@ -250,9 +250,24 @@
         </footer>
     @endif
 
+    {{-- The loader, in the DOM and hidden, so that showing it is one
+         attribute rather than a render while the page is being replaced.
+         `aria-live="polite"` on the wrapper and not on the component: the
+         component already carries `role="status"`, and a live region inside
+         a live region is announced twice. --}}
+    <div id="pf-navigation-loader" hidden
+         class="fixed inset-0 z-(--z-toast) flex items-center justify-center bg-surface">
+        <x-brand.loader :label="__('جارٍ الانتقال')" />
+    </div>
+
     {{-- The header's menus close on Escape and on a click outside, and the
          company switcher submits on change - js/header.js. Last, so the
          elements it binds to exist; nothing waits for it. --}}
     <script @cspNonce>{!! file_get_contents(resource_path('js/header.js')) !!}</script>
+
+    {{-- And the loader is revealed on a navigation - js/navigation-loader.js.
+         The 400ms wait is in the stylesheet, not here, so a fast page never
+         shows one and no timer races a navigation. --}}
+    <script @cspNonce>{!! file_get_contents(resource_path('js/navigation-loader.js')) !!}</script>
 </body>
 </html>

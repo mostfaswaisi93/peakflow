@@ -256,6 +256,14 @@
  * ======================================================================== */
 :root {
     --c-background:              var(--p-brand-mist);
+    /* The mark, when it is DRAWN rather than loaded as artwork - PF-279.
+       Only the loader draws it: `<x-brand.logo>` loads the kit's masters as
+       files. The three roles exist so that the drawing goes through the
+       token layer like everything else, and so the high-contrast themes can
+       make it monochrome the way the logo's own artwork does. */
+    --c-brand-peak-back:         var(--p-brand-navy);
+    --c-brand-peak-front:        var(--p-brand-teal);
+    --c-brand-summit:            var(--p-brand-amber);
     --c-surface:                 var(--p-neutral-0);
     --c-surface-raised:          var(--p-neutral-0);
     --c-surface-sunken:          var(--p-neutral-100);
@@ -399,6 +407,9 @@
 /* Graphite - the dark theme. Glacier Teal is the action, with navy ink. */
 .dark {
     --c-background:              var(--p-neutral-1000);
+    --c-brand-peak-back:         var(--p-neutral-0);
+    --c-brand-peak-front:        var(--p-brand-teal);
+    --c-brand-summit:            var(--p-brand-amber);
     --c-surface:                 var(--p-neutral-950);
     --c-surface-raised:          var(--p-neutral-900);
     --c-surface-sunken:          var(--p-neutral-1000);
@@ -487,6 +498,9 @@
    a table always sits on a solid surface. */
 [data-theme='midnight'] {
     --c-background:              var(--p-midnight-1000);
+    --c-brand-peak-back:         var(--p-neutral-0);
+    --c-brand-peak-front:        var(--p-brand-teal);
+    --c-brand-summit:            var(--p-brand-amber);
     --c-surface:                 var(--p-midnight-950);
     --c-surface-raised:          var(--p-midnight-900);
     --c-surface-sunken:          var(--p-midnight-1000);
@@ -575,6 +589,10 @@
  * ------------------------------------------------------------------------ */
 [data-theme='hc-light'] {
     --c-background:              var(--p-neutral-0);
+    /* Monochrome, as the kit's own high-contrast artwork is. */
+    --c-brand-peak-back:         var(--p-neutral-1000);
+    --c-brand-peak-front:        var(--p-neutral-1000);
+    --c-brand-summit:            var(--p-neutral-1000);
     --c-surface:                 var(--p-neutral-0);
     --c-surface-raised:          var(--p-neutral-0);
     --c-surface-sunken:          var(--p-neutral-50);
@@ -656,6 +674,9 @@
 
 [data-theme='hc-dark'] {
     --c-background:              var(--p-neutral-1000);
+    --c-brand-peak-back:         var(--p-neutral-0);
+    --c-brand-peak-front:        var(--p-neutral-0);
+    --c-brand-summit:            var(--p-neutral-0);
     --c-surface:                 var(--p-neutral-1000);
     --c-surface-raised:          var(--p-neutral-950);
     --c-surface-sunken:          var(--p-neutral-950);
@@ -858,6 +879,10 @@
     --color-surface-sunken:    oklch(var(--c-surface-sunken));
     --color-surface-hover:     oklch(var(--c-surface-hover));
     --color-surface-selected:  oklch(var(--c-surface-selected));
+
+    --color-brand-peak-back:   oklch(var(--c-brand-peak-back));
+    --color-brand-peak-front:  oklch(var(--c-brand-peak-front));
+    --color-brand-summit:      oklch(var(--c-brand-summit));
 
     --color-surface-container-lowest:  oklch(var(--c-surface-container-lowest));
     --color-surface-container-low:     oklch(var(--c-surface-container-low));
@@ -1294,6 +1319,93 @@
             background-color: transparent;
         }
     }
+
+    /* ----------------------------------------------------------------------
+     *  THE LOADER - PF-279.
+     *
+     *  The mark's own flow line, travelling across the peaks. It is the one
+     *  gesture already in the logo that is about movement, so the loader is
+     *  the brand doing what the brand draws rather than a spinner wearing
+     *  its colours.
+     *
+     *  ## It loops, and that is the exception rather than a lapse
+     *
+     *  "Nothing loops" exists to stop decoration. Here the repetition IS the
+     *  information: it is what says the work has not finished. A loader that
+     *  stopped after 500ms would freeze while the page was still loading,
+     *  which reads as a broken page rather than a slow one.
+     *
+     *  `motionStaysShort()` grants this one selector by name and still
+     *  refuses every other loop, so the exception is a decision somebody
+     *  wrote down rather than a hole.
+     *
+     *  ## It does not appear for a fast page
+     *
+     *  A loader that flashes on every click is worse than none: it makes a
+     *  fast product look busy. So it starts invisible and fades in after
+     *  400ms, which means a page that arrives before then never shows one -
+     *  and the delay costs nothing, because there is nothing to see during
+     *  it.
+     * ------------------------------------------------------------------- */
+    .pf-loader {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: var(--spacing);
+        opacity: 0;
+        animation: pf-loader-appear 200ms ease-out 400ms forwards;
+    }
+
+    .pf-loader__mark {
+        inline-size: 3rem;
+        block-size: auto;
+    }
+
+    /* The mask's own path, moved. Animating the MASK rather than the peaks
+       keeps the peaks still: the mark stays legible as the mark while the
+       line travels through it. */
+    .pf-loader__flow {
+        animation: pf-loader-flow 1600ms ease-in-out infinite; /* @motion-allow: the loader - see above */
+    }
+
+    .pf-loader__track {
+        inline-size: 12rem;
+        block-size: 0.25rem;
+        border-radius: 999px;
+        background-color: var(--color-surface-sunken);
+        overflow: hidden;
+    }
+
+    /* No transition on the width. A determinate bar that eases toward its
+       number is a bar that shows a number nobody sent, and a bar that lies
+       about progress is the most irritating thing an interface does. */
+    .pf-loader__bar {
+        block-size: 100%;
+        background-color: var(--color-brand-peak-front);
+    }
+
+    .pf-loader__label {
+        font-size: var(--text-label);
+        color: var(--color-on-surface-muted);
+    }
+
+    @keyframes pf-loader-appear {
+        to { opacity: 1; }
+    }
+
+    @keyframes pf-loader-flow {
+        0%   { transform: translateX(-18px); }
+        50%  { transform: translateX(18px); }
+        100% { transform: translateX(-18px); }
+    }
+
+    /* Reduced motion is handled by the global block near the end of this
+       file, which sets `animation-iteration-count: 1 !important` on
+       everything - so the loader's cycle runs once and stops, and its
+       fade-in completes immediately rather than being skipped. A rule of
+       its own here would be a second, weaker statement of the same thing,
+       and the one that is easy to delete by accident. The visible label is
+       what still says something is happening once the mark is still. */
 
     /* Focus is always visible, and tested as its own token pair against both
        the component and the adjacent background (WCAG 2.4.11). */

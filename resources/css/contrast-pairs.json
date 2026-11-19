@@ -1,93 +1,324 @@
 {
-    "$comment": [
-        "Every legitimate foreground/background pairing of the colour roles in app.css - UX-003, extending PF-200.",
-        "Read by tests/Support/DesignTokenRules.php (php bin/verify design), which resolves each role in each theme from app.css itself and measures it with the WCAG 2.2 formula.",
-        "Declared rather than generated: a cartesian product of roles would test combinations nobody renders and hide the ones that matter.",
-        "A role in app.css that appears in no pair must be listed under 'unpaired' with the reason it needs no measurement - otherwise the check fails, because a role nobody pairs is a role nobody has checked."
-    ],
-    "themes": {
-        "light":    { "selectors": [":root"], "text": 4.5, "ui": 3 },
-        "graphite": { "selectors": [":root", ".dark"], "text": 4.5, "ui": 3 },
-        "midnight": { "selectors": [":root", ".dark", "[data-theme='midnight']"], "text": 4.5, "ui": 3 },
-        "hc-light": { "selectors": [":root", "[data-theme='hc-light']"], "text": 7, "ui": 4.5 },
-        "hc-dark":  { "selectors": [":root", ".dark", "[data-theme='hc-dark']"], "text": 7, "ui": 4.5 }
+  "$comment": [
+    "Every legitimate foreground/background pairing of the colour roles in app.css - UX-003, extending PF-200.",
+    "Read by tests/Support/DesignTokenRules.php (php bin/verify design), which resolves each role in each theme from app.css itself and measures it with the WCAG 2.2 formula.",
+    "Declared rather than generated: a cartesian product of roles would test combinations nobody renders and hide the ones that matter.",
+    "A role in app.css that appears in no pair must be listed under 'unpaired' with the reason it needs no measurement - otherwise the check fails, because a role nobody pairs is a role nobody has checked."
+  ],
+  "themes": {
+    "light": {
+      "selectors": [
+        ":root"
+      ],
+      "text": 4.5,
+      "ui": 3
     },
-    "text": [
-        ["on-background", "background"],
-        ["on-surface", "background"],
-        ["on-surface", "surface"],
-        ["on-surface", "surface-raised"],
-        ["on-surface", "surface-sunken"],
-        ["on-surface", "surface-hover"],
-        ["on-surface", "surface-selected"],
-        ["on-surface", "surface-container-lowest"],
-        ["on-surface", "surface-container-low"],
-        ["on-surface", "surface-container"],
-        ["on-surface", "surface-container-high"],
-        ["on-surface", "surface-container-highest"],
-        ["on-surface-muted", "background"],
-        ["on-surface-muted", "surface"],
-        ["on-surface-muted", "surface-container"],
-        ["on-surface-muted", "surface-container-low"],
-        ["on-surface-muted", "surface-container-high"],
-        ["on-surface-muted", "surface-raised"],
-        ["on-surface-muted", "surface-sunken"],
-        ["on-surface-subtle", "surface"],
-        ["link", "surface"],
-        ["link", "background"],
-        ["on-primary", "primary"],
-        ["on-primary", "primary-hover"],
-        ["on-brand-cta", "brand-cta-start"],
-        ["on-brand-cta", "brand-cta-end"],
-        ["on-primary-subtle", "primary-subtle"],
-        ["on-tertiary", "tertiary"],
-        ["on-tertiary-subtle", "tertiary-subtle"],
-        ["on-insight", "insight"],
-        ["on-insight-subtle", "insight-subtle"],
-        ["on-danger", "danger"],
-        ["on-danger-subtle", "danger-subtle"],
-        ["on-warning", "warning"],
-        ["on-warning-subtle", "warning-subtle"],
-        ["on-success", "success"],
-        ["on-success-subtle", "success-subtle"],
-        ["figure", "surface"],
-        ["debit", "surface"],
-        ["credit", "surface"],
-        ["figure-muted", "surface"],
-        ["suspense", "surface"],
-        ["figure-negative", "surface"],
-        ["figure-negative", "surface-hover"],
-        ["figure-negative", "surface-selected"],
-        ["on-sidebar", "sidebar"],
-        ["on-sidebar", "sidebar-raised"],
-        ["on-sidebar", "sidebar-selected"],
-        ["on-sidebar-muted", "sidebar"]
-    ],
-    "ui": [
-        ["outline-control", "surface"],
-        ["outline-control", "background"],
-        ["focus-ring", "surface"],
-        ["focus-ring", "background"],
-        ["focus-ring", "focus-halo"],
-        ["primary", "surface"],
-        ["accent", "surface"],
-        ["accent", "background"],
-        ["sidebar-accent", "sidebar"],
-        ["sidebar-accent", "sidebar-selected"],
-        ["tertiary", "surface"],
-        ["insight", "surface"],
-        ["danger", "surface"],
-        ["warning", "surface"],
-        ["success", "surface"]
-    ],
-    "unpaired": {
-        "focus-halo": "The SECOND colour of the focus indicator - PF-200. It is measured against the ring it sits beside (the pair above) and, by DesignFoundationRules, against every fill a focused control can have, where the rule is that at least ONE of the ring and the halo clears the target. It is deliberately close to the page in the light themes, which is what lets it contrast with a dark fill, so measuring it against a surface would be measuring the wrong thing.",
-        "outline": "A decorative divider - a card edge or a table rule identifies nothing operable, so WCAG 1.4.11 sets no contrast for it. Form controls use outline-control, and a rule refuses one that does not.",
-        "outline-subtle": "A decorative divider, as outline.",
-        "outline-strong": "A decorative divider with more weight, as outline. It never marks the boundary of a control.",
-        "draft-stripe": "The hatch on a draft is decoration beside the literal word 'draft', which carries the meaning.",
-        "info": "A deprecated alias of insight, measured through it.",
-        "info-subtle": "A deprecated alias of insight-subtle, measured through it.",
-        "on-info-subtle": "A deprecated alias of on-insight-subtle, measured through it."
+    "graphite": {
+      "selectors": [
+        ":root",
+        ".dark"
+      ],
+      "text": 4.5,
+      "ui": 3
+    },
+    "midnight": {
+      "selectors": [
+        ":root",
+        ".dark",
+        "[data-theme='midnight']"
+      ],
+      "text": 4.5,
+      "ui": 3
+    },
+    "hc-light": {
+      "selectors": [
+        ":root",
+        "[data-theme='hc-light']"
+      ],
+      "text": 7,
+      "ui": 4.5
+    },
+    "hc-dark": {
+      "selectors": [
+        ":root",
+        ".dark",
+        "[data-theme='hc-dark']"
+      ],
+      "text": 7,
+      "ui": 4.5
     }
+  },
+  "text": [
+    [
+      "on-background",
+      "background"
+    ],
+    [
+      "on-surface",
+      "background"
+    ],
+    [
+      "on-surface",
+      "surface"
+    ],
+    [
+      "on-surface",
+      "surface-raised"
+    ],
+    [
+      "on-surface",
+      "surface-sunken"
+    ],
+    [
+      "on-surface",
+      "surface-hover"
+    ],
+    [
+      "on-surface",
+      "surface-selected"
+    ],
+    [
+      "on-surface",
+      "surface-container-lowest"
+    ],
+    [
+      "on-surface",
+      "surface-container-low"
+    ],
+    [
+      "on-surface",
+      "surface-container"
+    ],
+    [
+      "on-surface",
+      "surface-container-high"
+    ],
+    [
+      "on-surface",
+      "surface-container-highest"
+    ],
+    [
+      "on-surface-muted",
+      "background"
+    ],
+    [
+      "on-surface-muted",
+      "surface"
+    ],
+    [
+      "on-surface-muted",
+      "surface-container"
+    ],
+    [
+      "on-surface-muted",
+      "surface-container-low"
+    ],
+    [
+      "on-surface-muted",
+      "surface-container-high"
+    ],
+    [
+      "on-surface-muted",
+      "surface-raised"
+    ],
+    [
+      "on-surface-muted",
+      "surface-sunken"
+    ],
+    [
+      "on-surface-subtle",
+      "surface"
+    ],
+    [
+      "link",
+      "surface"
+    ],
+    [
+      "link",
+      "background"
+    ],
+    [
+      "on-primary",
+      "primary"
+    ],
+    [
+      "on-primary",
+      "primary-hover"
+    ],
+    [
+      "on-brand-cta",
+      "brand-cta-start"
+    ],
+    [
+      "on-brand-cta",
+      "brand-cta-end"
+    ],
+    [
+      "on-primary-subtle",
+      "primary-subtle"
+    ],
+    [
+      "on-tertiary",
+      "tertiary"
+    ],
+    [
+      "on-tertiary-subtle",
+      "tertiary-subtle"
+    ],
+    [
+      "on-insight",
+      "insight"
+    ],
+    [
+      "on-insight-subtle",
+      "insight-subtle"
+    ],
+    [
+      "on-danger",
+      "danger"
+    ],
+    [
+      "on-danger-subtle",
+      "danger-subtle"
+    ],
+    [
+      "on-warning",
+      "warning"
+    ],
+    [
+      "on-warning-subtle",
+      "warning-subtle"
+    ],
+    [
+      "on-success",
+      "success"
+    ],
+    [
+      "on-success-subtle",
+      "success-subtle"
+    ],
+    [
+      "figure",
+      "surface"
+    ],
+    [
+      "debit",
+      "surface"
+    ],
+    [
+      "credit",
+      "surface"
+    ],
+    [
+      "figure-muted",
+      "surface"
+    ],
+    [
+      "suspense",
+      "surface"
+    ],
+    [
+      "figure-negative",
+      "surface"
+    ],
+    [
+      "figure-negative",
+      "surface-hover"
+    ],
+    [
+      "figure-negative",
+      "surface-selected"
+    ],
+    [
+      "on-sidebar",
+      "sidebar"
+    ],
+    [
+      "on-sidebar",
+      "sidebar-raised"
+    ],
+    [
+      "on-sidebar",
+      "sidebar-selected"
+    ],
+    [
+      "on-sidebar-muted",
+      "sidebar"
+    ]
+  ],
+  "ui": [
+    [
+      "outline-control",
+      "surface"
+    ],
+    [
+      "outline-control",
+      "background"
+    ],
+    [
+      "focus-ring",
+      "surface"
+    ],
+    [
+      "focus-ring",
+      "background"
+    ],
+    [
+      "focus-ring",
+      "focus-halo"
+    ],
+    [
+      "primary",
+      "surface"
+    ],
+    [
+      "accent",
+      "surface"
+    ],
+    [
+      "accent",
+      "background"
+    ],
+    [
+      "sidebar-accent",
+      "sidebar"
+    ],
+    [
+      "sidebar-accent",
+      "sidebar-selected"
+    ],
+    [
+      "tertiary",
+      "surface"
+    ],
+    [
+      "insight",
+      "surface"
+    ],
+    [
+      "danger",
+      "surface"
+    ],
+    [
+      "warning",
+      "surface"
+    ],
+    [
+      "success",
+      "surface"
+    ]
+  ],
+  "unpaired": {
+    "focus-halo": "The SECOND colour of the focus indicator - PF-200. It is measured against the ring it sits beside (the pair above) and, by DesignFoundationRules, against every fill a focused control can have, where the rule is that at least ONE of the ring and the halo clears the target. It is deliberately close to the page in the light themes, which is what lets it contrast with a dark fill, so measuring it against a surface would be measuring the wrong thing.",
+    "outline": "A decorative divider - a card edge or a table rule identifies nothing operable, so WCAG 1.4.11 sets no contrast for it. Form controls use outline-control, and a rule refuses one that does not.",
+    "outline-subtle": "A decorative divider, as outline.",
+    "outline-strong": "A decorative divider with more weight, as outline. It never marks the boundary of a control.",
+    "draft-stripe": "The hatch on a draft is decoration beside the literal word 'draft', which carries the meaning.",
+    "info": "A deprecated alias of insight, measured through it.",
+    "info-subtle": "A deprecated alias of insight-subtle, measured through it.",
+    "on-info-subtle": "A deprecated alias of on-insight-subtle, measured through it.",
+    "brand-peak-back": "A colour the loader's mark is DRAWN with - PF-279. It is artwork, not text and not the edge of anything operable, so WCAG sets no contrast ratio for it: the loader's meaning is carried by its role, its label and its motion, and the drawing is what makes it the product's loader rather than a generic one. The high-contrast themes make all three monochrome, which is what the kit's own high-contrast artwork does.",
+    "brand-peak-front": "A colour the loader's mark is DRAWN with - PF-279. It is artwork, not text and not the edge of anything operable, so WCAG sets no contrast ratio for it: the loader's meaning is carried by its role, its label and its motion, and the drawing is what makes it the product's loader rather than a generic one. The high-contrast themes make all three monochrome, which is what the kit's own high-contrast artwork does.",
+    "brand-summit": "A colour the loader's mark is DRAWN with - PF-279. It is artwork, not text and not the edge of anything operable, so WCAG sets no contrast ratio for it: the loader's meaning is carried by its role, its label and its motion, and the drawing is what makes it the product's loader rather than a generic one. The high-contrast themes make all three monochrome, which is what the kit's own high-contrast artwork does."
+  }
 }

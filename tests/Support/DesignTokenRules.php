@@ -68,6 +68,7 @@ final class DesignTokenRules
             'type sizes and layers come from the scale, never a literal' => $this->noLiteralSizesOrLayers(),
             'Arabic is never letter-spaced' => $this->arabicIsNeverLetterSpaced($css),
             'nothing moves for longer than 500ms, and nothing loops' => $this->motionStaysShort(),
+            'the loader waits before it shows, and stops for reduced motion' => $this->theLoaderBehaves(),
             'glass is the only backdrop filter' => $this->glassIsTheOnlyBackdrop($css),
             'the brand kit\'s colours are used exactly' => $this->brandColoursAreExact($css),
             'every layout carries the brand icons' => $this->layoutsCarryTheBrand(),
@@ -513,6 +514,144 @@ final class DesignTokenRules
      *
      * @return list<string>
      */
+    /**
+     * The three things that make the loader's exception defensible - PF-279.
+     *
+     * The loop and the long cycle are granted above. An allowance with no
+     * conditions attached is just a hole, so these are the conditions:
+     *
+     * 1. **It waits.** A loader that flashes on every click is worse than
+     *    none - it makes a fast product look busy - so it fades in after a
+     *    delay, and a page that arrives before then never shows one.
+     * 2. **It stops under `prefers-reduced-motion`.** An exception to the
+     *    house style is one thing; an exception to the accessibility rule
+     *    is another, and this is not that.
+     * 3. **Its determinate bar has no transition.** A bar that eases toward
+     *    its number is showing a number nobody sent, and a bar that lies
+     *    about progress is the most irritating thing an interface does.
+     *
+     * @return list<string>
+     */
+    private function theLoaderBehaves(): array
+    {
+        $css = $this->read('resources/css/app.css');
+        $violations = [];
+
+        if (preg_match('/\.pf-loader\s*\{[^}]*animation:[^;]*?(\d+)ms\s+forwards/s', $css, $m) !== 1) {
+            if (preg_match('/\.pf-loader\s*\{[^}]*animation:[^;}]*forwards/s', $css) !== 1) {
+                $violations[] = 'the loader does not fade in with a delay, so it shows the moment a page '.
+                    'starts loading. A loader that flashes on every click is worse than none: it makes a '.
+                    'fast product look busy';
+            }
+        } elseif ((int) $m[1] < 200) {
+            $violations[] = \sprintf(
+                'the loader appears after only %dms. That is short enough that a page which was about to '.
+                'arrive shows one anyway, which is the flash the delay exists to prevent',
+                (int) $m[1],
+            );
+        }
+
+        /*
+         | The guarantee, wherever it comes from.
+         |
+         | The stylesheet stops the loader through a blanket
+         | `animation-iteration-count: 1 !important` on everything, which is
+         | stronger than a rule naming the loader - it covers the next
+         | looping thing too. So this accepts either, rather than demanding
+         | the weaker of the two and pushing somebody to write a second
+         | statement of what is already true.
+         */
+        $reduced = self::reducedMotionBlock($css);
+
+        if ($reduced === null) {
+            $violations[] = 'the stylesheet has no `prefers-reduced-motion` block at all';
+        } elseif (
+            ! str_contains($reduced, '.pf-loader__flow')
+            && preg_match('/animation-iteration-count\s*:\s*1\s*!important/', $reduced) !== 1
+        ) {
+            $violations[] = 'the loader\'s motion is not stopped under `prefers-reduced-motion`, by name '.
+                'or by the blanket iteration-count rule. It is granted a loop and a long cycle that '.
+                'nothing else gets, and an exception that applied there too would be an exception to the '.
+                'accessibility rule rather than to the house style';
+        }
+
+        if (preg_match('/\.pf-loader__bar\s*\{[^}]*transition/s', $css) === 1) {
+            $violations[] = 'the determinate bar has a transition, so its width eases toward the number '.
+                'rather than being it. A bar that moves between two figures is showing a figure nobody '.
+                'sent, and a bar that lies about progress is the most irritating thing an interface does';
+        }
+
+        return $violations;
+    }
+
+    /** The reduced-motion block, or null. */
+    private static function reducedMotionBlock(string $css): ?string
+    {
+        $at = strpos($css, '@media (prefers-reduced-motion: reduce)');
+
+        if ($at === false) {
+            return null;
+        }
+
+        $start = strpos($css, '{', $at);
+
+        if ($start === false) {
+            return null;
+        }
+
+        $depth = 0;
+
+        for ($i = $start, $n = \strlen($css); $i < $n; $i++) {
+            $depth += $css[$i] === '{' ? 1 : ($css[$i] === '}' ? -1 : 0);
+
+            if ($depth === 0) {
+                return substr($css, $start, $i - $start + 1);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The one loop the product is allowed, and only where it is declared.
+     *
+     * ## Why there is an exception at all
+     *
+     * "Nothing loops" was written against decoration - the `animate-ping`
+     * that `CONTRIBUTING.md` describes arriving in a build through a vendor
+     * view nobody asked for. An indeterminate loader is the other thing:
+     * the repetition IS the information, it is what says the work has not
+     * finished, and one that stopped after 500ms would freeze while the
+     * page was still loading - which reads as a broken page rather than a
+     * slow one.
+     *
+     * ## Why it is matched this narrowly
+     *
+     * The allowance is for a declaration inside `.pf-loader__flow` and for
+     * nothing else. Minifiers rewrite selectors but they do not rename
+     * classes, so the class is still the class in the built file; matching
+     * on "it is a loader-ish animation" would let the next looping thing in
+     * on the strength of its name.
+     *
+     * The loop is also undone entirely under `prefers-reduced-motion`,
+     * which `theLoaderStopsForReducedMotion()` checks separately - an
+     * exception that applied there too would be an exception to the
+     * accessibility rule rather than to the house style.
+     */
+    private function isTheLoadersOwnAnimation(string $css, string $declaration): bool
+    {
+        if (! str_contains($declaration, 'pf-loader-flow')) {
+            return false;
+        }
+
+        // The declaration has to live in the loader's own rule, not merely
+        // mention its keyframes.
+        return preg_match(
+            '/\.pf-loader__flow\s*\{[^}]*'.preg_quote($declaration, '/').'/s',
+            $css,
+        ) === 1;
+    }
+
     private function motionStaysShort(): array
     {
         $manifest = $this->base.'/public/build/manifest.json';
@@ -535,8 +674,24 @@ final class DesignTokenRules
 
         if (preg_match_all('/[^;{}]*\binfinite\b[^;{}]*/', $source, $m)) {
             foreach ($m[0] as $declaration) {
+                if ($this->isTheLoadersOwnAnimation($source, trim($declaration))) {
+                    continue;
+                }
+
                 $violations[] = \sprintf('The built CSS loops: "%s". Nothing loops - see interaction-and-motion.md.', trim($declaration));
             }
+        }
+
+        /*
+         | And the exception has to still be there.
+         |
+         | An allowance for a rule that has been deleted is an allowance for
+         | whatever is written next in its place.
+         */
+        if (! str_contains($source, '.pf-loader__flow')) {
+            $violations[] = 'the motion rules still grant the loader its loop and `.pf-loader__flow` is '.
+                'not in the built CSS. An allowance for a rule that has gone is an allowance for '.
+                'whatever is written next in its place.';
         }
 
         $timing = '/(?<![\w-])(?:transition|transition-duration|animation|animation-duration|--duration-[\w-]+|--default-transition-duration)\s*:\s*([^;{}]*)/';
@@ -549,6 +704,23 @@ final class DesignTokenRules
 
                 foreach ($times as [, $number, $unit]) {
                     $milliseconds = (float) $number * ($unit === 's' ? 1000 : 1);
+
+                    /*
+                     | The ceiling is about waiting, and nobody waits for this.
+                     |
+                     | 500ms exists so that a transition does not hold the
+                     | person up between one state and the next. A loader's
+                     | cycle holds nobody up - it runs beside the wait rather
+                     | than adding to it - and at 500ms a cycle is fast enough
+                     | to read as agitation, which makes a slow page feel
+                     | worse rather than better.
+                     |
+                     | Same allowance, same selector, same reason as the loop
+                     | above.
+                     */
+                    if ($this->isTheLoadersOwnAnimation($source, trim($declaration))) {
+                        continue;
+                    }
 
                     if ($milliseconds > 500) {
                         $violations[] = \sprintf('The built CSS has "%s" - %dms is past the 500ms ceiling.', trim($declaration), (int) $milliseconds);

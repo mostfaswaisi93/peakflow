@@ -412,6 +412,8 @@
     "تُقارَن الصيغة المختارة بمحتوى الملف، ويُرفض ما لا يطابقها.": "The format you choose is checked against the file's contents, and a mismatch is refused.",
     "ثانية": "second",
     "ثلاثة أرصدة لكل حساب، ولا واحد منها اسمه «الرصيد». الدفتري والكشف والمتاح أرقام مختلفة، وصفحة تعرض واحدًا منها باسم «الرصيد» هي الطريقة التي يُعتمد بها دفع من مال مرتبط أصلًا.": "Three balances per account, and not one of them is called “the balance”. Ledger, statement and available are different numbers, and a page that shows one of them labelled “balance” is how a payment comes to be authorised against money that is already committed.",
+    "جارٍ الانتقال": "Going there",
+    "جارٍ التحميل": "Loading",
     "حبة": "piece",
     "حتى": "until",
     "حتى تاريخ": "Up to",
