@@ -282,3 +282,65 @@ Designed states for every screen, not left to the framework.
 - [ ] The derivation runs at save time and is stored, not computed per request, because a colour ramp recomputed on every page is a colour ramp that shows up in the flame graph
 - [ ] The five themes each derive their own ramp from the same input: a brand colour that works on white rarely works on near-black, and picking one and lightening it is how a tenant's product looks broken in dark mode
 - [ ] A tenant that sets nothing gets the PeakFlow kit, which is the case to optimise - most tenants will never open this screen
+
+### PF-276 · Responsive, measured at the widths people actually use
+`—` · **8 pts** · depends: PF-204, PF-205 · standards: WCAG 2.2 AA (1.4.10 reflow) · `risk:high`
+
+**Commits to:** the product being usable on a phone and a tablet, not merely rendering on one.
+
+A ledger is used on a laptop and read on a phone - an approver clearing a payment run in a taxi, an owner checking a balance at a supplier's counter. The failure is not that the page breaks; it is that it *works* while costing four horizontal scrolls and a pinch, and the person stops using it rather than complaining.
+
+- [ ] A **width budget per screen**, asserted: no page scrolls horizontally at 320 CSS pixels, which is WCAG 1.4.10's reflow threshold and the narrowest phone still in use
+- [ ] The data grid has a declared behaviour at each breakpoint - which columns collapse, which become a second line, which are dropped - and the rule is in the component rather than in each page's classes
+- [ ] Every page is rendered at 320, 768, 1024 and 1440 in a real browser and the screenshots are compared against the previous run, so a layout that regresses is a diff rather than a bug report
+- [ ] Touch targets are at least 44×44 CSS pixels where a finger is the pointer, and the check reads the computed box rather than the class
+- [ ] RTL is measured at every width too, because a layout that only breaks in Arabic at 320 is a layout nobody on the team sees break
+
+### PF-277 · One spacing scale, applied everywhere
+`—` · **5 pts** · depends: PF-199 · standards: — · `type:design`
+
+**Commits to:** the product looking like one product.
+
+Inconsistent spacing is the single most visible sign of software assembled by several people on several days. It is also the cheapest thing to get right and the easiest to lose: one `mt-7` among `mt-6`s is invisible to its author and obvious on the page beside it.
+
+- [ ] A spacing scale is declared as tokens, and a check refuses an arbitrary value - a page may use `space-6`, not `margin-top: 26px`
+- [ ] Section rhythm is a component, not a convention: the vertical gap between a page header and its first section, and between sections, is set in one place
+- [ ] Every page is audited against the scale and the exceptions are **named with a reason**, because a design system with silent exceptions is a design system nobody trusts
+- [ ] The check reads computed styles from a rendered page, not class names - a page that reaches the right spacing by three overrides is a page that breaks on the next change
+
+### PF-278 · Tables that read like a financial product
+`—` · **8 pts** · depends: PF-205, PF-277 · standards: WCAG 2.2 AA · `risk:high`
+
+**Commits to:** the grid being the thing people point at when they say the product looks professional.
+
+Accounting software is tables. Everything else is navigation around them. A table that aligns its figures, holds its header, groups its totals and says what it is sorted by is the difference between a product that feels authoritative and one that feels like a spreadsheet somebody exported.
+
+- [ ] **Figures are tabular-lined and right-aligned**, negatives are accounting-style, and the decimal points line up down the column - a column whose decimals wander is a column nobody can scan
+- [ ] A sticky header that survives a scrolled body, and a sticky first column where the row's identity is in it
+- [ ] Zebra striping, row hover and the selected row are **three distinct states** that remain distinguishable in both high-contrast themes and in print
+- [ ] Column widths are content-aware with a declared minimum, so a long legal name does not squeeze the amount column into two lines
+- [ ] Totals and subtotals are visually anchored - a top border and a weight change, not a colour - because colour is the first thing a printer loses
+- [ ] Empty, loading and error states are part of the table component rather than each page's own markup
+- [ ] The whole of it is measured against three real financial products' grids, and the comparison is recorded so "more professional" is a judgement somebody can check rather than an opinion
+
+### PF-279 · The logo, and a loader that is part of it
+`—` · **5 pts** · depends: PF-204 · standards: WCAG 2.2 (2.3.3 animation from interactions) · `type:design`
+
+**Commits to:** the moment between pages being the product's, not the browser's.
+
+- [ ] The mark animates as a **loader**, derived from the logo rather than drawn separately, so the thing that spins is recognisably the brand
+- [ ] It appears on navigation and on a full refresh, after a delay long enough that a fast page never shows it - a loader that flashes on every click is worse than none
+- [ ] It respects `prefers-reduced-motion`: the same component, without the motion, still communicating that something is happening
+- [ ] It has a determinate form where the duration is known (an upload, an export) and an indeterminate one where it is not, because a bar that lies about progress is the most irritating thing an interface does
+- [ ] The animation is CSS or SVG, not a library, and its cost is measured - a loader that drops frames on a mid-range phone is a loader that makes the product feel slower than no loader at all
+
+### PF-280 · Skeletons where the wait is real
+`—` · **5 pts** · depends: PF-279, PF-278 · standards: WCAG 2.2 AA · `type:design`
+
+**Commits to:** a page that is honest about what it is about to show.
+
+- [ ] A skeleton is **the shape of the content that is coming**, not a grey box - a table skeleton has the table's columns, a tile skeleton has the tile's rows
+- [ ] It is used only where the wait is measured to be long enough to matter, and the measurement is recorded per screen; everywhere else the page simply arrives
+- [ ] A skeleton never shifts the layout when the content replaces it - the thing it is standing in for occupies the same box
+- [ ] It is announced to a screen reader as busy, and the announcement stops when the content lands
+- [ ] Under `prefers-reduced-motion` the shimmer stops and the skeleton stays, because the shimmer is decoration and the placeholder is information

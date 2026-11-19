@@ -9,7 +9,7 @@
 | [00](phase-00-foundations.md) | Foundations, tooling and guardrails | 17 | 60 |
 | [01](phase-01-tenancy-identity.md) | Tenancy, entities, identity, segregation of duties | 19 | 85 |
 | [02](phase-02-ledger.md) | The general ledger | 22 | 104 |
-| [03](phase-03-masters.md) | Parties, catalog, currencies, FX | 16 | 66 |
+| [03](phase-03-masters.md) | Parties, catalog, currencies, FX | 17 | 74 |
 | [04](phase-04-tax.md) | The tax engine | 14 | 71 |
 | [05](phase-05-sales.md) | Quotes, orders, invoices, credit notes | 21 | 110 |
 | [06](phase-06-einvoicing.md) | EN 16931, serializers, validation, jurisdiction profiles | 20 | 116 |
@@ -17,7 +17,7 @@
 | [08](phase-08-banking.md) | Bank accounts, statements, reconciliation | 21 | 109 |
 | [09](phase-09-settlement.md) | Payment runs, files, direct debit, in-transit | 16 | 81 |
 | [10](phase-10-reporting.md) | Reporting, close, consolidation | 17 | 87 |
-| [11](phase-11-design-system.md) | Design system, data grid, accessibility, RTL | 20 | 104 |
+| [11](phase-11-design-system.md) | Design system, data grid, accessibility, RTL | 25 | 135 |
 | [12](phase-12-api-exchange.md) | REST API, webhooks, the Exchange plane | 14 | 57 |
 | [13](phase-13-hardening.md) | 7 / 16 | 44 | 29 |
 | [14](phase-14-operations.md) | Stock, serials, returns, sync, payroll | 11 | 58 |
@@ -49,7 +49,7 @@ nobody can find is a task nobody will do.
 | [00](phase-00-foundations.md) | 15 / 17 | 175 | 5 |
 | [01](phase-01-tenancy-identity.md) | 15 / 19 | 85 | 4 |
 | [02](phase-02-ledger.md) | 19 / 22 | 143 | 3 |
-| [03](phase-03-masters.md) | 14 / 16 | 77 | 5 |
+| [03](phase-03-masters.md) | 14 / 17 | 77 | 13 |
 | [04](phase-04-tax.md) | 10 / 14 | 113 | 4 |
 | [05](phase-05-sales.md) | 17 / 21 | 159 | 17 |
 | [06](phase-06-einvoicing.md) | 8 / 20 | 107 | 37 |
@@ -57,12 +57,12 @@ nobody can find is a task nobody will do.
 | [08](phase-08-banking.md) | 21 / 21 | 124 | 0 |
 | [09](phase-09-settlement.md) | 15 / 16 | 79 | 1 |
 | [10](phase-10-reporting.md) | 9 / 17 | 50 | 26 |
-| [11](phase-11-design-system.md) | 3 / 20 | 43 | 62 |
+| [11](phase-11-design-system.md) | 3 / 25 | 43 | 88 |
 | [12](phase-12-api-exchange.md) | 4 / 14 | 25 | 39 |
 | [13](phase-13-hardening.md) | 7 / 16 | 44 | 29 |
 | [14](phase-14-operations.md) | 10 / 11 | 53 | 1 |
 | [15](phase-15-verticals.md) | 0 / 8 | 0 | 36 |
-| **all** | **176 / 267** | **1430** | **275** |
+| **all** | **176 / 273** | **1430** | **309** |
 
 Phases 00 to 09 are the ones that have been worked, and Phase 08 is closed. An open criterion in a worked phase is one that depends on a later phase and says so in its own task file, with the task that brings it - never one that was skipped.
 
