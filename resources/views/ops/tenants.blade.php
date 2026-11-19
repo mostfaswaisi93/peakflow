@@ -121,6 +121,27 @@
                                 'bg-success-subtle text-on-success-subtle' => $tenant->status->value === 'active',
                                 'bg-warning-subtle text-on-warning-subtle' => $tenant->status->value !== 'active',
                             ])>{{ $tenant->status->value }}</span>
+
+                            {{-- Where this tenant's schema actually is - PF-246.
+
+                                 "migrating" on its own tells an operator that a
+                                 migration is happening, not whether it is
+                                 progressing or which tenants it has reached - and
+                                 `tenants:migrate --unstick` exists because a tenant
+                                 can sit in that status after the run that set it
+                                 died. The version beside the status is what turns
+                                 the first reading into the second. --}}
+                            @if ($tenant->schema_version === null)
+                                <span class="figure ms-2 text-xs text-on-surface-subtle"
+                                      title="{{ __('لم يُسجَّل إصدار مخطَّط لهذا المستأجر') }}">{{ __('بلا إصدار') }}</span>
+                            @elseif ($tenant->isBehindSchema($expectedSchemaVersion))
+                                <span class="figure ms-2 rounded-full bg-warning-subtle px-2 py-0.5 text-xs text-on-warning-subtle"
+                                      dir="ltr"
+                                      title="{{ __('المتوقَّع') }}: {{ $expectedSchemaVersion }}">{{ $tenant->schema_version }}</span>
+                            @else
+                                <span class="figure ms-2 text-xs text-on-surface-subtle" dir="ltr"
+                                      title="{{ __('على أحدث إصدار') }}">{{ $tenant->schema_version }}</span>
+                            @endif
                         </td>
                         <td class="px-4 py-3">
                             @php $suspending = $tenant->status->value === 'active'; @endphp
