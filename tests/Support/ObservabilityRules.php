@@ -180,6 +180,8 @@ final class ObservabilityRules
                     => fn (): array => $this->theFiguresFollowTheFacts(),
                 'metrics:report publishes through a driver, and a figure nobody could compute is not zero'
                     => fn (): array => $this->theReportPublishesThroughADriver(),
+                'a scheduled run leaves a record, and both outcomes are reported'
+                    => fn (): array => $this->aScheduledRunLeavesARecord(),
 
                 // ---- PF-242 · invariant alerting --------------------------
                 'an alert cannot be built without naming the entity, the period and the record'
@@ -1655,6 +1657,124 @@ final class ObservabilityRules
 
         return $violations;
     }
+
+    /**
+     * A scheduled run leaves a record, not only an alert - PF-241, PF-238.
+     *
+     * ## Named as missing twice before it was built
+     *
+     * PF-241 asks for "failed scheduled runs by task", and PF-238's evidence
+     * pack carried a `not_included` entry saying the same thing: the
+     * failures raise `scheduled_job_failed` through the alert sink, so they
+     * reach a log - and a section whose completeness depends on log
+     * retention is not evidence.
+     *
+     * An alert is a notification. "Did the nightly chain walk run every
+     * night last quarter" is not a question a notification can answer.
+     *
+     * ## Both outcomes, and that is the assertion
+     *
+     * A history of failures answers "what went wrong" and not "what
+     * happened". A task missing from a list of failures looks exactly like
+     * one that succeeded - and it is also what a task that never ran looks
+     * like, which is the condition `invariants:watch` exists to make
+     * impossible for every other invariant in the product.
+     *
+     * So the check records one of each and asserts both are reported,
+     * labelled apart. Recording only the failure would pass against a
+     * recorder that dropped successes, which is the version that answers
+     * the wrong question.
+     *
+     * @return list<string>
+     */
+    private function aScheduledRunLeavesARecord(): array
+    {
+        $connection = \Illuminate\Support\Facades\DB::connection('platform');
+
+        if (! \Illuminate\Support\Facades\Schema::connection('platform')->hasTable('scheduled_runs')) {
+            return ['there is no scheduled_runs table, so the failures reach a log and nothing else - '.
+                'and a history whose completeness depends on log retention is not evidence'];
+        }
+
+        $recorder = app(\App\Platform\Services\ScheduledRunRecorder::class);
+        $marker = 'probe:'.\Illuminate\Support\Str::random(8);
+
+        $recorder->record('/usr/bin/php artisan '.$marker.' --all', \Illuminate\Support\Carbon::now()->subSeconds(2), 0);
+        $recorder->record('/usr/bin/php artisan '.$marker.'-failing --all', \Illuminate\Support\Carbon::now()->subSeconds(2), 3);
+
+        try {
+            $rows = $connection->table('scheduled_runs')
+                ->where('command', 'like', $marker.'%')
+                ->get(['command', 'exit_code', 'duration_ms']);
+
+            $problems = [];
+
+            if ($rows->count() !== 2) {
+                return ['the recorder wrote '.$rows->count().' row(s) for two runs'];
+            }
+
+            foreach ($rows as $row) {
+                if (str_contains((string) $row->command, 'artisan')) {
+                    $problems[] = sprintf(
+                        'the recorded command is the whole command line ("%s"). A history keyed on '.
+                        'that is one where the same job looks like two the first time a deployment '.
+                        'moves the php binary',
+                        (string) $row->command,
+                    );
+                }
+
+                if ((int) $row->duration_ms <= 0) {
+                    $problems[] = 'the run was recorded with no duration, so "it took four minutes" '.
+                        'is not answerable from the history';
+                }
+            }
+
+            $samples = app(\App\Platform\Metrics\ScheduledRunOutcomes::class)->collect(null);
+
+            $states = [];
+
+            foreach ($samples as $sample) {
+                $labels = $this->labelsOf($sample);
+
+                if (str_starts_with((string) ($labels['job'] ?? ''), $marker)) {
+                    $states[] = (string) ($labels['state'] ?? '');
+                }
+            }
+
+            foreach (['succeeded', 'failed'] as $state) {
+                if (! \in_array($state, $states, true)) {
+                    $problems[] = sprintf(
+                        'the metric reports no "%s" run. A history of failures answers "what went '.
+                        'wrong" and not "what happened" - and a task missing from a list of failures '.
+                        'looks exactly like one that succeeded, which is also what one that never '.
+                        'ran looks like',
+                        $state,
+                    );
+                }
+            }
+
+            return $problems;
+        } finally {
+            $connection->table('scheduled_runs')->where('command', 'like', $marker.'%')->delete();
+        }
+    }
+
+    /**
+     * A sample's labels, whatever shape the value object exposes.
+     *
+     * @return array<string, mixed>
+     */
+    private function labelsOf(object $sample): array
+    {
+        foreach (['labels', 'dimensions', 'tags'] as $property) {
+            if (property_exists($sample, $property) && \is_array($sample->{$property})) {
+                return $sample->{$property};
+            }
+        }
+
+        return [];
+    }
+
 
     /**
      * The command runs, publishes through the sink, and fails loudly.

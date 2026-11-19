@@ -163,6 +163,7 @@ final class TelemetryServiceProvider extends ServiceProvider
          | explains why their invoices are not being delivered.
          */
         $this->app->make(Metrics::class)->register(new \App\Platform\Metrics\QueueHealth());
+        $this->app->make(Metrics::class)->register(new \App\Platform\Metrics\ScheduledRunOutcomes());
 
         /*
          | The one watcher that is not a module's: the database's own

@@ -302,8 +302,43 @@ foreach ($recurring as $job) {
         continue;
     }
 
-    Schedule::command($job['run'])
+    $startedAt = null;
+    $scheduled = null;
+
+    $scheduled = Schedule::command($job['run'])
         ->cron($expression)
+        /*
+         | The run is recorded, succeeded or failed - PF-241.
+         |
+         | `before` and `after` rather than `onSuccess`/`onFailure`, because
+         | a history of failures answers "what went wrong" and not "what
+         | happened" - and a run MISSING from a history of failures looks
+         | exactly like one that succeeded, which is also what a run that
+         | never started looks like.
+         */
+        ->before(static function () use (&$startedAt): void {
+            $startedAt = \Illuminate\Support\Carbon::now();
+        })
+        ->after(static function () use ($job, &$startedAt, &$scheduled): void {
+            /*
+             | The event is closed over, not injected.
+             |
+             | Laravel calls an after-callback through the container, so a
+             | parameter typed `Event` makes it try to BUILD one - and
+             | `EventMutex` is not instantiable, so the callback throws and
+             | takes the remaining callbacks with it. Including the one that
+             | raises the alert: the failure that matters would then be
+             | unreported because the thing recording failures failed.
+             |
+             | `ObservabilityRules` found it by running every failure
+             | callback, which is what that check is for.
+             */
+            app(\App\Platform\Services\ScheduledRunRecorder::class)->record(
+                $job['run'],
+                $startedAt ?? \Illuminate\Support\Carbon::now(),
+                $scheduled?->exitCode,
+            );
+        })
         /*
          | Overlap refused, for the reason the watch refuses it: every one of
          | these makes a fleet-wide pass, and a second pass starting before the
