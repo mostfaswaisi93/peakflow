@@ -80,6 +80,7 @@ final class AttachmentRules
                     'a name with a path separator is refused' => fn (): array => $this->pathTraversalIsRefused(),
                     'the stored path is derived from the hash and the entity' => fn (): array => $this->pathShape(),
                     'a signed link carries the tenant and expires' => fn (): array => $this->signedLink(),
+                    'what is served cannot execute: attachment, nosniff, sandbox' => fn (): array => $this->theDownloadCannotExecute(),
                     'a stored object that changed is refused on read' => fn (): array => $this->divergenceIsRefused(),
                     'attachments:verify reports a missing object' => fn (): array => $this->verifyReports(),
                     'another entity cannot see these attachments' => fn (): array => $this->entityScope(),
@@ -536,6 +537,130 @@ final class AttachmentRules
         if (! str_contains($path, '/'.substr($hash, 0, 2).'/')) {
             $violations[] = 'the path does not fan out by the first bytes of the hash, so one directory '.
                 'holds every object';
+        }
+
+        return $violations;
+    }
+
+    /**
+     * The response makes a stored file inert - PF-236.
+     *
+     * ## Three headers, three different attacks
+     *
+     * The allowlist keeps SVG out, which is the first line. This is what
+     * holds when something gets past it - a PDF that is really HTML, a
+     * permitted type a browser decides to render, an allowlist widened in
+     * six months by somebody who did not read this.
+     *
+     * `Content-Disposition: attachment` means it is downloaded rather than
+     * rendered. `X-Content-Type-Options: nosniff` means a browser does not
+     * overrule the declared type by looking at the bytes - which is how a
+     * file served as `text/plain` comes to run as HTML. `default-src 'none';
+     * sandbox` means anything that is rendered anyway cannot run script or
+     * reach the network.
+     *
+     * Each has been bypassed somewhere on its own, which is why all three
+     * are asserted rather than one standing for the others.
+     *
+     * ## And the filename cannot end the header
+     *
+     * A quote or a newline in a declared name would close
+     * `Content-Disposition` and start another header - header injection
+     * through a filename somebody else chose. Driven with both.
+     *
+     * @return list<string>
+     */
+    private function theDownloadCannotExecute(): array
+    {
+        $violations = [];
+        $store = $this->storeWith(fn (): ScanVerdict => ScanVerdict::clean('a fixture'));
+
+        /*
+         | A quote and Arabic - and NOT a newline, which is refused earlier.
+         |
+         | The first draft used a newline and could not run: the uploader
+         | refuses a control character in a declared name, with its own
+         | sentence about a carriage return ending one header and starting
+         | another. That is the right place for it and it means the download
+         | never sees one.
+         |
+         | What the download still has to handle is the quote, which is
+         | permitted in a name and would close the quoting early. The Arabic
+         | is why the header needs the RFC 5987 form at all - an ASCII-only
+         | name would pass against an implementation that dropped it.
+         */
+        $name = 'فاتورة "2026".pdf';
+
+        $attachment = $store->attach(
+            $this->entityId, 'invoice', (string) \Illuminate\Support\Str::ulid(),
+            $this->file("%PDF-1.7 inert\n%%EOF\n", 'x.pdf'), $name,
+        );
+
+        $request = \Illuminate\Http\Request::create('/d/a-tenant/'.$this->entityId.'/'.(string) $attachment['id'], 'GET');
+
+        try {
+            $response = app(\App\Http\Controllers\AttachmentDownloadController::class)->__invoke(
+                $request,
+                'a-tenant',
+                $this->entityId,
+                (string) $attachment['id'],
+            );
+        } catch (\Throwable $e) {
+            return [sprintf('the download could not be served at all: %s', \Illuminate\Support\Str::limit($e->getMessage(), 160))];
+        }
+
+        $headers = $response->headers;
+
+        $disposition = (string) $headers->get('Content-Disposition');
+
+        if (! str_starts_with($disposition, 'attachment;')) {
+            $violations[] = sprintf(
+                'Content-Disposition is "%s". Without `attachment` the browser renders what it can, '.
+                'and a stored file that renders on the download origin is a stored file that runs',
+                \Illuminate\Support\Str::limit($disposition, 80),
+            );
+        }
+
+        if (! str_contains($disposition, "filename*=UTF-8''")) {
+            $violations[] = sprintf(
+                'Content-Disposition carries no RFC 5987 filename ("%s"), so an Arabic name arrives '.
+                'as underscores - every attachment in an Arabic workspace downloads as a file nobody '.
+                'can tell apart from the one before it',
+                \Illuminate\Support\Str::limit($disposition, 80),
+            );
+        }
+
+        if (substr_count($disposition, '"') !== 2) {
+            $violations[] = sprintf(
+                'the quoted filename in Content-Disposition is not balanced: "%s". A quote in the '.
+                'name closes the quoting early and what follows is read as header syntax',
+                \Illuminate\Support\Str::limit($disposition, 80),
+            );
+        }
+
+        if ((string) $headers->get('X-Content-Type-Options') !== 'nosniff') {
+            $violations[] = 'the download does not say nosniff, so a browser may overrule the '.
+                'declared type by looking at the bytes - which is how a file served as text/plain '.
+                'comes to run as HTML';
+        }
+
+        $csp = (string) $headers->get('Content-Security-Policy');
+
+        foreach (['sandbox', "default-src 'none'"] as $needle) {
+            if (! str_contains($csp, $needle)) {
+                $violations[] = sprintf(
+                    'the download\'s Content-Security-Policy does not carry "%s" ("%s"). It is the '.
+                    'layer that holds when the first two have been got past, and a file that renders '.
+                    'anyway can then still not run script or reach the network',
+                    $needle,
+                    \Illuminate\Support\Str::limit($csp, 60),
+                );
+            }
+        }
+
+        if ((string) $headers->get('Cache-Control') === '' || ! str_contains((string) $headers->get('Cache-Control'), 'no-store')) {
+            $violations[] = 'the download is cacheable. A signed link expires in minutes and a cached '.
+                'copy does not, so the expiry stops meaning anything on a shared machine';
         }
 
         return $violations;
