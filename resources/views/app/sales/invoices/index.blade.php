@@ -134,7 +134,7 @@
                         </span>
                     </x-grid.cell>
 
-                    <x-grid.cell column="customer">{{ $invoice->customerName() }}</x-grid.cell>
+                    <x-grid.cell column="customer" class="whitespace-nowrap">{{ $invoice->customerName() }}</x-grid.cell>
 
                     <x-grid.cell column="issued" :value="$invoice->issue_date?->toDateString()">
                         <time datetime="{{ $invoice->issue_date?->toDateString() }}" class="figure">

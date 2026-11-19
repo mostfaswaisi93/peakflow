@@ -384,7 +384,7 @@ final class StatementOfCashFlows
                     '%s of cash moved against an account with no classification, so it is in neither '.
                     'section. Classify those accounts in the chart; until then the direct method is '.
                     'short by that amount.',
-                    $unclassified->abs()->toPresentation(),
+                    $unclassified->abs()->format('en', false),
                 ),
                 'ar' => 'حركة نقدية قابلت حسابًا بلا تصنيف، فلم تدخل في أي نشاط. صنِّف تلك الحسابات في '.
                     'دليل الحسابات؛ وحتى ذلك الحين الطريقة المباشرة ناقصة بذلك المقدار.',
@@ -398,8 +398,8 @@ final class StatementOfCashFlows
                     'The two methods disagree: indirect reports %s and direct reports %s. They share no '.
                     'arithmetic, so one of them is wrong - and the difference is almost always a '.
                     'non-cash movement that nothing has tagged.',
-                    $byIndirect->toPresentation(),
-                    $byDirect->toPresentation(),
+                    $byIndirect->format('en', false),
+                    $byDirect->format('en', false),
                 ),
                 'ar' => 'الطريقتان لا تتفقان على صافي الحركة النقدية. وليس بينهما حسابٌ مشترك، فإحداهما '.
                     'خاطئة - والفرق في الغالب حركة غير نقدية لم يُصنِّفها شيء.',
@@ -412,8 +412,8 @@ final class StatementOfCashFlows
                 'en' => sprintf(
                     'Both methods report %s and the cash accounts moved by %s. The statement agrees with '.
                     'itself and not with the bank.',
-                    $byIndirect->toPresentation(),
-                    $actual->toPresentation(),
+                    $byIndirect->format('en', false),
+                    $actual->format('en', false),
                 ),
                 'ar' => 'الطريقتان تتفقان على رقم، والحسابات النقدية تحركت بغيره. القائمة متسقة مع نفسها '.
                     'ولا تتفق مع البنك.',
@@ -424,7 +424,7 @@ final class StatementOfCashFlows
             'severity' => 'ok',
             'en' => sprintf(
                 'Cash moved by %s, and the indirect and direct methods agree on it.',
-                $actual->toPresentation(),
+                $actual->format('en', false),
             ),
             'ar' => 'الطريقة غير المباشرة والطريقة المباشرة تتفقان على صافي حركة النقد.',
         ];

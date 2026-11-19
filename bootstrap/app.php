@@ -7,6 +7,7 @@ use App\Http\Middleware\Api\NegotiateApiLanguage;
 use App\Http\Middleware\Api\RequireIdempotency;
 use App\Http\Middleware\Api\RequireTokenScope;
 use App\Http\Middleware\Api\ResolveApiEntity;
+use App\Http\Middleware\Api\ThrottleApiRequests;
 use App\Http\Middleware\EnforceSessionPolicy;
 use App\Http\Middleware\EnsurePlanAllows;
 use App\Http\Middleware\RequireStepUp;
@@ -265,6 +266,10 @@ return Application::configure(basePath: dirname(__DIR__))
             'api.entity' => ResolveApiEntity::class,
             'api.scope' => RequireTokenScope::class,
             'api.idempotent' => RequireIdempotency::class,
+
+            // Per tenant and per token, reads and writes in separate buckets,
+            // named after `api.actor` because the token is the key - PF-260.
+            'api.throttle' => ThrottleApiRequests::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

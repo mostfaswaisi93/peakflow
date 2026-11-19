@@ -525,7 +525,7 @@ final class StatementOfFinancialPosition
                 'severity' => 'ok',
                 'en' => sprintf(
                     'Assets of %s equal liabilities and equity. Every account is classified.',
-                    Money::of($totals['assets'], $currency)->toPresentation(),
+                    Money::of($totals['assets'], $currency)->format('en', false),
                 ),
                 'ar' => 'الأصول تساوي الالتزامات وحقوق الملكية، وكل حساب مصنَّف.',
             ];
@@ -547,8 +547,8 @@ final class StatementOfFinancialPosition
                     'This statement is incomplete. %s sits on accounts with no IAS 1 classification, so it '.
                     'is shown under "Unclassified accounts" and is in no section total. Classify those '.
                     'accounts in the chart; until then assets differ from liabilities and equity by %s.',
-                    $unclassified->abs()->toPresentation(),
-                    $difference->abs()->toPresentation(),
+                    $unclassified->abs()->format('en', false),
+                    $difference->abs()->format('en', false),
                 ),
                 'ar' => 'هذه القائمة غير مكتملة: توجد أرصدة على حسابات بلا تصنيف وفق المعيار الدولي 1، '.
                     'فظهرت تحت «حسابات غير مصنَّفة» ولم تدخل في أي مجموع. صنِّف تلك الحسابات في دليل الحسابات.',
@@ -561,7 +561,7 @@ final class StatementOfFinancialPosition
                 'Assets differ from liabilities and equity by %s, and every account is classified. The '.
                 'difference is not a missing classification, so either an account is on the wrong side '.
                 'of the statement or the ledger does not balance. Run `ledger:verify`.',
-                $difference->abs()->toPresentation(),
+                $difference->abs()->format('en', false),
             ),
             'ar' => 'الأصول لا تساوي الالتزامات وحقوق الملكية، وكل الحسابات مصنَّفة. الفرق ليس تصنيفًا '.
                 'ناقصًا، فإمّا أن حسابًا وُضع في الجانب الخطأ أو أن الدفاتر نفسها غير متوازنة. '.

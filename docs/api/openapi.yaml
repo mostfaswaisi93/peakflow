@@ -98,6 +98,12 @@ tags:
     description: Accounts and journal entries.
   - name: Identity
     description: The tenant's own API tokens.
+  - name: Sessions
+    description: |
+      A person signing in on a device - a mobile app, say - and their own
+      sessions. The credentials are an ordinary short-lived API token and a
+      single-use refresh token; everything a session's token may do is
+      checked by the same scopes and the same gate as any other token.
 
 paths:
 
@@ -178,6 +184,7 @@ paths:
         '400': {"$ref": "#/components/responses/BadRequest"}
         '401': {"$ref": "#/components/responses/Unauthenticated"}
         '403': {"$ref": "#/components/responses/Forbidden"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
         '500': {"$ref": "#/components/responses/ServerError"}
 
   /journal-entries:
@@ -222,6 +229,7 @@ paths:
         '400': {"$ref": "#/components/responses/BadRequest"}
         '401': {"$ref": "#/components/responses/Unauthenticated"}
         '403': {"$ref": "#/components/responses/Forbidden"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
         '500': {"$ref": "#/components/responses/ServerError"}
 
     post:
@@ -282,6 +290,7 @@ paths:
         '409': {"$ref": "#/components/responses/Conflict"}
         '422': {"$ref": "#/components/responses/ValidationFailed"}
         '423': {"$ref": "#/components/responses/PeriodClosed"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
         '500': {"$ref": "#/components/responses/ServerError"}
 
   /journal-entries/{id}:
@@ -314,6 +323,7 @@ paths:
         '401': {"$ref": "#/components/responses/Unauthenticated"}
         '403': {"$ref": "#/components/responses/Forbidden"}
         '404': {"$ref": "#/components/responses/NotFound"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
         '500': {"$ref": "#/components/responses/ServerError"}
 
   /api-tokens:
@@ -352,6 +362,7 @@ paths:
                   value: {"data": [{"resource": "api_token", "id": "01jd3xq7f8k2m9n4p5r6s7t8v9", "name": "Nightly bookkeeping", "plane": "tenant", "scopes": ["report.view"], "entity_ids": ["01jd3xq7f8k2m9n4p5r6s7t8v8"], "created_at": "2026-03-10T09:00:00Z", "last_used_at": "2026-03-11T02:00:11Z", "expires_at": null, "revoked_at": null, "revoked_reason": null, "rotated_to_token_id": null}], "meta": {"available_scopes": ["account.manage", "journal.post", "report.view", "user.manage"], "scopes_requiring_a_person_present": ["payment.release"]}}
         '401': {"$ref": "#/components/responses/Unauthenticated"}
         '403': {"$ref": "#/components/responses/Forbidden"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
         '500': {"$ref": "#/components/responses/ServerError"}
 
     post:
@@ -411,6 +422,7 @@ paths:
         '401': {"$ref": "#/components/responses/Unauthenticated"}
         '403': {"$ref": "#/components/responses/Forbidden"}
         '422': {"$ref": "#/components/responses/ValidationFailed"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
         '500': {"$ref": "#/components/responses/ServerError"}
 
   /api-tokens/{id}/rotate:
@@ -465,6 +477,7 @@ paths:
         '404': {"$ref": "#/components/responses/NotFound"}
         '409': {"$ref": "#/components/responses/Conflict"}
         '422': {"$ref": "#/components/responses/ValidationFailed"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
         '500': {"$ref": "#/components/responses/ServerError"}
 
   /api-tokens/{id}:
@@ -518,6 +531,320 @@ paths:
         '404': {"$ref": "#/components/responses/NotFound"}
         '409': {"$ref": "#/components/responses/Conflict"}
         '422': {"$ref": "#/components/responses/ValidationFailed"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /auth/sign-in:
+    post:
+      tags: ["Sessions"]
+      operationId: signIn
+      summary: Sign a person in on a device
+      description: |
+        The password stage. A person with **no second factor** is signed in
+        here and receives a `201` with both credentials. A person **with** one
+        receives a `202` and a challenge, and is signed in by
+        `POST /auth/sign-in/second-factor` - the password alone opens nothing.
+
+        **One refusal for everything.** An unknown workspace, an unknown
+        address, a wrong password and a deactivated account are all
+        `sign-in-refused` with the same sentence: distinguishing them would
+        answer "is this person a customer of yours" to anybody who asks. The
+        audit log records which it was.
+
+        **The workspace is a field here**, not `X-Tenant`, because the person
+        types it and an unknown one must be refused exactly like a wrong
+        password. The response carries the tenant's id, which is what the app
+        sends as `X-Tenant` from then on.
+
+        Throttled per account **and** per address by the same budget as the
+        browser's sign-in form, so a password cannot be guessed five times in
+        one and five more in the other.
+
+        **The access token names one company.** A token's scopes are checked
+        in every entity it names, so combining companies would either take
+        away what the person may do in one or hand them in another what they
+        hold only in the first. It carries exactly what the person holds in
+        `entity_id`, less the permissions that need somebody present at the
+        moment of the act; switching company is a refresh naming another.
+      security: []
+      parameters:
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"$ref": "#/components/schemas/SignInRequest"}
+            examples:
+              phone:
+                summary: A person signing in on their phone
+                value: {"workspace": "acme", "email": "layla@acme.example", "password": "correct horse battery staple", "device_name": "Layla's iPhone"}
+      responses:
+        '201':
+          description: Signed in - the session, with both credentials, once
+          headers:
+            Cache-Control: {"$ref": "#/components/headers/CacheControlNoStore"}
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/DeviceSession"}
+              examples:
+                signedIn:
+                  summary: A person with no second factor, signed in
+                  value: {"resource": "device_session", "id": "01jd3xq7f8k2m9n4p5r6s7t8w1", "token_type": "Bearer", "access_token": "01jd3xq7f8k2m9n4p5r6s7t8w2|pfat_3Fq9rT...", "access_token_expires_at": "2026-11-19T10:00:00Z", "refresh_token": "pfrt_Zk81mQ...", "refresh_token_expires_at": "2026-12-19T09:00:00Z", "session_started_at": "2026-11-19T09:00:00Z", "second_factor": null, "tenant": {"id": "01jd3xq7f8k2m9n4p5r6s7t8v0", "slug": "acme", "name": "Acme Trading"}, "entity_id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "me": {"resource": "me", "id": "01jd3xq7f8k2m9n4p5r6s7t8v7", "name": "Layla Haddad", "email": "layla@acme.example", "locale": "ar", "second_factor_enrolled": false, "entity_id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "scopes": ["account.manage", "report.view"], "entities": [{"id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "code": "ACME", "legal_name": "Acme Trading LLC", "functional_currency": "SAR"}]}}
+        '202':
+          description: The password was accepted; a second factor is needed
+          headers:
+            Cache-Control: {"$ref": "#/components/headers/CacheControlNoStore"}
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/SecondFactorChallenge"}
+              examples:
+                challenged:
+                  summary: Send the code with this challenge
+                  value: {"resource": "second_factor_challenge", "challenge": "pfch_eyJpdiI6IkF4...", "expires_at": "2026-11-19T09:05:00Z", "accepts": ["totp", "recovery_code"]}
+        '401': {"$ref": "#/components/responses/SignInRefused"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '422': {"$ref": "#/components/responses/ValidationFailed"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /auth/sign-in/second-factor:
+    post:
+      tags: ["Sessions"]
+      operationId: completeSignIn
+      summary: Complete a sign-in with a second factor
+      description: |
+        The code stage, and the only path that signs in a person who has a
+        second factor. Accepts a code from their authenticator app or one of
+        their unused recovery codes, in the same field.
+
+        The challenge is **encrypted** - it names an account, and the password
+        stage must not reveal which accounts exist - expires after five
+        minutes, belongs to the workspace it was opened in, and is **spent
+        when it succeeds**: one accepted code opens one session. A WRONG code
+        does not spend it, so a person who mistypes does not retype their
+        password; the sign-in throttle, charged to the account the challenge
+        names, bounds the guessing.
+
+        Every failure - an expired challenge, a tampered one, a spent one, a
+        wrong code - is the same `sign-in-refused`.
+      security: []
+      parameters:
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"$ref": "#/components/schemas/SecondFactorRequest"}
+            examples:
+              code:
+                summary: The code from the authenticator app
+                value: {"workspace": "acme", "challenge": "pfch_eyJpdiI6IkF4...", "code": "492817"}
+      responses:
+        '201':
+          description: Signed in - the session, with both credentials, once
+          headers:
+            Cache-Control: {"$ref": "#/components/headers/CacheControlNoStore"}
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/DeviceSession"}
+              examples:
+                signedIn:
+                  summary: Signed in with an authenticator code
+                  value: {"resource": "device_session", "id": "01jd3xq7f8k2m9n4p5r6s7t8w1", "token_type": "Bearer", "access_token": "01jd3xq7f8k2m9n4p5r6s7t8w2|pfat_3Fq9rT...", "access_token_expires_at": "2026-11-19T10:00:00Z", "refresh_token": "pfrt_Zk81mQ...", "refresh_token_expires_at": "2026-12-19T09:00:00Z", "session_started_at": "2026-11-19T09:00:00Z", "second_factor": "totp", "tenant": {"id": "01jd3xq7f8k2m9n4p5r6s7t8v0", "slug": "acme", "name": "Acme Trading"}, "entity_id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "me": {"resource": "me", "id": "01jd3xq7f8k2m9n4p5r6s7t8v7", "name": "Layla Haddad", "email": "layla@acme.example", "locale": "ar", "second_factor_enrolled": true, "entity_id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "scopes": ["journal.post", "report.view"], "entities": [{"id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "code": "ACME", "legal_name": "Acme Trading LLC", "functional_currency": "SAR"}]}}
+        '401': {"$ref": "#/components/responses/SignInRefused"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '422': {"$ref": "#/components/responses/ValidationFailed"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /auth/refresh:
+    post:
+      tags: ["Sessions"]
+      operationId: refreshSession
+      summary: Exchange a refresh token for the next pair
+      description: |
+        Spends the refresh token and returns a **new access token and a new
+        refresh token** in the same session. The previous access token is
+        revoked as part of the exchange, so a device holds one live access
+        token at a time.
+
+        **A refresh token works once.** Presented again after it was spent, it
+        closes the whole session - every refresh token in it and the access
+        token live now - and answers `401`. The device was handed the
+        successor and stored it, so whoever presents the spent one holds a
+        copy; both hold a credential and the server cannot tell which is the
+        person, so both sign in again.
+
+        **Switching company** is a refresh naming `entity_id`. Without one the
+        session continues where it was - or, if the person has lost every role
+        there, in the first company they can still act in.
+
+        What the new access token may do is re-read from the person's grants
+        on every exchange, so a role taken away this morning is gone from the
+        phone within the hour without anybody signing out.
+
+        The session ends 90 days after it began however often it is
+        refreshed. Throttled per address.
+      security: []
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"$ref": "#/components/schemas/RefreshRequest"}
+            examples:
+              continue:
+                summary: The next pair, in the same company
+                value: {"refresh_token": "pfrt_Zk81mQ..."}
+              switchCompany:
+                summary: The next pair, in another company
+                value: {"refresh_token": "pfrt_Zk81mQ...", "entity_id": "01jd3xq7f8k2m9n4p5r6s7t8v9"}
+      responses:
+        '200':
+          description: The next pair of credentials, once
+          headers:
+            Cache-Control: {"$ref": "#/components/headers/CacheControlNoStore"}
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/DeviceSession"}
+              examples:
+                refreshed:
+                  summary: The same session, with new credentials
+                  value: {"resource": "device_session", "id": "01jd3xq7f8k2m9n4p5r6s7t8w1", "token_type": "Bearer", "access_token": "01jd3xq7f8k2m9n4p5r6s7t8w5|pfat_kP2wL8...", "access_token_expires_at": "2026-11-19T11:00:00Z", "refresh_token": "pfrt_aQ70vN...", "refresh_token_expires_at": "2026-12-19T10:00:00Z", "session_started_at": "2026-11-19T09:00:00Z", "second_factor": "totp", "tenant": {"id": "01jd3xq7f8k2m9n4p5r6s7t8v0", "slug": "acme", "name": "Acme Trading"}, "entity_id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "me": {"resource": "me", "id": "01jd3xq7f8k2m9n4p5r6s7t8v7", "name": "Layla Haddad", "email": "layla@acme.example", "locale": "ar", "second_factor_enrolled": true, "entity_id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "scopes": ["journal.post", "report.view"], "entities": [{"id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "code": "ACME", "legal_name": "Acme Trading LLC", "functional_currency": "SAR"}]}}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '422': {"$ref": "#/components/responses/ValidationFailed"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /auth/sign-out:
+    post:
+      tags: ["Sessions"]
+      operationId: signOut
+      summary: Sign this device out
+      description: |
+        Closes the session the presenting access token belongs to: every
+        refresh token in it, and the access token itself. A token that is not
+        part of a session - an integration's - is revoked on its own.
+
+        Needs no `X-Entity` and no scope. A sign-out that could be refused
+        would be a way to keep somebody signed in.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+      responses:
+        '200':
+          description: Signed out
+          headers:
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/SignOutResult"}
+              examples:
+                signedOut:
+                  summary: The session and its credentials are closed
+                  value: {"resource": "sign_out", "session_id": "01jd3xq7f8k2m9n4p5r6s7t8w1", "token_id": "01jd3xq7f8k2m9n4p5r6s7t8w5", "signed_out_at": "2026-11-19T17:42:10Z"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /auth/sessions:
+    get:
+      tags: ["Sessions"]
+      operationId: listDeviceSessions
+      summary: Where this person is signed in
+      description: |
+        The person's open sessions on every device, newest first, with the one
+        this request came from marked `current`. What a "signed-in devices"
+        screen lists, so that "sign out of the phone I lost" is a choice a
+        person can make from a list rather than a request to support.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+      responses:
+        '200':
+          description: The open sessions
+          headers:
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/DeviceSessionList"}
+              examples:
+                twoDevices:
+                  summary: A phone and a tablet
+                  value: {"data": [{"resource": "device_session_summary", "id": "01jd3xq7f8k2m9n4p5r6s7t8w1", "device_name": "Layla's iPhone", "entity_id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "second_factor": "totp", "started_at": "2026-11-19T09:00:00Z", "last_refreshed_at": "2026-11-19T16:58:03Z", "expires_at": "2026-12-19T16:58:03Z", "revoked_at": null, "current": true}, {"resource": "device_session_summary", "id": "01jd3xq7f8k2m9n4p5r6s7t8w9", "device_name": "Office iPad", "entity_id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "second_factor": "totp", "started_at": "2026-10-02T07:15:00Z", "last_refreshed_at": "2026-11-18T08:01:44Z", "expires_at": "2026-12-18T08:01:44Z", "revoked_at": null, "current": false}]}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /auth/sessions/{id}:
+    delete:
+      tags: ["Sessions"]
+      operationId: closeDeviceSession
+      summary: Sign one of this person's devices out
+      description: |
+        Closes that session - its refresh tokens and its live access token -
+        from any other device the person is signed in on. Another person's
+        session is a `404`, indistinguishable from one that never existed.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+        - {"$ref": "#/components/parameters/ResourceId"}
+      responses:
+        '200':
+          description: The closed session
+          headers:
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/DeviceSessionSummary"}
+              examples:
+                closed:
+                  summary: The lost phone, signed out
+                  value: {"resource": "device_session_summary", "id": "01jd3xq7f8k2m9n4p5r6s7t8w9", "device_name": "Office iPad", "entity_id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "second_factor": "totp", "started_at": "2026-10-02T07:15:00Z", "last_refreshed_at": "2026-11-18T08:01:44Z", "expires_at": "2026-12-18T08:01:44Z", "revoked_at": "2026-11-19T17:40:00Z", "current": false}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '404': {"$ref": "#/components/responses/NotFound"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
+        '500': {"$ref": "#/components/responses/ServerError"}
+
+  /me:
+    get:
+      tags: ["Sessions"]
+      operationId: getMe
+      summary: Who this token is, and what it may do here
+      description: |
+        The person behind the token, the companies they may switch to, and the
+        **token's** scopes in `X-Entity` - not the person's. An app deciding
+        whether to show an "Approve" button must ask what THIS credential may
+        do; a person's grants can be wider than the token they hold.
+
+        No scope is needed: a person may always ask who they are.
+      parameters:
+        - {"$ref": "#/components/parameters/Tenant"}
+        - {"$ref": "#/components/parameters/Entity"}
+        - {"$ref": "#/components/parameters/AcceptLanguage"}
+      responses:
+        '200':
+          description: The person, their companies and this token's scopes
+          headers:
+            Content-Language: {"$ref": "#/components/headers/ContentLanguage"}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/Me"}
+              examples:
+                me:
+                  summary: A person who can act in two companies
+                  value: {"resource": "me", "id": "01jd3xq7f8k2m9n4p5r6s7t8v7", "name": "Layla Haddad", "email": "layla@acme.example", "locale": "ar", "second_factor_enrolled": true, "entity_id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "scopes": ["journal.post", "report.view"], "entities": [{"id": "01jd3xq7f8k2m9n4p5r6s7t8v8", "code": "ACME", "legal_name": "Acme Trading LLC", "functional_currency": "SAR"}, {"id": "01jd3xq7f8k2m9n4p5r6s7t8v9", "code": "ACME-JO", "legal_name": "Acme Trading Jordan", "functional_currency": "JOD"}]}
+        '400': {"$ref": "#/components/responses/BadRequest"}
+        '401': {"$ref": "#/components/responses/Unauthenticated"}
+        '403': {"$ref": "#/components/responses/Forbidden"}
+        '429': {"$ref": "#/components/responses/RateLimited"}
         '500': {"$ref": "#/components/responses/ServerError"}
 
 components:
@@ -679,6 +1006,20 @@ components:
         `true` when this response is the stored answer to an earlier request
         with the same key, rather than a fresh execution.
       schema: {"type": "string"}
+    CacheControlNoStore:
+      description: |
+        `no-store`. The body is a credential, and a cache, a service worker or
+        a debugging proxy that kept it would be keeping a password.
+      schema: {"type": "string", "const": "no-store"}
+    RateLimitLimit:
+      description: Requests allowed per minute in this bucket - reads and writes are separate.
+      schema: {"type": "integer"}
+    RateLimitRemaining:
+      description: Requests left in this bucket this minute.
+      schema: {"type": "integer"}
+    RateLimitReset:
+      description: Seconds until this bucket refills.
+      schema: {"type": "integer"}
 
   responses:
     BadRequest:
@@ -796,6 +1137,42 @@ components:
             failed:
               summary: A server failure
               value: {"type": "https://peakflow.app/problems/server-error", "title": "Something went wrong", "status": 500, "detail": "The request failed on our side. Nothing was half-saved; quote the correlation id when reporting it.", "instance": "/api/v1/journal-entries"}
+
+    SignInRefused:
+      description: |
+        The workspace, address, password or code was not accepted. One type
+        and one sentence for every cause - see `POST /auth/sign-in`.
+      headers:
+        Cache-Control: {"$ref": "#/components/headers/CacheControlNoStore"}
+      content:
+        application/problem+json:
+          schema: {"$ref": "#/components/schemas/Problem"}
+          examples:
+            refused:
+              summary: Any sign-in failure
+              value: {"type": "https://peakflow.app/problems/sign-in-refused", "title": "The sign-in was refused", "status": 401, "detail": "The workspace, email address, password or code was not accepted. Check them and try again.", "instance": "/api/v1/auth/sign-in"}
+
+    RateLimited:
+      description: |
+        Too many requests. Per tenant and per token for an authenticated call,
+        reads and writes in separate buckets with writes the tighter; per
+        account and per address for a sign-in; per address for a refresh.
+
+        The `RateLimit-*` headers are on **every** response from an
+        authenticated operation, not only this one, so a client can slow down
+        before it is refused rather than finding the limit by hitting it.
+      headers:
+        Retry-After: {"$ref": "#/components/headers/RetryAfter"}
+        RateLimit-Limit: {"$ref": "#/components/headers/RateLimitLimit"}
+        RateLimit-Remaining: {"$ref": "#/components/headers/RateLimitRemaining"}
+        RateLimit-Reset: {"$ref": "#/components/headers/RateLimitReset"}
+      content:
+        application/problem+json:
+          schema: {"$ref": "#/components/schemas/Problem"}
+          examples:
+            slowDown:
+              summary: The bucket is empty for now
+              value: {"type": "https://peakflow.app/problems/rate-limited", "title": "Too many requests", "status": 429, "detail": "Too many requests on this token. Retry after the interval in Retry-After.", "instance": "/api/v1/journal-entries", "retry_after": 37}
 
   schemas:
 
@@ -1271,3 +1648,196 @@ components:
             from a response to a leak, and those are the two cases somebody
             will later need to tell apart. A database constraint requires it
             too.
+
+    SignInRequest:
+      type: object
+      required: ["workspace", "email", "password", "device_name"]
+      additionalProperties: false
+      properties:
+        workspace:
+          type: string
+          maxLength: 64
+          description: The workspace the person types - its short name, as on the browser's sign-in form.
+        email: {"type": "string", "format": "email", "maxLength": 255}
+        password: {"type": "string", "maxLength": 1024}
+        device_name:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: |
+            What the person will recognise the device by in their list of
+            signed-in devices - "Layla's iPhone", not a hardware identifier.
+        entity_id:
+          allOf: [{"$ref": "#/components/schemas/Ulid"}]
+          description: |
+            The company to open the session in. Optional: without it, the
+            first company - by code - in which the person holds anything.
+
+    SecondFactorRequest:
+      type: object
+      required: ["workspace", "challenge", "code"]
+      additionalProperties: false
+      properties:
+        workspace: {"type": "string", "maxLength": 64}
+        challenge:
+          type: string
+          pattern: '^pfch_'
+          maxLength: 4096
+          description: Exactly as the password stage returned it.
+        code:
+          type: string
+          maxLength: 64
+          description: Six digits from the authenticator app, or one unused recovery code.
+
+    RefreshRequest:
+      type: object
+      required: ["refresh_token"]
+      additionalProperties: false
+      properties:
+        refresh_token:
+          type: string
+          pattern: '^pfrt_'
+          maxLength: 200
+        entity_id:
+          allOf: [{"$ref": "#/components/schemas/Ulid"}]
+          description: Switch company. Omit to continue where the session was.
+
+    SecondFactorChallenge:
+      type: object
+      required: ["resource", "challenge", "expires_at", "accepts"]
+      additionalProperties: false
+      properties:
+        resource: {"type": "string", "const": "second_factor_challenge"}
+        challenge:
+          type: string
+          pattern: '^pfch_'
+          description: |
+            Opaque and encrypted. Send it back unaltered with the code; it
+            names an account, so it reveals nothing to anybody without the
+            application's key.
+        expires_at: {"$ref": "#/components/schemas/Timestamp"}
+        accepts:
+          type: array
+          items: {"type": "string", "enum": ["totp", "recovery_code"]}
+
+    EntitySummary:
+      type: object
+      required: ["id", "code", "legal_name", "functional_currency"]
+      additionalProperties: false
+      properties:
+        id: {"$ref": "#/components/schemas/Ulid"}
+        code: {"type": "string"}
+        legal_name: {"type": "string"}
+        functional_currency: {"$ref": "#/components/schemas/CurrencyCode"}
+
+    Me:
+      type: object
+      required: ["resource", "id", "name", "email", "locale", "second_factor_enrolled", "entity_id", "scopes", "entities"]
+      additionalProperties: false
+      properties:
+        resource: {"type": "string", "const": "me"}
+        id: {"$ref": "#/components/schemas/Ulid"}
+        name: {"type": "string"}
+        email: {"type": "string", "format": "email"}
+        locale: {"type": ["string", "null"]}
+        second_factor_enrolled: {"type": "boolean"}
+        entity_id:
+          allOf: [{"$ref": "#/components/schemas/Ulid"}]
+          description: The company this token acts in.
+        scopes:
+          type: array
+          items: {"type": "string"}
+          description: |
+            What THIS token may do in `entity_id` - permission keys, verbatim.
+            Show an action only when its permission is here.
+        entities:
+          type: array
+          items: {"$ref": "#/components/schemas/EntitySummary"}
+          description: Every company the person may switch to, by code.
+
+    DeviceSession:
+      type: object
+      required: ["resource", "id", "token_type", "access_token", "access_token_expires_at", "refresh_token", "refresh_token_expires_at", "session_started_at", "second_factor", "tenant", "entity_id", "me"]
+      additionalProperties: false
+      description: |
+        Both credentials, **returned once**. The database holds hashes of
+        both, so there is no endpoint that returns either again.
+
+        Keep the refresh token in the platform's secure storage - the iOS
+        Keychain, Android's Keystore - and never in plain preferences.
+      properties:
+        resource: {"type": "string", "const": "device_session"}
+        id:
+          allOf: [{"$ref": "#/components/schemas/Ulid"}]
+          description: The session. The same id for every refresh in it.
+        token_type: {"type": "string", "const": "Bearer"}
+        access_token:
+          type: string
+          description: Sent as `Authorization: Bearer <access_token>` on every request. Lives an hour.
+        access_token_expires_at: {"$ref": "#/components/schemas/Timestamp"}
+        refresh_token:
+          type: string
+          pattern: '^pfrt_'
+          description: |
+            Exchanged for the next pair at `POST /auth/refresh`, **once**. A
+            second use closes the session.
+        refresh_token_expires_at: {"$ref": "#/components/schemas/Timestamp"}
+        session_started_at:
+          allOf: [{"$ref": "#/components/schemas/Timestamp"}]
+          description: The session ends 90 days after this, however often it is refreshed.
+        second_factor:
+          type: ["string", "null"]
+          description: What the person presented when the session began - `totp`, `recovery_code`, or null for none.
+        tenant:
+          type: object
+          required: ["id", "slug", "name"]
+          additionalProperties: false
+          description: The workspace. Send `id` as `X-Tenant` from now on.
+          properties:
+            id: {"$ref": "#/components/schemas/Ulid"}
+            slug: {"type": "string"}
+            name: {"type": "string"}
+        entity_id:
+          allOf: [{"$ref": "#/components/schemas/Ulid"}]
+          description: The company the access token acts in. Send it as `X-Entity`.
+        me: {"$ref": "#/components/schemas/Me"}
+
+    DeviceSessionSummary:
+      type: object
+      required: ["resource", "id", "device_name", "entity_id", "second_factor", "started_at", "last_refreshed_at", "expires_at", "revoked_at", "current"]
+      additionalProperties: false
+      properties:
+        resource: {"type": "string", "const": "device_session_summary"}
+        id: {"$ref": "#/components/schemas/Ulid"}
+        device_name: {"type": "string"}
+        entity_id: {"$ref": "#/components/schemas/Ulid"}
+        second_factor: {"type": ["string", "null"]}
+        started_at: {"$ref": "#/components/schemas/Timestamp"}
+        last_refreshed_at: {"$ref": "#/components/schemas/Timestamp"}
+        expires_at: {"$ref": "#/components/schemas/Timestamp"}
+        revoked_at:
+          oneOf: [{"$ref": "#/components/schemas/Timestamp"}, {"type": "null"}]
+        current:
+          type: boolean
+          description: True for the session this request came from.
+
+    DeviceSessionList:
+      type: object
+      required: ["data"]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items: {"$ref": "#/components/schemas/DeviceSessionSummary"}
+
+    SignOutResult:
+      type: object
+      required: ["resource", "session_id", "token_id", "signed_out_at"]
+      additionalProperties: false
+      properties:
+        resource: {"type": "string", "const": "sign_out"}
+        session_id:
+          type: ["string", "null"]
+          description: The session closed, or null when the token was not part of one and was revoked on its own.
+        token_id: {"$ref": "#/components/schemas/Ulid"}
+        signed_out_at: {"$ref": "#/components/schemas/Timestamp"}

@@ -3,7 +3,9 @@
 declare(strict_types=1);
 
 use App\Http\Controllers\Api\OpenApiDocumentController;
+use App\Http\Controllers\Api\SignInController;
 use App\Tenant\Identity\Http\Controllers\Api\ApiTokenController;
+use App\Tenant\Identity\Http\Controllers\Api\DeviceSessionController;
 use App\Tenant\Ledger\Http\Controllers\Api\AccountApiController;
 use App\Tenant\Ledger\Http\Controllers\Api\JournalEntryApiController;
 use Illuminate\Support\Facades\Route;
@@ -54,12 +56,67 @@ use Illuminate\Support\Facades\Route;
 */
 Route::get('/openapi.yaml', OpenApiDocumentController::class)->name('api.openapi');
 
+/*
+|------------------------------------------------------------------------------
+| Signing a person in on a device - PF-260
+|------------------------------------------------------------------------------
+|
+| Outside every guard, because these are what a client calls to OBTAIN a
+| credential. They are also outside `tenant.header`: the person types their
+| workspace, and an unknown one must be refused exactly like a wrong password
+| - which a middleware answering `400 tenant-required` cannot do. The
+| controller resolves it and gives one answer for every failure.
+|
+| Throttled inside the controller, per account AND per address, by the same
+| `LoginThrottle` the browser's form uses - so a password cannot be guessed
+| five times in the browser and five more times here.
+*/
+Route::post('/auth/sign-in', [SignInController::class, 'signIn'])
+    ->name('api.auth.sign-in');
+
+Route::post('/auth/sign-in/second-factor', [SignInController::class, 'secondFactor'])
+    ->name('api.auth.second-factor');
+
+Route::post('/auth/refresh', [SignInController::class, 'refresh'])
+    ->name('api.auth.refresh');
+
+/*
+| A person's own sessions, which need a token and no entity: signing out of
+| the phone is not an act IN a company, and refusing it for want of an
+| `X-Entity` would be a way to stay signed in.
+*/
+Route::middleware([
+    'tenant.header',
+    'auth:sanctum',
+    'api.actor',
+    'api.throttle',
+])->group(static function (): void {
+    Route::post('/auth/sign-out', [DeviceSessionController::class, 'signOut'])
+        ->name('api.auth.sign-out');
+
+    Route::get('/auth/sessions', [DeviceSessionController::class, 'index'])
+        ->name('api.auth.sessions.index');
+
+    Route::delete('/auth/sessions/{id}', [DeviceSessionController::class, 'destroy'])
+        ->name('api.auth.sessions.destroy');
+});
+
 Route::middleware([
     'tenant.header',
     'auth:sanctum',
     'api.actor',
     'api.entity',
+    'api.throttle',
 ])->group(static function (): void {
+
+    /*
+    | Who this token is, where it acts and what it may do - PF-260.
+    |
+    | No scope: a person may always ask who they are. Inside the entity
+    | group because "what may I do" only has an answer in a company.
+    */
+    Route::get('/me', [DeviceSessionController::class, 'me'])
+        ->name('api.me');
 
     /*
     | The chart of accounts.
