@@ -350,18 +350,24 @@ final class ReturnFilingRules
             }
         }
 
+        /*
+         | Every item is now ASKED, and that is the thing to assert - PF-086.
+         |
+         | Three of these were `pending` until the phases they named
+         | arrived: documents with Phase 05, bank matching with Phase 08,
+         | evidence with a real document to record it against. All three
+         | did, so a pending item here is now a check that regressed into
+         | a placeholder rather than one honestly waiting.
+         |
+         | The old form of this check asserted there were AT LEAST three
+         | pending. Inverting it is the point: the list no longer has a
+         | gap, and a test that still demanded one would have to be
+         | satisfied by putting a gap back.
+         */
         $pending = array_values(array_filter(
             $findings,
             static fn (PreFilingFinding $f): bool => $f->isPending(),
         ));
-
-        if (\count($pending) < 3) {
-            $violations[] = sprintf(
-                'only %d items are reported as pending. A checklist that silently omits a check tells '.
-                'the person filing that everything was looked at, which is the one thing it must never '.
-                'do', \count($pending),
-            );
-        }
 
         foreach ($pending as $finding) {
             if (! preg_match('/Phase \d\d|PF-\d\d\d/', $finding->detail)) {
@@ -369,7 +375,16 @@ final class ReturnFilingRules
                     'the pending item "%s" does not say which task brings it, so the gap is an absence '.
                     'somebody has to notice rather than a sentence they can act on', $finding->check,
                 );
+
+                continue;
             }
+
+            $violations[] = sprintf(
+                'the checklist still reports "%s" as pending. Every phase this list was waiting on has '.
+                'arrived, so an item that is still a placeholder is a question nobody is asking at '.
+                'filing time - and the person filing is told it was looked at',
+                $finding->check,
+            );
         }
 
         if ($this->checklistBlocking($findings) !== []) {

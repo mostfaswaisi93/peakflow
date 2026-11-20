@@ -50,7 +50,7 @@ nobody can find is a task nobody will do.
 | [01](phase-01-tenancy-identity.md) | 15 / 19 | 85 | 4 |
 | [02](phase-02-ledger.md) | 19 / 22 | 143 | 3 |
 | [03](phase-03-masters.md) | 14 / 17 | 84 | 6 |
-| [04](phase-04-tax.md) | 10 / 14 | 113 | 4 |
+| [04](phase-04-tax.md) | 11 / 14 | 114 | 3 |
 | [05](phase-05-sales.md) | 17 / 21 | 161 | 15 |
 | [06](phase-06-einvoicing.md) | 8 / 20 | 107 | 37 |
 | [07](phase-07-purchasing.md) | 9 / 15 | 153 | 6 |
@@ -62,7 +62,7 @@ nobody can find is a task nobody will do.
 | [13](phase-13-hardening.md) | 8 / 16 | 49 | 24 |
 | [14](phase-14-operations.md) | 11 / 11 | 54 | 0 |
 | [15](phase-15-verticals.md) | 0 / 8 | 0 | 36 |
-| **all** | **181 / 273** | **1467** | **272** |
+| **all** | **182 / 273** | **1468** | **271** |
 
 Phases 00 to 09 are the ones that have been worked, and Phase 08 is closed. An open criterion in a worked phase is one that depends on a later phase and says so in its own task file, with the task that brings it - never one that was skipped.
 
