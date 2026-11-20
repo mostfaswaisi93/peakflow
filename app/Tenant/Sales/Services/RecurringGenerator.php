@@ -343,11 +343,25 @@ final class RecurringGenerator
                 'net_amount' => (string) $line['net'],
                 'revenue_account_id' => $line['revenue_account_id'] ?? null,
                 'tax_code_id' => $line['tax_code_id'] ?? null,
+                'supply_type' => \App\Tenant\Sales\SupplyTypes::of(
+                    \is_string($line['supply_type'] ?? null) ? (string) $line['supply_type'] : null,
+                    \is_string($line['item_id'] ?? null) ? (string) $line['item_id'] : null,
+                ),
                 'tax_category' => (string) $line['tax_category'],
                 'tax_rate' => (string) $line['tax_rate'],
                 'tax_point' => $date->toDateString(),
-                'place_of_supply' => 'SA',
-                'place_of_supply_rule' => 'domestic',
+                /*
+                 | Not stated on a draft - PF-078.
+                 |
+                 | This used to write `'domestic'` as a literal, which
+                 | satisfied the validator's `place_of_supply_unresolved`
+                 | gate with the very fiction the gate exists to catch.
+                 | `Issuer` asks the rule book at issue and writes both
+                 | columns from the decision; until then the honest value
+                 | is "not decided yet".
+                 */
+                'place_of_supply' => null,
+                'place_of_supply_rule' => null,
                 'service_from' => $line['service_from'] ?? null,
                 'service_until' => $line['service_until'] ?? null,
 

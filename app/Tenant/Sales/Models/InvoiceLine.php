@@ -19,6 +19,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  *
  * @property int $line_no
  * @property string|null $item_code
+ * @property string|null $supply_type
  * @property string $description
  * @property string $unit_code
  * @property string $quantity
@@ -36,7 +37,7 @@ final class InvoiceLine extends TenantModel
     protected $table = 'invoice_lines';
 
     protected $fillable = [
-        'entity_id', 'invoice_id', 'line_no', 'item_id', 'item_code', 'description',
+        'entity_id', 'invoice_id', 'line_no', 'item_id', 'item_code', 'supply_type', 'description',
         'credits_line_id', 'order_line_id',
         'unit_code', 'quantity', 'unit_price', 'net_amount', 'revenue_account_id',
         'tax_code_id', 'tax_category', 'tax_rate', 'tax_point',

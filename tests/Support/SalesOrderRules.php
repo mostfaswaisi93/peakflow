@@ -444,6 +444,16 @@ final class SalesOrderRules
     {
         return [[
             'description' => 'Supply and install',
+            /*
+             | The line says what kind of supply it is - PF-078.
+             |
+             | "Supply and install" has no catalogue item to answer for it,
+             | so the order states it; the order line carries it to the
+             | invoice line, and the rule book places it. Left unstated, the
+             | invoice raised from this order refuses at issue - which is
+             | the correct refusal and the reason the column exists.
+             */
+            'supply_type' => 'service',
             'quantity' => '10.00000000',
             'unit_price' => '100.00000000',
             'tax_code_id' => $this->taxCodeId,

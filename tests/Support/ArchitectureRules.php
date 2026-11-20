@@ -57,6 +57,7 @@ final class ArchitectureRules
             'a posting is never queued, and a side effect always is' => $this->postingIsNeverDeferred(),
             'an event carries no other module\'s models' => $this->eventsCarryNoModels(),
             'every financial event is raised somewhere' => $this->everyFinancialEventIsRaised(),
+            'no place of supply is asserted outside the rule book' => $this->placeOfSupplyIsNeverAsserted(),
             'a subtree is read as a range, never as a LIKE' => $this->subtreesAreReadAsRanges(),
             'a suite that posts ends with the global proof' => $this->postingSuitesProveTheLedger(),
             'a bank account is read only through the disclosure service' => $this->bankReadsAreAudited(),
@@ -2269,6 +2270,90 @@ final class ArchitectureRules
                     'listener for it',
                     $name,
                 );
+            }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * Nothing asserts a place-of-supply rule outside the rule book - PF-078.
+     *
+     * ## The rule that would have caught an eight-point engine with no caller
+     *
+     * `PlaceOfSupply::decide()` had none. Six draft services in `Sales`
+     * wrote `'place_of_supply_rule' => 'domestic'` as a literal, three of
+     * them with `'place_of_supply' => 'SA'` beside it, and the invoice API
+     * handed the issuer `['rule' => 'domestic']`. Every document ever issued
+     * therefore recorded a domestic supply in Saudi Arabia, whatever the
+     * customer's country and whatever kind of supply the line was.
+     *
+     * Nothing was broken by it in a way anybody would notice. The charge on
+     * the line came from the tax code somebody picked, so the figures could
+     * be right while the recorded REASON was wrong - and the reason is what
+     * an authority asks about, and what PF-078's panel exists to show.
+     *
+     * Three checks in `InvoiceIssuingRules` now prove the decision is made
+     * and is sensitive to the delivery location. They prove the paths they
+     * exercise. This one is about the path nobody has written yet: the
+     * seventh draft service, which will be written by somebody who copies
+     * the sixth.
+     *
+     * ## What counts as asserting one
+     *
+     * A string literal assigned to `place_of_supply_rule`, or to a `rule`
+     * key in an array handed to the issuer. The rule book's own
+     * configuration is where those literals belong, the decider is where
+     * they are read, and the enum of supply types is neither.
+     *
+     * @return list<string>
+     */
+    public function placeOfSupplyIsNeverAsserted(): array
+    {
+        $violations = [];
+
+        /*
+         | The three files that may name a rule.
+         |
+         | The rule book declares them, the decider asks for one and writes
+         | what comes back, and the engine evaluates them. Everything else
+         | has to take the answer.
+         */
+        $permitted = [
+            'config/place_of_supply.php',
+            'app/Tenant/Sales/Services/SupplyDecider.php',
+        ];
+
+        foreach ([...$this->phpFiles('app'), ...$this->phpFiles('config')] as $file) {
+            $relative = $this->relative($file);
+
+            if (\in_array($relative, $permitted, true) || str_starts_with($relative, 'app/Tenant/Tax/')) {
+                continue;
+            }
+
+            $source = $this->withoutComments((string) file_get_contents($file));
+
+            /*
+             | `'place_of_supply_rule' => '<anything>'`.
+             |
+             | A variable, a method call or null is fine - those are a
+             | decision being carried. A quoted string is a decision being
+             | invented.
+             */
+            if (preg_match_all(
+                "/'place_of_supply(?:_rule)?'\s*=>\s*'([^']*)'/",
+                $source,
+                $matches,
+            )) {
+                foreach ($matches[1] as $literal) {
+                    $violations[] = sprintf(
+                        '%s assigns the literal "%s" as a place of supply. The rule book decides '.
+                        'this - six services used to write it by hand, and every document in the '.
+                        'product recorded a domestic supply as a result',
+                        $relative,
+                        $literal,
+                    );
+                }
             }
         }
 

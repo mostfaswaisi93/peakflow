@@ -77,6 +77,7 @@ final class Issuer
 {
     public function __construct(
         private readonly InvoiceValidator $validator,
+        private readonly SupplyDecider $supply,
         private readonly Snapshots $snapshots,
         private readonly NumberAllocator $numbers,
         private readonly Poster $poster,
@@ -223,6 +224,32 @@ final class Issuer
             $this->freezeTheTaxPoint($draft, $taxPoint);
 
             /*
+             | 0c. Which jurisdiction's tax applies, asked of the rule book - PF-078.
+             |
+             | Before the validator, because the validator refuses a line
+             | whose place of supply is unresolved - `place_of_supply_unresolved`
+             | has been in `InvoiceValidator` since PF-091 - and that
+             | refusal is only meaningful once something has tried to
+             | resolve it.
+             |
+             | Nothing tried, until now. `PlaceOfSupply::decide()` had no
+             | caller anywhere in the application: seven draft paths wrote
+             | `'place_of_supply_rule' => 'domestic'` as a literal, three of
+             | them with `'SA'` beside it, and the API handed the issuer
+             | `['rule' => 'domestic']`. So every document recorded a
+             | domestic supply, the gate above was satisfied by the literal
+             | that caused the problem, and the eight-point engine existed
+             | only in its own test suite.
+             |
+             | The decision is frozen onto the document in the snapshot
+             | below rather than recomputed: it is derived from party
+             | records and a rule book that will both have changed by the
+             | time anybody asks, and the question an accountant asks is
+             | what the rule was THEN.
+             */
+            $placeOfSupply = $this->supply->decide($draft, $entity, $draft->issue_date);
+
+            /*
              | 1. Validate, while nothing has been consumed.
              |
              | Inside the transaction rather than before it, because the
@@ -305,6 +332,23 @@ final class Issuer
                  */
                 'tax_decision_snapshot' => array_merge($taxDecision, [
                     'tax_point' => $taxPointDecision->jsonSerialize(),
+                    /*
+                     | And the place of supply, with its reasoning - PF-078.
+                     |
+                     | The winning rule's id, its precedence, the legal
+                     | source it cites, the category, whether the customer
+                     | accounts for the tax and what evidence the treatment
+                     | needs - per line, because one invoice can carry a
+                     | good and a digital service and the book treats them
+                     | differently on purpose.
+                     |
+                     | An accountant disagreeing with a place of supply does
+                     | not ask which country was chosen; they ask which rule
+                     | chose it and what it cites. A bare country makes them
+                     | reconstruct the decision from the party records, which
+                     | will have changed.
+                     */
+                    'place_of_supply' => $placeOfSupply,
                 ]),
                 'terms_snapshot' => $terms === null
                     ? $draft->terms_snapshot

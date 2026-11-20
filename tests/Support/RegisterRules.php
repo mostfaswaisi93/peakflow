@@ -158,6 +158,7 @@ final class RegisterRules
                 'a register exports through the one export path, parameters first' => fn (): array => $this->theRegisterExports(),
                 'and a closed period\'s file does not move when a later one does' => fn (): array => $this->theFileIsByteStable(),
                 'receivables and payables are compared to their control accounts' => fn (): array => $this->theSubledgersTie(),
+                'a credit note against an invoice is subtracted once, not twice' => fn (): array => $this->aCreditIsSubtractedOnce(),
                 'a partial invoice is money owed everywhere that asks' => fn (): array => $this->aPartialInvoiceIsOwed(),
             ]));
         } catch (Throwable $e) {
@@ -2525,4 +2526,142 @@ final class RegisterRules
         $this->accountant?->forgetResolvedPermissions();
         $this->controller?->forgetResolvedPermissions();
     }
+    /**
+     * A referencing credit note is subtracted once - PF-190, PF-054.
+     *
+     * ## What was wrong
+     *
+     * `AgingReport::instalmentsOf()` said, in its own comment, that a credit
+     * note naming an invoice "reaches this method only when it stands alone
+     * - which is a credit balance on the account". Nothing made that true.
+     * `receivableTypes()` returns every non-purchase-side document type,
+     * credit notes among them, and no filter asked whether one referenced
+     * anything.
+     *
+     * So the credit was counted twice: once by
+     * `peakflow_document_open_balance`, which subtracts it from the invoice
+     * it credits, and again as a negative bucket of its own.
+     *
+     * ## Why it hid, and where it surfaced
+     *
+     * The ageing is also what `SubledgersTieToTheirControls` compares with
+     * the receivables control account - deliberately, so that there is one
+     * answer to "does receivables tie" rather than two. With the ageing
+     * understated, the check that exists to prove the subledger ties was the
+     * thing that did not tie, and it reported the control account as wrong.
+     *
+     * It took the concurrency suite to surface it, because that is the only
+     * place that issues a referencing credit note and then runs the ledger
+     * proof over the same entity: 209 invoices and two credit notes of 115,
+     * ledger 23,575 against a control of 23,805.
+     *
+     * ## What is asserted
+     *
+     * The ageing total falls by the credit exactly once, and the credit note
+     * does not appear as a row of its own. Both halves, because the fix is a
+     * filter and a filter that excluded too much would make a STANDALONE
+     * credit vanish - which is the balance PF-190 exists to show.
+     *
+     * @return list<string>
+     */
+    private function aCreditIsSubtractedOnce(): array
+    {
+        $violations = [];
+        $invoice = $this->issue();
+        $gross = Money::of((string) $invoice->gross_amount, 'SAR');
+
+        $before = app(AgingReport::class)->receivables($this->entityId, 'SAR', $this->date->copy());
+        $totalBefore = $this->ageingTotal($before);
+
+        /*
+         | A second person issues the credit note - PF-033.
+         |
+         | Whoever issued an invoice may not credit it, and the pair cannot
+         | be overridden: one person creating a debt and then wiping it out
+         | is the control's whole subject. The suite signs in as the
+         | accountant for everything else, so the controller signs this one
+         | and the session is handed back afterwards - a check that left
+         | somebody else signed in would make the NEXT check's refusals
+         | land on the wrong person.
+         */
+        $this->signInAs($this->controller ?? $this->accountant);
+
+        $credit = app(\App\Tenant\Sales\Services\Issuer::class)->issue(
+            app(\App\Tenant\Sales\Services\Crediting::class)->full($invoice, $this->date->copy()),
+            $this->entity(),
+            /*
+             | The SECOND actor, because whoever issued may not credit.
+             |
+             | PF-033's pair, and it cannot be overridden: issuing an
+             | invoice and then wiping it out is one person creating and
+             | destroying a debt.
+             */
+            (string) ($this->controller?->getKey() ?? $this->secondActorId()),
+            $this->decision,
+        );
+
+        $this->signInAs($this->accountant);
+
+        $after = app(AgingReport::class)->receivables($this->entityId, 'SAR', $this->date->copy());
+        $totalAfter = $this->ageingTotal($after);
+        $moved = $totalBefore->minus($totalAfter);
+
+        if (! $moved->equals($gross)) {
+            $violations[] = sprintf(
+                'crediting %s moved the ageing by %s. Twice the document means the credit is '.
+                'subtracted both by the open-balance definition and again as a bucket of its own, '.
+                'and the ageing is what the subledger tie compares with the control account',
+                (string) $gross->toPresentation(),
+                (string) $moved->toPresentation(),
+            );
+        }
+
+        $rows = array_values(array_filter(
+            (array) ($after['rows'] ?? []),
+            static fn (array $row): bool => (string) ($row['document_id'] ?? '') === (string) $credit->getKey(),
+        ));
+
+        if ($rows !== []) {
+            $violations[] = 'the credit note has a row of its own in the ageing as well as being '.
+                'netted off the invoice it names, which is the double count';
+        }
+
+        /*
+         | And the invoice it credits is gone from the grid, at zero.
+         |
+         | Asserted so the check cannot pass by the credit note being
+         | filtered out AND the invoice staying at its full value - which
+         | would move the total by nothing and look like a different bug.
+         */
+        $stillThere = array_values(array_filter(
+            (array) ($after['rows'] ?? []),
+            static fn (array $row): bool => (string) ($row['document_id'] ?? '') === (string) $invoice->getKey(),
+        ));
+
+        if ($stillThere !== []) {
+            $violations[] = sprintf(
+                'the fully credited invoice is still in the ageing at %s',
+                (string) ($stillThere[0]['outstanding'] ?? '?'),
+            );
+        }
+
+        return $violations;
+    }
+
+    /** The ageing's own total for the functional currency. */
+    private function ageingTotal(array $report): Money
+    {
+        $total = Money::zero('SAR');
+
+        foreach ((array) ($report['rows'] ?? []) as $row) {
+            if ((string) ($row['currency'] ?? '') !== 'SAR') {
+                continue;
+            }
+
+            $total = $total->plus(Money::of((string) $row['outstanding'], 'SAR'));
+        }
+
+        return $total;
+    }
+
 }

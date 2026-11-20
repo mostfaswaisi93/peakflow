@@ -288,6 +288,16 @@ final class Corrections
                 'tax_category' => $line['tax_category'],
                 'tax_rate' => $line['tax_rate'],
                 'tax_point' => $date->toDateString(),
+                /*
+                 | The supply type travels with the treatment - PF-078.
+                 |
+                 | A credit note or a corrected invoice is about the same
+                 | supply as the document it adjusts, so it is the same kind
+                 | of supply. Leaving it null would make the adjusting
+                 | document undecidable and refuse at issue, which is the
+                 | right refusal for a reason that is not true.
+                 */
+                'supply_type' => $template->supply_type,
                 'place_of_supply' => $template->place_of_supply,
                 'place_of_supply_rule' => $template->place_of_supply_rule,
             ]);

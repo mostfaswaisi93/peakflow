@@ -188,9 +188,30 @@ trait IssuesInvoices
             'tax_category' => 'S',
             'tax_rate' => '15.000000',
             'tax_point' => $this->date->toDateString(),
-            'place_of_supply' => 'SA',
-            'place_of_supply_rule' => 'domestic',
+            /*
+             | The fixture states what KIND of supply it is - PF-078.
+             |
+             | The two place-of-supply columns are left for `Issuer` to
+             | write from the rule book's decision; stating them here would
+             | be the literal the draft paths no longer write. What the
+             | fixture does have to say is the supply type, because the
+             | book's first question is what kind of supply it is and these
+             | lines carry no catalogue item to answer it.
+             */
+            'supply_type' => 'service',
         ]);
+
+        /*
+         | And the draft is PLACED, as every draft path now places one.
+         |
+         | `InvoiceDrafts::create()` calls the decider at the end of
+         | drafting and `Issuer` calls it again at issue. This fixture
+         | writes its lines directly, so it has to do the same - a draft
+         | nobody has tried to place is refused by the validator, and the
+         | suites that exercise the validator would be failing on the
+         | fixture rather than on the thing they test.
+         */
+        app(\App\Tenant\Sales\Services\SupplyDecider::class)->decide($invoice, $this->entity());
 
         InvoiceTaxBreakdownRow::create([
             'entity_id' => $this->entityId,
@@ -377,9 +398,30 @@ trait IssuesInvoices
             'tax_category' => 'Z',
             'tax_rate' => '0.000000',
             'tax_point' => $this->date->toDateString(),
-            'place_of_supply' => 'SA',
-            'place_of_supply_rule' => 'domestic',
+            /*
+             | The fixture states what KIND of supply it is - PF-078.
+             |
+             | The two place-of-supply columns are left for `Issuer` to
+             | write from the rule book's decision; stating them here would
+             | be the literal the draft paths no longer write. What the
+             | fixture does have to say is the supply type, because the
+             | book's first question is what kind of supply it is and these
+             | lines carry no catalogue item to answer it.
+             */
+            'supply_type' => 'service',
         ]);
+
+        /*
+         | And the draft is PLACED, as every draft path now places one.
+         |
+         | `InvoiceDrafts::create()` calls the decider at the end of
+         | drafting and `Issuer` calls it again at issue. This fixture
+         | writes its lines directly, so it has to do the same - a draft
+         | nobody has tried to place is refused by the validator, and the
+         | suites that exercise the validator would be failing on the
+         | fixture rather than on the thing they test.
+         */
+        app(\App\Tenant\Sales\Services\SupplyDecider::class)->decide($invoice, $this->entity());
 
         InvoiceTaxBreakdownRow::create([
             'entity_id' => $this->entityId,

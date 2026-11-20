@@ -398,9 +398,23 @@ final class InvoiceApiController
                 $draft,
                 $entity,
                 $userId,
+                /*
+                 | The country and the rule are NOT asserted here - PF-078.
+                 |
+                 | This used to pass `'rule' => 'domestic'` and the entity's
+                 | own country, which is how every document in the product
+                 | came to record a domestic supply whatever the customer's
+                 | country: `PlaceOfSupply::decide()` had no caller, and the
+                 | literal satisfied the validator's unresolved-place gate
+                 | with the fiction the gate exists to catch.
+                 |
+                 | `Issuer` asks the rule book now and freezes the winning
+                 | rule, its precedence and the source it cites onto the
+                 | document. What is left here is what a controller can
+                 | legitimately know: the category and rate somebody picked
+                 | on the lines.
+                 */
                 [
-                    'country' => \is_string($entity->country) ? $entity->country : 'SA',
-                    'rule' => 'domestic',
                     'category' => $first === null ? null : Row::text($first, 'tax_category'),
                     'rate' => $first === null ? null : Row::text($first, 'tax_rate'),
                 ],

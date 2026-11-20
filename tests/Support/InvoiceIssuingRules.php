@@ -82,6 +82,8 @@ final class InvoiceIssuingRules
                 'the chain claims consistency and not authorship' => fn (): array => $this->theChainDoesNotOverclaim(),
                 'issuing is audited' => fn (): array => $this->issuingIsAudited(),
                 'issuing raises InvoiceIssued, once, with the document on it' => fn (): array => $this->theEventIsRaised(),
+                'the place of supply is decided by the rule book and frozen with its reasoning' => fn (): array => $this->thePlaceIsFrozen(),
+                'goods delivered abroad are not recorded as a domestic supply' => fn (): array => $this->anExportIsNotDomestic(),
             ]), $this->entityId);
         } finally {
             $this->connection->rollBack();
@@ -859,6 +861,199 @@ final class InvoiceIssuingRules
                 (string) $event->gross,
                 (string) $issued->gross_amount,
                 (string) $issued->currency,
+            );
+        }
+
+        return $violations;
+    }
+
+    /**
+     * The place of supply is decided, and frozen with its reasoning - PF-078.
+     *
+     * ## The defect this closes, which was not a missing panel
+     *
+     * `PlaceOfSupply::decide()` - eight points, sixteen asserted cases, a
+     * vendored bloc register, a precedence integer per row and a dated UK
+     * departure - **had no caller anywhere in the application**. Six draft
+     * services wrote `'place_of_supply_rule' => 'domestic'` as a literal,
+     * three of them with `'SA'` beside it, and `InvoiceApiController` handed
+     * the issuer `['rule' => 'domestic']`.
+     *
+     * So the validator's `place_of_supply_unresolved` gate - which refuses a
+     * line whose place of supply is unknown, on the grounds that "a default
+     * would issue a document in a jurisdiction nobody chose" - was satisfied
+     * by exactly that default, written one layer up.
+     *
+     * PF-078's last criterion asks for the decision and its reasoning on the
+     * invoice's tax panel, because an accountant must be able to check it. A
+     * panel over the literal would have shown a decision nobody made, which
+     * is worse than no panel: it reads as checked.
+     *
+     * ## What is asserted
+     *
+     * The winning rule's id, its precedence and the source it cites, because
+     * those are what "check it" means - an accountant disagreeing with a
+     * place of supply asks which rule chose it and what it quotes. And the
+     * explanation in both languages, because the panel shows the one for the
+     * reader's locale.
+     *
+     * @return list<string>
+     */
+    private function thePlaceIsFrozen(): array
+    {
+        $violations = [];
+        $invoice = $this->issue();
+        $snapshot = $invoice->tax_decision_snapshot['place_of_supply'] ?? null;
+
+        if (! \is_array($snapshot)) {
+            return ['the document carries no place-of-supply decision at all, so the panel has '.
+                'nothing to show and the rule book was never asked'];
+        }
+
+        if (($snapshot['decided'] ?? false) !== true) {
+            return [sprintf(
+                'the decision was not made: %s',
+                (string) ($snapshot['why'] ?? 'no reason recorded, which is its own problem'),
+            )];
+        }
+
+        $line = $snapshot['lines'][0] ?? null;
+
+        if (! \is_array($line)) {
+            return ['the decision carries no per-line reasoning, and the lines are what a rule '.
+                'applies to - one invoice can carry a good and a digital service'];
+        }
+
+        foreach (['country', 'rule', 'category', 'source', 'explanation_en', 'explanation_ar'] as $field) {
+            if (! \is_string($line[$field] ?? null) || trim((string) $line[$field]) === '') {
+                $violations[] = sprintf('the frozen decision has no %s on it', $field);
+            }
+        }
+
+        if (! \is_int($line['precedence'] ?? null)) {
+            $violations[] = 'the frozen decision carries no precedence, so the rule cannot be found '.
+                'in a book that is ordered by it';
+        }
+
+        /*
+         | The rule id is a rule the book actually has.
+         |
+         | The literal was `'domestic'`, which IS a rule id - the lowest
+         | precedence one, the documented fallback - so a check that only
+         | asserted "there is a rule" would have passed against the defect.
+         | Asserted against the book's own ids instead.
+         */
+        $known = array_map(
+            static fn (array $rule): string => (string) $rule['id'],
+            (array) config('place_of_supply.rules', []),
+        );
+
+        if (! \in_array((string) $line['rule'], $known, true)) {
+            $violations[] = sprintf(
+                'the document names rule "%s" and the book has no such rule, so nothing can be '.
+                'checked against it',
+                (string) $line['rule'],
+            );
+        }
+
+        /*
+         | And the columns agree with the snapshot.
+         |
+         | Two places record the same decision: the snapshot an accountant
+         | reads and the two columns a query filters on. `Issuer` falls back
+         | to `lines()->value('place_of_supply')` in three places, and those
+         | fallbacks were reading the literal nobody decided.
+         */
+        $stored = $invoice->lines()->first();
+
+        if ($stored === null || (string) $stored->place_of_supply_rule !== (string) $line['rule']) {
+            $violations[] = sprintf(
+                'the line column says "%s" and the snapshot says "%s" - two answers to which rule '.
+                'applied, and three readers take the column',
+                (string) ($stored->place_of_supply_rule ?? 'null'),
+                (string) $line['rule'],
+            );
+        }
+
+        return $violations;
+    }
+
+    /**
+     * Goods delivered abroad are not a domestic supply - PF-078.
+     *
+     * ## Why this is the check that matters
+     *
+     * `thePlaceIsFrozen()` proves a decision was made and recorded. It does
+     * not prove the decision is the RIGHT one, and the defect it replaced -
+     * a hard-coded `'domestic'` - would have satisfied a weaker version of
+     * it, because the entity here is domestic and `domestic` is a real rule
+     * in the book.
+     *
+     * So this one changes the facts and asserts the answer changes with
+     * them: the same line, as goods, delivered outside the supplier's state,
+     * must not come back as a supply in the supplier's state. The book's
+     * highest-precedence rule exists for exactly this distinction - a
+     * customer collecting goods from the supplier's warehouse IS a domestic
+     * supply, and goods that left are not.
+     *
+     * An export recorded as domestic charges output tax that is not due,
+     * puts it in the standard-rate box of the return, and is found by an
+     * authority comparing the return against the customs declarations.
+     *
+     * @return list<string>
+     */
+    private function anExportIsNotDomestic(): array
+    {
+        $draft = $this->draft();
+
+        /*
+         | Goods, and they went to Jordan.
+         |
+         | Jordan rather than a GCC state deliberately: an intra-GCC supply
+         | has rules of its own at precedences 20 and 30, and this check is
+         | about the plain export. The customer stays domestic, so the ONLY
+         | fact that changed is where the goods went - which is the fact a
+         | hard-coded rule cannot see.
+         */
+        DB::connection('tenant')->table('invoices')
+            ->where('id', (string) $draft->getKey())
+            ->update(['delivery_country' => 'JO', 'updated_at' => now()]);
+
+        DB::connection('tenant')->table('invoice_lines')
+            ->where('invoice_id', (string) $draft->getKey())
+            ->update(['supply_type' => 'good', 'updated_at' => now()]);
+
+        $decision = app(\App\Tenant\Sales\Services\SupplyDecider::class)
+            ->decide($draft->refresh(), $this->entity(), $this->date);
+
+        $line = $decision['lines'][0] ?? null;
+
+        if (! \is_array($line) || ($line['decided'] ?? false) !== true) {
+            return [sprintf(
+                'goods delivered to Jordan could not be placed: %s',
+                \is_array($line) ? (string) ($line['why'] ?? '') : 'no line in the decision',
+            )];
+        }
+
+        $violations = [];
+
+        if ((string) $line['rule'] === 'goods-delivered-in-the-supplier-state') {
+            $violations[] = 'goods that went to Jordan were placed by the rule for goods that did '.
+                'NOT move, so the delivery location is not reaching the book';
+        }
+
+        if ((string) $line['rule'] === 'domestic') {
+            $violations[] = 'goods delivered abroad fell through to the documented fallback, which '.
+                'is the rule the hard-coded literal named - so either the engine is not being '.
+                'asked or the export rows are not matching';
+        }
+
+        if ((string) $line['country'] === (string) $this->entity()->country
+            && (string) $line['category'] === 'S') {
+            $violations[] = sprintf(
+                'an export was placed in %s at the standard rate, which charges output tax that is '.
+                'not due and puts it in the standard-rate box of the return',
+                (string) $line['country'],
             );
         }
 

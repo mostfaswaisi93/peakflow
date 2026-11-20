@@ -31,6 +31,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property array<string, mixed>|null $supplier_snapshot
  * @property array<string, mixed>|null $customer_snapshot
  * @property array<string, mixed>|null $terms_snapshot
+ * @property string|null $delivery_country
  * @property array<string, mixed>|null $tax_decision_snapshot
  * @property string $net_amount
  * @property string $tax_amount
@@ -50,7 +51,7 @@ final class Invoice extends TenantModel
 
     protected $fillable = [
         'entity_id', 'number', 'series_key', 'document_type', 'status', 'party_id',
-        'issue_date', 'delivery_date', 'tax_point', 'return_period_label', 'currency',
+        'issue_date', 'delivery_date', 'tax_point', 'delivery_country', 'return_period_label', 'currency',
         'fx_rate', 'fx_source', 'fx_rate_date',
         'net_amount', 'tax_amount', 'gross_amount', 'prepaid_amount', 'payable_amount',
         'presentation_exponent', 'supplier_snapshot', 'customer_snapshot',

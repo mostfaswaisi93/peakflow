@@ -50,7 +50,7 @@ nobody can find is a task nobody will do.
 | [01](phase-01-tenancy-identity.md) | 15 / 19 | 85 | 4 |
 | [02](phase-02-ledger.md) | 20 / 22 | 144 | 2 |
 | [03](phase-03-masters.md) | 14 / 17 | 84 | 6 |
-| [04](phase-04-tax.md) | 13 / 14 | 116 | 1 |
+| [04](phase-04-tax.md) | 14 / 14 | 117 | 0 |
 | [05](phase-05-sales.md) | 17 / 21 | 161 | 15 |
 | [06](phase-06-einvoicing.md) | 8 / 20 | 107 | 37 |
 | [07](phase-07-purchasing.md) | 9 / 15 | 153 | 6 |
@@ -62,9 +62,9 @@ nobody can find is a task nobody will do.
 | [13](phase-13-hardening.md) | 8 / 16 | 49 | 24 |
 | [14](phase-14-operations.md) | 11 / 11 | 54 | 0 |
 | [15](phase-15-verticals.md) | 0 / 8 | 0 | 36 |
-| **all** | **185 / 273** | **1471** | **268** |
+| **all** | **186 / 273** | **1472** | **267** |
 
-Phases 00 to 09 are the ones that have been worked, and Phase 08 is closed. An open criterion in a worked phase is one that depends on a later phase and says so in its own task file, with the task that brings it - never one that was skipped.
+Phases 00 to 09 are the ones that have been worked. Phases 04, 08 and 09 are closed, and Phase 14 with them. An open criterion in a worked phase is one that depends on a later phase and says so in its own task file, with the task that brings it - never one that was skipped.
 
 **Phases 14 and 15 came later than the rest.** They are the result of a gap analysis against [hawalaty](https://github.com/mostfaswaisi93/hawalaty-laravel), which runs real businesses and therefore knows what an invoicing core alone cannot do. Phase 14 is the part that belongs in a product whose subject is invoices and banks. Phase 15 is **four industry verticals**, and its own file opens by saying that starting it changes what the product is - recorded as a decision to take deliberately rather than a gap to close by default.
 

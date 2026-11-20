@@ -335,6 +335,132 @@
             @endif
         </section>
 
+        {{--
+         | The place of supply, and why - PF-078.
+         |
+         | The criterion is that an accountant must be able to CHECK the
+         | decision, which means the winning rule and what it cites, not a
+         | country. Three things are on the panel for that reason: the rule's
+         | id and its precedence, so the rule can be found in the book; the
+         | legal source it quotes, which is what an authority's query will be
+         | about; and whether the customer accounts for the tax, because that
+         | is the difference between a zero in the tax column being right and
+         | being an unpaid liability.
+         |
+         | Read from the FROZEN snapshot, never recomputed. The party's
+         | registration will have lapsed, the rule book will have been
+         | amended and the bloc will have gained or lost a member by the time
+         | anybody asks - and the question is what the rule was then.
+         |
+         | An undecided line says so, in words, with the reason. It used to
+         | say `domestic` for every document ever issued, because nothing
+         | asked the rule book at all.
+        --}}
+        @php
+            $place = $invoice->tax_decision_snapshot['place_of_supply'] ?? null;
+            $placeLines = is_array($place) ? ($place['lines'] ?? []) : [];
+        @endphp
+
+        <section class="mt-8">
+            <h2 class="text-title font-semibold text-on-surface">{{ __('مكان التوريد') }}</h2>
+
+            @if (! is_array($place) || $placeLines === [])
+                <p class="mt-3 rounded-card border border-outline bg-surface p-6 text-label text-on-surface-muted">
+                    {{ __('لا قرار محفوظ لمكان التوريد على هذه الفاتورة.') }}
+                    @if (is_array($place) && is_string($place['why_ar'] ?? null))
+                        {{ $place['why_ar'] }}
+                    @endif
+                </p>
+            @else
+                @if (($place['mixed'] ?? false) === true)
+                    <p class="mt-3 text-label text-on-surface-muted">
+                        {{ __('سطور هذه الفاتورة لا تخضع لقاعدة واحدة، وكل سطر مذكور بقاعدته.') }}
+                    </p>
+                @endif
+
+                <div class="mt-3 flow-tight">
+                    @foreach ($placeLines as $decision)
+                        <article class="rounded-card border border-outline bg-surface p-6">
+                            <header class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                                <h3 class="text-label font-medium text-on-surface">
+                                    {{ __('سطر') }} <span class="figure">{{ $decision['line_no'] ?? '—' }}</span>
+                                </h3>
+
+                                @if (($decision['decided'] ?? false) === true)
+                                    <p class="text-label text-on-surface">
+                                        {{ app()->getLocale() === 'ar'
+                                            ? ($decision['explanation_ar'] ?? '')
+                                            : ($decision['explanation_en'] ?? '') }}
+                                    </p>
+                                @else
+                                    <p class="text-label text-on-surface-muted">
+                                        {{ __('لم يُحدَّد:') }}
+                                        {{ app()->getLocale() === 'ar'
+                                            ? ($decision['why_ar'] ?? '')
+                                            : ($decision['why'] ?? '') }}
+                                    </p>
+                                @endif
+                            </header>
+
+                            @if (($decision['decided'] ?? false) === true)
+                                <dl class="mt-4 grid gap-x-6 gap-y-3 sm:grid-cols-2">
+                                    <div>
+                                        <dt class="text-label text-on-surface-muted">{{ __('الدولة') }}</dt>
+                                        <dd class="figure text-on-surface">{{ $decision['country'] ?? '—' }}</dd>
+                                    </div>
+
+                                    <div>
+                                        <dt class="text-label text-on-surface-muted">{{ __('القاعدة') }}</dt>
+                                        <dd class="text-on-surface">
+                                            {{ $decision['rule'] ?? '—' }}
+                                            <span class="text-on-surface-muted">
+                                                ({{ __('الأولوية') }}
+                                                <span class="figure">{{ $decision['precedence'] ?? '—' }}</span>)
+                                            </span>
+                                        </dd>
+                                    </div>
+
+                                    <div>
+                                        <dt class="text-label text-on-surface-muted">{{ __('الفئة') }}</dt>
+                                        <dd class="text-on-surface">{{ $decision['category'] ?? '—' }}</dd>
+                                    </div>
+
+                                    <div>
+                                        <dt class="text-label text-on-surface-muted">{{ __('من يحتسب الضريبة') }}</dt>
+                                        <dd class="text-on-surface">
+                                            {{ ($decision['reverse_charge'] ?? false) === true
+                                                ? __('العميل، بالتحصيل العكسي')
+                                                : __('المورّد') }}
+                                        </dd>
+                                    </div>
+
+                                    @if (($decision['evidence_required'] ?? []) !== [])
+                                        <div class="sm:col-span-2">
+                                            <dt class="text-label text-on-surface-muted">{{ __('الإثبات المطلوب') }}</dt>
+                                            <dd class="text-on-surface">
+                                                {{ implode('، ', $decision['evidence_required']) }}
+                                            </dd>
+                                        </div>
+                                    @endif
+
+                                    <div class="sm:col-span-2">
+                                        <dt class="text-label text-on-surface-muted">{{ __('المصدر القانوني') }}</dt>
+                                        <dd class="text-on-surface">{{ $decision['source'] ?? '—' }}</dd>
+                                    </div>
+                                </dl>
+                            @endif
+                        </article>
+                    @endforeach
+                </div>
+
+                <p class="mt-3 text-label text-on-surface-muted">
+                    {{ __('القرار مثبّت على المستند بتاريخ') }}
+                    <time datetime="{{ $place['decided_on'] ?? '' }}" class="figure">{{ $place['decided_on'] ?? '—' }}</time>{{ __('، وصفة العميل آنذاك') }}
+                    {{ ($place['customer_status'] ?? '') === 'business' ? __('منشأة مسجّلة') : __('مستهلك') }}@if (is_string($place['delivery_country'] ?? null)){{ __('، ومكان التسليم') }} <span class="figure">{{ $place['delivery_country'] }}</span>@endif{{ __('. لا يُعاد حسابه: سجلات الأطراف وكتاب القواعد يتغيّران، والسؤال هو ما كانت القاعدة يومها.') }}
+                </p>
+            @endif
+        </section>
+
         <section class="mt-8">
             <h2 class="text-title font-semibold text-on-surface">{{ __('الدفعات') }}</h2>
 

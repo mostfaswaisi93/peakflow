@@ -184,6 +184,17 @@ return [
 
     'not_scheduled' => [
 
+        'tenants:dump' => 'an operator runs it, and the reason is what it is FOR: moving a tenant '.
+            "to another installation, or taking a copy before something irreversible. Neither is ".
+            'defined by the passage of time, and a dump on a schedule would be a second backup '.
+            'regime beside the one the database already has - with its own retention nobody set '.
+            'and its own disk nobody watches.',
+
+        'tenants:restore' => 'an operator runs it, into a database they named, and it refuses to '.
+            'overwrite a live one. A restore that could start itself is the one command in the '.
+            'product that can destroy a tenant, and a schedule is a way for it to happen at '.
+            "03:00 on a Sunday to a database somebody renamed.",
+
         'ledger:verify' => 'covered by invariants:watch: LedgerInvariantWatcher runs the same '.
             'verifier hourly, per entity, and raises the findings as alerts.',
 

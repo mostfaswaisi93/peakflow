@@ -24,7 +24,7 @@ final class SalesOrderLine extends TenantModel
     protected $table = 'sales_order_lines';
 
     protected $fillable = [
-        'entity_id', 'sales_order_id', 'line_no', 'item_id', 'item_code', 'description',
+        'entity_id', 'sales_order_id', 'line_no', 'item_id', 'item_code', 'supply_type', 'description',
         'unit_code', 'quantity', 'unit_price', 'net_amount',
         'invoiced_quantity', 'invoiced_net',
         'revenue_account_id', 'tax_code_id', 'tax_category', 'tax_rate',

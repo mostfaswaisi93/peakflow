@@ -17,7 +17,7 @@ final class QuoteLine extends TenantModel
     protected $table = 'quote_lines';
 
     protected $fillable = [
-        'entity_id', 'quote_id', 'line_no', 'item_id', 'item_code', 'description',
+        'entity_id', 'quote_id', 'line_no', 'item_id', 'item_code', 'supply_type', 'description',
         'unit_code', 'quantity', 'unit_price', 'net_amount',
         'revenue_account_id', 'tax_code_id', 'tax_category', 'tax_rate',
     ];

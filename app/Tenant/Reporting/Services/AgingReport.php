@@ -144,6 +144,39 @@ final class AgingReport
             ->where('entity_id', $entityId)
             ->where('status', 'issued')
             ->whereIn('document_type', $this->receivableTypes())
+            /*
+             | A credit note that NAMES an invoice is already subtracted - PF-190.
+             |
+             | `instalmentsOf()` says in its own comment that a referencing
+             | credit note "reaches this method only when it stands alone".
+             | Nothing made that true: `receivableTypes()` returns every
+             | non-purchase-side type, credit notes included, and no filter
+             | asked whether one referenced anything.
+             |
+             | So a credit note against an invoice was counted TWICE - once
+             | by `peakflow_document_open_balance`, which subtracts it from
+             | the invoice it credits, and again here as a negative bucket of
+             | its own. The ageing came out understated by the whole value of
+             | every such credit note.
+             |
+             | And the ageing is what `SubledgersTieToTheirControls` compares
+             | with the receivables control account, so the two disagreed by
+             | the same figure and the report that was supposed to prove the
+             | subledger ties was the thing that did not. Measured on 209
+             | issued invoices and two credit notes of 115: the ledger came
+             | to 23,575 and the control held 23,805.
+             |
+             | A standalone credit is kept, which is the whole point of
+             | PF-190: it is a credit balance on the account, it belongs in
+             | the grid as a negative bucket, and nothing else subtracts it.
+             */
+            ->whereNot(static fn ($query) => $query
+                ->where('document_type', DocumentType::CreditNote->value)
+                ->whereExists(static fn ($inner) => $inner
+                    ->selectRaw('1')
+                    ->from('invoice_references as r')
+                    ->whereColumn('r.invoice_id', 'invoices.id')
+                    ->where('r.kind', 'credits')))
             ->where('issue_date', '<=', $day->toDateString())
             ->when($partyId !== null, static fn ($query) => $query->where('party_id', $partyId))
             // The customer's name comes from the frozen snapshot and falls

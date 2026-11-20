@@ -539,6 +539,10 @@ final class Quotes
                 'quote_id' => (string) $quote->getKey(),
                 'line_no' => $line['line_no'],
                 'item_id' => $line['item_id'] ?? null,
+                'supply_type' => \App\Tenant\Sales\SupplyTypes::of(
+                    \is_string($line['supply_type'] ?? null) ? (string) $line['supply_type'] : null,
+                    \is_string($line['item_id'] ?? null) ? (string) $line['item_id'] : null,
+                ),
                 'item_code' => $line['item_code'] ?? null,
                 'description' => (string) $line['description'],
                 'unit_code' => (string) ($line['unit_code'] ?? 'C62'),

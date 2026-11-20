@@ -148,8 +148,36 @@ final class Prepayments
                 'tax_category' => $category->value,
                 'tax_rate' => $rate,
                 'tax_point' => $date->toDateString(),
-                'place_of_supply' => (string) $code->jurisdiction,
-                'place_of_supply_rule' => 'domestic',
+
+                /*
+                 | A prepayment is a supply of SERVICES for placing - PF-078.
+                 |
+                 | Stated rather than left null, and the reason is the tax
+                 | point rather than the goods. A prepayment invoice is
+                 | raised because money arrived before performance, and
+                 | nothing has been delivered when it is raised - so no rule
+                 | about where goods went can apply to it, and the rules
+                 | that can are the ones about where a service is supplied.
+                 |
+                 | The eventual supply may well be goods, and it gets its own
+                 | document with its own decision. Calling this one goods
+                 | would ask the book where goods went on a date when they
+                 | had not gone anywhere, and the answer would be a refusal
+                 | for a document that is perfectly issuable.
+                 */
+                'supply_type' => 'service',
+                /*
+                 | Not stated on a draft - PF-078.
+                 |
+                 | This used to write `'domestic'` as a literal, which
+                 | satisfied the validator's `place_of_supply_unresolved`
+                 | gate with the very fiction the gate exists to catch.
+                 | `Issuer` asks the rule book at issue and writes both
+                 | columns from the decision; until then the honest value
+                 | is "not decided yet".
+                 */
+                'place_of_supply' => null,
+                'place_of_supply_rule' => null,
             ]);
 
             foreach ($breakdown->entries as $entry) {

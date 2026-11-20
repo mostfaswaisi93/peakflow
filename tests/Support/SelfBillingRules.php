@@ -367,7 +367,15 @@ final class SelfBillingRules
             'expense_account_id' => $this->expenseAccountId,
             'tax_code_id' => $this->taxCodeId,
             'tax_rate' => '15.000000',
-            'place_of_supply' => 'SA',
+            /*
+             | Subcontracted work is a service, and the line says so - PF-078.
+             |
+             | `place_of_supply` used to be stated here and `SelfBilling`
+             | wrote `'domestic'` beside it; both are the rule book's answer
+             | now, and what the caller has to supply is the question's
+             | input.
+             */
+            'supply_type' => 'service',
         ]];
     }
 
