@@ -77,7 +77,17 @@ final class SodExceptionsReport
             ->leftJoin('users as u', 'u.id', '=', 'r.user_id')
             ->where('r.entity_id', $entityId)
             ->whereBetween('r.created_at', [$from, $to])
+            /*
+             | The id breaks the tie, and the tie is not rare.
+             |
+             | Rows written in one transaction share a `created_at` to the
+             | microsecond, so ordering on it alone leaves their order to
+             | the planner - and this report goes into the evidence pack,
+             | which is diffed against last quarter's. A pack whose row
+             | order moves on its own makes every section look changed.
+             */
             ->orderByDesc('r.created_at')
+            ->orderByDesc('r.id')
             ->get([
                 'r.id', 'r.created_at', 'r.attempted_duty', 'r.conflicting_duty',
                 'r.subject_type', 'r.subject_id', 'r.conflicting_audit_id',
@@ -89,6 +99,7 @@ final class SodExceptionsReport
             ->with(['rule', 'user'])
             ->where('entity_id', $entityId)
             ->orderByDesc('approved_at')
+            ->orderByDesc('id')
             ->get();
 
         /*

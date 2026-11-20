@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Tenant\Identity\Services;
 
 use App\Tenant\Identity\Models\SodOverride;
+use App\Tenant\Identity\Services\SodExceptionsReport;
+use App\Tenant\Tenancy\Services\EntityContext;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -57,6 +59,7 @@ final class CompliancePack
     public function __construct(
         private readonly AccessReview $review,
         private readonly AuditChainVerifier $chain,
+        private readonly SodExceptionsReport $exceptions,
     ) {}
 
     /**
@@ -76,6 +79,21 @@ final class CompliancePack
                 'dormant' => $this->review->dormant($asAt->copy()->subDays($dormantDays)),
             ],
 
+            /*
+             | Two different questions about segregation of duties - PF-034.
+             |
+             | `in_force` is which overrides are live: who has been given
+             | permission to break a rule. `exceptions` is what the control
+             | actually did - where it refused, and what was done under an
+             | override that was granted.
+             |
+             | An auditor asks both and they have different answers. A
+             | standing override nobody ever used is a risk that did not
+             | materialise; a refusal is the control working; an act under
+             | an override is the control being set aside by somebody who
+             | is named. A pack with only the first says what was permitted
+             | and not what happened.
+             */
             'sod_overrides' => [
                 'basis' => 'as_at',
                 'in_force' => $this->overridesInForce($asAt),
@@ -94,14 +112,78 @@ final class CompliancePack
                 'verdict' => $this->chainVerdict(),
             ],
 
+            /*
+             | Scheduled runs, which this pack used to say did not exist.
+             |
+             | It said: "no durable record of scheduled-run outcomes
+             | exists... a section whose completeness depends on log
+             | retention is not evidence". That was true when it was
+             | written and stopped being true with PF-241's
+             | `platform.scheduled_runs`, which records every finished run
+             | rather than only the failures - because a run missing from a
+             | history of failures looks exactly like one that succeeded,
+             | and exactly like one that never started.
+             */
+            'scheduled_runs' => [
+                'basis' => 'as_at',
+                'why' => 'the thirty days before the date above. "Did the nightly chain walk run every '.
+                    'night" is the question this answers, and it is a question about a recent window '.
+                    'rather than about all time',
+                'runs' => $this->scheduledRuns($asAt),
+            ],
+
             'not_included' => [
-                'failed_scheduled_runs' => 'no durable record of scheduled-run outcomes exists. The '.
-                    'failures raise scheduled_job_failed through the alert sink, so they reach a log; '.
-                    'a section whose completeness depends on log retention is not evidence',
                 'close_checklist_overrides' => 'there is no override. PeriodStateMachine refuses a '.
                     'close whose checks have not passed and it cannot be waived, so the related act '.
                     'that is recorded is a reopening - which is in this pack',
             ],
+        ];
+    }
+
+    /**
+     * Scheduled runs in the thirty days before the date - PF-241, PF-13x.
+     *
+     * Successes as well as failures. A history of failures answers "what
+     * went wrong" and not "what happened", and the second is the one an
+     * auditor asks: a run missing from a list of failures looks exactly
+     * like one that succeeded and exactly like one that never started.
+     *
+     * Read from the PLATFORM connection, because the schedule is the
+     * platform's - a tenant does not have its own cron.
+     *
+     * @return array<string, mixed>
+     */
+    private function scheduledRuns(Carbon $asAt): array
+    {
+        // Day boundaries, for the reason above: a window measured from an
+        // instant makes two packs for one date differ at the edges.
+        $from = $asAt->copy()->startOfDay()->subDays(30);
+        $until = $asAt->copy()->endOfDay();
+
+        $rows = DB::connection('platform')->table('scheduled_runs')
+            ->whereBetween('finished_at', [$from, $until])
+            ->selectRaw(
+                'command, count(*) as runs, '.
+                "count(*) FILTER (WHERE exit_code = 0) as succeeded, ".
+                "count(*) FILTER (WHERE exit_code IS NOT NULL AND exit_code <> 0) as failed, ".
+                "count(*) FILTER (WHERE exit_code IS NULL) as unknown, ".
+                'max(finished_at)::text as last_finished',
+            )
+            ->groupBy('command')
+            ->orderBy('command')
+            ->get();
+
+        return [
+            'from' => $from->toDateString(),
+            'until' => $until->toDateString(),
+            'by_command' => $rows->map(static fn (object $row): array => [
+                'command' => (string) $row->command,
+                'runs' => (int) $row->runs,
+                'succeeded' => (int) $row->succeeded,
+                'failed' => (int) $row->failed,
+                'unknown' => (int) $row->unknown,
+                'last_finished' => (string) $row->last_finished,
+            ])->all(),
         ];
     }
 

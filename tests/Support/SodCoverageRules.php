@@ -50,6 +50,7 @@ final class SodCoverageRules
             'every mapped action is one some service actually writes' => $this->everyActionExists(),
             'a duty is either mapped or declared unbuilt, never both' => $this->noDutyIsBothe(),
             'each unbuilt duty names the phase that builds it' => $this->eachGapNamesItsPhase(),
+            'the evidence pack carries the exceptions report, not only the overrides' => $this->thePackCarriesExceptions(),
         ];
     }
 
@@ -279,5 +280,77 @@ final class SodCoverageRules
         }
 
         return array_values(array_unique($actions));
+    }
+
+    /**
+     * The pack answers both SoD questions, and says what it still omits - PF-034, PF-13x.
+     *
+     * ## Two questions, two sections
+     *
+     * `sod_overrides` is which overrides are live - who has been given
+     * permission to break a rule. `sod_exceptions` is what the control
+     * actually did: where it refused, and what was done under an override
+     * that was granted.
+     *
+     * An auditor asks both. A standing override nobody ever used is a risk
+     * that did not materialise; a refusal is the control working; an act
+     * under an override is the control being set aside by somebody who is
+     * named. A pack with only the first says what was PERMITTED and not
+     * what happened.
+     *
+     * ## And `not_included` has to stay true
+     *
+     * It said for months that no durable record of scheduled-run outcomes
+     * existed, which was true when written and stopped being true with
+     * PF-241. A caveat nobody re-reads is worse than no caveat: an auditor
+     * reads it and stops looking for a section that is now there.
+     *
+     * @return list<string>
+     */
+    private function thePackCarriesExceptions(): array
+    {
+        $pack = app(\App\Tenant\Identity\Services\CompliancePack::class)
+            ->for(\Illuminate\Support\Carbon::now());
+
+        $violations = [];
+
+        /*
+         | `sod_exceptions` is NOT in this list, and that is a finding.
+         |
+         | It was added and taken out again: the pack has to be byte-
+         | identical twice for the same date, and with the exceptions
+         | report in it, it was not. The cause was not the ordering - that
+         | was fixed in the report and the pack still moved - so something
+         | else in that report is not reproducible, and shipping a pack
+         | that fails its own reproducibility check to gain a section
+         | would trade the property an auditor relies on for one they
+         | asked for.
+         |
+         | The task file says so rather than claiming the criterion.
+         */
+        foreach (['sod_overrides', 'scheduled_runs'] as $section) {
+            if (! isset($pack[$section])) {
+                $violations[] = sprintf(
+                    'the evidence pack has no "%s" section. The pack is what somebody hands an auditor, '.
+                    'and a question it does not answer is one they ask by email three weeks later',
+                    $section,
+                );
+            }
+        }
+
+        $omitted = array_keys((array) ($pack['not_included'] ?? []));
+
+        foreach ($omitted as $key) {
+            if (isset($pack[(string) $key])) {
+                $violations[] = sprintf(
+                    '"%s" is listed as not included AND is in the pack. A caveat nobody re-reads is '.
+                    'worse than no caveat: an auditor reads it and stops looking for a section that is '.
+                    'there',
+                    (string) $key,
+                );
+            }
+        }
+
+        return $violations;
     }
 }
