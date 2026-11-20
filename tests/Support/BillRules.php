@@ -42,6 +42,7 @@ use Illuminate\Support\Facades\DB;
 final class BillRules
 {
     use \Tests\Support\Concerns\EntersBills;
+    use \Tests\Support\Concerns\CapturesEvents;
     use \Tests\Support\Concerns\ProvesTheLedger;
 
     /** @return array<string, list<string>> */
@@ -83,6 +84,7 @@ final class BillRules
                     'an acknowledgement needs a reason and is recorded' => fn (): array => $this->acknowledgement(),
                     'detection runs again at payment time' => fn (): array => $this->atPaymentTime(),
                     'another entity cannot see these bills' => fn (): array => $this->entityScope(),
+                    'posting raises BillPosted, once, naming the liability' => fn (): array => $this->theEventIsRaised(),
                     'and the ledger still proves its own invariants' => fn (): array => [],
                 ]), $this->entityId),
             ];
@@ -760,4 +762,112 @@ final class BillRules
 
         return (string) $total->toScale(4);
     }
+    /**
+     * Posting raises the event, and entering does not - PF-048.
+     *
+     * ## Why posting and not approval
+     *
+     * The task sheet asked for `BillApproved`. There is no approval on this
+     * path - the service's own docblock says so at length, and five read
+     * sites filter for a status nothing writes. An event named for a gate
+     * that does not run would be a second place claiming the control
+     * exists, and the first place was a docblock that had to be corrected.
+     *
+     * The payable arrives at POSTING. That is the moment a liability exists
+     * for an exposure check to read, for a payment run to draw from and for
+     * a cash forecast to count - so that is the moment announced.
+     *
+     * ## And entering raises nothing
+     *
+     * Asserted here because the opposite is the easy mistake: a draft bill
+     * is a piece of data entry, and a listener that reserved cash against
+     * one would reserve cash for a document somebody is still typing.
+     *
+     * @return list<string>
+     */
+    private function theEventIsRaised(): array
+    {
+        $violations = [];
+        $entered = null;
+
+        $strays = $this->captureEvents(
+            \App\Tenant\Purchasing\Events\BillPosted::class,
+            function () use (&$entered): void {
+                $entered = $this->enterBill();
+            },
+        );
+
+        if ($strays !== []) {
+            $violations[] = 'entering a draft bill raised BillPosted, so a listener reserves cash '.
+                'against a document somebody is still typing';
+        }
+
+        if ($entered === null) {
+            return $violations;
+        }
+
+        $posted = null;
+        $caught = $this->captureEvents(
+            \App\Tenant\Purchasing\Events\BillPosted::class,
+            function () use ($entered, &$posted): void {
+                $posted = $this->post($entered);
+            },
+        );
+
+        if (\count($caught) !== 1) {
+            $violations[] = sprintf(
+                'posting raised BillPosted %d times, expected once. Nothing raised is a declaration '.
+                'with no mechanism; twice makes every posting listener post twice',
+                \count($caught),
+            );
+
+            return $violations;
+        }
+
+        $event = $caught[0];
+
+        if ($event->eventKey() !== 'purchasing.bill.posted') {
+            $violations[] = sprintf('its eventKey is "%s", and the audit entry reads that', $event->eventKey());
+        }
+
+        if ($posted !== null && $event->billId !== (string) $posted->getKey()) {
+            $violations[] = 'the event names a different bill from the one posted';
+        }
+
+        /*
+         | The supplier's own number is on it, not ours.
+         |
+         | A listener that tells somebody a bill was posted has to say which
+         | bill, and the only number the supplier recognises is theirs. Our
+         | internal id means nothing in a reply to their statement.
+         */
+        if ($posted !== null && $event->supplierDocumentNumber !== (string) $posted->supplier_document_number) {
+            $violations[] = sprintf(
+                'the event carries "%s" and the supplier\'s number is "%s" - the only number they '.
+                'recognise on their own statement',
+                $event->supplierDocumentNumber,
+                (string) $posted->supplier_document_number,
+            );
+        }
+
+        if ($posted !== null && (string) $event->gross !== (string) Money::of(
+            (string) $posted->gross_amount,
+            (string) $posted->currency,
+        )) {
+            $violations[] = sprintf(
+                'the event carries %s and the bill is %s %s',
+                (string) $event->gross,
+                (string) $posted->gross_amount,
+                (string) $posted->currency,
+            );
+        }
+
+        if ($posted !== null && $event->partyId !== (string) $posted->party_id) {
+            $violations[] = 'the event names a different supplier, so an exposure check reads the '.
+                'wrong one\'s limit';
+        }
+
+        return $violations;
+    }
+
 }

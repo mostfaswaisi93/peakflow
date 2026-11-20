@@ -422,7 +422,36 @@ final class Bills
                 partyId: (string) $bill->party_id,
             );
 
-            return $bill->refresh();
+            $posted = $bill->refresh();
+
+            /*
+             | The payable now exists, and that is what is announced - PF-048.
+             |
+             | Named for posting rather than for approval, because approval
+             | is not a gate on this path - the docblock above says so at
+             | length - and an event called `BillApproved` would be a second
+             | place claiming a control that does not run.
+             |
+             | Inside the transaction: a listener that reserves cash for a
+             | payment run, or that trips a supplier's exposure limit, is
+             | reading a liability, and a liability that exists for four
+             | seconds before anybody can be told about it is a liability
+             | the exposure check missed.
+             */
+            event(new \App\Tenant\Purchasing\Events\BillPosted(
+                entityId: (string) $posted->entity_id,
+                billId: (string) $posted->getKey(),
+                supplierDocumentNumber: (string) $posted->supplier_document_number,
+                partyId: (string) $posted->party_id,
+                gross: \App\Support\Money\Money::of(
+                    (string) $posted->gross_amount,
+                    (string) $posted->currency,
+                ),
+                postedOn: (string) ($posted->posted_at?->toDateString() ?? now()->toDateString()),
+                byUserId: $userId,
+            ));
+
+            return $posted;
         });
     }
 

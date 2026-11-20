@@ -43,6 +43,7 @@ use Illuminate\Support\Str;
  */
 final class MatchingRules
 {
+    use \Tests\Support\Concerns\CapturesEvents;
     use \Tests\Support\Concerns\OpensBankAccounts;
     use \Tests\Support\Concerns\PreparesPaymentRuns;
 
@@ -138,6 +139,7 @@ final class MatchingRules
                 'a proposal cannot be decided twice' => fn (): array => $this->decidedOnce(),
                 'a stale proposal is refused' => fn (): array => $this->staleProposal(),
                 'the engine records which passes it skipped' => fn (): array => $this->skipsAreRecorded(),
+                'accepting a match raises StatementLineMatched, naming what it matched' => fn (): array => $this->theEventIsRaised(),
             ]);
         } finally {
             $this->connection->rollBack();
@@ -2634,4 +2636,125 @@ final class MatchingRules
             'last_seen_at' => now(),
         ]);
     }
+    /**
+     * Accepting a match raises the event, naming what it matched - PF-048.
+     *
+     * ## Why `matchedType` crosses as a string
+     *
+     * An invoice, a bill, a payment and a payroll run can all be what a
+     * bank line matched. An event typed to any of their models would make
+     * Banking depend on four modules at once - which deptrac refuses, and
+     * rightly: the matcher's job is to say that a line and a document
+     * agree, not to know what the document is.
+     *
+     * So the type is a string and the id is a string, and this check
+     * asserts both against the proposal, because a pair that does not
+     * identify the document makes the event unusable for the one thing
+     * anybody wants it for.
+     *
+     * ## The amount is the APPLIED figure
+     *
+     * Not the line's total. On a part-applied line those differ, and a
+     * listener reading the line total would report a 10,000 transfer as
+     * having settled a 6,000 invoice twice over.
+     *
+     * ## And a proposal nobody accepted raises nothing
+     *
+     * Asserted too, because proposing is the engine looking: a listener
+     * that posted on a proposal would post on the engine's guess, and the
+     * engine proposes several per line.
+     *
+     * @return list<string>
+     */
+    private function theEventIsRaised(): array
+    {
+        $violations = [];
+        $invoice = $this->issue();
+
+        $this->importLines([$this->line((string) $invoice->gross_amount, [
+            'bank_reference' => 'REF-EVENT',
+            'counterparty_account' => 'SA1111222233334444555599',
+            'remittance_unstructured' => (string) $invoice->number,
+        ])]);
+
+        $transaction = $this->transactionBy('REF-EVENT');
+
+        $proposals = [];
+        $strays = $this->captureEvents(
+            \App\Tenant\Banking\Events\StatementLineMatched::class,
+            function () use ($transaction, &$proposals): void {
+                $proposals = app(MatchingEngine::class)->propose($transaction);
+            },
+        );
+
+        if ($strays !== []) {
+            $violations[] = 'proposing raised StatementLineMatched, so a listener posts on the '.
+                'engine\'s guess - and the engine proposes several per line';
+        }
+
+        if ($proposals === []) {
+            return [...$violations, 'nothing was proposed to accept'];
+        }
+
+        $proposal = $proposals[0];
+        $caught = $this->captureEvents(
+            \App\Tenant\Banking\Events\StatementLineMatched::class,
+            fn (): mixed => app(Matches::class)->accept($proposal, $this->actorId()),
+        );
+
+        if (\count($caught) !== 1) {
+            return [...$violations, sprintf(
+                'accepting raised StatementLineMatched %d times, expected once',
+                \count($caught),
+            )];
+        }
+
+        $event = $caught[0];
+
+        if ($event->eventKey() !== 'banking.statement_line.matched') {
+            $violations[] = sprintf('its eventKey is "%s", and the audit entry reads that', $event->eventKey());
+        }
+
+        if ($event->bankTransactionId !== (string) $transaction->getKey()) {
+            $violations[] = 'the event names a different bank line from the one matched';
+        }
+
+        if ($event->matchedType !== (string) $proposal->matched_type) {
+            $violations[] = sprintf(
+                'the event says the line matched a "%s" and the proposal says "%s"',
+                $event->matchedType,
+                (string) $proposal->matched_type,
+            );
+        }
+
+        if ($event->matchedId !== (string) $proposal->matched_id) {
+            $violations[] = 'the event names a different document, so the pair does not identify '.
+                'anything a listener can act on';
+        }
+
+        if ((string) $event->amount !== (string) \App\Support\Money\Money::of(
+            (string) $proposal->amount,
+            (string) $proposal->currency,
+        )) {
+            $violations[] = sprintf(
+                'the event carries %s and the applied figure is %s %s. On a part-applied line the '.
+                'line total is the larger one, and a listener reading it settles the document twice '.
+                'over',
+                (string) $event->amount,
+                (string) $proposal->amount,
+                (string) $proposal->currency,
+            );
+        }
+
+        if ($event->byUserId !== $this->actorId()) {
+            $violations[] = sprintf(
+                'a person accepted it and the event says "%s". A null means the engine applied it '.
+                'automatically, which is a different fact about a reconciliation',
+                (string) $event->byUserId,
+            );
+        }
+
+        return $violations;
+    }
+
 }

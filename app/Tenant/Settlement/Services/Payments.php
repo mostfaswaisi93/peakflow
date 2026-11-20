@@ -199,6 +199,32 @@ final class Payments
                 partyId: $partyId,
             );
 
+            /*
+             | Money moved, and one event says so for both directions - PF-048.
+             |
+             | Not `PaymentReceived` and `PaymentMade`. A listener that cares
+             | which way the cash went reads `direction`; a listener that
+             | cares that cash moved at all - the bank matcher, the cash
+             | forecast, the audit stream - would otherwise have to subscribe
+             | twice and stay subscribed twice, and the second subscription
+             | is the one somebody forgets when a third direction is added.
+             |
+             | Carried as the UNSIGNED amount with the direction beside it,
+             | because `$signed` is the ledger's view and a listener summing
+             | signed figures across a mixed set gets a number that means
+             | nothing. The sign is a posting decision, made above, once.
+             */
+            event(new \App\Tenant\Settlement\Events\PaymentRecorded(
+                entityId: $entityId,
+                paymentId: $id,
+                number: $number,
+                direction: $direction->value,
+                amount: $amount,
+                valueDate: $valueDate->toDateString(),
+                partyId: $partyId,
+                byUserId: $userId,
+            ));
+
             return [
                 'id' => $id,
                 'number' => $number,

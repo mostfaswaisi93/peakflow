@@ -56,6 +56,7 @@ final class ArchitectureRules
             'no exchange rate is ever inverted' => $this->ratesAreNeverInverted(),
             'a posting is never queued, and a side effect always is' => $this->postingIsNeverDeferred(),
             'an event carries no other module\'s models' => $this->eventsCarryNoModels(),
+            'every financial event is raised somewhere' => $this->everyFinancialEventIsRaised(),
             'a subtree is read as a range, never as a LIKE' => $this->subtreesAreReadAsRanges(),
             'a suite that posts ends with the global proof' => $this->postingSuitesProveTheLedger(),
             'a bank account is read only through the disclosure service' => $this->bankReadsAreAudited(),
@@ -94,6 +95,30 @@ final class ArchitectureRules
     {
         $violations = [];
 
+        /*
+         | The list of financial events is READ, not written here - PF-048.
+         |
+         | It used to be ten class names in an alternation, and the names
+         | were the ones the task sheet proposed rather than the ones the
+         | modules built: `BillApproved` where purchasing raises
+         | `BillPosted`, `PaymentReceived` where settlement raises one
+         | `PaymentRecorded` for both directions. So the rule covered four
+         | events that exist and six names that do not, and a listener
+         | queued against a real one would have passed.
+         |
+         | A snapshot of a list is the failure mode this file warns about
+         | twice in `eventsCarryNoModels` and then committed here. Reading
+         | the marker instead means the event itself decides, which is what
+         | `FinancialEvent`'s docblock says it is for.
+         */
+        $names = $this->financialEventNames();
+
+        if ($names === []) {
+            $violations[] = 'No class in app implements FinancialEvent, so this rule matches nothing '.
+                'and cannot fail. Either the marker was renamed, or the events it marks were deleted - '.
+                'and a rule that quietly covers nothing is worse than no rule';
+        }
+
         foreach ($this->phpFiles('app') as $file) {
             $original = (string) file_get_contents($file);
 
@@ -114,7 +139,7 @@ final class ArchitectureRules
              | marker on the listener, because the listener does not get to
              | decide: the event says the ledger depends on it.
              */
-            $handlesFinancial = (bool) preg_match(
+            $handlesFinancial = $names !== [] && (bool) preg_match(
                 /*
                  | `[^)]*` rather than a namespace pattern.
                  |
@@ -125,9 +150,7 @@ final class ArchitectureRules
                  | directions. The parameter list cannot contain a `)`
                  | before the type, so this is both simpler and exact.
                  */
-                '/function\s+handle\s*\([^)]*\b'.
-                '(PeriodClosed|PeriodReopened|YearClosed|RevaluationRun|InvoiceIssued|CreditNoteIssued|'.
-                'BillApproved|PaymentReceived|PaymentReleased|StatementLineMatched)\b/',
+                '/function\s+handle\s*\([^)]*\b('.implode('|', $names).')\b/',
                 $source,
             );
 
@@ -2150,6 +2173,108 @@ final class ArchitectureRules
      * Each comment is replaced by spaces of the same length, so byte offsets
      * - and therefore reported line numbers - are unchanged.
      */
+    /**
+     * The short class names of everything that implements `FinancialEvent`.
+     *
+     * Short names because the parameter list of a `handle()` method may
+     * spell the type either way - imported or fully qualified - and the
+     * short name is the tail of both.
+     *
+     * @return list<string>
+     */
+    private function financialEventNames(): array
+    {
+        $names = [];
+
+        foreach ($this->phpFiles('app') as $file) {
+            if (! str_contains($file, '/Events/')) {
+                continue;
+            }
+
+            $source = $this->withoutComments((string) file_get_contents($file));
+
+            if (! preg_match('/\bimplements\b[^{]*\bFinancialEvent\b/', $source)) {
+                continue;
+            }
+
+            if (preg_match('/\b(?:final\s+)?(?:readonly\s+)?(?:final\s+)?class\s+(\w+)/', $source, $m) === 1) {
+                $names[] = $m[1];
+            }
+        }
+
+        sort($names);
+
+        return array_values(array_unique($names));
+    }
+
+    /**
+     * Every financial event is raised somewhere - PF-048.
+     *
+     * ## Why this is a rule and not a reading exercise
+     *
+     * An event class that nothing dispatches is a declaration that the
+     * ledger depends on something happening, with nothing happening. It
+     * passes every other rule in this file: it carries no models, it has no
+     * queued listener, it implements the marker. It is also inert, and the
+     * way that is discovered is somebody writing a listener for it and
+     * wondering for an afternoon why it never fires.
+     *
+     * Six of these were written in one sitting and wired in one at a time.
+     * This is the check that says which ones got wired.
+     *
+     * ## What counts as raising it
+     *
+     * `new Thing(` anywhere outside the event's own file and outside tests.
+     * Not `event(new Thing(` specifically: a service that builds the event
+     * and hands it to a dispatcher it was given is raising it, and matching
+     * the helper function would make the rule a style guide.
+     *
+     * @return list<string>
+     */
+    public function everyFinancialEventIsRaised(): array
+    {
+        $violations = [];
+        $sources = [];
+
+        foreach ($this->phpFiles('app') as $file) {
+            $sources[$file] = $this->withoutComments((string) file_get_contents($file));
+        }
+
+        foreach ($this->financialEventNames() as $name) {
+            $raisedIn = [];
+
+            foreach ($sources as $file => $source) {
+                if (str_ends_with($file, '/'.$name.'.php')) {
+                    continue;
+                }
+
+                /*
+                 | Qualified or imported, both count.
+                 |
+                 | The raise sites spell it `new \App\Tenant\...\BillPosted(`
+                 | because the service's import block is already long; a
+                 | literal `'new '.$name` matched none of them, and the
+                 | first version of this rule reported all six events as
+                 | unraised an hour after they were wired.
+                 */
+                if (preg_match('/\bnew\s+(?:\\\\?\w+\\\\)*'.preg_quote($name, '/').'\s*\(/', $source) === 1) {
+                    $raisedIn[] = $this->relative($file);
+                }
+            }
+
+            if ($raisedIn === []) {
+                $violations[] = sprintf(
+                    '%s implements FinancialEvent and nothing in app raises it. An event the ledger is '.
+                    'declared to depend on, that never fires, is found by whoever writes the first '.
+                    'listener for it',
+                    $name,
+                );
+            }
+        }
+
+        return $violations;
+    }
+
     private function withoutComments(string $source): string
     {
         $tokens = @token_get_all($source);

@@ -48,6 +48,7 @@ use Throwable;
 final class CreditNoteRules
 {
     use \Tests\Support\Concerns\IssuesInvoices;
+    use \Tests\Support\Concerns\CapturesEvents;
     use \Tests\Support\Concerns\ProvesTheLedger;
 
     /** @return array<string, list<string>> */
@@ -78,6 +79,7 @@ final class CreditNoteRules
                 'whoever issued the invoice cannot credit it' => fn (): array => $this->theDutyIsSeparated(),
                 'a credit note has its own series and its own chain' => fn (): array => $this->itsOwnChain(),
                 'the enforcement counter agrees with the documents' => fn (): array => $this->theCounterAgrees(),
+                'issuing a credit note raises CreditNoteIssued, and not InvoiceIssued' => fn (): array => $this->theEventIsRaised(),
             ]), $this->entityId);
         } finally {
             $this->connection->rollBack();
@@ -765,4 +767,96 @@ final class CreditNoteRules
 
         return $user;
     }
+    /**
+     * A credit note raises its own event, and not the invoice's - PF-048.
+     *
+     * ## The branch this guards
+     *
+     * `Issuer::issueNow()` ends in one ternary: credit note or not. The
+     * discriminator is the cast enum's `isCredit()`, and the first version
+     * called `isCreditNote()` on the model - a method that does not exist,
+     * which PHP reports only when the line runs, i.e. on the first issue
+     * after deployment, inside the transaction, rolling back a real
+     * document.
+     *
+     * Reading it the other way is worse than crashing: a listener that
+     * posts a sale, emails a sales invoice or adds to a revenue forecast
+     * would do all three for a document that REDUCES what the customer
+     * owes, and the entry would balance, so nothing would look wrong.
+     *
+     * So both halves are asserted - the right event once, and the wrong one
+     * not at all.
+     *
+     * @return list<string>
+     */
+    public function theEventIsRaised(): array
+    {
+        $violations = [];
+        $invoice = $this->issue();
+        $credit = null;
+
+        $issueTheCredit = function () use ($invoice, &$credit): void {
+            $credit = app(Issuer::class)->issue(
+                app(Crediting::class)->full($invoice, $this->date),
+                $this->entity(), $this->actorId(), $this->decision,
+            );
+        };
+
+        $caught = $this->captureEvents(\App\Tenant\Sales\Events\CreditNoteIssued::class, $issueTheCredit);
+
+        if (\count($caught) !== 1) {
+            return [sprintf(
+                'issuing a credit note raised CreditNoteIssued %d times, expected once',
+                \count($caught),
+            )];
+        }
+
+        $event = $caught[0];
+
+        if ($event->eventKey() !== 'sales.credit_note.issued') {
+            $violations[] = sprintf('its eventKey is "%s", and the audit entry reads that', $event->eventKey());
+        }
+
+        if ($credit !== null && $event->creditNoteId !== (string) $credit->getKey()) {
+            $violations[] = 'the event names a different document from the one issued';
+        }
+
+        /*
+         | The invoice it credits is ON the event.
+         |
+         | Without it a listener has the credit note and no way to find what
+         | it adjusts without reading `invoice_references` - which is Sales'
+         | table, and a listener in another module is not permitted to read
+         | it. A null here would make the event unusable for the one thing
+         | anybody wants a credit note event for.
+         */
+        if ($event->creditsInvoiceId !== (string) $invoice->getKey()) {
+            $violations[] = sprintf(
+                'the event says it credits "%s" and it credits %s. A listener cannot look that up: '.
+                'the reference lives in a Sales table it may not read',
+                (string) $event->creditsInvoiceId,
+                (string) $invoice->getKey(),
+            );
+        }
+
+        $second = $this->issue();
+        $strays = $this->captureEvents(
+            \App\Tenant\Sales\Events\InvoiceIssued::class,
+            function () use ($second): void {
+                app(Issuer::class)->issue(
+                    app(Crediting::class)->full($second, $this->date),
+                    $this->entity(), $this->actorId(), $this->decision,
+                );
+            },
+        );
+
+        if ($strays !== []) {
+            $violations[] = 'a credit note also raised InvoiceIssued, so a listener that posts a sale, '.
+                'emails a sales invoice or forecasts revenue does all three for a document that '.
+                'reduces what the customer owes';
+        }
+
+        return $violations;
+    }
+
 }

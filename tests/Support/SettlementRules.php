@@ -56,6 +56,8 @@ use Illuminate\Support\Str;
  */
 final class SettlementRules
 {
+    use \Tests\Support\Concerns\CapturesEvents;
+
     use \Tests\Support\Concerns\OpensBankAccounts;
     use \Tests\Support\Concerns\PreparesPaymentRuns;
     use \Tests\Support\Concerns\ProvesTheLedger;
@@ -224,6 +226,8 @@ final class SettlementRules
                 'a supplier statement reads the other side' => fn (): array => $this->supplierStatements(),
 
                 'for any sequence, the balance and the control agree' => fn (): array => $this->theProperty(),
+                'recording a payment raises PaymentRecorded, with the direction beside the amount' => fn (): array => $this->thePaymentEvent(),
+                'releasing a run raises PaymentRunReleased, carrying the net and a name' => fn (): array => $this->theRunEvent(),
             ]));
         } finally {
             $this->connection->rollBack();
@@ -7431,4 +7435,210 @@ final class SettlementRules
 
         return null;
     }
+    /**
+     * Recording a payment raises the event, once, for either direction - PF-048.
+     *
+     * ## One event, both directions
+     *
+     * Not `PaymentReceived` and `PaymentMade`, which is what the task sheet
+     * proposed. A listener that cares which way the cash went reads
+     * `direction`; a listener that cares only that cash moved - the bank
+     * matcher, the cash forecast, the audit stream - would otherwise have
+     * to subscribe twice and stay subscribed twice, and the second
+     * subscription is the one somebody forgets when a third direction
+     * arrives.
+     *
+     * So both directions are run through here, and the event is asserted to
+     * arrive for each with the direction on it.
+     *
+     * ## The amount is UNSIGNED, deliberately
+     *
+     * `Payments::record()` signs the figure once, for the posting. The
+     * event carries the amount as entered with the direction beside it,
+     * because a listener summing signed figures over a mixed set gets a
+     * number that means nothing - and a figure that means nothing is a
+     * figure somebody puts on a screen.
+     *
+     * @return list<string>
+     */
+    private function thePaymentEvent(): array
+    {
+        $violations = [];
+
+        foreach ([
+            ['direction' => PaymentDirection::Receipt, 'amount' => '310.0000'],
+            ['direction' => PaymentDirection::Disbursement, 'amount' => '275.0000'],
+        ] as $case) {
+            $result = null;
+            $direction = $case['direction'];
+            $amount = Money::of($case['amount'], 'SAR');
+
+            $caught = $this->captureEvents(
+                \App\Tenant\Settlement\Events\PaymentRecorded::class,
+                function () use ($direction, $amount, &$result): void {
+                    $result = app(Payments::class)->record(
+                        entityId: $this->entityId,
+                        direction: $direction,
+                        method: PaymentMethod::CreditTransfer,
+                        amount: $amount,
+                        valueDate: $this->date->copy(),
+                        userId: $this->actorId(),
+                        bankAccountId: (string) $this->bank()->getKey(),
+                    );
+                },
+            );
+
+            if (\count($caught) !== 1) {
+                $violations[] = sprintf(
+                    'a %s raised PaymentRecorded %d times, expected once',
+                    $direction->value,
+                    \count($caught),
+                );
+
+                continue;
+            }
+
+            $event = $caught[0];
+
+            if ($event->eventKey() !== 'settlement.payment.recorded') {
+                $violations[] = sprintf('its eventKey is "%s", and the audit entry reads that', $event->eventKey());
+            }
+
+            if ($event->direction !== $direction->value) {
+                $violations[] = sprintf(
+                    'a %s arrived as "%s", so a listener posts the cash the wrong way',
+                    $direction->value,
+                    $event->direction,
+                );
+            }
+
+            if ((string) $event->amount !== (string) $amount) {
+                $violations[] = sprintf(
+                    'a %s of %s arrived as %s. The sign is a posting decision, made once, in the '.
+                    'service - an event carrying a signed figure gives a listener two ways to say '.
+                    '"money out"',
+                    $direction->value,
+                    (string) $amount,
+                    (string) $event->amount,
+                );
+            }
+
+            if ($result !== null && $event->paymentId !== (string) $result['id']) {
+                $violations[] = 'the event names a different payment from the one recorded';
+            }
+
+            if ($result !== null && $event->number !== (string) $result['number']) {
+                $violations[] = 'the event carries a number the payment does not have';
+            }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * Releasing a run raises the event, with the net and a named releaser - PF-048.
+     *
+     * ## Why the net and not the gross
+     *
+     * The net is what the bank will move. The gross is what the
+     * instructions add up to before deductions, and a listener forecasting
+     * cash on the gross forecasts money that never leaves the account - in
+     * the direction that makes the balance look worse than it is, which is
+     * the direction nobody questions.
+     *
+     * ## Why the releaser is non-nullable on this one event
+     *
+     * Everywhere else a null user means "the system did it", and that is a
+     * legitimate answer. Here it is not: the two rules this method cannot
+     * be made to skip are both about WHO released, and an event permitting
+     * a null would be a route for a release with nobody's name on it to
+     * reach a listener that then reports it as authorised.
+     *
+     * Asserted as the SECOND actor, because the first prepared it - the
+     * maker-checker pair - so a release carrying the preparer's name would
+     * mean the event is reading the wrong column.
+     *
+     * @return list<string>
+     */
+    private function theRunEvent(): array
+    {
+        $violations = [];
+
+        /*
+         | This check brings its own payable.
+         |
+         | Each check here runs in its own savepoint, so whatever an earlier
+         | one made is rolled back by the time this one starts - and a
+         | `prepare()` with nothing to pay refuses rather than preparing an
+         | empty run, which is correct and made the first version of this
+         | check report a refusal instead of an event.
+         */
+        $supplier = $this->aPayableSupplier();
+        $this->anApprovedBill($supplier, '820.0000', '2026-05-18');
+
+        $run = app(PaymentRuns::class)->prepare(
+            entityId: $this->entityId,
+            bankAccountId: (string) $this->bank()->getKey(),
+            payOn: Carbon::parse('2026-05-19'),
+            userId: $this->actorId(),
+        );
+
+        $prepared = DB::connection('tenant')->table('payment_runs')->where('id', $run['id'])->first();
+
+        if ($prepared === null) {
+            return ['the run was not prepared, so this check is not reading what it thinks it is'];
+        }
+
+        $caught = $this->captureEvents(
+            \App\Tenant\Settlement\Events\PaymentRunReleased::class,
+            fn (): mixed => app(PaymentRuns::class)->release($run['id'], $this->secondActorId()),
+        );
+
+        if (\count($caught) !== 1) {
+            return [sprintf(
+                'releasing raised PaymentRunReleased %d times, expected once',
+                \count($caught),
+            )];
+        }
+
+        $event = $caught[0];
+
+        if ($event->eventKey() !== 'settlement.payment_run.released') {
+            $violations[] = sprintf('its eventKey is "%s", and the audit entry reads that', $event->eventKey());
+        }
+
+        if ($event->runId !== (string) $run['id']) {
+            $violations[] = 'the event names a different run from the one released';
+        }
+
+        if ($event->releasedBy !== $this->secondActorId()) {
+            $violations[] = sprintf(
+                'the event says %s released it and the releaser was %s. The pair that can never be '.
+                'overridden is about exactly this name',
+                $event->releasedBy,
+                $this->secondActorId(),
+            );
+        }
+
+        if ((string) $event->total !== (string) Money::of((string) $prepared->net_total, (string) $prepared->currency)) {
+            $violations[] = sprintf(
+                'the event carries %s and the run\'s net is %s %s. A forecast on the gross forecasts '.
+                'money that never leaves the account',
+                (string) $event->total,
+                (string) $prepared->net_total,
+                (string) $prepared->currency,
+            );
+        }
+
+        if ($event->itemCount !== (int) $prepared->instruction_count) {
+            $violations[] = sprintf(
+                'the event counts %d instructions and the run has %d',
+                $event->itemCount,
+                (int) $prepared->instruction_count,
+            );
+        }
+
+        return $violations;
+    }
+
 }

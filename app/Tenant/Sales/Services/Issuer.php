@@ -370,8 +370,69 @@ final class Issuer
                 entityId: (string) $entity->getKey(),
             );
 
-            return $draft->refresh();
+            $issued = $draft->refresh();
+
+            /*
+             | The event, inside the transaction - PF-048.
+             |
+             | A posting listener on this commits with the invoice or does
+             | not happen; a posting that is eventually consistent with the
+             | document that caused it is not a ledger. Anything that is
+             | not a posting is a `SideEffect`, queued, and cannot fail the
+             | issue - and the split is a build failure either way.
+             |
+             | A credit note and an invoice are different events rather
+             | than one with a type field, because a single event means
+             | every listener starts with a branch, and the first one
+             | written without it treats a credit as a sale.
+             */
+            $gross = \App\Support\Money\Money::of(
+                (string) $issued->gross_amount,
+                (string) $issued->currency,
+            );
+
+            $type = $issued->document_type instanceof \App\Tenant\Sales\Enums\DocumentType
+                ? $issued->document_type
+                : \App\Tenant\Sales\Enums\DocumentType::tryFrom((string) $issued->document_type);
+
+            event($type?->isCredit() === true
+                ? new \App\Tenant\Sales\Events\CreditNoteIssued(
+                    entityId: (string) $entity->getKey(),
+                    creditNoteId: (string) $issued->getKey(),
+                    number: (string) $issued->number,
+                    partyId: (string) $issued->party_id,
+                    gross: $gross,
+                    issuedOn: (string) $issued->issue_date?->toDateString(),
+                    creditsInvoiceId: $this->creditedInvoiceId($issued),
+                    byUserId: $userId,
+                )
+                : new \App\Tenant\Sales\Events\InvoiceIssued(
+                    entityId: (string) $entity->getKey(),
+                    invoiceId: (string) $issued->getKey(),
+                    number: (string) $issued->number,
+                    partyId: (string) $issued->party_id,
+                    gross: $gross,
+                    issuedOn: (string) $issued->issue_date?->toDateString(),
+                    byUserId: $userId,
+                ));
+
+            return $issued;
         });
+    }
+
+    /**
+     * The invoice a credit note names, if it names one.
+     *
+     * Null is a real answer: a goodwill credit with no invoice behind it
+     * is an ordinary document, not a missing reference.
+     */
+    private function creditedInvoiceId(Invoice $document): ?string
+    {
+        $reference = DB::connection('tenant')->table('invoice_references')
+            ->where('invoice_id', (string) $document->getKey())
+            ->value('referenced_invoice_id');
+
+        return $reference === null ? null : (string) $reference;
     }
 
     /**

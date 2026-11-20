@@ -652,6 +652,36 @@ final class PaymentRuns
                 entityId: (string) $run->entity_id,
             );
 
+            /*
+             | Money is leaving, and the releaser is named on the event - PF-048.
+             |
+             | `$releasedBy` is not nullable here, unlike every other event
+             | in the product. Everywhere else a null user means "the system
+             | did it" - a scheduled posting, an import - and that is a
+             | legitimate answer. On this path it is not: the two rules this
+             | method cannot be made to skip are both about WHO released,
+             | and an event that permitted a null would be a route for a
+             | release with nobody's name on it to reach a listener which
+             | then reports it as authorised.
+             |
+             | The total is the NET, which is what the bank will move. The
+             | gross is what the instructions add up to before deductions,
+             | and a listener forecasting cash on the gross forecasts money
+             | that never leaves the account.
+             */
+            event(new \App\Tenant\Settlement\Events\PaymentRunReleased(
+                entityId: (string) $run->entity_id,
+                runId: $runId,
+                reference: (string) $run->number,
+                total: \App\Support\Money\Money::of(
+                    (string) $run->net_total,
+                    (string) $run->currency,
+                ),
+                itemCount: (int) $run->instruction_count,
+                releasedBy: $userId,
+                payOn: (string) $run->pay_on,
+            ));
+
             return [
                 'id' => $runId,
                 'number' => (string) $run->number,

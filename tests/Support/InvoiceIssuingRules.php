@@ -49,6 +49,7 @@ use Throwable;
 final class InvoiceIssuingRules
 {
     use \Tests\Support\Concerns\IssuesInvoices;
+    use \Tests\Support\Concerns\CapturesEvents;
     use \Tests\Support\Concerns\ProvesTheLedger;
 
     /** @return array<string, list<string>> */
@@ -80,6 +81,7 @@ final class InvoiceIssuingRules
                 'a document removed from the middle of a series is caught' => fn (): array => $this->aGapIsCaught(),
                 'the chain claims consistency and not authorship' => fn (): array => $this->theChainDoesNotOverclaim(),
                 'issuing is audited' => fn (): array => $this->issuingIsAudited(),
+                'issuing raises InvoiceIssued, once, with the document on it' => fn (): array => $this->theEventIsRaised(),
             ]), $this->entityId);
         } finally {
             $this->connection->rollBack();
@@ -786,4 +788,81 @@ final class InvoiceIssuingRules
 
         return $code;
     }
+    /**
+     * Issuing raises the event, once, with the document on it - PF-048.
+     *
+     * ## Why this is a check and not a line in the docblock
+     *
+     * `Issuer::issueNow()` is a long transaction and the event is dispatched
+     * in its last few lines - after the posting, the chain link and the
+     * audit entry, which is the correct place and also the place an early
+     * `return` skips. There are several returns above it; each one is right,
+     * and the next one added will not know about this.
+     *
+     * The payload is asserted, not only the arrival. An event with the right
+     * class and a blank number is an event whose listener writes a blank
+     * number into a webhook.
+     *
+     * @return list<string>
+     */
+    private function theEventIsRaised(): array
+    {
+        $issued = null;
+
+        $caught = $this->captureEvents(
+            \App\Tenant\Sales\Events\InvoiceIssued::class,
+            function () use (&$issued): void {
+                $issued = $this->issue();
+            },
+        );
+
+        if (\count($caught) !== 1) {
+            return [sprintf(
+                'issuing raised InvoiceIssued %d times, expected once. Nothing raised is a '.
+                'declaration with no mechanism; twice makes every posting listener post twice',
+                \count($caught),
+            )];
+        }
+
+        $event = $caught[0];
+        $violations = [];
+
+        if (! $event instanceof \App\Support\Events\FinancialEvent) {
+            $violations[] = 'InvoiceIssued does not implement FinancialEvent, so nothing forces its '.
+                'posting to be synchronous';
+        } elseif ($event->eventKey() !== 'sales.invoice.issued') {
+            $violations[] = sprintf('its eventKey is "%s", and the audit entry reads that', $event->eventKey());
+        }
+
+        if ($issued !== null && $event->invoiceId !== (string) $issued->getKey()) {
+            $violations[] = sprintf(
+                'the event names document %s and the issued one is %s',
+                $event->invoiceId,
+                (string) $issued->getKey(),
+            );
+        }
+
+        if ($issued !== null && $event->number !== (string) $issued->number) {
+            $violations[] = sprintf(
+                'the event carries number "%s" and the document is "%s"',
+                $event->number,
+                (string) $issued->number,
+            );
+        }
+
+        if ($issued !== null && (string) $event->gross !== (string) \App\Support\Money\Money::of(
+            (string) $issued->gross_amount,
+            (string) $issued->currency,
+        )) {
+            $violations[] = sprintf(
+                'the event carries %s and the document is %s %s',
+                (string) $event->gross,
+                (string) $issued->gross_amount,
+                (string) $issued->currency,
+            );
+        }
+
+        return $violations;
+    }
+
 }

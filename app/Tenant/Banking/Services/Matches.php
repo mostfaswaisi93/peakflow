@@ -180,6 +180,39 @@ final class Matches
                     (string) $remainder->toPresentation(),
                 );
 
+            /*
+             | A bank line now points at a document, and that is announced - PF-048.
+             |
+             | `matchedType` crosses as a STRING, deliberately. An invoice,
+             | a bill, a payment and a payroll run can all be what a line
+             | matched, and an event typed to any of their models would make
+             | banking depend on four modules at once - which deptrac
+             | refuses, and rightly: the matcher's job is to say that a line
+             | and a document agree, not to know what the document is.
+             |
+             | Raised whether a person accepted it or the engine applied it
+             | automatically. A listener asking "was this reconciled" has the
+             | same answer either way, and `applied_automatically` is on the
+             | row for anybody who needs to tell them apart.
+             |
+             | The amount is the APPLIED figure, not the line's total: on a
+             | part-applied line those differ, and `$remainder` above says
+             | how much is still unexplained.
+             */
+            event(new \App\Tenant\Banking\Events\StatementLineMatched(
+                entityId: (string) $proposal->entity_id,
+                matchId: $matchId,
+                bankTransactionId: (string) $proposal->bank_transaction_id,
+                matchedType: (string) $proposal->matched_type,
+                matchedId: (string) $proposal->matched_id,
+                amount: \App\Support\Money\Money::of(
+                    (string) $proposal->amount,
+                    (string) $proposal->currency,
+                ),
+                bookingDate: $proposal->booking_date->toDateString(),
+                byUserId: $automatically ? null : $userId,
+            ));
+
             return [
                 'match_id' => $matchId,
                 'identifiers_learned' => $learned,
