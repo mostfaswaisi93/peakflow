@@ -39,6 +39,19 @@ final class TaxServiceProvider extends ServiceProvider
         $registry->register(new PurchaseTaxRule());
 
         /*
+         | The VAT controls are part of the global proof - PF-054.
+         |
+         | `TaxReconciler` has compared them to the return since PF-088 and
+         | somebody had to open a screen to see the answer. Registered here
+         | so the question is asked on every `ledger:verify` instead - the
+         | difference between a report and a control is whether anybody has
+         | to remember to look.
+         */
+        $this->app->make(\App\Support\Verification\LedgerChecks::class)->register(
+            $this->app->make(\App\Tenant\Tax\Verification\TaxControlsTieToTheirReturns::class),
+        );
+
+        /*
          | Both sides of a reverse charge, in one rule.
          |
          | One rule rather than two because the two legs are not independently
