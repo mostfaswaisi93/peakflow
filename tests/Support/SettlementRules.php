@@ -228,6 +228,9 @@ final class SettlementRules
                 'for any sequence, the balance and the control agree' => fn (): array => $this->theProperty(),
                 'recording a payment raises PaymentRecorded, with the direction beside the amount' => fn (): array => $this->thePaymentEvent(),
                 'releasing a run raises PaymentRunReleased, carrying the net and a name' => fn (): array => $this->theRunEvent(),
+                'an invoice closes in full against short cash and a certificate' => fn (): array => $this->withholdingClosesTheInvoice(),
+                'and refuses when no rate is configured, which is not a rate of zero' => fn (): array => $this->noRateIsNotZero(),
+                'and refuses when the open balance is not what the rate withholds' => fn (): array => $this->theFigureMustAgree(),
             ]));
         } finally {
             $this->connection->rollBack();
@@ -7639,6 +7642,332 @@ final class SettlementRules
         }
 
         return $violations;
+    }
+
+    /**
+     * An invoice total that does not equal the cash received is CORRECT - PF-083, PF-120.
+     *
+     * ## What this closes
+     *
+     * The last open criterion of PF-083, and the note PF-120 carried: the
+     * allocation path had no way to say that a 1,050 receipt settles a
+     * 1,150 invoice in full when the customer withheld 100. It allocated
+     * 1,050, left 100 open, and the 100 was indistinguishable from a
+     * customer who paid short - so the ageing counted it and the
+     * collections report chased somebody who had paid everything they owed.
+     *
+     * ## The three assertions, each for a different wrong answer
+     *
+     * The open balance reaches **zero**, because the document is settled.
+     * The withholding receivable carries the **100**, because the shortfall
+     * is an asset the certificate makes claimable - writing it off would
+     * close the invoice and destroy the credit. And a **certificate exists**
+     * with that figure on it, because an asset nobody can claim is a
+     * write-off wearing the wrong label.
+     *
+     * @return list<string>
+     */
+    private function withholdingClosesTheInvoice(): array
+    {
+        $violations = [];
+        $invoice = $this->issue();
+        $party = (string) $invoice->party_id;
+        $gross = Money::of((string) $invoice->gross_amount, 'SAR');
+
+        $this->aWithholdingRate('10.000000', 'net', $party);
+
+        /*
+         | The customer transfers the gross less the deduction.
+         |
+         | 1,150 invoiced, 10% of the 1,000 net withheld, so 1,050 arrives.
+         | Allocated in full: the receipt is not short, it is the whole of
+         | what the customer had to transfer.
+         */
+        $withheldByThem = Money::of('100.0000', 'SAR');
+        $transferred = $gross->minus($withheldByThem);
+        $payment = $this->receipt((string) $transferred->amount, $party);
+
+        app(Allocations::class)->allocate(
+            paymentId: (string) $payment['id'],
+            documentType: 'invoice',
+            documentId: (string) $invoice->getKey(),
+            amount: $transferred,
+            userId: $this->actorId(),
+            on: $this->date->copy(),
+        );
+
+        $open = app(Allocations::class)->openBalance('invoice', (string) $invoice->getKey(), 'SAR');
+
+        if (! $open->equals($withheldByThem)) {
+            return [sprintf(
+                'after allocating the transfer, %s is open and the deduction is %s, so this check '.
+                'is not reading what it thinks it is',
+                (string) $open->toPresentation(),
+                (string) $withheldByThem->toPresentation(),
+            )];
+        }
+
+        $before = $this->balanceOf(ControlRole::WithholdingReceivable);
+
+        $result = app(Allocations::class)->closeWithholding(
+            documentType: 'invoice',
+            documentId: (string) $invoice->getKey(),
+            entityId: $this->entityId,
+            userId: $this->actorId(),
+            partyId: $party,
+            on: $this->date->copy(),
+        );
+
+        $after = app(Allocations::class)->openBalance('invoice', (string) $invoice->getKey(), 'SAR');
+
+        if (! $after->isZero()) {
+            $violations[] = sprintf(
+                '%s is still open on the invoice. An invoice total that does not equal the cash '.
+                'received is correct when withholding applies, and a part-open document is chased '.
+                'by the collections report',
+                (string) $after->toPresentation(),
+            );
+        }
+
+        $credit = $this->balanceOf(ControlRole::WithholdingReceivable)->minus($before);
+
+        if (! $credit->equals($withheldByThem)) {
+            $violations[] = sprintf(
+                'the withholding receivable moved by %s rather than %s. The shortfall is an asset '.
+                'because the certificate makes it claimable; anywhere else and the credit is '.
+                'destroyed while the certificate sits in a drawer',
+                (string) $credit->toPresentation(),
+                (string) $withheldByThem->toPresentation(),
+            );
+        }
+
+        $certificate = DB::connection('tenant')->table('withholding_certificates')
+            ->where('number', (string) $result['certificate_number'])
+            ->first();
+
+        if ($certificate === null) {
+            $violations[] = 'no certificate was written, so the entry turned an uncollected '.
+                'receivable into an asset nobody can claim';
+        } else {
+            if (! Money::of((string) $certificate->withheld_amount, 'SAR')->equals($withheldByThem)) {
+                $violations[] = sprintf(
+                    'the certificate says %s was withheld and the entry relieved %s. The payee '.
+                    'claims against the certificate, so the two disagreeing is a claim the '.
+                    'authority will not match',
+                    (string) $certificate->withheld_amount,
+                    (string) $withheldByThem->amount,
+                );
+            }
+
+            /*
+             | The period is the DEDUCTION's, not the invoice's.
+             |
+             | An invoice raised in March and settled in May produces a May
+             | certificate: reporting it in March gives the payee a credit
+             | the authority will not match.
+             */
+            if ((string) $certificate->period !== $this->date->format('Y-m')) {
+                $violations[] = sprintf(
+                    'the certificate is reported in %s and the deduction was made in %s',
+                    (string) $certificate->period,
+                    $this->date->format('Y-m'),
+                );
+            }
+        }
+
+        /*
+         | The certificate number is IN the ledger.
+         |
+         | It is what somebody looks for when the authority queries the
+         | claim, and a journal entry that cannot be found by it leaves them
+         | reading dates and amounts.
+         */
+        $narrations = DB::connection('tenant')->table('journal_lines')
+            ->where('journal_entry_id', (string) $result['journal_entry_id'])
+            ->pluck('narration')
+            ->filter()
+            ->implode(' ');
+
+        if (! str_contains($narrations, (string) $result['certificate_number'])) {
+            $violations[] = 'the certificate number is nowhere on the entry, so when the authority '.
+                'queries the claim there is nothing in the ledger to look it up by';
+        }
+
+        return $violations;
+    }
+
+    /**
+     * No rate configured is not a rate of zero - PF-083.
+     *
+     * The distinction `Withholding::rateFor()` makes, kept across the port
+     * rather than collapsed into a zero. A payer that withheld nothing
+     * because nobody set a rate up is liable for what it should have
+     * withheld, and closing the document here would hide that behind a
+     * settled invoice - which is the version nobody discovers until an
+     * assessment arrives.
+     *
+     * @return list<string>
+     */
+    private function noRateIsNotZero(): array
+    {
+        $invoice = $this->issue();
+        $party = (string) $invoice->party_id;
+        $gross = Money::of((string) $invoice->gross_amount, 'SAR');
+
+        $payment = $this->receipt((string) $gross->minus(Money::of('100.0000', 'SAR'))->amount, $party);
+
+        app(Allocations::class)->allocate(
+            paymentId: (string) $payment['id'],
+            documentType: 'invoice',
+            documentId: (string) $invoice->getKey(),
+            amount: $gross->minus(Money::of('100.0000', 'SAR')),
+            userId: $this->actorId(),
+            on: $this->date->copy(),
+        );
+
+        $refusal = $this->refusal(fn (): array => app(Allocations::class)->closeWithholding(
+            documentType: 'invoice',
+            documentId: (string) $invoice->getKey(),
+            entityId: $this->entityId,
+            userId: $this->actorId(),
+            partyId: $party,
+            on: $this->date->copy(),
+        ));
+
+        if ($refusal === null) {
+            return ['a document was closed against a withholding deduction with no rate configured, '.
+                'so a shortfall nobody can explain became a tax credit'];
+        }
+
+        return str_contains($refusal, 'not a rate of zero')
+            ? []
+            : [sprintf(
+                'the refusal does not say that no rate is not a rate of zero, which is the whole '.
+                'distinction: %s',
+                $refusal,
+            )];
+    }
+
+    /**
+     * The open balance has to BE the deduction - PF-083.
+     *
+     * ## Why this is the check that matters most here
+     *
+     * Everything else about this path is arithmetic that can be read. This
+     * one is the gate: without it, `closeWithholding()` is a transfer from
+     * the receivable to an asset account for whatever happens to be open,
+     * which is a route to turning an uncollectible balance into a tax
+     * credit. The entry balances, the invoice closes, and the only trace is
+     * a certificate for a deduction the customer never made.
+     *
+     * Both directions are refused. More open than the rate withholds means
+     * something else is outstanding - a short payment, or a credit note
+     * nobody raised. Less means part of the deduction has already been
+     * relieved, and relieving it again would claim the credit twice.
+     *
+     * @return list<string>
+     */
+    private function theFigureMustAgree(): array
+    {
+        $violations = [];
+        $invoice = $this->issue();
+        $party = (string) $invoice->party_id;
+
+        $this->aWithholdingRate('10.000000', 'net', $party);
+
+        /*
+         | Nothing allocated at all, so the whole 1,150 is open and the rate
+         | withholds 100 of it.
+         */
+        $refusal = $this->refusal(fn (): array => app(Allocations::class)->closeWithholding(
+            documentType: 'invoice',
+            documentId: (string) $invoice->getKey(),
+            entityId: $this->entityId,
+            userId: $this->actorId(),
+            partyId: $party,
+            on: $this->date->copy(),
+        ));
+
+        if ($refusal === null) {
+            $violations[] = 'a whole invoice was closed against a deduction of a tenth of it, so '.
+                '1,050 of uncollected receivable became a tax credit';
+        } elseif (! str_contains($refusal, 'short payment')) {
+            $violations[] = sprintf(
+                'the refusal does not say what more-open-than-withheld actually means: %s',
+                $refusal,
+            );
+        }
+
+        /*
+         | And the other direction: settled in full, nothing open.
+         */
+        $second = $this->issue();
+        $secondParty = (string) $second->party_id;
+        $this->aWithholdingRate('10.000000', 'net', $secondParty);
+        $full = Money::of((string) $second->gross_amount, 'SAR');
+        $payment = $this->receipt((string) $full->amount, $secondParty);
+
+        app(Allocations::class)->allocate(
+            paymentId: (string) $payment['id'],
+            documentType: 'invoice',
+            documentId: (string) $second->getKey(),
+            amount: $full,
+            userId: $this->actorId(),
+            on: $this->date->copy(),
+        );
+
+        $settled = $this->refusal(fn (): array => app(Allocations::class)->closeWithholding(
+            documentType: 'invoice',
+            documentId: (string) $second->getKey(),
+            entityId: $this->entityId,
+            userId: $this->actorId(),
+            partyId: $secondParty,
+            on: $this->date->copy(),
+        ));
+
+        if ($settled === null) {
+            $violations[] = 'a document that was paid in full was relieved against a withholding '.
+                'certificate, which creates a tax credit out of an invoice nobody withheld from';
+        }
+
+        return $violations;
+    }
+
+    /** A rate row, which is Tax's table and inserted here because the port reads it. */
+    private function aWithholdingRate(string $rate, string $base, ?string $partyId = null): string
+    {
+        $id = (string) Str::ulid();
+
+        /*
+         | Replaced rather than added.
+         |
+         | The exclusion constraint refuses two rows covering one party,
+         | jurisdiction and period - which is the constraint doing its job:
+         | two rates for one payer on one date is a figure with two answers.
+         | The fixture has one customer, so a second check asking for a rate
+         | is asking for the same row.
+         */
+        DB::connection('tenant')->table('withholding_rates')
+            ->where('entity_id', $this->entityId)
+            ->where('jurisdiction', 'SA')
+            ->where('party_id', $partyId)
+            ->delete();
+
+        DB::connection('tenant')->table('withholding_rates')->insert([
+            'id' => $id,
+            'entity_id' => $this->entityId,
+            'jurisdiction' => 'SA',
+            'party_id' => $partyId,
+            'item_type' => null,
+            'rate' => $rate,
+            'base' => $base,
+            'source' => 'fixture: PF-083 settlement path',
+            'validity' => '[2020-01-01,)',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $id;
     }
 
 }

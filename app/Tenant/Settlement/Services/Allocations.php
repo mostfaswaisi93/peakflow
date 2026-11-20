@@ -55,6 +55,18 @@ final class Allocations
         private readonly Poster $poster,
         private readonly Reverser $reverser,
         private readonly \App\Tenant\Banking\Services\Differences $differences,
+        /*
+         | Tax's answer, through a port - PF-083.
+         |
+         | Not `Tax\Services\Withholding`. The layering ruleset does not
+         | let Settlement depend on Tax, and that rule is right: the module
+         | that moves money has no business deciding treatments, and a
+         | jurisdiction's rate changing must not be a change in the
+         | allocation path. So Settlement names a contract in `Support` and
+         | Tax supplies it - the mirror of `CounterpartyRegistrations`,
+         | which Tax declares and Sales supplies.
+         */
+        private readonly \App\Support\Withholding\WithheldAtSettlement $withholding,
     ) {}
 
     /**
@@ -388,6 +400,331 @@ final class Allocations
         $atDocument = $rates['document']->convert($amount, $policy);
 
         return $atPayment->amount->minus($atDocument->amount);
+    }
+
+    /**
+     * Close what the payer withheld, against the certificate - PF-083, PF-120.
+     *
+     * ## The criterion this exists for
+     *
+     * **An invoice total that does not equal the cash received is correct
+     * when withholding applies**, and until now the allocation path had no
+     * way to say so. A 900 receipt against a 1,000 invoice allocated 900
+     * and left 100 open, and the 100 was indistinguishable from a customer
+     * who paid short.
+     *
+     * The three things somebody does with that 100 are all wrong:
+     *
+     * - **Leave it.** The invoice is part-open for ever, the ageing counts
+     *   it, and the collections report chases a customer who paid
+     *   everything it owed - which is the version that damages a
+     *   relationship rather than the books.
+     * - **Write it off.** The invoice closes and the credit is destroyed:
+     *   the certificate is in a drawer, the money is gone from the books,
+     *   and nobody claims it. `closeRounding()` is right next to this and
+     *   would do exactly that, under a label that reads like housekeeping.
+     * - **Net it off the invoice.** Then the receivable and the VAT base
+     *   both understate by the deduction, which is the defect PF-083's
+     *   first criterion is arranged to make impossible.
+     *
+     * What is correct is that the shortfall is an **asset**: the
+     * certificate makes it claimable against our own liability. So the
+     * receivable is relieved in full and the credit is recognised, in one
+     * transaction with the certificate that makes it claimable.
+     *
+     * ## The amount is ASSERTED, not taken
+     *
+     * The caller says what is open and this recomputes what the rate makes
+     * of it, and refuses if the two differ. A caller passing the figure
+     * would make this a transfer from the receivable to an asset account
+     * for any amount anybody typed, which is a route to turning an
+     * uncollectible balance into a tax credit - and the entry balances.
+     *
+     * ## And no rate is not a rate of zero
+     *
+     * A null from the port means nobody configured one, which is a
+     * refusal: a payer that withheld nothing because of it is liable for
+     * what it should have withheld, and closing the document here would
+     * hide the omission behind a settled invoice.
+     *
+     * @return array<string, mixed>
+     *
+     * @throws PaymentRefused
+     */
+    public function closeWithholding(
+        string $documentType,
+        string $documentId,
+        string $entityId,
+        string $userId,
+        string $partyId,
+        ?Carbon $on = null,
+        ?string $paymentReference = null,
+        ?string $itemType = null,
+    ): array {
+        $entity = Entity::query()->findOrFail($entityId);
+        $currency = (string) $entity->functional_currency;
+        $settledOn = $on ?? Carbon::now();
+
+        $open = $this->openBalance($documentType, $documentId, $currency);
+
+        if (! $open->isPositive()) {
+            throw PaymentRefused::because(
+                'This document has nothing left on it, so there is nothing a deduction could have '.
+                'held back. Relieving a settled document against a withholding certificate would '.
+                'create a tax credit out of an invoice that was paid in full.',
+            );
+        }
+
+        $base = $this->documentBase($documentType, $documentId, $currency);
+
+        $withheld = $this->withholding->on(
+            $entityId,
+            $partyId,
+            $base['net'],
+            $base['tax'],
+            $settledOn,
+            $itemType,
+        );
+
+        if ($withheld === null) {
+            throw PaymentRefused::because(sprintf(
+                'No withholding rate is configured for this party on %s, and no rate is not a rate '.
+                'of zero: a payer that withheld nothing because nobody set one up is liable for '.
+                'what it should have withheld. Closing the %s here would hide that behind a '.
+                'settled document. Record the rate - a zero one is how an exemption is kept, dated '.
+                'and sourced - or close the remainder as what it actually is.',
+                $settledOn->toDateString(),
+                $documentType,
+            ));
+        }
+
+        if ($withheld->isZero()) {
+            throw PaymentRefused::because(
+                'The configured rate is zero, which is an exemption: nothing was withheld, so the '.
+                'remainder on this document is not a deduction and a certificate for it would tell '.
+                'the payee it may claim nothing.',
+            );
+        }
+
+        if (! $withheld->withheld->equals($open)) {
+            throw PaymentRefused::because(sprintf(
+                'The rate withholds %s from this document and %s is open on it. The two have to '.
+                'agree: relieving a receivable against a certificate for a figure the rate does '.
+                'not produce turns whatever else is outstanding into a tax credit, and the entry '.
+                'balances either way. %s',
+                (string) $withheld->withheld->toPresentation(),
+                (string) $open->toPresentation(),
+                $withheld->withheld->isGreaterThan($open)
+                    ? 'Part of the deduction has already been relieved.'
+                    : 'Something other than the deduction is outstanding - a short payment, or a '.
+                        'credit note nobody raised.',
+            ));
+        }
+
+        return DB::connection('tenant')->transaction(function () use (
+            $documentType, $documentId, $entityId, $entity, $userId, $partyId,
+            $settledOn, $withheld, $paymentReference, $open,
+        ): array {
+            /*
+             | The certificate FIRST, inside the transaction.
+             |
+             | Its number goes into the narration of the entry, so the
+             | ledger line can be looked up by it when the authority
+             | queries the claim. The order matters for the failure case
+             | rather than for the happy one: a posting that succeeded
+             | with a certificate that then failed would leave an asset
+             | nobody can claim, and the asset is the whole justification
+             | for the entry.
+             */
+            $number = $this->withholding->certify(
+                $entityId,
+                $partyId,
+                $withheld,
+                $settledOn,
+                $paymentReference ?? sprintf('%s %s', $documentType, $documentId),
+            );
+
+            $entry = $this->poster->post(
+                entity: $entity,
+                ruleKey: $this->withholding->postingRuleKey($documentType),
+                event: [
+                    'withheld_amount' => (string) $withheld->withheld->amount,
+                    'party_id' => $partyId,
+                    'certificate_number' => $number,
+                    'narration' => sprintf(
+                        'Withheld %s at %s%% on %s',
+                        (string) $withheld->withheld->toPresentation(),
+                        $withheld->ratePercent,
+                        $documentType,
+                    ),
+                ],
+                accountingDate: $settledOn,
+                /*
+                 | The general journal, not the cash one.
+                 |
+                 | `allocate()` posts to `CSH` because an allocation moves
+                 | money out of unapplied cash. This entry has no cash leg
+                 | at all - the money arrived and was allocated already -
+                 | so putting it in the cash journal would leave whoever
+                 | reconciles that journal with an entry that moved no
+                 | cash, and the chart templates define no tax journal to
+                 | put it in instead.
+                 */
+                journalCode: 'GEN',
+                sourceType: $documentType,
+                sourceId: $documentId,
+                narration: sprintf('Withholding certificate %s', $number),
+            );
+
+            /*
+             | The join the open balance reads - PF-120.
+             |
+             | `withholding_certificates.payment_reference` is free text,
+             | which is what PF-120's note said it was: a certificate that
+             | names its document in prose cannot be joined to, so nothing
+             | could answer "how much of this invoice was relieved by
+             | withholding" - and that is the question the open balance has
+             | to ask before it can report the document settled.
+             |
+             | Written after the posting and in the same transaction, so a
+             | relief that exists always names an entry that exists. A row
+             | here with no entry would close the document in every report
+             | and in none of the books.
+             */
+            DB::connection('tenant')->table('withholding_reliefs')->insert([
+                'id' => (string) Str::ulid(),
+                'entity_id' => $entityId,
+                'document_type' => $documentType,
+                'document_id' => $documentId,
+                'certificate_id' => $this->certificateIdOf($entityId, $number),
+                'journal_entry_id' => (string) $entry->getKey(),
+                'amount' => (string) $withheld->withheld->amount,
+                'currency' => $withheld->withheld->currency,
+                'party_id' => $partyId,
+                'relieved_on' => $settledOn->toDateString(),
+                'relieved_by' => $userId,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            $this->audit->record(
+                category: 'settlement',
+                action: 'allocation.withholding_closed',
+                subjectType: $documentType,
+                subjectId: $documentId,
+                subjectLabel: $number,
+                after: [
+                    'withheld' => (string) $withheld->withheld,
+                    'rate' => $withheld->ratePercent,
+                    'jurisdiction' => $withheld->jurisdiction,
+                    'certificate_number' => $number,
+                    'journal_entry_id' => (string) $entry->getKey(),
+                ],
+                reason: sprintf('Closed against withholding certificate %s', $number),
+                entityId: $entityId,
+                partyId: $partyId,
+            );
+
+            $remaining = $this->openBalance($documentType, $documentId, (string) $entity->functional_currency);
+
+            return [
+                'certificate_number' => $number,
+                'withheld' => $withheld->withheld,
+                'journal_entry_id' => (string) $entry->getKey(),
+                'open_balance' => $remaining,
+                'why' => sprintf(
+                    '%s was withheld at %s%% and certificate %s records it. The %s is closed in '.
+                    'full - the cash received was less than its total, and that is correct - and '.
+                    'the %s sits as a credit claimable against our own liability rather than as a '.
+                    'balance somebody chases.',
+                    (string) $withheld->withheld->toPresentation(),
+                    $withheld->ratePercent,
+                    $number,
+                    $documentType,
+                    (string) $open->toPresentation(),
+                ),
+            ];
+        });
+    }
+
+    /**
+     * The id of the certificate the port just wrote, by its number.
+     *
+     * The port returns the number rather than the id, because a number is
+     * what a person reads and what the authority quotes, and handing back a
+     * `char(26)` would make the caller depend on Tax's primary keys. The
+     * relief row needs the key, so it is looked up here - inside the same
+     * transaction, against the entity, so the number cannot resolve to
+     * another company's certificate.
+     */
+    private function certificateIdOf(string $entityId, string $number): string
+    {
+        $id = DB::connection('tenant')->table('withholding_certificates')
+            ->where('entity_id', $entityId)
+            ->where('number', $number)
+            ->value('id');
+
+        if ($id === null) {
+            throw PaymentRefused::because(sprintf(
+                'Certificate %s was reported as written and cannot be found, so the relief has '.
+                'nothing to point at. The document would close against a certificate nobody can '.
+                'produce.',
+                $number,
+            ));
+        }
+
+        return (string) $id;
+    }
+
+    /**
+     * The document's net and its tax, which is what a rate is applied to.
+     *
+     * Read from the document rather than from what is open, because the base
+     * is the regime's choice between the net and the gross and both of those
+     * are properties of the document. Applying a rate to a remaining balance
+     * would make the deduction depend on how much had already been paid.
+     *
+     * @return array{net: Money, tax: Money}
+     */
+    private function documentBase(string $documentType, string $documentId, string $currency): array
+    {
+        $table = match ($documentType) {
+            'invoice' => 'invoices',
+            'bill' => 'bills',
+            default => throw PaymentRefused::because(sprintf(
+                'A withholding deduction is taken from a document with a net and a tax amount, and '.
+                '"%s" is not one of those. Guessing the base from an open balance would make the '.
+                'deduction depend on how much had already been paid.',
+                $documentType,
+            )),
+        };
+
+        $row = DB::connection('tenant')->table($table)
+            ->where('id', $documentId)
+            ->first(['net_amount', 'tax_amount', 'currency']);
+
+        if ($row === null) {
+            throw PaymentRefused::because(sprintf(
+                'There is no %s with that id, so there is no base to apply a rate to.',
+                $documentType,
+            ));
+        }
+
+        if ((string) $row->currency !== $currency) {
+            throw PaymentRefused::because(sprintf(
+                'This %s is in %s and the entity accounts in %s. A deduction on a foreign-currency '.
+                'document is withheld in the currency the authority is paid in, which is a '.
+                'conversion with a date on it rather than a figure this path can derive.',
+                $documentType,
+                (string) $row->currency,
+                $currency,
+            ));
+        }
+
+        return [
+            'net' => Money::of((string) $row->net_amount, $currency),
+            'tax' => Money::of((string) $row->tax_amount, $currency),
+        ];
     }
 
     /**

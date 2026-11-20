@@ -11,6 +11,7 @@ use App\Tenant\Tax\Posting\Rules\PurchaseTaxRule;
 use App\Tenant\Tax\Posting\Rules\ReverseChargeSelfAssessmentRule;
 use App\Tenant\Tax\Posting\Rules\SalesTaxRule;
 use App\Tenant\Tax\Posting\Rules\WithholdingOnPaymentRule;
+use App\Tenant\Tax\Posting\Rules\WithholdingAtSettlementRule;
 use App\Tenant\Tax\Posting\Rules\WithholdingOnReceiptRule;
 use Illuminate\Support\ServiceProvider;
 
@@ -66,6 +67,16 @@ final class TaxServiceProvider extends ServiceProvider
         $registry->register(new WithholdingOnReceiptRule());
 
         /*
+         | And the two-leg relief the allocation path needs - PF-083, PF-120.
+         |
+         | A third withholding rule rather than a parameter on the second,
+         | because the cash has already moved by the time the allocation
+         | path reaches it: the three-leg rule would debit the bank a
+         | second time for money that arrived once.
+         */
+        $registry->register(new WithholdingAtSettlementRule());
+
+        /*
          | And the reason a period might not close - PF-088.
          |
          | Registered into a registry in `Support` that the ledger consults,
@@ -76,6 +87,24 @@ final class TaxServiceProvider extends ServiceProvider
          */
         $this->app->make(ClosingChecks::class)->register(
             $this->app->make(TaxReconciliationCheck::class),
+        );
+    }
+
+    public function register(): void
+    {
+        /*
+         | Settlement's port, answered here - PF-083.
+         |
+         | Bound in this provider and not Settlement's, for the same reason
+         | the posting rules are: the implementation is Tax's and the
+         | contract is in `Support`, so this direction is the one the
+         | layering ruleset permits. Binding it from `SettlementServiceProvider`
+         | would make the module that moves money import the module that
+         | decides treatments, through a door deptrac does not watch.
+         */
+        $this->app->bind(
+            \App\Support\Withholding\WithheldAtSettlement::class,
+            \App\Tenant\Tax\Services\WithholdingAtSettlement::class,
         );
     }
 }

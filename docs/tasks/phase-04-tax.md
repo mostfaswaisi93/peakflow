@@ -23,36 +23,6 @@ The engine's organising principle is that **tax is data, not code**. A rate that
 
 > The open criterion is a panel on an invoice, and invoices arrive in Phase 05. `PlaceOfSupplyDecision::explain()` already returns the sentence it will show, in Arabic and English, and the decision is `JsonSerializable` so the reasoning can be frozen onto the document rather than recomputed from party records that will have changed by the time anybody looks.
 
-### PF-079 · Reverse charge
-`Tax` · **3 pts** · depends: PF-078 · standards: UNCL 5305 (`AE`), EN 16931 · `type:compliance`
-
-- [x] Modelled as the `AE` category, which reverses who accounts for the tax - not as a zero rate with a comment. `AE` and `Z` both leave the tax column empty, which is exactly why they get conflated, and the check asserts the four-way matrix for both from the code list rather than from the enum
-- [x] The invoice carries no tax amount and a **mandatory legal note**, whose text is per jurisdiction. Six profiles, Arabic and English, each with the article it comes from. A profile with no note **refuses**: the fallback prints a document missing a mandatory legal mention and looks complete
-- [ ] The recipient self-assesses: `Purchasing` posts both the input and the output tax on the bill, which is the half most systems forget
-- [x] Requires both parties to have a valid registration; issuing reverse-charge without one is refused - and valid **on the tax point**, not today. A document raised in May for a supply in March is judged on March, and a registration that lapsed in April was valid then
-- [x] `party_tax_registrations` had an identifier and nothing about when it was the customer's identifier, so it gained a half-open `daterange` with an exclusion constraint over `(party_id, jurisdiction, scheme)` - deliberately **not** including the identifier, because a renumbered business has two identifiers in the same jurisdiction whose periods must not overlap
-- [x] A refusal tells **no registration** apart from **one that had lapsed**, with the date it stopped applying. The two send somebody to different places - the customer record, or the customer - and a refusal that cannot distinguish them gets resolved by typing a number in
-- [x] Found on the way: `Entity::primaryTaxRegistration()` answers for **today**, while its own docblock says an invoice issued last year must carry the number that was current when it was issued. `now()` cannot answer that, so `taxRegistrationOn()` takes the date. The bite - looking the customer up as at today - was accepted silently: the number is on the record, it is current, and it was not theirs when the supply happened
-- [x] Found on the way: the layer rules refused the first version outright. Tax may not depend on `Parties`, which is right - a module that reaches into another's models decides treatments from whatever happens to be on a record. Tax now declares `CounterpartyRegistrations` and `Sales\Services\CounterpartyRegistrationReader` supplies it, which is the first file in the Sales module and deliberately the smallest possible one
-- [x] Found on the way: the citation check failed on my own data - the Jordanian note cited a law and no article. The fix was **not** to invent one. A guessed article reads as checked and is the first thing an auditor looks up, so two sources are marked `article unverified here`, the same stance `database/iso/provenance.json` takes, and the check accepts a citation or that marker
-
-> The open criterion is the purchasing half, which is Phase 07: posting both the input and the output tax on the bill is what makes a reverse charge net to nothing for a fully recoverable customer and cost money for one that is partly exempt. The sell-side gate, the note and the registration checks are here.
-
-### PF-083 · Withholding tax
-`Tax` · **5 pts** · depends: PF-082 · standards: — · `type:compliance`
-
-- [x] Withholding is deducted by the **payer from the payment**, not from the invoice - so it lives in the settlement path, not in the document total. Asserted architecturally: a check reads the source of `TaxCalculator`, `TaxBreakdown`, `TaxBreakdownEntry` and `TaxableLine` and refuses any mention of withholding. The moment a document total can see it, somebody puts it on an invoice - and an invoice that nets it off understates the receivable and the VAT base at once
-- [x] A rate per party, per item type and per jurisdiction, effective-dated. Resolved by **specificity**, and a party-specific row beats an item-specific one: a party row is normally a treaty rate or an exemption certificate, and the reverse ordering would withhold 20% from a supplier holding a certificate that says 5%
-- [ ] An invoice total that does not equal the cash received is **correct** when withholding applies, and the allocation logic must handle it rather than treating the shortfall as a short payment
-- [x] A withholding certificate is generated and tracked, because the payee needs it to claim the credit. Numbered from the series, and its **period is the deduction's**: an invoice raised in March and paid in May produces a May certificate, and reporting it in March gives the payee a credit the authority will not match
-- [x] Its own reporting, separate from VAT. `totalsFor()` reads the certificates - not the ledger, which holds the posting, and not a VAT accumulator, which is right only where the two filing cycles happen to coincide. Void certificates drop out, because the payee cannot claim against one
-- [x] **No rate configured is not a rate of zero.** `rateFor()` returns null for a jurisdiction nobody has set up; a zero rate is how an exemption is recorded, dated and sourced. A payer that withholds nothing because of the first is liable for what it should have withheld, and `deduct()` takes a rate rather than looking one up so a caller cannot skip the distinction
-- [x] The **base** is the regime's choice - the net or the gross - and the difference is the whole VAT amount rather than a rounding difference: 1,000 net with 150 of VAT at 10% is 100 withheld on the net and 115 on the gross
-- [x] The overlap constraint uses `COALESCE(party_id::text, '-')` rather than the nullable columns: `NULL` is not equal to `NULL` under `=`, so an exclusion over them directly would let two "any party, any item" rows cover the same dates. The cast to text avoids `char(26)`'s blank padding making the sentinel a different value from itself. A successor that **abuts** the predecessor is accepted, because a constraint that made a rate change impossible is a constraint somebody drops
-- [x] A certificate for a deduction of zero is **refused**: it tells the payee it may claim nothing, which it can work out without a document, and an exemption belongs on the rate table
-
-> The open criterion is the allocation path, which is PF-120 in Phase 09 - an invoice settled in full against short cash. `payment_reference` is free text until it adds the payment key beside it, and the arithmetic the allocation depends on is asserted here: the payable plus the withheld comes back to the base exactly.
-
 ### PF-086 · Return generation
 `Tax` · **8 pts** · depends: PF-085 · standards: — · `risk:high` `type:compliance`
 

@@ -11,6 +11,12 @@ use RuntimeException;
  */
 final class WithholdingRefused extends RuntimeException
 {
+    /** A refusal whose whole reason is in the sentence, with nothing to interpolate. */
+    public static function because(string $why): self
+    {
+        return new self($why);
+    }
+
     public static function noRate(string $jurisdiction, string $date): self
     {
         return new self(sprintf(

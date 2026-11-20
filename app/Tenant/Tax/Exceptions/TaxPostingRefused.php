@@ -11,6 +11,19 @@ use RuntimeException;
  */
 final class TaxPostingRefused extends RuntimeException
 {
+    /**
+     * A refusal whose whole reason is in the sentence.
+     *
+     * The named constructors above exist because their reasons are
+     * arithmetic and the figures belong in the message. Where the reason is
+     * a single condition with nothing to interpolate, a named constructor
+     * is a second name for one sentence.
+     */
+    public static function because(string $why): self
+    {
+        return new self($why);
+    }
+
     public static function recoverableExceedsTheTax(string $recoverable, string $tax): self
     {
         return new self(sprintf(
