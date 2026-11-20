@@ -41,8 +41,17 @@ Two tasks in this phase carry disproportionate risk. `PF-093` is gapless numberi
 ### PF-104 · Delivery
 `Sales` · **5 pts** · depends: PF-102, PF-063 · standards: —
 
-- [ ] Email with the PDF and, where the profile requires, the XML attached, rendered in the **recipient's** language
+- [x] Email with the PDF and, where the profile requires, the XML attached, rendered in the **recipient's** language
+  - `EmailChannel` implements the same `MessageChannel` as WhatsApp, so the attempt numbering, the duplicate reference, the consent check and the delivery log are **one code path** rather than two. A second sending path would have its own answers to all four, and the first time they differed would be a customer with two copies of one invoice because only one path deduplicated.
+  - `OutboundMessage` carries attachments as `name => path` rather than as contents: an invoice PDF is already on disk, and holding a second copy of each in memory is how a delivery run exhausts a worker on the one day somebody sends a thousand.
+  - Every template carries both languages and a check asserts it. A channel with one language is a channel that silently sends the issuer's rather than the recipient's, and the bite removes `en` from a template to prove the check notices.
+  - The templates are in configuration, not in the adapter, so adding a document type to the delivery path is a configuration change rather than a change to a provider's code.
 - [ ] A delivery log per document: channel, address, attempt, outcome, provider message id
-- [ ] Bounce and complaint handling that marks the address and surfaces it, rather than silently retrying forever
+- [x] Bounce and complaint handling that marks the address and surfaces it, rather than silently retrying forever
+  - A hard bounce means the mailbox does not exist. **Retrying does not eventually work** - it burns the sending domain's reputation, and the business discovers that when the invoices with the *right* addresses stop arriving. Silent and ever-widening is the worst shape a failure has.
+  - So the address is suppressed, `isReachable()` refuses it from then on, and the refusal **names the address** - "surfaces it" means somebody reading the delivery log can see which one stopped, not that something did. Both halves are bitten.
+  - **A bounce and a complaint are stored as different facts** because the remedies are opposite: a bounce is fixed by correcting the address, a complaint by asking the customer whether they want these at all - and certainly not by sending from a different address, which is how a domain goes from a complaint to a blocklist.
+  - Soft bounces are deliberately *not* suppressed. A full mailbox is temporary, and suppressing on one would stop a customer's invoices because their inbox was full on a Tuesday; the transport's own retry handles those.
+  - The list is per tenant: an address that bounced for one company may be fine for another that typed it correctly, and a shared list would let one tenant's typo stop another tenant's invoice.
 - [ ] A signed customer-facing view with a payment instruction, and no login
 - [ ] Delivery failure never changes the document's issued state - it is issued, and undelivered

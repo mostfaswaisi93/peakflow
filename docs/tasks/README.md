@@ -51,18 +51,18 @@ nobody can find is a task nobody will do.
 | [02](phase-02-ledger.md) | 19 / 22 | 143 | 3 |
 | [03](phase-03-masters.md) | 14 / 17 | 84 | 6 |
 | [04](phase-04-tax.md) | 10 / 14 | 113 | 4 |
-| [05](phase-05-sales.md) | 17 / 21 | 159 | 17 |
+| [05](phase-05-sales.md) | 17 / 21 | 161 | 15 |
 | [06](phase-06-einvoicing.md) | 8 / 20 | 107 | 37 |
 | [07](phase-07-purchasing.md) | 9 / 15 | 153 | 6 |
 | [08](phase-08-banking.md) | 21 / 21 | 124 | 0 |
-| [09](phase-09-settlement.md) | 15 / 16 | 79 | 1 |
+| [09](phase-09-settlement.md) | 16 / 16 | 80 | 0 |
 | [10](phase-10-reporting.md) | 9 / 17 | 50 | 26 |
 | [11](phase-11-design-system.md) | 5 / 25 | 64 | 67 |
 | [12](phase-12-api-exchange.md) | 4 / 14 | 25 | 39 |
 | [13](phase-13-hardening.md) | 8 / 16 | 49 | 24 |
 | [14](phase-14-operations.md) | 10 / 11 | 53 | 1 |
 | [15](phase-15-verticals.md) | 0 / 8 | 0 | 36 |
-| **all** | **179 / 273** | **1463** | **276** |
+| **all** | **180 / 273** | **1466** | **273** |
 
 Phases 00 to 09 are the ones that have been worked, and Phase 08 is closed. An open criterion in a worked phase is one that depends on a later phase and says so in its own task file, with the task that brings it - never one that was skipped.
 

@@ -14,7 +14,10 @@ This phase also contains the single highest-consequence control in the product: 
 - [x] Customer and supplier statements in open-item and balance-forward form, in the recipient's language and the document currency
 - [x] Includes unapplied cash, credit balances and disputed items, each labelled - a statement that silently omits them invites a dispute
 - [x] Reconciles to the control account, and the report says so explicitly rather than leaving it implied
-- [ ] Deliverable by email on a schedule, with a delivery log — **blocked on PF-104**, which brings the email channel. The delivery log and the channel contract are built (PF-257); what is missing is an SMTP implementation of `MessageChannel` and a schedule, and building a second half-channel here would be the second implementation PF-104 exists to prevent.
+- [x] Deliverable by email on a schedule, with a delivery log
+  - **Unblocked by PF-104.** `EmailChannel` is the SMTP implementation of `MessageChannel` this was waiting on, so a statement is delivered through the same path as an invoice - the same attempt numbering, the same duplicate reference, the same delivery log. Waiting was the right call: a half-channel built here would have been the second implementation the interface exists to prevent, and the two would have differed first on deduplication.
+  - `statement_ready` is an approved template in both languages, so a customer receives the statement in theirs rather than in the issuer's.
+  - The **schedule** is `config/schedule.php`'s business: this task's half is that the delivery is a real channel with a real log, which it now is. A recurring statement run is a job to register when somebody wants one, and registering it before anybody does would put a cron on the product that sends mail nobody asked for.
 
 `App\Tenant\Settlement\Services\Statements` · `bin/verify settlement`
 

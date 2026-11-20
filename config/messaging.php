@@ -22,7 +22,68 @@ return [
     |
     */
 
-    'driver' => 'fake',
+    'driver' => env('MESSAGING_DRIVER', 'fake'),
+
+    /*
+    |---------------------------------------------------------------------------
+    | Email - PF-104
+    |---------------------------------------------------------------------------
+    |
+    | The templates are HERE and not in the channel adapter, so adding a
+    | document type to the delivery path is a configuration change rather
+    | than a change to a provider's code. The variables are positional -
+    | `{1}`, `{2}` - which is the scheme the WhatsApp templates use, so a
+    | document type's variables are one list rather than one per channel.
+    |
+    | Rendered in the RECIPIENT'S language, which is why every template
+    | carries both: a customer who reads Arabic should not receive an
+    | English invoice because the person who issued it had English on.
+    |
+    */
+
+    'email' => [
+        'mailer' => env('MESSAGING_MAILER'),
+
+        'templates' => [
+            'invoice_issued' => [
+                'category' => 'utility',
+                'languages' => ['ar', 'en'],
+                'variables' => ['the document number', 'the entity name', 'the gross amount', 'the due date'],
+                'subject' => [
+                    'ar' => 'فاتورة {1} من {2}',
+                    'en' => 'Invoice {1} from {2}',
+                ],
+                'body' => [
+                    'ar' => "تجدون مرفقًا الفاتورة {1} الصادرة عن {2}.
+
+المبلغ المستحق: {3}
+تاريخ الاستحقاق: {4}",
+                    'en' => "Attached is invoice {1} issued by {2}.
+
+Amount due: {3}
+Due date: {4}",
+                ],
+            ],
+
+            'statement_ready' => [
+                'category' => 'utility',
+                'languages' => ['ar', 'en'],
+                'variables' => ['the entity name', 'the period', 'the closing balance'],
+                'subject' => [
+                    'ar' => 'كشف حساب من {1}',
+                    'en' => 'Statement of account from {1}',
+                ],
+                'body' => [
+                    'ar' => "تجدون مرفقًا كشف الحساب عن {2}.
+
+الرصيد الختامي: {3}",
+                    'en' => "Attached is your statement of account for {2}.
+
+Closing balance: {3}",
+                ],
+            ],
+        ],
+    ],
 
     /*
     |---------------------------------------------------------------------------

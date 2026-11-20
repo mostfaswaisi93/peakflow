@@ -82,6 +82,11 @@ final class MessagingRules
 
                 // ---- The vendor boundary -------------------------------
                 'the provider is behind an interface with a fake' => fn (): array => $this->theVendorIsBehindAnInterface(),
+
+                // ---- Email delivery - PF-104 ---------------------------
+                'email is a channel, not a second sending path' => fn (): array => $this->emailIsAChannel(),
+                'a bounced address is refused next time, with the reason' => fn (): array => $this->aBounceStopsTheSending(),
+                'a template carries both languages, and the recipient picks' => fn (): array => $this->templatesCarryBothLanguages(),
             ]);
         } catch (Throwable $e) {
             return ['messaging could not be checked' => [
@@ -357,6 +362,180 @@ final class MessagingRules
     // ---- Templates --------------------------------------------------------
 
     /** @return list<string> */
+    /**
+     * Email implements the same contract, and is reached the same way - PF-104.
+     *
+     * ## What this is really asserting
+     *
+     * Not that an email can be sent - that `Mail` can send mail is
+     * Laravel's problem. That the email channel is reached through
+     * `MessageChannel`, so the attempt numbering, the duplicate
+     * reference, the consent check and the delivery log are the SAME
+     * code for both channels.
+     *
+     * A second sending path for email would have its own answers to all
+     * four, and the first time they differed would be a customer who got
+     * two copies of one invoice because only one path deduplicated.
+     *
+     * @return list<string>
+     */
+    private function emailIsAChannel(): array
+    {
+        $channel = new \App\Exchange\Messaging\Providers\EmailChannel();
+        $failures = [];
+
+        if (! $channel instanceof \App\Exchange\Messaging\Contracts\MessageChannel) {
+            $failures[] = 'the email channel does not implement MessageChannel, so it is a second '.
+                'sending path with its own answers to consent, attempts and deduplication';
+        }
+
+        if ($channel->key() !== 'email') {
+            $failures[] = sprintf('the email channel calls itself "%s", so a delivery log cannot say '.
+                'which channel an attempt was on', $channel->key());
+        }
+
+        $templates = $channel->approvedTemplates();
+
+        if ($templates === []) {
+            $failures[] = 'the email channel approves no templates, so every send through it is refused '.
+                'by the same guard that refuses an unapproved WhatsApp template - which is correct '.
+                'behaviour for an empty configuration and useless as a channel';
+        }
+
+        /*
+         | A malformed address is not reachable.
+         |
+         | The same question WhatsApp answers about a number. Asking it
+         | here is what stops a typo becoming a bounce, which is cheaper
+         | than suppressing the address afterwards.
+         */
+        if ($channel->isReachable('not-an-address')) {
+            $failures[] = 'the email channel reports a malformed address as reachable, so a typo becomes '.
+                'a bounce rather than a refusal - and a bounce costs the sending domain something a '.
+                'refusal does not';
+        }
+
+        return $failures;
+    }
+
+    /**
+     * A bounce stops the sending and says why - PF-104.
+     *
+     * ## "Rather than silently retrying forever"
+     *
+     * A hard bounce means the mailbox does not exist. Retrying does not
+     * eventually work; it burns the sending domain's reputation, and the
+     * business discovers that when the invoices with the RIGHT addresses
+     * stop arriving. Silent and ever-widening is the worst shape a
+     * failure has.
+     *
+     * So the next attempt is refused, and the refusal names the address.
+     *
+     * @return list<string>
+     */
+    private function aBounceStopsTheSending(): array
+    {
+        $suppressions = app(\App\Tenant\Messaging\Services\Suppressions::class);
+        $channel = new \App\Exchange\Messaging\Providers\EmailChannel();
+        $address = 'ap-'.bin2hex(random_bytes(3)).'@showcase.test';
+        $failures = [];
+
+        if (! $channel->isReachable($address)) {
+            return ['a fresh address was already unreachable, so this check cannot tell a suppression '.
+                'from the starting state'];
+        }
+
+        $suppressions->suppress($this->entityId, $address, 'bounce', 'mailbox unavailable');
+
+        if ($channel->isReachable($address)) {
+            $failures[] = 'an address that bounced is still reported as reachable, so the next attempt '.
+                'sends to it again. A hard bounce retried is how a sending domain loses the reputation '.
+                'that delivers the invoices whose addresses are right';
+        }
+
+        $result = $channel->send(new \App\Exchange\Messaging\ValueObjects\OutboundMessage(
+            to: $address,
+            template: 'invoice_issued',
+            language: 'ar',
+            variables: ['INV-1', 'Showcase', '100', '2026-12-01'],
+            reference: 'probe-'.bin2hex(random_bytes(3)),
+        ));
+
+        if ($result->accepted) {
+            $failures[] = 'a send to a suppressed address was accepted';
+        }
+
+        if (! str_contains($result->why, $address)) {
+            $failures[] = sprintf(
+                'the refusal does not name the address (%s). "Surfaces it" means somebody reading the '.
+                'delivery log can see WHICH address stopped, not that something did',
+                $result->why,
+            );
+        }
+
+        /*
+         | And the reason is kept, because the remedies differ.
+         |
+         | A bounce is fixed by correcting the address; a complaint is
+         | fixed by asking the customer whether they want these at all,
+         | and certainly not by sending from a different address.
+         */
+        if ($suppressions->reasonFor($address) !== 'bounce') {
+            $failures[] = 'the suppression does not record that it was a bounce, so nobody can tell it '.
+                'from a complaint - and the two have opposite remedies';
+        }
+
+        $suppressions->release($address);
+
+        if (! $channel->isReachable($address)) {
+            $failures[] = 'releasing a suppression did not make the address reachable again, so a '.
+                'corrected address stays blocked for ever';
+        }
+
+        return $failures;
+    }
+
+    /**
+     * Rendered in the RECIPIENT's language - PF-104.
+     *
+     * A customer who reads Arabic should not receive an English invoice
+     * because the person who issued it had English on. So every template
+     * carries both, and the check is that it does - a channel with one
+     * language is a channel that silently sends the wrong one.
+     *
+     * @return list<string>
+     */
+    private function templatesCarryBothLanguages(): array
+    {
+        $channel = new \App\Exchange\Messaging\Providers\EmailChannel();
+        $byName = [];
+
+        foreach ($channel->approvedTemplates() as $template) {
+            $byName[$template->name][] = $template->language;
+        }
+
+        if ($byName === []) {
+            return ['no email template is approved, so this check asserted nothing'];
+        }
+
+        $failures = [];
+
+        foreach ($byName as $name => $languages) {
+            foreach (['ar', 'en'] as $wanted) {
+                if (! \in_array($wanted, $languages, true)) {
+                    $failures[] = sprintf(
+                        'the email template "%s" has no %s version, so a customer who reads it receives '.
+                        'the other language - which is the issuer\'s, not theirs',
+                        $name,
+                        $wanted,
+                    );
+                }
+            }
+        }
+
+        return $failures;
+    }
+
     private function unapprovedTemplatesAreRefused(): array
     {
         $invoice = $this->issue();

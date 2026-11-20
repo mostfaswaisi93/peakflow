@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Providers;
 
 use App\Exchange\Messaging\Contracts\MessageChannel;
+use App\Exchange\Messaging\Providers\EmailChannel;
 use App\Exchange\Messaging\Providers\FakeChannel;
 use Illuminate\Support\ServiceProvider;
 
@@ -44,6 +45,7 @@ final class MessagingServiceProvider extends ServiceProvider
              | would take the whole product down for a delivery setting.
              */
             return match ($driver) {
+                'email' => new EmailChannel(),
                 default => new FakeChannel(),
             };
         });
