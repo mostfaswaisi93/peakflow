@@ -6,6 +6,7 @@ namespace App\Tenant\Inventory\Services;
 
 use App\Support\Audit\AuditTrail;
 use App\Support\Money\Money;
+use App\Support\Iso\UnitRegistry;
 use App\Tenant\Inventory\Exceptions\StockRefused;
 use App\Tenant\Inventory\Posting\Rules\StockAdjustedRule;
 use App\Tenant\Inventory\Posting\Rules\StockIssuedRule;
@@ -604,6 +605,7 @@ final class Stock
         ?string $serialId = null,
     ): array {
         $this->assertTheLocationExists($entityId, $locationId);
+        $this->assertTheUnitPermits($item, $quantity);
 
         $signed = BigDecimal::of($quantity);
 
@@ -821,6 +823,54 @@ final class Stock
     }
 
     /** @throws StockRefused */
+    /**
+     * A quantity the item's unit can express - PF-247.
+     *
+     * ## Why it is here and not on each entry point
+     *
+     * Every movement goes through `write()`, so this is the one place a
+     * quantity becomes a row. Putting it on `receive()` and `issue()` and
+     * `adjust()` and `returnIn()` would be four copies, and the fifth
+     * movement type somebody adds would be the one without it.
+     *
+     * ## Why the unit decides and not the column
+     *
+     * The column holds six places, which is headroom, not permission.
+     * "2.5" is a fine quantity of kilograms and a nonsense quantity of
+     * pairs, and nothing about the number says which - only the unit
+     * does. A line reading 2.5 NPR is a line somebody typed a gram
+     * quantity into, and the cost of accepting it is a stock count that
+     * can never be reconciled to anything physical.
+     */
+    private function assertTheUnitPermits(object $item, string $quantity): void
+    {
+        $unit = (string) ($item->unit_code ?? '');
+
+        if ($unit === '') {
+            return;
+        }
+
+        $magnitude = ltrim($quantity, '-+');
+
+        if (UnitRegistry::permits($unit, $magnitude)) {
+            return;
+        }
+
+        $allowed = UnitRegistry::decimals($unit);
+
+        throw StockRefused::because(sprintf(
+            'A quantity of %s cannot be expressed in %s, which carries %s. %s',
+            $quantity,
+            $unit,
+            $allowed === 0 ? 'no decimal places' : $allowed.' decimal place'.($allowed === 1 ? '' : 's'),
+            $allowed === 0
+                ? 'There is no half of one of these, and a movement that records one is a movement '.
+                  'nobody can count against the shelf.'
+                : 'The column holds six places, which is headroom rather than permission: the unit is '.
+                  'what says how finely this item is actually measured.',
+        ));
+    }
+
     private function assertPositive(string $quantity, string $why): void
     {
         if (! BigDecimal::of($quantity)->isPositive()) {

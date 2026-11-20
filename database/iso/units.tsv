@@ -4,51 +4,65 @@
 #
 # dimension exists so a comparison or conversion between incompatible units can be refused
 # rather than producing a number. It is PeakFlow's classification, not part of Rec 20.
-code	dimension	en	ar
-C62	count	unit	وحدة
-EA	count	each	لكل
-NPR	count	pair	زوج
-SET	count	set	طقم
-DZN	count	dozen	دسته
-BX	count	box	صندوق
-CT	count	carton	كرتون
-PK	count	pack	عبوة
-PF	count	pallet	منصة
-RO	count	roll	لفة
-BG	count	bag	كيس
-BO	count	bottle	زجاجة
-CS	count	case	حافظة
-DR	count	drum	برميل
-TU	count	tube	أنبوب
-SEC	time	second	ثانية
-MIN	time	minute	دقيقة
-HUR	time	hour	ساعة
-DAY	time	day	يوم
-WEE	time	week	أسبوع
-MON	time	month	شهر
-ANN	time	year	سنة
-GRM	mass	gram	غرام
-KGM	mass	kilogram	كيلوغرام
-TNE	mass	tonne	طن
-LBR	mass	pound	رطل
-ONZ	mass	ounce	أونصة
-MMT	length	millimetre	مليمتر
-CMT	length	centimetre	سنتيمتر
-MTR	length	metre	متر
-KMT	length	kilometre	كيلومتر
-INH	length	inch	بوصة
-FOT	length	foot	قدم
-CMK	area	square centimetre	سنتيمتر مربع
-MTK	area	square metre	متر مربع
-MLT	volume	millilitre	مليلتر
-LTR	volume	litre	لتر
-MTQ	volume	cubic metre	متر مكعب
-GLL	volume	gallon	غالون
-WHR	energy	watt hour	واط ساعة
-KWH	energy	kilowatt hour	كيلوواط ساعة
-MWH	energy	megawatt hour	ميغاواط ساعة
-E34	data	gigabyte	غيغابايت
-E35	data	terabyte	تيرابايت
-4L	data	megabyte	ميغابايت
-TKM	freight	tonne kilometre	طن كيلومتر
-P1	proportion	percent	نسبة مئوية
+#
+# decimals is how many places a quantity in this unit may carry - PF-247. Also
+# PeakFlow's, and also not in Rec 20, which says what a code means and nothing
+# about precision.
+#
+# It is per UNIT and not per dimension because the dimension is the wrong
+# question: a minute and an hour are both time, and a quarter of an hour is an
+# ordinary line on an invoice while half a minute is not a thing anybody bills.
+# Counting units are 0 - there is no half of a pair, and a line that says 2.5
+# NPR is a line somebody typed a gram quantity into.
+#
+# The column on a document carries six places, which is the headroom. This is
+# what the unit ALLOWS, and the two are different questions: six places is what
+# the database can hold, and 0 is what "each" means.
+code	dimension	decimals	en	ar
+C62	count	0	unit	وحدة
+EA	count	0	each	لكل
+NPR	count	0	pair	زوج
+SET	count	0	set	طقم
+DZN	count	0	dozen	دسته
+BX	count	0	box	صندوق
+CT	count	0	carton	كرتون
+PK	count	0	pack	عبوة
+PF	count	0	pallet	منصة
+RO	count	0	roll	لفة
+BG	count	0	bag	كيس
+BO	count	0	bottle	زجاجة
+CS	count	0	case	حافظة
+DR	count	0	drum	برميل
+TU	count	0	tube	أنبوب
+SEC	time	2	second	ثانية
+MIN	time	0	minute	دقيقة
+HUR	time	2	hour	ساعة
+DAY	time	2	day	يوم
+WEE	time	2	week	أسبوع
+MON	time	2	month	شهر
+ANN	time	2	year	سنة
+GRM	mass	2	gram	غرام
+KGM	mass	3	kilogram	كيلوغرام
+TNE	mass	3	tonne	طن
+LBR	mass	3	pound	رطل
+ONZ	mass	3	ounce	أونصة
+MMT	length	3	millimetre	مليمتر
+CMT	length	3	centimetre	سنتيمتر
+MTR	length	3	metre	متر
+KMT	length	3	kilometre	كيلومتر
+INH	length	3	inch	بوصة
+FOT	length	3	foot	قدم
+CMK	area	3	square centimetre	سنتيمتر مربع
+MTK	area	3	square metre	متر مربع
+MLT	volume	3	millilitre	مليلتر
+LTR	volume	3	litre	لتر
+MTQ	volume	3	cubic metre	متر مكعب
+GLL	volume	3	gallon	غالون
+WHR	energy	3	watt hour	واط ساعة
+KWH	energy	3	kilowatt hour	كيلوواط ساعة
+MWH	energy	3	megawatt hour	ميغاواط ساعة
+E34	data	3	gigabyte	غيغابايت
+E35	data	3	terabyte	تيرابايت
+4L	data	3	megabyte	ميغابايت
+TKM	freight	3	tonne kilometre	طن كيلومتر
+P1	proportion	3	percent	نسبة مئوية

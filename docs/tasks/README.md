@@ -60,9 +60,9 @@ nobody can find is a task nobody will do.
 | [11](phase-11-design-system.md) | 5 / 25 | 64 | 67 |
 | [12](phase-12-api-exchange.md) | 4 / 14 | 25 | 39 |
 | [13](phase-13-hardening.md) | 8 / 16 | 49 | 24 |
-| [14](phase-14-operations.md) | 10 / 11 | 53 | 1 |
+| [14](phase-14-operations.md) | 11 / 11 | 54 | 0 |
 | [15](phase-15-verticals.md) | 0 / 8 | 0 | 36 |
-| **all** | **180 / 273** | **1466** | **273** |
+| **all** | **181 / 273** | **1467** | **272** |
 
 Phases 00 to 09 are the ones that have been worked, and Phase 08 is closed. An open criterion in a worked phase is one that depends on a later phase and says so in its own task file, with the task that brings it - never one that was skipped.
 

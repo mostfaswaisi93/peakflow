@@ -1,85 +1,87 @@
 {
-    "_readme": [
-        "Where the vendored standards data in this directory came from - PF-007.",
-        "",
-        "This file records provenance, not a verification that did not happen. The environment",
-        "PeakFlow is assembled in cannot reach ISO, SWIFT or UNECE, so nothing here was",
-        "downloaded. Saying so is the point: a provenance record that implies a fetch and a",
-        "checksum against the publisher converts an unknown into a false assurance, and a false",
-        "assurance is never re-examined. An honest caveat is re-examined the first time somebody",
-        "needs the data to be right.",
-        "",
-        "Each entry therefore states how the file was obtained, what second source it was",
-        "cross-checked against inside this process, and what remains unverified. ICU/CLDR ships",
-        "with PHP and knows every ISO 4217 and ISO 3166-1 code, so two of these files have a real",
-        "independent check. Rec 20 has none, and its entry says so.",
-        "",
-        "sha256 is the digest of the file as reviewed. `bin/verify iso` compares it, so an edit",
-        "that nobody recorded is caught at the one place it would be noticed."
-    ],
-    "recorded_on": "2026-11-15",
-    "cross_checked_with": {
-        "icu": "74.2",
-        "php": "8.3",
-        "note": "ICU's currency fraction digits come from CLDR, which deliberately differs from ISO 4217 where a subunit has fallen out of use. The divergences are enumerated and frozen in tests/Support/IsoRegistryRules.php; a new one fails the check rather than silently changing what an invoice rounds to."
+  "_readme": [
+    "Where the vendored standards data in this directory came from - PF-007.",
+    "",
+    "This file records provenance, not a verification that did not happen. The environment",
+    "PeakFlow is assembled in cannot reach ISO, SWIFT or UNECE, so nothing here was",
+    "downloaded. Saying so is the point: a provenance record that implies a fetch and a",
+    "checksum against the publisher converts an unknown into a false assurance, and a false",
+    "assurance is never re-examined. An honest caveat is re-examined the first time somebody",
+    "needs the data to be right.",
+    "",
+    "Each entry therefore states how the file was obtained, what second source it was",
+    "cross-checked against inside this process, and what remains unverified. ICU/CLDR ships",
+    "with PHP and knows every ISO 4217 and ISO 3166-1 code, so two of these files have a real",
+    "independent check. Rec 20 has none, and its entry says so.",
+    "",
+    "sha256 is the digest of the file as reviewed. `bin/verify iso` compares it, so an edit",
+    "that nobody recorded is caught at the one place it would be noticed."
+  ],
+  "recorded_on": "2026-11-15",
+  "cross_checked_with": {
+    "icu": "74.2",
+    "php": "8.3",
+    "note": "ICU's currency fraction digits come from CLDR, which deliberately differs from ISO 4217 where a subunit has fallen out of use. The divergences are enumerated and frozen in tests/Support/IsoRegistryRules.php; a new one fails the check rather than silently changing what an invoice rounds to."
+  },
+  "files": {
+    "currencies.tsv": {
+      "standard": "ISO 4217",
+      "table": "Table A.1, active codes",
+      "publisher": "ISO 4217 Maintenance Agency (SIX Financial Information)",
+      "obtained": "transcribed from the published code list; not downloaded in this environment",
+      "rows": 174,
+      "cross_checked": "every code is known to ICU 74.2 (0 unknown). Exponents are ISO 4217's, NOT ICU's - see cross_checked_with.note",
+      "unverified": "the numeric codes and the exponents were not compared against the publisher's file. The 36 currencies whose exponent is not 2 are each asserted by name in bin/verify, which is where a transcription error in the column that matters would show",
+      "not_here": "names and symbols, which ICU already knows in every locale PeakFlow serves",
+      "sha256": "f8b681e8c4815e9f2064593f3892947990c9d1b89aac8f1f19b296c02827d280"
     },
-    "files": {
-        "currencies.tsv": {
-            "standard": "ISO 4217",
-            "table": "Table A.1, active codes",
-            "publisher": "ISO 4217 Maintenance Agency (SIX Financial Information)",
-            "obtained": "transcribed from the published code list; not downloaded in this environment",
-            "rows": 174,
-            "cross_checked": "every code is known to ICU 74.2 (0 unknown). Exponents are ISO 4217's, NOT ICU's - see cross_checked_with.note",
-            "unverified": "the numeric codes and the exponents were not compared against the publisher's file. The 36 currencies whose exponent is not 2 are each asserted by name in bin/verify, which is where a transcription error in the column that matters would show",
-            "not_here": "names and symbols, which ICU already knows in every locale PeakFlow serves",
-            "sha256": "f8b681e8c4815e9f2064593f3892947990c9d1b89aac8f1f19b296c02827d280"
-        },
-        "countries.tsv": {
-            "standard": "ISO 3166-1",
-            "table": "alpha-2, alpha-3 and numeric",
-            "publisher": "ISO 3166 Maintenance Agency",
-            "obtained": "transcribed from the published code list; not downloaded in this environment",
-            "rows": 249,
-            "cross_checked": "every alpha-2 is a region ICU 74.2 recognises (0 unknown)",
-            "unverified": "the alpha-3 and numeric columns. ICU exposes no alpha-3 or numeric mapping through intl, so there is no second source in-process for either",
-            "not_here": "country names, which ICU already knows; and whether an IBAN applies, which ISO 13616 answers and Iban::appliesTo() owns",
-            "sha256": "ec2b0cf0109c4bb4d8e9c5259f668cfbddf13fada669d7c247d7dbe7b9e36fa3"
-        },
-        "units.tsv": {
-            "standard": "UN/CEFACT Recommendation 20",
-            "table": "Annex I common codes, with Rec 21 extensions where they appear",
-            "publisher": "UNECE",
-            "obtained": "transcribed; not downloaded in this environment",
-            "rows": 47,
-            "cross_checked": "nothing. ICU has no Rec 20 mapping, so unlike the two ISO files above this one has no independent source inside the process",
-            "unverified": "every code. This is the weakest provenance in the directory and the caveat is deliberate: an invoice is validated against the real Rec 20 list by the RECEIVING system, so a wrong code here is rejected there, by a customer's software, with a schema error a salesperson cannot act on",
-            "removed": "KTM, labelled 'kilometre per hour'. A speed is not a chargeable quantity - a line multiplies a quantity by a unit price, and 3 km/h x 50 SAR is not money - and the label could not be confirmed against the published list from inside this environment. A code whose meaning cannot be sourced has no business validating an e-invoice field",
-            "peakflow_additions": "the `dimension` column, which is PeakFlow's classification and not part of Rec 20. It exists so that adding three hours to two kilograms can be refused",
-            "sha256": "3ce34fd3143ae8532c600ade4de198d5b5ddef7976e1c9de4a7c368b80996fe3"
-        },
-        "languages.tsv": {
-            "standard": "BCP 47 tags; CLDR plural categories",
-            "table": "not a standard registry - this is the product's own list",
-            "publisher": "PeakFlow",
-            "obtained": "a product decision, not a transcription. ISO 639-1 in full would be 184 languages the product has no translations for, every one offerable in a picker that then renders English",
-            "rows": 2,
-            "cross_checked": "the plural categories were verified against ICU 74.2 by formatting a six-category ICU message across 0-220 plus fractional and large values and collecting which categories are reachable: ar gives zero,one,two,few,many,other and en gives one,other - exactly the file's contents",
-            "unverified": "nothing. Every column either is a product decision or was checked against ICU in-process",
-            "note": "`numbering` is the locale's own system (arab for Arabic). It is NOT what a formatter is handed: financial documents in the region conventionally use Western digits even in Arabic text, so the display default is latn and the departure is recorded in config/money.php",
-            "sha256": "425ec033d908463142e464962ec69f837e4d25a3fb75cd96ea32a56c32793427"
-        },
-        "iban.tsv": {
-            "standard": "ISO 13616",
-            "table": "per-country IBAN length, with a published registry example per country",
-            "publisher": "SWIFT, as the ISO 13616 registration authority",
-            "obtained": "transcribed; not downloaded in this environment",
-            "rows": 87,
-            "cross_checked": "every one of the 80 examples was put through MOD 97-10 before being committed, and all 80 are accepted by the Iban constructor on every bin/verify run. The check digits are a checksum over the whole string, so a validating example is a string that is right to about 1 part in 97 - which makes the example an independent check on the length column: a wrong length would refuse the country's own published IBAN",
-            "unverified": "the lengths of the 7 countries with no sourced example (BI, DJ, MN, NI, RU, SD, SO). bin/verify iban counts them and the count may shrink but not grow",
-            "dropped": "one candidate example failed MOD 97-10 and was dropped rather than corrected. A corrected example is no longer a registry vector, it is a computed one, and a computed one cannot confirm a length",
-            "not_here": "the BBAN structure per country. A structure table taken from memory would refuse real bank accounts, and refusing a customer's genuine IBAN stops them being paid, where accepting a structurally odd one that passes MOD 97-10 costs a rejected payment message with a reason. Deferred to Phase 06, against the registry file itself",
-            "sha256": "42ab8b23aba9721b7cd7d2af80b91ea7bf15785830a11e923791316dbdedd91d"
-        }
+    "countries.tsv": {
+      "standard": "ISO 3166-1",
+      "table": "alpha-2, alpha-3 and numeric",
+      "publisher": "ISO 3166 Maintenance Agency",
+      "obtained": "transcribed from the published code list; not downloaded in this environment",
+      "rows": 249,
+      "cross_checked": "every alpha-2 is a region ICU 74.2 recognises (0 unknown)",
+      "unverified": "the alpha-3 and numeric columns. ICU exposes no alpha-3 or numeric mapping through intl, so there is no second source in-process for either",
+      "not_here": "country names, which ICU already knows; and whether an IBAN applies, which ISO 13616 answers and Iban::appliesTo() owns",
+      "sha256": "ec2b0cf0109c4bb4d8e9c5259f668cfbddf13fada669d7c247d7dbe7b9e36fa3"
+    },
+    "units.tsv": {
+      "standard": "UN/CEFACT Recommendation 20",
+      "table": "Annex I common codes, with Rec 21 extensions where they appear",
+      "publisher": "UNECE",
+      "obtained": "transcribed; not downloaded in this environment",
+      "rows": 47,
+      "cross_checked": "nothing. ICU has no Rec 20 mapping, so unlike the two ISO files above this one has no independent source inside the process",
+      "unverified": "every code. This is the weakest provenance in the directory and the caveat is deliberate: an invoice is validated against the real Rec 20 list by the RECEIVING system, so a wrong code here is rejected there, by a customer's software, with a schema error a salesperson cannot act on",
+      "removed": "KTM, labelled 'kilometre per hour'. A speed is not a chargeable quantity - a line multiplies a quantity by a unit price, and 3 km/h x 50 SAR is not money - and the label could not be confirmed against the published list from inside this environment. A code whose meaning cannot be sourced has no business validating an e-invoice field",
+      "peakflow_additions": "the `dimension` column, which is PeakFlow's classification and not part of Rec 20. It exists so that adding three hours to two kilograms can be refused",
+      "sha256": "420b374057920f89cf5e1781ceb232b9c70b889aef1bb778c245885192ba682c",
+      "peakflow_columns": "dimension and decimals are both PeakFlow's, not Rec 20's. Rec 20 says what a code means and nothing about precision or compatibility - so a comparison between incompatible units and a quantity with more places than the unit allows are both refused on our classification, and the file says so rather than letting a reader think UNECE published them.",
+      "changed": "2026-11-20, PF-247: a `decimals` column was added, per unit. No code, name or dimension was touched - the digest moved because the file gained a column, which is exactly the edit this digest exists to make somebody state out loud rather than slip past."
+    },
+    "languages.tsv": {
+      "standard": "BCP 47 tags; CLDR plural categories",
+      "table": "not a standard registry - this is the product's own list",
+      "publisher": "PeakFlow",
+      "obtained": "a product decision, not a transcription. ISO 639-1 in full would be 184 languages the product has no translations for, every one offerable in a picker that then renders English",
+      "rows": 2,
+      "cross_checked": "the plural categories were verified against ICU 74.2 by formatting a six-category ICU message across 0-220 plus fractional and large values and collecting which categories are reachable: ar gives zero,one,two,few,many,other and en gives one,other - exactly the file's contents",
+      "unverified": "nothing. Every column either is a product decision or was checked against ICU in-process",
+      "note": "`numbering` is the locale's own system (arab for Arabic). It is NOT what a formatter is handed: financial documents in the region conventionally use Western digits even in Arabic text, so the display default is latn and the departure is recorded in config/money.php",
+      "sha256": "425ec033d908463142e464962ec69f837e4d25a3fb75cd96ea32a56c32793427"
+    },
+    "iban.tsv": {
+      "standard": "ISO 13616",
+      "table": "per-country IBAN length, with a published registry example per country",
+      "publisher": "SWIFT, as the ISO 13616 registration authority",
+      "obtained": "transcribed; not downloaded in this environment",
+      "rows": 87,
+      "cross_checked": "every one of the 80 examples was put through MOD 97-10 before being committed, and all 80 are accepted by the Iban constructor on every bin/verify run. The check digits are a checksum over the whole string, so a validating example is a string that is right to about 1 part in 97 - which makes the example an independent check on the length column: a wrong length would refuse the country's own published IBAN",
+      "unverified": "the lengths of the 7 countries with no sourced example (BI, DJ, MN, NI, RU, SD, SO). bin/verify iban counts them and the count may shrink but not grow",
+      "dropped": "one candidate example failed MOD 97-10 and was dropped rather than corrected. A corrected example is no longer a registry vector, it is a computed one, and a computed one cannot confirm a length",
+      "not_here": "the BBAN structure per country. A structure table taken from memory would refuse real bank accounts, and refusing a customer's genuine IBAN stops them being paid, where accepting a structurally odd one that passes MOD 97-10 costs a rejected payment message with a reason. Deferred to Phase 06, against the registry file itself",
+      "sha256": "42ab8b23aba9721b7cd7d2af80b91ea7bf15785830a11e923791316dbdedd91d"
     }
+  }
 }

@@ -137,6 +137,9 @@ final class StockRules
                 // ---- The tie --------------------------------------------
                 'the inventory account equals its movements' => fn (): array => $this->inventoryReconciles(),
                 'and the check notices when it does not' => fn (): array => $this->inventoryDriftIsCaught(),
+
+                // ---- Fractional quantities - PF-247 --------------------
+                'the unit says how finely an item is counted, not the column' => fn (): array => $this->theUnitDecidesPrecision(),
             ]));
         } finally {
             $this->connection->rollBack();
@@ -3648,6 +3651,82 @@ final class StockRules
             method: $method,
             allowsNegative: $allowsNegative,
         );
+    }
+
+    /**
+     * A quantity the unit can express, and nothing finer - PF-247.
+     *
+     * ## The column is headroom, not permission
+     *
+     * `quantity` holds six places. That is what the database can store,
+     * and it says nothing about what an item is measured in. "2.5" is a
+     * fine quantity of kilograms and a nonsense quantity of pairs - and
+     * nothing about the number itself says which, which is exactly why
+     * the precision is declared on the unit rather than inferred from
+     * the value.
+     *
+     * ## Why a half of "each" is worse than a rounding error
+     *
+     * A movement of 2.5 EA cannot be counted against a shelf. Whatever
+     * the shelf holds, it is not two and a half of anything - so the
+     * stock count that eventually runs can never reconcile, and the
+     * difference is attributed to shrinkage by somebody who was not here
+     * when the line was typed.
+     *
+     * @return list<string>
+     */
+    private function theUnitDecidesPrecision(): array
+    {
+        $violations = [];
+
+        // `anItem()` gives EA, which counts whole things.
+        $counted = $this->aStockedItem();
+
+        $refusal = $this->refusal(fn () => $this->receive($counted, '2.5', '4.0000'));
+
+        if ($refusal === null) {
+            $violations[] = 'a movement of 2.5 EA was accepted. Whatever the shelf holds it is not two '.
+                'and a half of anything, so the count that eventually runs can never reconcile - and '.
+                'the difference gets attributed to shrinkage by somebody who was not here when the line '.
+                'was typed';
+        } elseif (! str_contains($refusal, 'EA')) {
+            $violations[] = sprintf(
+                'the refusal does not name the unit (%s), so somebody reading it does not know whether '.
+                'to fix the quantity or the item',
+                $refusal,
+            );
+        }
+
+        // And the whole quantity it is derived from still works.
+        if ($this->refusal(fn () => $this->receive($counted, '3', '4.0000')) !== null) {
+            $violations[] = 'a whole quantity in a counting unit was refused, so the rule is refusing '.
+                'the unit rather than the precision';
+        }
+
+        /*
+         | And a unit that DOES take decimals still does.
+         |
+         | Without this leg the check passes against a rule that refuses
+         | every fraction, which is a different product - "fractional
+         | quantities where the unit of measure permits them" is the
+         | criterion, and a rule that permits none meets half of it.
+         */
+        $weighed = $this->aStockedItem();
+        DB::connection('tenant')->table('items')->where('id', $weighed)->update(['unit_code' => 'KGM']);
+
+        if ($this->refusal(fn () => $this->receive($weighed, '2.5', '4.0000')) !== null) {
+            $violations[] = '2.5 KGM was refused. Kilograms take three places, and a rule that refuses '.
+                'every fraction is not "where the unit permits them" - it is a product that cannot '.
+                'invoice anything sold by weight';
+        }
+
+        if ($this->refusal(fn () => $this->receive($weighed, '2.5001', '4.0000')) === null) {
+            $violations[] = '2.5001 KGM was accepted, which is four places in a unit that declares '.
+                'three. The column would hold it, which is the point: the column is headroom and the '.
+                'unit is permission';
+        }
+
+        return $violations;
     }
 
     private function anItem(

@@ -48,6 +48,17 @@ final class UnitRegistry
     /** The vendored file this registry reads. */
     public const SOURCE = 'units';
 
+    /**
+     * What the quantity column can hold - PF-247.
+     *
+     * A unit may declare fewer places and most do; none may declare more,
+     * because a precision the database cannot store is a precision that is
+     * silently rounded on the way in. The refusal belongs at load time,
+     * where somebody is editing the file, rather than at the first invoice
+     * that uses the unit.
+     */
+    public const MAX_DECIMALS = 6;
+
     /** @var array<string, array{dimension: UnitDimension, en: string, ar: string}>|null */
     private static ?array $table = null;
 
@@ -65,7 +76,7 @@ final class UnitRegistry
         $table = [];
 
         foreach (VendoredRegistry::rows(self::SOURCE) as $row) {
-            foreach (['code', 'dimension', 'en', 'ar'] as $column) {
+            foreach (['code', 'dimension', 'decimals', 'en', 'ar'] as $column) {
                 if (! isset($row[$column])) {
                     throw RegistryDataUnusable::column(self::SOURCE, $column);
                 }
@@ -89,8 +100,32 @@ final class UnitRegistry
                 throw RegistryDataUnusable::value(self::SOURCE, $row['code'], 'name', $row['en'].'/'.$row['ar']);
             }
 
+            /*
+             | A precision that is not a number is refused, not defaulted.
+             |
+             | Same reasoning as the dimension above: a unit that fell back
+             | to "three places" would accept 2.5 pairs, and a line reading
+             | 2.5 NPR is a line somebody typed a gram quantity into. The
+             | point of declaring it per unit is that it is declared.
+             */
+            if (! ctype_digit((string) $row['decimals'])) {
+                throw RegistryDataUnusable::value(self::SOURCE, $row['code'], 'decimals', (string) $row['decimals']);
+            }
+
+            $decimals = (int) $row['decimals'];
+
+            if ($decimals > self::MAX_DECIMALS) {
+                throw RegistryDataUnusable::value(
+                    self::SOURCE,
+                    $row['code'],
+                    'decimals',
+                    $row['decimals'].' (the quantity column holds '.self::MAX_DECIMALS.')',
+                );
+            }
+
             $table[$row['code']] = [
                 'dimension' => $dimension,
+                'decimals' => $decimals,
                 'en' => $row['en'],
                 'ar' => $row['ar'],
             ];
@@ -143,6 +178,43 @@ final class UnitRegistry
      * refused at load if it does not, and {@see comparable()} can answer the
      * question the enum was written for.
      */
+    /**
+     * How many decimal places a quantity in this unit may carry - PF-247.
+     *
+     * Declared on the unit rather than assumed from its dimension: a
+     * minute and an hour are both time, and a quarter of an hour is an
+     * ordinary invoice line while half a minute is not a thing anybody
+     * bills. Counting units are 0 - there is no half of a pair.
+     */
+    public static function decimals(string $code): int
+    {
+        $code = self::assertExists($code);
+
+        return (int) self::all()[$code]['decimals'];
+    }
+
+    /**
+     * Whether a quantity is expressible in this unit.
+     *
+     * The question a document line asks before it accepts a number, and
+     * the reason the precision is data rather than a constant: "2.5" is a
+     * fine quantity of kilograms and a nonsense quantity of pairs, and
+     * nothing about the number itself says which.
+     */
+    public static function permits(string $code, string $quantity): bool
+    {
+        $allowed = self::decimals($code);
+        $point = strpos($quantity, '.');
+
+        if ($point === false) {
+            return true;
+        }
+
+        $places = rtrim(substr($quantity, $point + 1), '0');
+
+        return \strlen($places) <= $allowed;
+    }
+
     public static function dimension(string $code): UnitDimension
     {
         return self::all()[self::assertExists($code)]['dimension'];
