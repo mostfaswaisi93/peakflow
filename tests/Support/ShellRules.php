@@ -137,6 +137,38 @@ final class ShellRules
      *
      * @param  list<string>  $roleKeys
      */
+    /**
+     * The route's action as something callable, whatever shape it has.
+     *
+     * ## Why this is not `$route->getController()`
+     *
+     * Because that is the controller OBJECT, and calling it only works for
+     * a single-action controller. Every navigable page in the product was
+     * one until the manual journal, which has a screen and two write
+     * actions - a validation endpoint a keystroke asks, and the post - and
+     * three routes on one class is the ordinary shape for that.
+     *
+     * Called the old way, the first page with sibling actions reported
+     * "Object of type ... is not callable" from three checks at once, which
+     * reads as a broken page and is a suite that cannot call it.
+     *
+     * @return callable|array{0: object, 1: string}
+     */
+    private function actionOf(\Illuminate\Routing\Route $route): callable|array
+    {
+        $controller = $route->getController();
+        $method = $route->getActionMethod();
+
+        /*
+         | `getActionMethod()` returns the CLASS NAME for an invokable
+         | controller, not `__invoke`, so the two cases are told apart by
+         | asking whether the method exists on the object.
+         */
+        return method_exists($controller, $method)
+            ? [$controller, $method]
+            : $controller;
+    }
+
     private function signIn(array $roleKeys): User
     {
         $user = User::create([
@@ -789,7 +821,7 @@ final class ShellRules
                 $connection->enableQueryLog();
 
                 try {
-                    $rendered = app()->call($route->getController(), ['request' => $request]);
+                    $rendered = app()->call($this->actionOf($route), ['request' => $request]);
 
                     if ($rendered instanceof \Illuminate\Contracts\Support\Renderable) {
                         $rendered->render();
@@ -879,7 +911,7 @@ final class ShellRules
                     $request = \Illuminate\Http\Request::create('/'.ltrim($route->uri(), '/'), 'GET');
                     app()->instance('request', $request);
 
-                    $rendered = app()->call($route->getController(), ['request' => $request]);
+                    $rendered = app()->call($this->actionOf($route), ['request' => $request]);
 
                     $html = $rendered instanceof \Illuminate\Contracts\Support\Renderable
                         ? $rendered->render()
@@ -959,7 +991,7 @@ final class ShellRules
                     $request = \Illuminate\Http\Request::create('/'.ltrim($route->uri(), '/'), 'GET');
                     app()->instance('request', $request);
 
-                    app()->call($route->getController(), ['request' => $request]);
+                    app()->call($this->actionOf($route), ['request' => $request]);
                 } catch (\Illuminate\Auth\Access\AuthorizationException) {
                     $problems[] = sprintf(
                         '"%s" is offered in the menu to anybody holding %s, and the page then refuses '.
@@ -1036,7 +1068,7 @@ final class ShellRules
                     $request = \Illuminate\Http\Request::create('/'.ltrim($route->uri(), '/'), 'GET');
                     app()->instance('request', $request);
 
-                    app()->call($route->getController(), ['request' => $request]);
+                    app()->call($this->actionOf($route), ['request' => $request]);
 
                     /*
                      | It opened. So it has to be in their menu.
@@ -1218,7 +1250,7 @@ final class ShellRules
 
                 app()->instance('request', $request);
 
-                $rendered = app()->call($route->getController(), [
+                $rendered = app()->call($this->actionOf($route), [
                     'request' => $request,
                     $parameter => $id,
                 ]);

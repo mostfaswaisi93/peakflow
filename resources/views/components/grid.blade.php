@@ -39,9 +39,22 @@
         loading     show the grid's skeleton instead of rows. Where this may
                     be used is decided by docs/design/wait-budget.md, not by
                     whoever is writing the page.
-        action      where an edited grid submits. Required if any column is
-                    editable, because an editable grid with nowhere to
-                    submit loses every number typed into it in silence.
+        action      where an edited grid submits. An editable grid needs
+                    this or `ownedBy`, because one with nowhere to submit
+                    loses every number typed into it in silence.
+        ownedBy     the id of the PAGE's form, when the page submits this
+                    grid. Every editable cell then carries `form="<id>"`,
+                    which is HTML's own way of saying so, and the grid
+                    renders no submit of its own.
+
+                    The grid must sit OUTSIDE that form, as a sibling. It
+                    renders forms of its own - column visibility, the
+                    filters, the saved view - and a form inside a form is
+                    not nested by any parser: the inner start tag is
+                    ignored and the inner `</form>` closes the outer one,
+                    which silently puts everything the page wrote after the
+                    grid outside its own form. Mutually exclusive with
+                    `action`.
         method      the form method for `action`.
         submit      the label of the submit button for `action`.
         filtered    whether the request that produced these rows carried a
@@ -122,6 +135,7 @@
     'error' => null,
     'loading' => false,
     'action' => null,
+    'ownedBy' => null,
     'method' => 'POST',
     'submit' => null,
     'filtered' => false,
@@ -224,10 +238,34 @@
         $editable = $editable || (bool) ($column['editable'] ?? false);
     }
 
-    if ($editable && ! is_string($action)) {
+    /*
+     | An editable grid has to say where its figures go.
+     |
+     | Either it owns a form of its own - `action` - or the page owns one
+     | and says so with `ownedBy`, which carries the id of that form. The
+     | second case is not a loophole: a grid inside a page's form cannot
+     | render a form of its own, because a nested form is dropped by every
+     | browser, and the figures would then submit nowhere in the one case
+     | that looks most like it works.
+     |
+     | What is refused is SILENCE. A grid that is editable and names
+     | neither is a grid whose author has not decided, and the cost of not
+     | deciding is every number somebody typed, lost with no error.
+     */
+    if ($editable && ! is_string($action) && ! is_string($ownedBy)) {
         $refuse(
-            'has an editable column and no `action`. Typing into a grid that submits nowhere loses every '.
-            'figure entered, and it loses them without an error - the page simply reloads unchanged.'
+            'has an editable column and neither `action` nor `ownedBy`. Typing into a grid that submits '.
+            'nowhere loses every figure entered, and it loses them without an error - the page simply '.
+            'reloads unchanged. Give it an `action`, or name the page form that submits it.'
+        );
+    }
+
+    if (is_string($action) && is_string($ownedBy)) {
+        $refuse(
+            'has both `action` and `ownedBy`. One of them renders a form around the table and the other '.
+            'says a form already surrounds it, so together they nest a form inside a form - which every '.
+            'browser resolves by dropping one, usually the inner, and the figures go to whichever '.
+            'survived.'
         );
     }
 

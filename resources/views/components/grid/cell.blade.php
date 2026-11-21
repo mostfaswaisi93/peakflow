@@ -47,6 +47,7 @@
     'name' => null,
     'index' => 0,
     'rowKey' => null,
+    'ownedBy' => null,
 ])
 
 @props([
@@ -162,6 +163,24 @@
             script.
         --}}
         <input type="text"
+               {{--
+                   The form this field belongs to, when the page owns one.
+
+                   HTML's own answer to "this input submits with that form",
+                   and the reason it is needed here rather than nesting: the
+                   grid renders forms of its own - the column-visibility
+                   control, the filters, the saved view - and a form inside
+                   a form is not nested by any parser. The inner start tag is
+                   ignored and the inner `</form>` CLOSES THE OUTER ONE, so
+                   everything the page put after the grid ends up outside its
+                   own form.
+
+                   Measured: with the grid inside the page's form, the
+                   imbalance paragraph and both submit buttons were outside
+                   it, and the script that reads the form found no output to
+                   write into. Nothing in the markup looked wrong.
+               --}}
+               @if (is_string($ownedBy)) form="{{ $ownedBy }}" @endif
                name="{{ $name }}[{{ $rowKey }}][{{ $definition['key'] }}]"
                value="{{ $value }}"
                @if ($isFigure) inputmode="decimal" dir="ltr" @endif

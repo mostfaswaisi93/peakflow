@@ -118,6 +118,7 @@ final class Navigation
                     ['label_ar' => 'قائمة المركز المالي', 'label_en' => 'Financial position', 'route' => 'financial-position.index', 'permission' => 'report.view'],
                     ['label_ar' => 'قائمة الأرباح أو الخسائر', 'label_en' => 'Profit or loss', 'route' => 'profit-or-loss.index', 'permission' => 'report.view'],
                     ['label_ar' => 'دليل الحسابات', 'label_en' => 'Chart of accounts', 'route' => 'accounts.index', 'permission' => 'account.manage'],
+                    ['label_ar' => 'قيد يدوي', 'label_en' => 'Manual journal', 'route' => 'journals.create', 'permission' => 'journal.post'],
                     ['label_ar' => 'قيود اليومية', 'label_en' => 'Journal entries', 'route' => null, 'permission' => 'journal.draft'],
                     ['label_ar' => 'الفترات', 'label_en' => 'Periods', 'route' => null, 'permission' => 'period.close'],
                 ],

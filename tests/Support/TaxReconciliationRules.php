@@ -20,6 +20,8 @@ use App\Tenant\Tax\Enums\TaxCategory;
 use App\Tenant\Tax\Models\TaxCode;
 use App\Tenant\Tax\Models\TaxReconciliationSignoff;
 use App\Tenant\Tax\Services\ReturnPeriods;
+use App\Tenant\Tax\Models\ReturnPeriod;
+use App\Tenant\Tax\Verification\TaxControlsTieToTheirReturns;
 use App\Tenant\Tax\Services\TaxReconciler;
 use App\Tenant\Tax\TaxReconciliation;
 use App\Tenant\Tenancy\Models\Entity;
@@ -101,6 +103,8 @@ final class TaxReconciliationRules
                 'the two sides are computed independently' => fn (): array => $this->theSidesAreIndependent(),
                 'each jurisdiction reconciles against its own accounts' => fn (): array => $this->perJurisdiction(),
                 'the check runs in ledger:verify, per open period' => fn (): array => $this->itRunsInLedgerVerify(),
+                'a filed return whose control account moved underneath it is reported' => fn (): array => $this->aFiledReturnIsWatched(),
+                'and an open period is left to the closing check, deliberately' => fn (): array => $this->anOpenPeriodIsNotReported(),
             ]), $this->entityId);
         } finally {
             $this->connection->rollBack();
@@ -700,7 +704,15 @@ final class TaxReconciliationRules
 
         app(ReturnPeriods::class)->generateYear($entity, 'SA', 2026);
 
-        foreach (['2026-04', '2026-05'] as $month) {
+/*
+         | June as well as April and May - PF-054.
+         |
+         | The filed-period check needs a month that is OPEN while another
+         | is filed, so that the division of labour between the ledger
+         | check and the closing check can be asserted rather than
+         | described.
+         */
+        foreach (['2026-04', '2026-05', '2026-06'] as $month) {
             $period = app(FiscalCalendarGenerator::class)->periodFor(
                 $this->entityId, Carbon::parse($month.'-15'),
             );
@@ -754,4 +766,247 @@ final class TaxReconciliationRules
 
         return $results;
     }
+    /**
+     * A filed return whose control account moved underneath it - PF-054.
+     *
+     * ## The criterion this closes, and why it stayed open
+     *
+     * PF-054 asks that every subledger total equals its control account,
+     * VAT input and output among them. `TaxControlsTieToTheirReturns` has
+     * been registered as a `LedgerCheck` and reported nothing on the
+     * showcase books - and so did its own raw `difference()`, so there was
+     * no way to tell "the books agree" from "the check never reaches the
+     * data". A check nobody has seen fail is a check nobody has seen.
+     *
+     * Three earlier attempts failed for the same reason: they tried to make
+     * the difference through the application, and the application refuses.
+     * A control account takes a posting only from a posting rule; a sales
+     * document whose tax point lands in a filed return is refused by
+     * PF-086; and `post_filing_adjustment` sends a late adjustment to the
+     * next open period on purpose. **The product cannot produce this state,
+     * which is the point of the check** - it exists for the state the
+     * product cannot produce: a restored dump, a disabled trigger, a
+     * superuser session, a backfill written in a hurry.
+     *
+     * So the measurement is made the way PF-054's fingerprint criterion
+     * measures its own: by going around the guard, as the thing it guards
+     * against would. This fixture sets `peakflow.posting_rule` - the same
+     * session setting every posting sets - and writes a line into the output
+     * account, inside a period that has been FILED.
+     *
+     * ## What is asserted, in order
+     *
+     * The clean baseline FIRST, with the return filed and nothing wrong, so
+     * a pass cannot come from the check reporting everything. Then the
+     * difference, and the check naming the entity, the period, the figure
+     * and `critical`. The severity is asserted because the whole argument
+     * for this being in `ledger:verify` rather than in a report is that a
+     * filed return is a statement made to an authority.
+     *
+     * @return list<string>
+     */
+    public function aFiledReturnIsWatched(): array
+    {
+        $violations = [];
+
+        \assert($this->entity !== null);
+
+        $this->sell('2026-05-18', '2026-05-20', '1000.0000', '150.0000');
+
+        $period = $this->fileTheReturn('2026-05');
+
+        if ($period === null) {
+            return ['the 2026-05 return period does not exist, so this check is not reading what it '.
+                'thinks it is'];
+        }
+
+        $check = app(TaxControlsTieToTheirReturns::class);
+        $clean = $check->findings($this->entityId);
+
+        if ($clean !== []) {
+            return [sprintf(
+                'the filed period was already reported before anything was injected, so a pass '.
+                'would prove nothing: %s',
+                implode(' | ', array_map(
+                    static fn (array $f): string => (string) $f['detail'],
+                    $clean,
+                )),
+            )];
+        }
+
+        /*
+         | 500 into the output account, inside the filed month.
+         |
+         | With no tax code, which is what makes it unexplainable: the
+         | return is assembled from tax codes and this line cannot reach
+         | one, so no class of timing or tax-point difference accounts for
+         | it. That is the definition of `unexplained()`.
+         */
+        $this->manualJournal('2026-05-25', '-500.0000');
+
+        $findings = $check->findings($this->entityId);
+
+        if ($findings === []) {
+            return ['the output control account moved 500 under a FILED return and the ledger check '.
+                'reported nothing. This is the state the check exists for - the product refuses to '.
+                'produce it, so the only things that can are a restored dump, a disabled trigger or '.
+                'a backfill, and none of those will announce themselves'];
+        }
+
+        /*
+         | The kind AND the detail, because that is what a reader sees.
+         |
+         | The entity's code is in `kind` - "tax controls in SHOW" - and
+         | the period, jurisdiction and figure are in `detail`. Asserting
+         | only the detail reported the entity as missing when it was one
+         | field over, which is the check being wrong about the thing it
+         | checks.
+         */
+        $detail = implode(' ', array_map(
+            static fn (array $f): string => (string) $f['kind'].' '.(string) $f['detail'],
+            $findings,
+        ));
+
+        foreach ([
+            'the period' => '2026-05',
+            'the jurisdiction' => 'SA',
+            'the figure' => '500',
+            'the entity' => (string) $this->entity->code,
+        ] as $what => $needle) {
+            if (! str_contains($detail, $needle)) {
+                $violations[] = sprintf(
+                    'the finding does not name %s, so whoever is woken by it has to go and find the '.
+                    'period themselves: %s',
+                    $what,
+                    $detail,
+                );
+            }
+        }
+
+        $severities = array_unique(array_map(
+            static fn (array $f): string => (string) $f['severity'],
+            $findings,
+        ));
+
+        if ($severities !== ['critical']) {
+            $violations[] = sprintf(
+                'the finding is %s rather than critical. The whole argument for this being in '.
+                'ledger:verify rather than in a report is that a filed return is a statement made '.
+                'to an authority, and a warning is a line people scroll past',
+                implode(', ', $severities),
+            );
+        }
+
+        return $violations;
+    }
+
+    /**
+     * An open period is NOT reported here, and that is the design - PF-054.
+     *
+     * ## Why the absence needs its own check
+     *
+     * Because the obvious fix for the check above - report every period
+     * with a difference - would make this check fire on the current month,
+     * every run, for ever. Documents are still arriving, the control
+     * account moves before the return is drawn, and a check that reports
+     * the normal state of the current month is a line people scroll past.
+     *
+     * The open period is already covered, by a different instrument with a
+     * different consequence: `TaxReconciliationCheck` is a `ClosingCheck`
+     * and it REFUSES THE CLOSE, which is the right moment to insist - the
+     * last one at which the period can still be posted into.
+     *
+     * So this asserts the division of labour rather than a behaviour, and
+     * it is the half that a well-meaning widening would break silently.
+     *
+     * @return list<string>
+     */
+    public function anOpenPeriodIsNotReported(): array
+    {
+        $violations = [];
+
+        $this->sell('2026-06-18', '2026-06-20', '1000.0000', '150.0000');
+        $this->manualJournal('2026-06-25', '-500.0000');
+
+        $findings = app(TaxControlsTieToTheirReturns::class)->findings($this->entityId);
+
+        if ($findings !== []) {
+            $violations[] = sprintf(
+                'an OPEN period with a difference was reported by the ledger check: %s. The current '.
+                'month differs as a matter of course, and a check that says so on every run is one '.
+                'nobody reads',
+                implode(' | ', array_map(
+                    static fn (array $f): string => (string) $f['detail'],
+                    $findings,
+                )),
+            );
+        }
+
+        /*
+         | And the closing check DOES see it.
+         |
+         | Otherwise this check could pass with nothing watching the open
+         | period at all, which is the failure it is meant to rule out.
+         */
+        $reasons = app(ClosingChecks::class)->reasonsToRefuse(
+            $this->entityId,
+            '2026-06',
+            '2026-06-01',
+            '2026-07-01',
+        );
+
+        if ($reasons === []) {
+            $violations[] = 'nothing refuses the close of an open period with 500 unexplained, so '.
+                'the difference is watched by neither instrument';
+        }
+
+        return $violations;
+    }
+
+    /**
+     * File the return for a month, so the ledger check will look at it.
+     *
+     * Through the model rather than `ReturnFiler`: filing properly needs a
+     * generated return, an MFA step-up and a frozen snapshot, and what this
+     * check needs from the state is the one column the ledger check reads.
+     * Going through the filer would make this a check about filing.
+     */
+    private function fileTheReturn(string $month): ?ReturnPeriod
+    {
+        $period = ReturnPeriod::query()
+            ->where('entity_id', $this->entityId)
+            ->where('jurisdiction', 'SA')
+            ->where('label', $month)
+            ->first();
+
+        if ($period === null) {
+            return null;
+        }
+
+        /*
+         | A filer, because the database insists on one.
+         |
+         | `return_periods_filed_is_attributable` refuses a filed period
+         | with no `filed_at` and no `filed_by`, on the grounds that "a
+         | filed period with no filer is a period nobody can be asked
+         | about" - which is right, and is why this fixture creates a user
+         | rather than writing a null and working around the constraint.
+         */
+        $filer = \App\Tenant\Identity\Models\User::query()->create([
+            'name' => 'Filing Probe',
+            'email' => 'pf054-'.bin2hex(random_bytes(5)).'@invalid.test',
+            'password' => Str::password(32),
+            'active' => true,
+        ]);
+
+        $period->forceFill([
+            'state' => 'filed',
+            'filed_at' => now(),
+            'filed_by' => (string) $filer->getKey(),
+            'submission_reference' => 'PF-054-PROBE',
+        ])->save();
+
+        return $period->refresh();
+    }
+
 }

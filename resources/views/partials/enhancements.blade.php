@@ -63,5 +63,26 @@
 @endphp
 
 @once('pf-ui-behaviour')
-    <script id="pf-ui-behaviour">{!! $pfUiBehaviour !!}</script>
+    {{--
+        `@cspNonce`, and it was missing - PF-237, PF-206.
+
+        `script-src` is a nonce and nothing else: no `'self'`, no
+        `'unsafe-inline'`, no hashes. So this script, inlined without one,
+        was REFUSED BY THE BROWSER on every page that rendered a grid or a
+        currency field - which is every list in the product.
+
+        Nothing reported it. The markup was correct, so `bin/verify grid`
+        compared the markup it reads and found the hooks it expected; the
+        suites that exercise the keyboard model inspect the source of this
+        file rather than running it; and a page whose arrow keys do nothing
+        still renders, still scrolls and still submits. The only symptom was
+        a keyboard model that existed in the repository and not in a
+        browser.
+
+        Measured after the fix, in Chromium against the showcase workspace:
+        with the nonce absent `window.pfUi` is undefined and ArrowRight on a
+        cell moves nothing; with it present the roving focus, type-to-edit,
+        Enter and Tab all behave as PF-206 describes.
+    --}}
+    <script id="pf-ui-behaviour" @cspNonce>{!! $pfUiBehaviour !!}</script>
 @endonce

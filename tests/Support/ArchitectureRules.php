@@ -58,6 +58,7 @@ final class ArchitectureRules
             'an event carries no other module\'s models' => $this->eventsCarryNoModels(),
             'every financial event is raised somewhere' => $this->everyFinancialEventIsRaised(),
             'no place of supply is asserted outside the rule book' => $this->placeOfSupplyIsNeverAsserted(),
+            'every inline script carries the CSP nonce' => $this->inlineScriptsCarryTheNonce(),
             'a subtree is read as a range, never as a LIKE' => $this->subtreesAreReadAsRanges(),
             'a suite that posts ends with the global proof' => $this->postingSuitesProveTheLedger(),
             'a bank account is read only through the disclosure service' => $this->bankReadsAreAudited(),
@@ -2352,6 +2353,90 @@ final class ArchitectureRules
                         'product recorded a domestic supply as a result',
                         $relative,
                         $literal,
+                    );
+                }
+            }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * Every inline `<script>` in a template carries `@cspNonce` - PF-237.
+     *
+     * ## The defect this is for, which ran for months
+     *
+     * `partials/enhancements.blade.php` inlines the whole behaviour layer -
+     * the grid's roving focus, type-to-edit, Enter, Tab, the selection, the
+     * copy, the paste preview, the currency field's digit normalisation - in
+     * a `<script>` tag with no nonce. The product's `script-src` is a nonce
+     * and nothing else: no `'self'`, no `'unsafe-inline'`, no hashes. So the
+     * browser refused it on every page that rendered a grid or a currency
+     * field, which is every list in the product.
+     *
+     * Nothing caught it. The markup was right, so the suites that compare
+     * the markup against what the script reads passed. The suites that
+     * cover the keyboard model read the SOURCE of the script, and
+     * `str_contains($source, "case 'Enter'")` is true of a file that never
+     * executes. And a page whose arrow keys do nothing still renders, still
+     * scrolls, still submits and still passes every check that reads the
+     * DOM.
+     *
+     * `bin/verify behaviour` now presses the keys in a real browser, which
+     * is the proof. This rule is the cheap half of it: it runs in `all`, it
+     * takes no browser, and it fails the moment somebody adds the next
+     * inline script without the nonce.
+     *
+     * ## Why a template rule rather than a response header check
+     *
+     * Because the header is correct. The policy is exactly what PF-237 asks
+     * for, and the thing that was wrong was a tag that did not comply with
+     * it - which is only visible where the tag is written.
+     *
+     * @return list<string>
+     */
+    public function inlineScriptsCarryTheNonce(): array
+    {
+        $violations = [];
+
+        foreach ($this->filesMatching('resources/views', '/\.blade\.php$/') as $file) {
+            $source = (string) file_get_contents($file);
+            $relative = $this->relative($file);
+
+            /*
+             | An opening `<script` with no `src=` is an inline script.
+             |
+             | A `src=` script is governed by the same policy and cannot
+             | carry a nonce in this product at all - `script-src` lists no
+             | host, so an external script is refused whatever it says. If
+             | one ever appears, it is a different conversation and this
+             | rule should not quietly bless it; hence the second branch.
+             */
+            if (preg_match_all('/<script\b([^>]*)>/i', $source, $matches, PREG_OFFSET_CAPTURE) === 0) {
+                continue;
+            }
+
+            foreach ($matches[1] as [$attributes, $offset]) {
+                $line = substr_count(substr($source, 0, (int) $offset), "\n") + 1;
+
+                if (preg_match('/\bsrc\s*=/i', (string) $attributes) === 1) {
+                    $violations[] = sprintf(
+                        '%s:%d loads a script from a URL. `script-src` lists a nonce and no host, so '.
+                        'the browser refuses it whatever it says - and refuses it silently',
+                        $relative,
+                        $line,
+                    );
+
+                    continue;
+                }
+
+                if (! str_contains((string) $attributes, '@cspNonce')) {
+                    $violations[] = sprintf(
+                        '%s:%d inlines a script with no `@cspNonce`. `script-src` is a nonce and '.
+                        'nothing else, so the browser refuses it - on every page that renders this '.
+                        'template, silently, with the markup still looking correct',
+                        $relative,
+                        $line,
                     );
                 }
             }

@@ -62,6 +62,7 @@ declare(strict_types=1);
  |   php bin/verify manual     manual journal entry: validation, templates, import
  |   php bin/verify logging    what a log line may and may not contain
  |   php bin/verify examples   worked examples only
+ |   php bin/verify behaviour  the keyboard model, pressed in a real browser
  |
  | Exits non-zero on any violation.
  */
@@ -148,6 +149,18 @@ if ($only === 'all' || $only === 'wiring') {
 if ($only === 'viewport') {
     // Starts a server and a browser, so it is slow and it signs in.
     $suites['Measured in a browser'] = $suite(static fn (): array => (new Tests\Support\ViewportRules())->all());
+}
+
+/*
+ | The behaviour layer, pressed rather than read - PF-206, PF-055.
+ |
+ | Its own target for the same reason as `viewport`: a server and a browser.
+ | Separate from `viewport` because the questions are different - that one
+ | measures the computed box, this one presses keys - and one failure line
+ | for both would say "the browser run failed" for either.
+ */
+if ($only === 'behaviour') {
+    $suites['Driven from the keyboard'] = $suite(static fn (): array => (new Tests\Support\BehaviourRules())->all());
 }
 
 if ($only === 'public') {
@@ -428,7 +441,7 @@ if ($only === 'all' || $only === 'examples') {
 }
 
 if ($suites === []) {
-    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | design | design-system | grid | shell | identity | sales-currency | reporting | errors | hardening | observability | repo | ops | tax | charts | sales | exchange | attachments | archive | inbound | purchasing | banking | settlement | stock | sync | payroll | messaging | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public | api | viewport\n");
+    fwrite(STDERR, "Unknown suite \"{$only}\". Use: all | arch | wiring | tenant | ledger | parties | currency | numbering | terms | catalog | settings | iso | iban | canonical | roles | config | lang | design | design-system | grid | shell | identity | sales-currency | reporting | errors | hardening | observability | repo | ops | tax | charts | sales | exchange | attachments | archive | inbound | purchasing | banking | settlement | stock | sync | payroll | messaging | sod | queue | group | manual | logging | property | examples | rollback | concurrency | public | api | viewport | behaviour\n");
     exit(2);
 }
 

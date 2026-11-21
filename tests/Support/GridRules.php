@@ -1472,7 +1472,17 @@ final class GridRules
                 '<x-grid name="g" caption="ج" :columns="$columns"><x-grid.row :index="0" row-key="1">'
                 .'<x-grid.cell column="a" value="1"/></x-grid.row><x-slot:empty>لا شيء</x-slot:empty></x-grid>',
                 ['columns' => [['key' => 'a', 'label' => 'أ', 'editable' => true]]],
-                'no `action`',
+                /*
+                 | The refusal names both ways out now - PF-055.
+                 |
+                 | It used to say "no `action`", and there was one way out.
+                 | A grid whose page owns the form cannot render a form of
+                 | its own, so `ownedBy` was added and the refusal has to
+                 | name it: a message that offers the one remedy that does
+                 | not apply sends the next person to nest a form inside a
+                 | form, which no parser nests.
+                 */
+                'neither `action` nor `ownedBy`',
             ],
             'no rows and no words about the first one' => [
                 '<x-grid name="g" caption="ج" :columns="$columns"></x-grid>',

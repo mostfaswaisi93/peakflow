@@ -376,7 +376,16 @@ const BASE = `http://127.0.0.1:${PORT}`;
 
 const PAGES = ['/overview', '/sales/invoices', '/purchasing/bills', '/banking/accounts',
                '/ledger/trial-balance', '/ledger/financial-position', '/masters/parties',
-               '/masters/currencies', '/settlement/payment-runs', '/settlement/statements'];
+               '/masters/currencies', '/settlement/payment-runs', '/settlement/statements',
+               /*
+                | The one screen in the product that is TYPED into - PF-055.
+                |
+                | Every other page here is read. A grid of editable cells at
+                | 320 pixels is the hardest case the reflow rule has: four
+                | inputs in a row, each with a minimum width, inside a table
+                | that may scroll but must not take the page with it.
+                */
+               '/ledger/journals/new'];
 
 (async () => {
   const browser = await chromium.launch();

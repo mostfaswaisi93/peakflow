@@ -15,6 +15,7 @@ use App\Tenant\Identity\Http\Controllers\TotpEnrolmentController;
 use App\Tenant\Banking\Http\Controllers\BankAccountListController;
 use App\Tenant\Catalog\Http\Controllers\CurrencyListController;
 use App\Tenant\Catalog\Http\Controllers\ItemListController;
+use App\Tenant\Ledger\Http\Controllers\ManualJournalController;
 use App\Tenant\Ledger\Http\Controllers\AccountListController;
 use App\Tenant\Parties\Http\Controllers\PartyDetailController;
 use App\Tenant\Parties\Http\Controllers\PartyListController;
@@ -268,6 +269,26 @@ Route::middleware(['tenant.session', 'auth', 'entity.scope'])->group(static func
         ->middleware('can:report.view')->name('financial-position.index');
     Route::get('/ledger/profit-or-loss', ProfitOrLossController::class)
         ->middleware('can:report.view')->name('profit-or-loss.index');
+
+    /*
+     | The manual journal - PF-055.
+     |
+     | Three routes for one screen, and the middle one is the reason there
+     | are three: `check` is what a keystroke asks, and it answers with the
+     | verdict rather than a page. A GET would put a draft entry's amounts
+     | and a customer's narration in a URL and then in an access log.
+     |
+     | All three carry `journal.post`, which is the permission to write into
+     | any account in the chart. Reading the imbalance of a draft is not a
+     | lesser act than posting it: the draft is the entry, and somebody who
+     | may not post one has no reason to be told what it would do.
+     */
+    Route::get('/ledger/journals/new', [ManualJournalController::class, 'create'])
+        ->middleware('can:journal.post')->name('journals.create');
+    Route::post('/ledger/journals/check', [ManualJournalController::class, 'check'])
+        ->middleware('can:journal.post')->name('journals.check');
+    Route::post('/ledger/journals', [ManualJournalController::class, 'store'])
+        ->middleware('can:journal.post')->name('journals.store');
 
     Route::get('/banking/accounts', BankAccountListController::class)
         ->middleware('can:bank.manage')->name('bank-accounts.index');
